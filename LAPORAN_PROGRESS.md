@@ -1,147 +1,155 @@
 # LAPORAN PROGRESS LENGKAP: TRANSFORMASI PANE IPHONE MIRRORING (WINDOWS)
 
 > **Klien:** Kelvin (Content Creator)  
-> **Target:** Mengubah fork Pane menjadi aplikasi iPhone Mirroring ala macOS Sequoia / ASUS GlideX di Windows 11  
-> **Status:** Siap Uji Manual Tahap Revisi Layout  
+> **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Edge-to-Edge  
+> **Status:** Siap Uji Manual Tema Baru  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
+> **Commit Terbaru:** `74f98ef` (`feat(ui): redesign theme to WinUI 3 Fluent Liquid Glass with edge-to-edge display`)  
 
 ---
 
 ## 📌 DAFTAR ISI
 1. [Ringkasan Eksekutif](#1-ringkasan-eksekutif)
 2. [Tahap 1: Verifikasi Lingkungan & Housekeeping Git](#2-tahap-1-verifikasi-lingkungan--housekeeping-git)
-3. [Tahap 2: Fitur 1 — Quick Nav Bar & Gesture Back (100% Berhasil)](#3-tahap-2-fitur-1--quick-nav-bar--gesture-back-100-berhasil)
+3. [Tahap 2: Fitur 1 — Quick Nav Bar & Gesture Back (100% Sukses)](#3-tahap-2-fitur-1--quick-nav-bar--gesture-back-100-sukses)
 4. [Tahap 3: Fitur 2 — Pencegahan Intersepsi IDM & Launcher `run.bat`](#4-tahap-3-fitur-2--pencegahan-intersepsi-idm--launcher-runbat)
-5. [Tahap 4: Revisi Tata Letak — Compact Snug GlideX Layout](#5-tahap-4-revisi-tata-letak--compact-snug-glidex-layout)
-6. [Struktur Riwayat Git Commit](#6-struktur-riwayat-git-commit)
-7. [Daftar File yang Dimodifikasi](#7-daftar-file-yang-dimodifikasi)
-8. [Panduan Menjalankan & Verifikasi Manual](#8-panduan-menjalankan--verifikasi-manual)
+5. [Tahap 4: Revisi Tata Letak Compact Snug Container](#5-tahap-4-revisi-tata-letak-compact-snug-container)
+6. [Tahap 5: Rombak Total Tema — WinUI 3 Fluent Liquid Glass (Edge-to-Edge)](#6-tahap-5-rombak-total-tema--winui-3-fluent-liquid-glass-edge-to-edge)
+7. [Struktur Riwayat Git Commit](#7-struktur-riwayat-git-commit)
+8. [Daftar File yang Dimodifikasi](#8-daftar-file-yang-dimodifikasi)
+9. [Panduan Menjalankan & Verifikasi Manual](#9-panduan-menjalankan--verifikasi-manual)
 
 ---
 
 ## 1. Ringkasan Eksekutif
 
-Proyek ini bertujuan mengoptimalkan **Pane** (aplikasi mirroring dan kontrol iPhone berbasis Python + `pymobiledevice3` di Windows) agar memberikan pengalaman layaknya **macOS Sequoia iPhone Mirroring** dan **ASUS GlideX**, khususnya untuk kenyamanan penggunaan aplikasi mobile native (seperti Instagram) langsung dari PC tanpa alat keras tambahan (No ESP32, No Bluetooth HID).
+Proyek ini bertujuan mentransformasikan **Pane** (aplikasi mirroring dan kontrol iPhone berbasis Python + `pymobiledevice3` di Windows) menjadi aplikasi desktop Windows 11 modern sekelas **ASUS GlideX / Windows Subsystem for Android / macOS Sequoia**, tanpa hardware tambahan (No ESP32, No Bluetooth HID).
 
-Pekerjaan telah mencakup:
-- Pembersihan lisensi dan pengamanan kredensial pairing ke `.gitignore`.
-- Penambahan dock navigasi cepat (Back, Home, Recent Apps) dengan gesture swipe tepi presisi ($x=0$) dan shortcut keyboard/mouse.
-- Bypass download interceptor IDM (Internet Download Manager) dengan mengubah ekstensi `/stream.bin` menjadi endpoint live video stream `/mirror/live`.
-- Peluncur satu-klik (`run.bat`) dengan aktivasi venv otomatis dan Chrome/Edge App Mode mandiri tanpa address bar.
-- Revisi tata letak terkini: single-column pas tanpa ruang hitam raksasa, Top Bar 36px dengan tombol Restart Screen, dock navigasi stasioner di bawah dagu frame iPhone (tidak menutupi video), dan modal panel settings ramping berbentuk accordion.
+Pembaruan terkini mencakup **perombakan visual total**:
+- Menghapus seluruh mockup bingkai casing HP tiruan (bezel plastik, notch tiruan, tombol samping tiruan).
+- Layar video tampil murni **edge-to-edge** (100% lebar, fleksibel, terpusat).
+- Material **WinUI 3 Liquid Glass / Acrylic** (`backdrop-filter: blur(24px) saturate(180%)`) pada Top Bar, Bottom CommandBar, dan Flyout Settings.
+- Tipografi sistem Windows 11: `'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif`.
+- Aksen warna biru resmi Windows 11 (`#0078d4`, hover `#1886d9`).
+- Peluncur `run.bat` disesuaikan presisi ke ukuran standar iPhone: `--window-size=375,820`.
 
 ---
 
 ## 2. Tahap 1: Verifikasi Lingkungan & Housekeeping Git
 
-### Langkah yang Dilakukan:
-1. **Verifikasi Toolchain**:
+1. **Toolchain**:
    - Python terverifikasi menggunakan venv Python 3.12 (`D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\python.exe`).
    - Git terverifikasi pada Git for Windows 2.56.0.
-   - Sesuai instruksi: **tidak ada perintah `pip install` mandiri** tanpa izin pengguna.
+   - Sesuai komitmen: tidak menjalankan instalasi library tanpa izin.
 2. **Commit Housekeeping (`fb79bfd`)**:
-   - Memperbaiki ketidaksesuaian lisensi di footer [`index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) dari MIT menjadi **GPL-3.0** (sesuai lisensi resmi Pane).
-   - Memperbaiki typo instruksi panduan CLI di UI dari `cd handset` menjadi `cd pane-iphone-mirror-windows`.
-   - Mengamankan file kredensial pairing iPhone (`*.plist`, `*.pairrecord`) ke dalam [`.gitignore`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/.gitignore) agar aman jika di-push ke GitHub publik.
+   - Lisensi di footer [`index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) diperbaiki dari MIT ke **GPL-3.0**.
+   - Typo direktori panduan CLI diperbaiki (`cd pane-iphone-mirror-windows`).
+   - Kredensial pairing iPhone (`*.plist`, `*.pairrecord`) diamankan ke dalam [`.gitignore`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/.gitignore).
 
 ---
 
-## 3. Tahap 2: Fitur 1 — Quick Nav Bar & Gesture Back (100% Berhasil)
+## 3. Tahap 2: Fitur 1 — Quick Nav Bar & Gesture Back (100% Sukses)
 
-> **Status:** Dites manual 100% berfungsi di iPhone fisik oleh Kelvin dan telah dimerge ke branch `main`.
+> **Status:** Terverifikasi 100% berfungsi pada iPhone fisik oleh Kelvin dan telah dimerge ke `main`.
 
-### Fitur yang Diterapkan:
-1. **Quick Navigation Dock**:
-   - Tombol **◀ Back**: Melakukan simulasi swipe dari tepi kiri layar ($x=0$) menuju ke tengah ($x=42000$).
-   - Tombol **● Home**: Gesture swipe naik dari tepi bawah layar ($y=65535$ ke $y=42000$).
-   - Tombol **▢ Recent (App Switcher)**: Swipe naik dari bawah dengan pause pendek 180ms di tengah layar agar iOS membuka multitasking drawer.
-2. **Input Shortcut Tambahan**:
-   - Tombol Mouse 3 / Back Button browser (`button === 3`).
-   - Tombol Keyboard `Alt + ←` (Alt + ArrowLeft).
-3. **Perbaikan Presisi Koordinat HID**:
-   - Memperbaiki koordinat awal gesture back dari $x=1000$ menjadi persis $x=0$, sehingga iOS mengenali gesture sistem secara konsisten 100%.
+- **Dock Navigasi**:
+  - **◀ Back**: Simulasi swipe dari tepi kiri layar ($x=0$) ke tengah ($x=42000$).
+  - **● Home**: Gesture swipe naik dari tepi bawah layar ($y=65535$ ke $y=42000$).
+  - **▢ Recent (App Switcher)**: Swipe naik dari bawah dengan jeda 180ms di tengah layar.
+- **Shortcut Tambahan**: Mouse Button 3 (Back) & Keyboard `Alt + ←`.
+- **Presisi HID**: Memastikan $x=0$ agar iOS mengenali gesture sistem secara andal.
 
 ---
 
 ## 4. Tahap 3: Fitur 2 — Pencegahan Intersepsi IDM & Launcher `run.bat`
 
-### 1. Masalah IDM (Internet Download Manager):
-- Pane default menggunakan URL `/stream.bin` untuk streaming frame H.264 ke web browser.
-- Ekstensi `.bin` sering kali otomatis diintersepsi oleh IDM sebagai unduhan file biner raksasa tak berujung, sehingga kanvas video mirroring menjadi macet / layar hitam.
-
-### 2. Solusi Ringan (Zero External Dependencies):
-- Menambahkan alias routing di backend [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py):
-  - Request ke `/mirror/live` diteruskan langsung ke handler video stream yang sama dengan `/stream.bin`.
-- Di frontend [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js), URL streaming dialihkan ke `/mirror/live`.
-- IDM tidak mengenali URL tanpa ekstensi `.bin` ini sebagai file download, sehingga stream berjalan mulus langsung ke decoder canvas/WebGL.
-
-### 3. Pembuatan Launcher Satu-Klik (`run.bat`):
-- Skrip batch otomatis yang:
-  1. Mengaktifkan lingkungan `venv\Scripts\activate.bat`.
-  2. Menjalankan server backend `python -m handset.server` di background/minimized.
-  3. Membuka Chrome atau Edge dalam mode standalone app (`--app=http://127.0.0.1:8765`), bebas dari address bar, tab bar, dan bookmark bar.
+1. **Bypass IDM (Internet Download Manager)**:
+   - Endpoint `/stream.bin` sering dicegat IDM sebagai download tak berujung.
+   - Ditambahkan alias routing backend di [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) menjadi `/mirror/live`.
+   - Di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js), streaming dialihkan ke `/mirror/live` sehingga stream video berjalan mulus tanpa diinterupsi downloader.
+2. **Peluncur Satu-Klik (`run.bat`)**:
+   - Otomatis mengaktifkan venv, menjalankan server di background, dan membuka Chrome/Edge dalam Standalone App Mode tanpa address bar.
 
 ---
 
-## 5. Tahap 4: Revisi Tata Letak — Compact Snug GlideX Layout
+## 5. Tahap 4: Revisi Tata Letak Compact Snug Container
 
-Berdasarkan revisi dari Kelvin, layout diperbarui agar jendela membungkus perangkat secara pas, kontrol tetap terlihat menempel di frame, dan tidak floating menutupi konten video:
-
-```
-+---------------------------------------------------------+
-|  [● Cable]                [↺ Restart] [⚙️]  (Tinggi 36px)|  <- Top Bar Ramping
-+---------------------------------------------------------+
-|                                                         |
-|         +-------------------------------------+         |
-|         |                                     |         |
-|         |          LAYAR IPHONE LIVE          |         |  <- Bodi iPhone (~760px)
-|         |        (Fit Window Snug,           |         |     Zero Black Margin Kiri/Kanan
-|         |        Rasio Asli 71.5/146.7)       |         |
-|         |                                     |         |
-|         +-------------------------------------+         |
-|                                                         |
-+---------------------------------------------------------+
-|      [ ◀ Back ]      [ ● Home ]      [ ▢ Recent ]       |  <- Stationary Dock Bawah
-+---------------------------------------------------------+
-```
-
-### Spesifikasi yang Direvisi:
-
-#### A. Ukuran Jendela Pas (Compact Snug Container)
-- Layout murni 1 kolom: `[Top Toolbar] -> [Bodi Layar iPhone] -> [Bottom Nav Bar]`.
-- Margin/padding horizontal dibuat minimal (`0 2px`), lebar bodi iPhone (~370px) pas mengisi jendela tanpa ruang hitam raksasa di samping.
-- `overflow: hidden` pada `html` dan `body` menghilangkan scrollbar vertikal maupun horizontal (aman di Windows 11 DPI scaling 125% / 150%).
-
-#### B. Top Bar Ramping (~36px GlideX-style Header)
-- Bar tipis tinggi 36px tepat di atas bodi iPhone.
-- Berisi:
-  1. Status koneksi (`#pill-connection`: `Cable` / `Wi-Fi` / `Mirroring`).
-  2. Nama device (`#pill-device`).
-  3. Tombol **Restart Screen** (`#restart-screen`: `↺ Restart`) yang selalu siap diklik di top bar jika layar macet.
-  4. Tombol **Refresh** status perangkat.
-  5. Tombol **Settings** (`⚙️`).
-
-#### C. Dock Navigasi Tetap di Bawah Frame
-- Tombol Quick Navigation (`◀ Back · ● Home · ▢ Recent`) ditempatkan **stasioner tepat di bawah dagu frame iPhone** (di luar video canvas, bukan floating menutupi konten).
-- Perhitungan tinggi dinamis `calc(100vh - 36px - 46px - 12px)` dengan `flex-shrink: 0` memastikan tombol navigasi **100% selalu terlihat dan siap diklik**.
-
-#### D. Panel Settings Ramping (Accordion Modal)
-- Backdrop hitam pekat tebal telah dihilangkan.
-- Saat tombol `⚙️` diklik, panel settings muncul sebagai **dropdown sheet ramping** dari bawah Top Bar dengan latar transparan kaca (glassmorphism).
-- Submenu Gestures, Hardware Keys, Device Info, dan Panduan dirapikan dalam collapsible accordion (`<details>`), sehingga tidak menutupi seluruh bodi layar iPhone.
-
-#### E. Ukuran Peluncur Browser di `run.bat`
-- Ukuran jendela Chrome diatur presisi:
-  `--window-size=400,890`
+- Menghilangkan ruang hitam raksasa di samping.
+- Menata jendela menjadi layout 1 kolom rapi.
+- Menambahkan tombol Restart Screen langsung di top bar agar pengguna tidak perlu membuka menu settings ketika stream macet.
 
 ---
 
-## 6. Struktur Riwayat Git Commit
+## 6. Tahap 5: Rombak Total Tema — WinUI 3 Fluent Liquid Glass (Edge-to-Edge)
 
-Semua pekerjaan tercatat rapi di Git log repo:
+Sesuai permintaan Kelvin, tema visual dirombak total menyerupai software native modern Windows 11:
 
 ```
-* c50f64f (HEAD -> feature/macos-sequoia-ui) feat(ui): revise layout to compact snug container with top bar and docked nav
++---------------------------------------------------------+
+|  [● Cable]              [↺ Restart] [⚙️]   (Tinggi 36px) |  <- WinUI 3 Acrylic Top Bar
++---------------------------------------------------------+
+|                                                         |
+|                                                         |
+|                   MURNI DISPLAY IPHONE                  |
+|                      EDGE-TO-EDGE                       |  <- Kanvas Video Langsung
+|                (Lebar 100%, Tanpa Casing,               |     Mengisi 100% Jendela,
+|                 Tanpa Bezel / Notch Palsu)              |     Latar Hitam Murni (#000)
+|                                                         |
+|                                                         |
++---------------------------------------------------------+
+|      [ ◀ Back ]      [ ● Home ]      [ ▢ Recent ]       |  <- WinUI 3 CommandBar (44px)
++---------------------------------------------------------+
+```
+
+### Rincian Spesifikasi Desain:
+
+#### 1. Material Liquid Glass & Acrylic (WinUI 3)
+- **Tipografi**: `'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif`.
+- **Spesifikasi Acrylic**:
+  ```css
+  background: rgba(30, 30, 35, 0.78);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  ```
+
+#### 2. Murni Display Edge-to-Edge (Tanpa Mockup HP)
+- Seluruh mockup bingkai HP tiruan (`.iphone-rim`, `.iphone-bezel`, `.iphone-notch`, `.iphone-key`, shadow 80px) telah **dihapus**.
+- Kanvas video dan iframe berada di tengah dan langsung mengisi **100% lebar jendela** (`width: 100%; flex: 1; background: #000;`).
+- Bersih, minimalis, dan modern layaknya software profesional.
+
+#### 3. Top Toolbar WinUI 3 (~36px)
+- Bar ramping menempel di bagian paling atas jendela.
+- Memuat badge status koneksi translucent, tombol `↺ Restart`, tombol `Refresh`, dan tombol `⚙️ Settings`.
+- Efek hover: `background: rgba(255, 255, 255, 0.08); border-radius: 6px; transition: all 0.15s ease;`.
+
+#### 4. Bottom Navigation Bar WinUI 3 (~44px CommandBar)
+- Bar perintah stasioner tepat di bawah video.
+- Tombol `◀ Back`, `● Home`, `▢ Recent` mengadopsi gaya **WinUI 3 CommandBar Button**:
+  - `background: transparent; color: #f3f3f3; border-radius: 6px; padding: 6px 16px;`.
+  - Hover: `background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.08);`.
+  - Active: `transform: scale(0.97); background: rgba(255, 255, 255, 0.12);`.
+
+#### 5. Flyout Modal Pengaturan (Flyout Fluent 2)
+- Muncul sebagai **floating flyout card** melayang di bawah top bar (bukan fullscreen yang menutupi layar).
+- Radius 10px, background Acrylic WinUI 3.
+- Tombol aksi utama (Start Mirroring) menggunakan **aksen biru Windows 11**:
+  - `background: #0078d4; hover: #1886d9; active: #0067c0;`.
+- Pengaturan tambahan dirapikan dalam WinUI 3 Expander / Accordion.
+
+#### 6. Ukuran Jendela di `run.bat`
+- Ukuran jendela peluncur disetel presisi ke:
+  `--window-size=375,820`
+  (Pas dengan rasio layar mobile dan tinggi total top bar 36px + display + bottom nav 44px).
+
+---
+
+## 7. Struktur Riwayat Git Commit
+
+```
+* 74f98ef (HEAD -> feature/macos-sequoia-ui) feat(ui): redesign theme to WinUI 3 Fluent Liquid Glass with edge-to-edge display
+* c50f64f feat(ui): revise layout to compact snug container with top bar and docked nav
 * 9864528 feat(ui): redesign for macOS Sequoia floating aesthetic, popover controls, /mirror/live alias, and add run.bat launcher
 | * 85b49e9 (main) feat(web): add GlideX-style Quick Navigation bar and edge back swipe gesture
 |/  
@@ -151,37 +159,29 @@ Semua pekerjaan tercatat rapi di Git log repo:
 
 ---
 
-## 7. Daftar File yang Dimodifikasi
+## 8. Daftar File yang Dimodifikasi
 
-| No | File Path | Keterangan Perubahan |
+| No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`.gitignore`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/.gitignore) | Menambahkan aturan ignore untuk `*.plist` dan `*.pairrecord`. |
-| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Alias routing `/mirror/live` untuk bypass pencegatan IDM. |
-| 3 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Fetch video stream dialihkan ke `/mirror/live`. |
-| 4 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Struktur layout Top Bar 36px, dock bawah frame, dan accordion settings. |
-| 5 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Styling snug tanpa sisa ruang hitam, dock stasioner, dan modal dropdown ramping. |
-| 6 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika tombol Restart Screen top bar, gesture back tepi, dan klik layar untuk mirror. |
-| 7 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Skrip launcher otomatis dengan ukuran `--window-size=400,890`. |
+| 1 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Menghilangkan elemen mockup casing HP dan restrukturisasi display edge-to-edge. |
+| 2 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Implementasi tema WinUI 3 Fluent Liquid Glass, Acrylic material, dan aksen Windows 11. |
+| 3 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Penyesuaian ukuran peluncur Chrome/Edge menjadi `--window-size=375,820`. |
+| 4 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika tombol Restart Screen top bar dan event click start mirroring pada display. |
+| 5 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint routing `/mirror/live` bypass IDM. |
+| 6 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Koneksi client stream ke `/mirror/live`. |
+| 7 | [`.gitignore`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/.gitignore) | Proteksi kredensial pairing `*.plist` dan `*.pairrecord`. |
 
 ---
 
-## 8. Panduan Menjalankan & Verifikasi Manual
-
-Untuk menguji hasil revisi ini secara langsung:
+## 9. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
-   Cukup double-click file [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) di folder repo, atau jalankan via terminal:
-   ```cmd
-   .\run.bat
-   ```
-2. **Verifikasi Visual**:
-   - Pastikan jendela Chrome / Edge terbuka mandiri dengan ukuran ramping (`400x890`).
-   - Sisi kiri dan kanan frame iPhone pas tanpa ruang hitam raksasa.
-   - Header atas tipis (36px) menampilkan status koneksi, tombol `↺ Restart`, dan ikon gear `⚙️`.
-   - Di bawah dagu frame iPhone, dock navigasi `◀ Back · ● Home · ▢ Recent` menempel rapi dan langsung siap diklik.
-3. **Verifikasi Fungsionalitas**:
-   - Klik di layar iPhone untuk memulai mirroring.
-   - Uji tombol `◀ Back` saat membuka menu/halaman di aplikasi iPhone (misalnya Instagram).
-   - Uji tombol `● Home` dan `▢ Recent`.
-   - Klik tombol `↺ Restart` di Top Bar untuk memastikan stream bisa di-refresh langsung saat gambar macet.
-   - Klik tombol `⚙️` untuk memastikan panel setting terbuka ramping tanpa menutupi seluruh layar iPhone.
+   Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
+2. **Cek Tampilan Baru**:
+   - Jendela akan terbuka ramping (`375x820`) bergaya aplikasi native Windows 11.
+   - Tidak ada lagi bingkai casing HP tiruan.
+   - Header atas tipis (36px) bernuansa Acrylic kaca semi-transparan.
+   - CommandBar bawah (44px) menempel rapi dengan tombol `◀ Back`, `● Home`, `▢ Recent`.
+3. **Mulai Mirroring**:
+   - Klik di layar tengah ("Ready to mirror") atau buka tombol `⚙️` lalu klik tombol biru "Start mirroring".
+   - Video iPhone langsung tampil penuh di tengah jendela.
