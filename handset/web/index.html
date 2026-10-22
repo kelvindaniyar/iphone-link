@@ -39,61 +39,48 @@
       </div>
     </header>
 
-    <!-- Main Workspace (Snug centered iPhone stage + docked nav bar) -->
+    <!-- Murni Display Edge-to-Edge (WinUI 3 Liquid Glass) -->
     <main class="workspace" id="workspace">
-      <div class="iphone-stage">
-        <div class="iphone" id="phone-shell">
-          <button type="button" class="iphone-key key-action" data-btn="mute" title="Action / Mute" aria-label="Mute"></button>
-          <button type="button" class="iphone-key key-volup" data-btn="volume-up" title="Volume up" aria-label="Volume up"></button>
-          <button type="button" class="iphone-key key-voldown" data-btn="volume-down" title="Volume down" aria-label="Volume down"></button>
-          <button type="button" class="iphone-key key-side" data-btn="lock" title="Side button (lock)" aria-label="Side button"></button>
-
-          <div class="iphone-rim">
-            <div class="iphone-bezel">
-              <div class="iphone-screen" id="phone-screen">
-                <div class="placeholder" id="placeholder" title="Click to start mirroring">
-                  <div class="placeholder-icon" aria-hidden="true">
-                    <svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="12" y="4" width="24" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
-                      <circle cx="24" cy="38" r="2" fill="currentColor"/>
-                    </svg>
-                  </div>
-                  <p class="placeholder-title">Ready to mirror</p>
-                  <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone, then press Start mirroring.</p>
-                </div>
-                <iframe id="screen-view" class="screen-frame" title="iPhone screen" hidden src="about:blank"></iframe>
-                <div class="iphone-notch" aria-hidden="true"><span class="notch-cam"></span></div>
-                <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
-              </div>
+      <div class="screen-stage" id="phone-shell">
+        <div class="screen-viewport" id="phone-screen">
+          <div class="placeholder" id="placeholder" title="Click to start mirroring">
+            <div class="placeholder-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="12" y="4" width="24" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
+                <circle cx="24" cy="38" r="2" fill="currentColor"/>
+              </svg>
             </div>
+            <p class="placeholder-title">Ready to mirror</p>
+            <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone, then press Start mirroring.</p>
           </div>
+          <iframe id="screen-view" class="screen-frame" title="iPhone screen" hidden src="about:blank"></iframe>
+          <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
         </div>
-
-        <!-- Quick Navigation Dock (Stationary right beneath iPhone chin) -->
-        <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
-          <button type="button" class="nav-btn" data-gesture="back" id="nav-back" title="Back (Alt+← or Mouse Back button)" aria-label="Back">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="15 18 9 12 15 6"></polyline>
-            </svg>
-            <span>Back</span>
-          </button>
-          <button type="button" class="nav-btn" data-gesture="home" id="nav-home" title="Go to Home Screen" aria-label="Home">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-              <circle cx="12" cy="12" r="6"/>
-            </svg>
-            <span>Home</span>
-          </button>
-          <button type="button" class="nav-btn" data-gesture="switcher" id="nav-recent" title="Recent Apps (App Switcher)" aria-label="Recent Apps">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="5" y="5" width="14" height="14" rx="3"/>
-            </svg>
-            <span>Recent</span>
-          </button>
-        </nav>
-
-        <p class="stage-note" id="screen-note" role="status"></p>
       </div>
+      <p class="stage-note" id="screen-note" role="status"></p>
     </main>
+
+    <!-- Bottom Navigation Bar WinUI 3 (~44px CommandBar) -->
+    <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
+      <button type="button" class="nav-btn" data-gesture="back" id="nav-back" title="Back (Alt+← or Mouse Back button)" aria-label="Back">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+        <span>Back</span>
+      </button>
+      <button type="button" class="nav-btn" data-gesture="home" id="nav-home" title="Go to Home Screen" aria-label="Home">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <circle cx="12" cy="12" r="5"/>
+        </svg>
+        <span>Home</span>
+      </button>
+      <button type="button" class="nav-btn" data-gesture="switcher" id="nav-recent" title="Recent Apps (App Switcher)" aria-label="Recent Apps">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="5" width="14" height="14" rx="2.5"/>
+        </svg>
+        <span>Recent</span>
+      </button>
+    </nav>
 
     <!-- Slim Settings Dropdown Modal (no dark opaque fullscreen cover) -->
     <div class="popover-backdrop" id="popover-backdrop" aria-hidden="true"></div>

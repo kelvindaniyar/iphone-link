@@ -35,14 +35,14 @@ if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
 )
 
 if defined CHROME_CMD (
-    start "" %CHROME_CMD% --app=http://127.0.0.1:8765 --window-size=400,890
+    start "" %CHROME_CMD% --app=http://127.0.0.1:8765 --window-size=375,820
 ) else (
     where chrome.exe >nul 2>&1
     if %errorlevel% equ 0 (
-        start "" chrome.exe --app=http://127.0.0.1:8765 --window-size=400,890
+        start "" chrome.exe --app=http://127.0.0.1:8765 --window-size=375,820
     ) else (
         echo [INFO] Chrome tidak ditemukan di path default, membuka via Microsoft Edge App Mode...
-        start "" msedge.exe --app=http://127.0.0.1:8765 --window-size=400,890
+        start "" msedge.exe --app=http://127.0.0.1:8765 --window-size=375,820
     )
 )
 
