@@ -145,6 +145,14 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy_mirror(self, method: str) -> None:
         target = self._mirror_upstream_path()
         upstream_path = target.split("?", 1)[0]
+
+        # Alias without .bin extension to prevent IDM / download managers from intercepting stream
+        if upstream_path in ("/live", "/live/"):
+            query = urlparse(self.path).query
+            upstream_target = "/stream.bin" + (f"?{query}" if query else "")
+            self._proxy_mirror_stream(method, upstream_target)
+            return
+
         is_live_stream = method == "GET" and upstream_path.endswith(".bin")
         if is_live_stream:
             self._proxy_mirror_stream(method, target)

@@ -76,7 +76,30 @@ showScreen.addEventListener("click", () => showPhone());
 restartScreen.addEventListener("click", () => restartMirror());
 wireRemoteControls();
 
-toggleGuide.addEventListener("click", () => {
+const btnSettings = document.querySelector("#btn-settings");
+const closeSettings = document.querySelector("#close-settings");
+const popoverBackdrop = document.querySelector("#popover-backdrop");
+const controlPane = document.querySelector("#control-pane");
+
+function toggleSettings(open) {
+  if (!controlPane) return;
+  const shouldOpen = open !== undefined ? open : !controlPane.classList.contains("open");
+  controlPane.classList.toggle("open", shouldOpen);
+  popoverBackdrop?.classList.toggle("open", shouldOpen);
+  controlPane.setAttribute("aria-hidden", String(!shouldOpen));
+  popoverBackdrop?.setAttribute("aria-hidden", String(!shouldOpen));
+}
+
+btnSettings?.addEventListener("click", () => toggleSettings(true));
+closeSettings?.addEventListener("click", () => toggleSettings(false));
+popoverBackdrop?.addEventListener("click", () => toggleSettings(false));
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && controlPane?.classList.contains("open")) {
+    toggleSettings(false);
+  }
+});
+
+toggleGuide?.addEventListener("click", () => {
   const open = runGuide.hidden;
   runGuide.hidden = !open;
   toggleGuide.setAttribute("aria-expanded", String(open));

@@ -3,209 +3,183 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Mirror and control your iPhone screen on Windows over USB.">
-  <title>Pane — your iPhone on Windows</title>
+  <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
+  <title>iPhone Mirroring — Pane</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
   <div class="app">
-    <header class="bar">
-      <div class="brand">
-        <img class="brand-mark" src="/logo.svg" alt="" aria-hidden="true">
-        <div>
-          <p class="brand-name">Pane</p>
-          <p class="brand-tag">Your iPhone, on Windows</p>
-        </div>
+    <!-- Sequoia-style minimal top status bar -->
+    <header class="app-bar">
+      <div class="app-title-area">
+        <img class="app-logo" src="/logo.svg" alt="" aria-hidden="true" width="16" height="16">
+        <span class="pill" id="pill-connection">Checking…</span>
+        <span class="pill pill-muted" id="pill-device" hidden>No iPhone</span>
       </div>
-      <nav class="bar-actions">
-        <button type="button" class="ghost" id="toggle-guide" aria-expanded="false" aria-controls="run-guide">How to run</button>
-        <button type="button" class="ghost" id="refresh" title="Refresh connection">Refresh</button>
-      </nav>
+      <div class="app-actions">
+        <button type="button" class="icon-btn" id="refresh" title="Refresh connection" aria-label="Refresh">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-settings" title="Settings & Controls" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
     </header>
 
+    <!-- Main Workspace (Snug centered iPhone stage) -->
     <main class="workspace" id="workspace">
-      <div class="mirror-split">
-        <section class="mirror-pane" aria-label="iPhone screen">
-          <div class="stage-meta">
-            <span class="pill" id="pill-connection">Checking…</span>
-            <span class="pill pill-muted" id="pill-device" hidden>No iPhone</span>
-          </div>
+      <div class="iphone-stage">
+        <div class="iphone" id="phone-shell">
+          <button type="button" class="iphone-key key-action" data-btn="mute" title="Action / Mute" aria-label="Mute"></button>
+          <button type="button" class="iphone-key key-volup" data-btn="volume-up" title="Volume up" aria-label="Volume up"></button>
+          <button type="button" class="iphone-key key-voldown" data-btn="volume-down" title="Volume down" aria-label="Volume down"></button>
+          <button type="button" class="iphone-key key-side" data-btn="lock" title="Side button (lock)" aria-label="Side button"></button>
 
-          <div class="iphone" id="phone-shell">
-            <button type="button" class="iphone-key key-action" data-btn="mute" title="Action / Mute" aria-label="Mute"></button>
-            <button type="button" class="iphone-key key-volup" data-btn="volume-up" title="Volume up" aria-label="Volume up"></button>
-            <button type="button" class="iphone-key key-voldown" data-btn="volume-down" title="Volume down" aria-label="Volume down"></button>
-            <button type="button" class="iphone-key key-side" data-btn="lock" title="Side button (lock)" aria-label="Side button"></button>
-
-            <div class="iphone-rim">
-              <div class="iphone-bezel">
-                <div class="iphone-screen" id="phone-screen">
-                  <div class="placeholder" id="placeholder">
-                    <div class="placeholder-icon" aria-hidden="true">
-                      <svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <rect x="12" y="4" width="24" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
-                        <circle cx="24" cy="38" r="2" fill="currentColor"/>
-                      </svg>
-                    </div>
-                    <p class="placeholder-title">Ready to mirror</p>
-                    <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone, then press Start mirroring.</p>
+          <div class="iphone-rim">
+            <div class="iphone-bezel">
+              <div class="iphone-screen" id="phone-screen">
+                <div class="placeholder" id="placeholder">
+                  <div class="placeholder-icon" aria-hidden="true">
+                    <svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="12" y="4" width="24" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
+                      <circle cx="24" cy="38" r="2" fill="currentColor"/>
+                    </svg>
                   </div>
-                  <iframe id="screen-view" class="screen-frame" title="iPhone screen" hidden src="about:blank"></iframe>
-                  <div class="iphone-notch" aria-hidden="true"><span class="notch-cam"></span></div>
-                  <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
+                  <p class="placeholder-title">Ready to mirror</p>
+                  <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone, then press Start mirroring.</p>
                 </div>
+                <iframe id="screen-view" class="screen-frame" title="iPhone screen" hidden src="about:blank"></iframe>
+                <div class="iphone-notch" aria-hidden="true"><span class="notch-cam"></span></div>
+                <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
               </div>
             </div>
           </div>
+        </div>
 
-          <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
-            <button type="button" class="nav-btn" data-gesture="back" id="nav-back" title="Back (Alt+← or Mouse Back button)" aria-label="Back">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="15 18 9 12 15 6"></polyline>
-              </svg>
-              <span>Back</span>
-            </button>
-            <button type="button" class="nav-btn" data-gesture="home" id="nav-home" title="Go to Home Screen" aria-label="Home">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                <circle cx="12" cy="12" r="6"/>
-              </svg>
-              <span>Home</span>
-            </button>
-            <button type="button" class="nav-btn" data-gesture="switcher" id="nav-recent" title="Recent Apps (App Switcher)" aria-label="Recent Apps">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="5" y="5" width="14" height="14" rx="3"/>
-              </svg>
-              <span>Recent</span>
-            </button>
-          </nav>
+        <!-- Quick Navigation Dock (GlideX style) -->
+        <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
+          <button type="button" class="nav-btn" data-gesture="back" id="nav-back" title="Back (Alt+← or Mouse Back button)" aria-label="Back">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <span>Back</span>
+          </button>
+          <button type="button" class="nav-btn" data-gesture="home" id="nav-home" title="Go to Home Screen" aria-label="Home">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+              <circle cx="12" cy="12" r="6"/>
+            </svg>
+            <span>Home</span>
+          </button>
+          <button type="button" class="nav-btn" data-gesture="switcher" id="nav-recent" title="Recent Apps (App Switcher)" aria-label="Recent Apps">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="3"/>
+            </svg>
+            <span>Recent</span>
+          </button>
+        </nav>
 
-          <p class="stage-note" id="screen-note" role="status"></p>
-        </section>
-
-        <aside class="control-pane" aria-label="Device and controls">
-          <section class="card panel-start">
-            <div class="segmented" role="radiogroup" aria-label="Connection">
-              <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
-              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi‑Fi</button>
-            </div>
-            <div class="wifi-row" id="wifi-row">
-              <span class="wifi-state" id="wifi-state">Wi‑Fi not set up</span>
-              <button type="button" class="ctl ctl-sm" id="wifi-pair">Set up Wi‑Fi</button>
-            </div>
-            <button type="button" class="primary primary-block" id="show-screen">Start mirroring</button>
-            <button type="button" class="ghost ghost-block" id="restart-screen" hidden>Restart screen</button>
-            <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>⌨ Keyboard → iPhone: On</button>
-            <p class="control-hint" id="control-hint">Drag up from the bottom edge for Home; pause before letting go for the app switcher. While mirroring, typing goes straight to the iPhone.</p>
-          </section>
-
-          <section class="card panel-remote" id="remote-panel" hidden>
-            <h2 class="card-title">Gestures</h2>
-            <div class="control-grid">
-              <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
-              <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
-              <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
-              <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
-              <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
-              <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
-              <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
-            </div>
-
-            <h2 class="card-title card-title-gap">Buttons</h2>
-            <div class="control-row">
-              <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
-              <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
-              <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
-              <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
-            </div>
-            <div class="control-row control-row-2">
-              <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
-              <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
-            </div>
-
-            <div class="view-tools">
-              <span class="view-label">View</span>
-              <div class="zoom-cluster">
-                <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
-                <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
-                <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
-              </div>
-              <div class="rotate-cluster">
-                <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
-                <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
-              </div>
-              <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
-            </div>
-          </section>
-
-          <section class="card" id="device-card">
-            <h2 class="card-title">Device</h2>
-            <ul class="device-list" id="devices"></ul>
-            <div class="device-detail" id="detail" hidden></div>
-          </section>
-
-          <details class="card card-details">
-            <summary>Connection details</summary>
-            <dl class="kv" id="status"></dl>
-            <p class="fine" id="status-note"></p>
-          </details>
-        </aside>
+        <p class="stage-note" id="screen-note" role="status"></p>
       </div>
     </main>
 
-    <section class="guide" id="run-guide" hidden>
-      <div class="guide-inner">
-        <h2>How to run Pane</h2>
-        <p class="guide-lead">Open-source mirroring for Windows. Everything runs on your PC; the phone stays on USB.</p>
-
-        <div class="guide-grid">
-          <article class="guide-step">
-            <span class="step-num">1</span>
-            <h3>Prerequisites</h3>
-            <ul>
-              <li>Windows 10 or 11</li>
-              <li>Python 3.10+</li>
-              <li><a href="https://apps.microsoft.com/store/detail/apple-devices/9np83t1wptph" rel="noopener">Apple Devices</a> from Microsoft Store</li>
-              <li>USB‑C data cable (not charge‑only)</li>
-            </ul>
-          </article>
-
-          <article class="guide-step">
-            <span class="step-num">2</span>
-            <h3>Install</h3>
-            <pre class="code"><code>git clone &lt;your-repo-url&gt;
-cd pane-iphone-mirror-windows
-pip install -r requirements.txt</code></pre>
-            <p class="fine">On Windows, if <code>pip install pymobiledevice3</code> fails on native wheels, install the package without optional firmware tools, then run from this repo (it includes small shims).</p>
-          </article>
-
-          <article class="guide-step">
-            <span class="step-num">3</span>
-            <h3>Start the server</h3>
-            <pre class="code"><code>python -m handset.server</code></pre>
-            <p class="fine">Open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a> in your browser. Keep the terminal open.</p>
-          </article>
-
-          <article class="guide-step">
-            <span class="step-num">4</span>
-            <h3>iPhone setup</h3>
-            <ul>
-              <li>Plug in and unlock the iPhone</li>
-              <li>Tap <strong>Trust</strong> on the phone</li>
-              <li>Enable <strong>Settings → Privacy &amp; Security → Developer Mode</strong> and restart</li>
-              <li>Press <strong>Start mirroring</strong> here (first run may mount a developer image; keep the phone unlocked)</li>
-            </ul>
-          </article>
-        </div>
-
-        <p class="guide-footer fine">Pane uses the same display tunnel as Xcode Device Hub, over USB or Wi‑Fi. It does not run iOS on Windows—it streams and controls your physical iPhone.</p>
+    <!-- Floating Settings & Controls Popover -->
+    <div class="popover-backdrop" id="popover-backdrop" aria-hidden="true"></div>
+    <aside class="control-pane popover" id="control-pane" aria-label="Settings and controls" aria-hidden="true">
+      <div class="popover-bar">
+        <h2 class="popover-title">Settings & Controls</h2>
+        <button type="button" class="icon-btn-close" id="close-settings" title="Close settings (Esc)" aria-label="Close">✕</button>
       </div>
-    </section>
 
-    <footer class="foot">
-      <p>Pane · GPL-3.0 · Mirror and control your iPhone over USB or Wi‑Fi</p>
-    </footer>
+      <div class="popover-content">
+        <section class="card panel-start">
+          <div class="segmented" role="radiogroup" aria-label="Connection">
+            <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
+            <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi‑Fi</button>
+          </div>
+          <div class="wifi-row" id="wifi-row">
+            <span class="wifi-state" id="wifi-state">Wi‑Fi not set up</span>
+            <button type="button" class="ctl ctl-sm" id="wifi-pair">Set up Wi‑Fi</button>
+          </div>
+          <button type="button" class="primary primary-block" id="show-screen">Start mirroring</button>
+          <button type="button" class="ghost ghost-block" id="restart-screen" hidden>Restart screen</button>
+          <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>⌨ Keyboard → iPhone: On</button>
+          <p class="control-hint" id="control-hint">Swipe up from bottom edge for Home; pause for App switcher. Typing routes straight to iPhone.</p>
+        </section>
+
+        <section class="card panel-remote" id="remote-panel" hidden>
+          <h2 class="card-title">Gestures</h2>
+          <div class="control-grid">
+            <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
+            <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
+            <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
+            <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
+            <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
+            <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
+            <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
+          </div>
+
+          <h2 class="card-title card-title-gap">Buttons</h2>
+          <div class="control-row">
+            <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
+            <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
+            <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
+            <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
+          </div>
+          <div class="control-row control-row-2">
+            <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
+            <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
+          </div>
+
+          <div class="view-tools">
+            <span class="view-label">View</span>
+            <div class="zoom-cluster">
+              <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
+              <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
+              <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
+            </div>
+            <div class="rotate-cluster">
+              <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
+              <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
+            </div>
+            <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
+          </div>
+        </section>
+
+        <section class="card" id="device-card">
+          <h2 class="card-title">Device</h2>
+          <ul class="device-list" id="devices"></ul>
+          <div class="device-detail" id="detail" hidden></div>
+        </section>
+
+        <details class="card card-details">
+          <summary>Connection details</summary>
+          <dl class="kv" id="status"></dl>
+          <p class="fine" id="status-note"></p>
+        </details>
+
+        <details class="card card-details">
+          <summary>How to run & Troubleshooting</summary>
+          <div style="font-size: 12px; line-height: 1.6; color: var(--muted); padding-top: 6px;">
+            <p style="margin: 0 0 6px;">1. Plug in iPhone and unlock it.</p>
+            <p style="margin: 0 0 6px;">2. Tap <strong>Trust</strong> on the iPhone.</p>
+            <p style="margin: 0 0 6px;">3. Ensure <strong>Developer Mode</strong> is enabled in Settings > Privacy & Security.</p>
+            <p style="margin: 0;">4. Click <strong>Start mirroring</strong>.</p>
+          </div>
+          <button type="button" class="ghost ghost-block" id="toggle-guide" style="display: none;" aria-hidden="true"></button>
+        </details>
+      </div>
+    </aside>
+
+    <!-- Hidden guide placeholder to maintain app.js compat -->
+    <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
+
   <script src="/keys.js"></script>
   <script src="/app.js"></script>
 </body>

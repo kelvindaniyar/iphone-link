@@ -417,7 +417,7 @@ async function run(generation) {
       }
     }
     try {
-      const r = await fetch(`${MIRROR}/stream.bin`, { cache: "no-store" });
+      const r = await fetch(`${MIRROR}/live`, { cache: "no-store" });
       if (r.ok) {
         resp = r;
         break;
