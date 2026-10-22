@@ -8,3 +8,6 @@ dist/
 venv/
 .vscode/
 .idea/
+*.plist
+*.pairrecord
+pair_records/
