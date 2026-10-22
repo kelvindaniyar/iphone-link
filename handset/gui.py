@@ -31,7 +31,7 @@ class WindowApi:
         if self._window:
             # Side drawer: expand window to 740px or collapse back to 380px
             target_width = 740 if is_open else 380
-            h = self._window.height or 840
+            h = max(self._window.height or 840, 840)
             self._window.resize(target_width, h)
 
     def is_pywebview(self):

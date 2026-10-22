@@ -66,8 +66,8 @@
     <div class="main-body" id="main-body">
       <div class="display-col" id="display-col">
         <!-- Murni Display Edge-to-Edge -->
-        <main class="workspace" id="workspace">
-          <div class="screen-stage" id="phone-shell">
+        <main class="workspace stage" id="workspace">
+          <div class="screen-stage stage" id="phone-shell">
             <div class="screen-viewport" id="phone-screen">
               <div class="placeholder" id="placeholder" title="Click to start mirroring">
                 <div class="placeholder-icon" aria-hidden="true">
@@ -79,7 +79,7 @@
                 <p class="placeholder-title">Ready to mirror</p>
                 <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone, then press Start mirroring.</p>
               </div>
-              <iframe id="screen-view" class="screen-frame" title="iPhone screen" hidden src="about:blank"></iframe>
+              <iframe id="screen-view" name="mirror-frame" class="screen-frame mirror-frame" title="iPhone screen" hidden src="about:blank"></iframe>
               <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
             </div>
           </div>

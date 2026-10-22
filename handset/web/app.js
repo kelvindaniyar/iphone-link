@@ -128,6 +128,10 @@ function toggleFullSize() {
   } else {
     document.exitFullscreen?.().catch(() => {});
   }
+  const notifyFrame = () => screenView?.contentWindow?.postMessage({ type: "resize" }, "*");
+  notifyFrame();
+  setTimeout(notifyFrame, 100);
+  setTimeout(notifyFrame, 300);
 }
 document.querySelector("#btn-fullsize")?.addEventListener("click", toggleFullSize);
 

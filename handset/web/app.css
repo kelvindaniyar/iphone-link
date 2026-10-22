@@ -51,6 +51,8 @@ a:hover { text-decoration: underline; }
 .app {
   width: 100vw;
   height: 100vh;
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -238,6 +240,7 @@ button {
   flex: 1 1 auto;
   width: 100%;
   height: calc(100vh - 36px);
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -247,65 +250,78 @@ button {
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   background: #000;
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 3. Murni Display Edge-to-Edge */
-.workspace {
-  flex: 1 1 auto;
-  width: 100%;
+/* 3. Murni Display Edge-to-Edge: Rantai Flexbox 100% Tinggi */
+.workspace,
+.stage,
+#phone-shell,
+.screen-stage,
+#phone-screen,
+.screen-viewport {
+  height: 100%;
   min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  background: #000;
   margin: 0;
-  overflow: hidden;
-  position: relative;
-  background: #000;
+  padding: 0;
 }
 
+.workspace,
+.stage {
+  align-items: center;
+  justify-content: center;
+}
+
+#phone-shell,
 .screen-stage {
-  width: 100%;
-  height: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  background: #000;
-  overflow: hidden;
 }
 
+#phone-screen,
 .screen-viewport {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  display: flex;
   align-items: center;
   justify-content: center;
-  background: #000;
-  overflow: hidden;
 }
 
-.screen-stage.live .placeholder { display: none; }
+.screen-stage.live .placeholder {
+  display: none !important;
+}
 
-.screen-frame {
-  position: absolute;
-  inset: 0;
-  width: 100%;
+#mirror-frame,
+#screen-view,
+.screen-frame,
+.mirror-frame {
   height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  display: block;
+  object-fit: contain;
+  aspect-ratio: 9 / 19.5;
   border: 0;
   background: #000;
 }
 
-.screen-frame[hidden] { display: none; }
+#mirror-frame[hidden],
+#screen-view[hidden],
+.screen-frame[hidden],
+.mirror-frame[hidden] {
+  display: none !important;
+}
 
 .placeholder {
   position: absolute;
@@ -394,15 +410,15 @@ button {
 .stage-note:empty { display: none; }
 .stage-note.warn { color: var(--warn); }
 
-/* 4. Bottom Navigation CommandBar WinUI 3 (~44px) */
+/* 4. Bottom Navigation CommandBar WinUI 3 (~48px) */
 .quick-nav {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 44px;
-  min-height: 44px;
-  max-height: 44px;
+  height: 48px;
+  min-height: 48px;
+  max-height: 48px;
   width: 100%;
   background: rgba(30, 30, 35, 0.78);
   backdrop-filter: blur(24px) saturate(180%);
@@ -834,22 +850,59 @@ button {
 
 /* 6. Full Size / Responsive Scaling Mode */
 .app.is-fullsize .main-body {
+  width: 100%;
+  height: calc(100vh - 36px);
   justify-content: center;
-}
-
-.app.is-fullsize .display-col {
-  width: auto;
-  max-width: 100%;
   align-items: center;
 }
 
-.app.is-fullsize .workspace {
+.app.is-fullsize .display-col {
+  width: 100%;
+  height: 100%;
+  align-items: center;
   justify-content: center;
 }
 
+.app.is-fullsize .workspace,
+.app.is-fullsize .stage {
+  width: 100%;
+  height: calc(100vh - 84px);
+  justify-content: center;
+  align-items: center;
+}
+
+.app.is-fullsize #phone-shell,
 .app.is-fullsize .screen-stage {
-  height: calc(100vh - 36px - 44px);
+  height: calc(100vh - 84px); /* dikurangi tinggi top bar 36px & bottom nav 48px */
   width: auto;
   aspect-ratio: 9 / 19.5;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.app.is-fullsize #phone-screen,
+.app.is-fullsize .screen-viewport {
+  height: 100%;
+  width: 100%;
+  aspect-ratio: 9 / 19.5;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.app.is-fullsize #mirror-frame,
+.app.is-fullsize #screen-view,
+.app.is-fullsize .screen-frame,
+.app.is-fullsize .mirror-frame {
+  height: 100%;
+  width: 100%;
+  aspect-ratio: 9 / 19.5;
+  object-fit: contain;
+  margin: 0 auto;
+  display: block;
 }

@@ -28,15 +28,24 @@ function fitCanvas() {
   const parent = canvas.parentElement;
   if (!parent) return;
   const rect = parent.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
   const naturalW = canvas.width;
   const naturalH = canvas.height;
   const base = Math.min(rect.width / naturalW, rect.height / naturalH);
   const scale = base * zoom;
-  canvas.style.width = `${naturalW * scale}px`;
-  canvas.style.height = `${naturalH * scale}px`;
+  canvas.style.width = `${Math.round(naturalW * scale)}px`;
+  canvas.style.height = `${Math.round(naturalH * scale)}px`;
 }
 
 window.addEventListener("resize", fitCanvas);
+if (window.ResizeObserver && document.body) {
+  new ResizeObserver(() => fitCanvas()).observe(document.body);
+}
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "resize") {
+    fitCanvas();
+  }
+});
 
 function setZoom(value) {
   zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
