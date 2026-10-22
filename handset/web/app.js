@@ -71,6 +71,11 @@ async function setUpWifi() {
   }
 }
 
+const placeholder = document.querySelector("#placeholder");
+placeholder?.addEventListener("click", () => {
+  if (!showScreen.disabled) showPhone();
+});
+
 refresh.addEventListener("click", () => load());
 showScreen.addEventListener("click", () => showPhone());
 restartScreen.addEventListener("click", () => restartMirror());
@@ -281,6 +286,7 @@ function renderScreen(screen) {
     phoneShell.classList.add("live");
     remotePanel.hidden = false;
     restartScreen.hidden = false;
+    restartScreen.disabled = false;
     kbToggle.hidden = false;
     screenNote.textContent = "Mirroring — typing on your keyboard goes to the iPhone.";
     screenNote.className = "";
@@ -294,7 +300,8 @@ function renderScreen(screen) {
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
   remotePanel.hidden = true;
-  restartScreen.hidden = true;
+  restartScreen.hidden = false;
+  restartScreen.disabled = false;
   kbToggle.hidden = true;
   screenView.hidden = true;
   screenView.src = "about:blank";
@@ -306,6 +313,7 @@ function renderScreen(screen) {
     screenNote.className = "";
     showScreen.disabled = true;
     showScreen.textContent = "Connecting…";
+    restartScreen.disabled = true;
     return;
   }
   if (screen.error) {

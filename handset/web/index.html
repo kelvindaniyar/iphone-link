@@ -10,21 +10,28 @@
 </head>
 <body>
   <div class="app">
-    <!-- Sequoia-style minimal top status bar -->
+    <!-- GlideX / Sequoia minimal top status bar -->
     <header class="app-bar">
       <div class="app-title-area">
-        <img class="app-logo" src="/logo.svg" alt="" aria-hidden="true" width="16" height="16">
         <span class="pill" id="pill-connection">Checking…</span>
         <span class="pill pill-muted" id="pill-device" hidden>No iPhone</span>
       </div>
       <div class="app-actions">
+        <button type="button" class="bar-btn" id="restart-screen" title="Restart screen stream">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span>Restart</span>
+        </button>
         <button type="button" class="icon-btn" id="refresh" title="Refresh connection" aria-label="Refresh">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
         </button>
         <button type="button" class="icon-btn" id="btn-settings" title="Settings & Controls" aria-label="Settings">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
@@ -32,7 +39,7 @@
       </div>
     </header>
 
-    <!-- Main Workspace (Snug centered iPhone stage) -->
+    <!-- Main Workspace (Snug centered iPhone stage + docked nav bar) -->
     <main class="workspace" id="workspace">
       <div class="iphone-stage">
         <div class="iphone" id="phone-shell">
@@ -44,7 +51,7 @@
           <div class="iphone-rim">
             <div class="iphone-bezel">
               <div class="iphone-screen" id="phone-screen">
-                <div class="placeholder" id="placeholder">
+                <div class="placeholder" id="placeholder" title="Click to start mirroring">
                   <div class="placeholder-icon" aria-hidden="true">
                     <svg viewBox="0 0 48 48" width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <rect x="12" y="4" width="24" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
@@ -62,7 +69,7 @@
           </div>
         </div>
 
-        <!-- Quick Navigation Dock (GlideX style) -->
+        <!-- Quick Navigation Dock (Stationary right beneath iPhone chin) -->
         <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
           <button type="button" class="nav-btn" data-gesture="back" id="nav-back" title="Back (Alt+← or Mouse Back button)" aria-label="Back">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -88,11 +95,11 @@
       </div>
     </main>
 
-    <!-- Floating Settings & Controls Popover -->
+    <!-- Slim Settings Dropdown Modal (no dark opaque fullscreen cover) -->
     <div class="popover-backdrop" id="popover-backdrop" aria-hidden="true"></div>
     <aside class="control-pane popover" id="control-pane" aria-label="Settings and controls" aria-hidden="true">
       <div class="popover-bar">
-        <h2 class="popover-title">Settings & Controls</h2>
+        <h2 class="popover-title">Settings</h2>
         <button type="button" class="icon-btn-close" id="close-settings" title="Close settings (Esc)" aria-label="Close">✕</button>
       </div>
 
@@ -107,60 +114,57 @@
             <button type="button" class="ctl ctl-sm" id="wifi-pair">Set up Wi‑Fi</button>
           </div>
           <button type="button" class="primary primary-block" id="show-screen">Start mirroring</button>
-          <button type="button" class="ghost ghost-block" id="restart-screen" hidden>Restart screen</button>
           <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>⌨ Keyboard → iPhone: On</button>
-          <p class="control-hint" id="control-hint">Swipe up from bottom edge for Home; pause for App switcher. Typing routes straight to iPhone.</p>
+          <p class="control-hint" id="control-hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
         </section>
 
-        <section class="card panel-remote" id="remote-panel" hidden>
-          <h2 class="card-title">Gestures</h2>
-          <div class="control-grid">
-            <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
-            <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
-            <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
-            <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
-            <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
-            <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
-            <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
-          </div>
-
-          <h2 class="card-title card-title-gap">Buttons</h2>
-          <div class="control-row">
-            <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
-            <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
-            <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
-            <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
-          </div>
-          <div class="control-row control-row-2">
-            <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
-            <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
-          </div>
-
-          <div class="view-tools">
-            <span class="view-label">View</span>
-            <div class="zoom-cluster">
-              <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
-              <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
-              <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
+        <!-- Remote Gestures & Keys (Collapsible Accordion) -->
+        <details class="card card-details" id="remote-panel" hidden>
+          <summary>Gestures & Hardware Keys</summary>
+          <div class="details-body">
+            <div class="control-grid">
+              <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
+              <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
+              <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
+              <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
+              <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
+              <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
+              <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
             </div>
-            <div class="rotate-cluster">
-              <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
-              <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
+            <div class="control-row">
+              <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
+              <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
+              <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
+              <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
             </div>
-            <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
+            <div class="control-row control-row-2">
+              <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
+              <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
+            </div>
+            <div class="view-tools">
+              <span class="view-label">View</span>
+              <div class="zoom-cluster">
+                <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
+                <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
+                <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
+              </div>
+              <div class="rotate-cluster">
+                <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
+                <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
+              </div>
+              <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
+            </div>
           </div>
-        </section>
+        </details>
 
-        <section class="card" id="device-card">
-          <h2 class="card-title">Device</h2>
-          <ul class="device-list" id="devices"></ul>
-          <div class="device-detail" id="detail" hidden></div>
-        </section>
-
-        <details class="card card-details">
-          <summary>Connection details</summary>
-          <dl class="kv" id="status"></dl>
-          <p class="fine" id="status-note"></p>
+        <details class="card card-details" id="device-card">
+          <summary>Device & Connection Details</summary>
+          <div class="details-body">
+            <ul class="device-list" id="devices"></ul>
+            <div class="device-detail" id="detail" hidden></div>
+            <dl class="kv" id="status" style="margin-top: 10px;"></dl>
+            <p class="fine" id="status-note"></p>
+          </div>
         </details>
 
         <details class="card card-details">
