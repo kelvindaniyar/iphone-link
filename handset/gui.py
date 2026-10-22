@@ -59,7 +59,7 @@ def main():
 
     window = webview.create_window(
         title="iPhone Mirroring",
-        url="http://127.0.0.1:8765",
+        url="http://127.0.0.1:8765/?v=20261023_fix",
         js_api=api,
         width=380,
         height=840,

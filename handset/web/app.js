@@ -19,7 +19,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html";
+const MIRROR_PAGE = "/mirror.html?v=20261023_fix";
 const MIRROR_API = "/mirror";
 
 let selectedUdid = null;
@@ -177,7 +177,7 @@ function renderPills(state) {
   } else if (!driver.ready) {
     setPill(pillConnection, "Install Apple Devices", "warn");
   } else if (!connected) {
-    setPill(pillConnection, "Plug in iPhone", "warn");
+    setPill(pillConnection, "", "");
   } else if (state.developerMode === false) {
     setPill(pillConnection, "Developer Mode off", "warn");
   } else if (state.screen?.phase === "running") {
@@ -187,8 +187,8 @@ function renderPills(state) {
   }
 
   if (!connected) {
-    pillDevice.hidden = !overWifi;
-    pillDevice.textContent = "Wi‑Fi";
+    pillDevice.hidden = true;
+    pillDevice.textContent = "";
     return;
   }
   pillDevice.hidden = false;
@@ -197,6 +197,12 @@ function renderPills(state) {
 }
 
 function setPill(el, text, tone) {
+  if (!text) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
   el.textContent = text;
   el.className = "pill" + (tone ? ` pill-${tone}` : "");
 }

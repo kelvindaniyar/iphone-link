@@ -6,15 +6,15 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.css?v=20261023_fix">
 </head>
 <body>
   <div class="app" id="app-root">
     <!-- WinUI 3 Liquid Glass Top Toolbar (Frameless Drag Region) -->
     <header class="app-bar pywebview-drag-region">
       <div class="app-title-area">
-        <span class="pill" id="pill-connection">Checking…</span>
-        <span class="pill pill-muted" id="pill-device" hidden>No iPhone</span>
+        <span class="pill" id="pill-connection" hidden></span>
+        <span class="pill pill-muted" id="pill-device" hidden></span>
       </div>
       <div class="app-actions">
         <button type="button" class="bar-btn" id="restart-screen" title="Restart screen stream">
@@ -205,7 +205,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js"></script>
-  <script src="/app.js"></script>
+  <script src="/keys.js?v=20261023_fix"></script>
+  <script src="/app.js?v=20261023_fix"></script>
 </body>
 </html>

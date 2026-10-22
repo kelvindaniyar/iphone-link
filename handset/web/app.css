@@ -263,63 +263,54 @@ button {
 .workspace,
 .stage,
 #phone-shell,
-.screen-stage,
-#phone-screen,
-.screen-viewport {
-  height: 100%;
-  min-height: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  overflow: hidden;
-  position: relative;
+.screen-stage {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
   background: #000;
   margin: 0;
   padding: 0;
-}
-
-.workspace,
-.stage {
-  align-items: center;
-  justify-content: center;
-}
-
-#phone-shell,
-.screen-stage {
   align-items: center;
   justify-content: center;
 }
 
 #phone-screen,
 .screen-viewport {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  position: relative !important;
+  display: flex !important;
+  overflow: hidden !important;
   align-items: center;
   justify-content: center;
+  background: #000;
 }
 
 .screen-stage.live .placeholder {
   display: none !important;
 }
 
-#mirror-frame,
-#screen-view,
-.screen-frame,
-.mirror-frame {
-  height: 100%;
-  min-height: 0;
-  flex: 1 1 auto;
-  width: 100%;
-  display: block;
-  object-fit: contain;
-  aspect-ratio: 9 / 19.5;
-  border: 0;
+iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  display: block !important;
   background: #000;
 }
 
-#mirror-frame[hidden],
+iframe[hidden],
 #screen-view[hidden],
-.screen-frame[hidden],
-.mirror-frame[hidden] {
+#mirror-frame[hidden],
+.screen-frame[hidden] {
   display: none !important;
 }
 
@@ -850,59 +841,59 @@ button {
 
 /* 6. Full Size / Responsive Scaling Mode */
 .app.is-fullsize .main-body {
-  width: 100%;
-  height: calc(100vh - 36px);
-  justify-content: center;
-  align-items: center;
+  width: 100% !important;
+  height: calc(100vh - 36px) !important;
+  justify-content: center !important;
+  align-items: center !important;
 }
 
 .app.is-fullsize .display-col {
-  width: 100%;
-  height: 100%;
-  align-items: center;
-  justify-content: center;
+  width: 100% !important;
+  height: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
 .app.is-fullsize .workspace,
 .app.is-fullsize .stage {
-  width: 100%;
-  height: calc(100vh - 84px);
-  justify-content: center;
-  align-items: center;
+  width: 100% !important;
+  height: calc(100vh - 84px) !important;
+  justify-content: center !important;
+  align-items: center !important;
 }
 
 .app.is-fullsize #phone-shell,
 .app.is-fullsize .screen-stage {
-  height: calc(100vh - 84px); /* dikurangi tinggi top bar 36px & bottom nav 48px */
-  width: auto;
-  aspect-ratio: 9 / 19.5;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  height: calc(100vh - 84px) !important; /* dikurangi tinggi top bar 36px & bottom nav 48px */
+  width: auto !important;
+  aspect-ratio: 9 / 19.5 !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+  position: relative !important;
 }
 
 .app.is-fullsize #phone-screen,
 .app.is-fullsize .screen-viewport {
-  height: 100%;
-  width: 100%;
-  aspect-ratio: 9 / 19.5;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  height: 100% !important;
+  width: 100% !important;
+  aspect-ratio: 9 / 19.5 !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: relative !important;
 }
 
-.app.is-fullsize #mirror-frame,
-.app.is-fullsize #screen-view,
-.app.is-fullsize .screen-frame,
-.app.is-fullsize .mirror-frame {
-  height: 100%;
-  width: 100%;
-  aspect-ratio: 9 / 19.5;
-  object-fit: contain;
-  margin: 0 auto;
-  display: block;
+.app.is-fullsize iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  display: block !important;
 }

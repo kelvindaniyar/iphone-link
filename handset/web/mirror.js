@@ -24,14 +24,12 @@ function setStatus(text, tone) {
 }
 
 function fitCanvas() {
-  if (!canvas.width || !canvas.height) return;
-  const parent = canvas.parentElement;
-  if (!parent) return;
-  const rect = parent.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const naturalW = canvas.width;
-  const naturalH = canvas.height;
-  const base = Math.min(rect.width / naturalW, rect.height / naturalH);
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+  if (!winW || !winH) return;
+  const naturalW = canvas.width || 1170;
+  const naturalH = canvas.height || 2532;
+  const base = Math.min(winW / naturalW, winH / naturalH);
   const scale = base * zoom;
   canvas.style.width = `${Math.round(naturalW * scale)}px`;
   canvas.style.height = `${Math.round(naturalH * scale)}px`;
@@ -46,6 +44,7 @@ window.addEventListener("message", (e) => {
     fitCanvas();
   }
 });
+fitCanvas();
 
 function setZoom(value) {
   zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
@@ -393,8 +392,8 @@ function drawFrame(f) {
   if (targetW !== canvas.width || targetH !== canvas.height) {
     canvas.width = targetW;
     canvas.height = targetH;
-    fitCanvas();
   }
+  fitCanvas();
   const dstW = canvas.width;
   const dstH = canvas.height;
   const fpW = sideways ? dstH : dstW;
