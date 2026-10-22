@@ -221,14 +221,90 @@ document.body.addEventListener("lostpointercapture", (e) => {
   if (e.pointerId === activePointer) releaseActive();
 });
 window.addEventListener("blur", releaseActive);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") releaseActive();
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
 });
 
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  pressHome();
 });
+
+// Precision Touchpad (2-finger scroll / swipe) -> Synthetic HID touch drag
+let wheelBusy = false;
+let wheelAccumY = 0;
+let wheelAccumX = 0;
+let wheelTimer = null;
+
+async function performWheelSwipe(deltaX, deltaY, clientX, clientY) {
+  if (wheelBusy) return;
+  wheelBusy = true;
+  try {
+    let startPos = { x: 32768, y: 32768 };
+    if (clientX != null && clientY != null) {
+      try {
+        startPos = touchCoords({ clientX, clientY });
+      } catch (_) {}
+    }
+
+    startPos.x = Math.max(10000, Math.min(55535, startPos.x));
+    startPos.y = Math.max(16000, Math.min(49000, startPos.y));
+
+    const isVertical = Math.abs(deltaY) >= Math.abs(deltaX);
+    let dx = 0;
+    let dy = 0;
+
+    if (isVertical) {
+      const distance = Math.max(6000, Math.min(20000, Math.round(Math.abs(deltaY) * 80)));
+      dy = deltaY > 0 ? -distance : distance;
+    } else {
+      const distance = Math.max(6000, Math.min(20000, Math.round(Math.abs(deltaX) * 80)));
+      dx = deltaX > 0 ? -distance : distance;
+    }
+
+    const endX = Math.max(2500, Math.min(63000, startPos.x + dx));
+    const endY = Math.max(2500, Math.min(63000, startPos.y + dy));
+
+    const steps = 6;
+    const dt = 12;
+
+    await postJson("/touch", { type: "contact", x: startPos.x, y: startPos.y });
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const curX = Math.round(startPos.x + (endX - startPos.x) * t);
+      const curY = Math.round(startPos.y + (endY - startPos.y) * t);
+      await new Promise((r) => setTimeout(r, dt));
+      await postJson("/touch", { type: "contact", x: curX, y: curY });
+    }
+    await postJson("/touch", { type: "release", x: endX, y: endY });
+  } finally {
+    wheelBusy = false;
+  }
+}
+
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    wheelAccumX += e.deltaX;
+    wheelAccumY += e.deltaY;
+
+    const threshold = 35;
+    if (Math.abs(wheelAccumY) >= threshold || Math.abs(wheelAccumX) >= threshold) {
+      const dX = wheelAccumX;
+      const dY = wheelAccumY;
+      wheelAccumX = 0;
+      wheelAccumY = 0;
+      performWheelSwipe(dX, dY, e.clientX, e.clientY);
+    }
+
+    window.clearTimeout(wheelTimer);
+    wheelTimer = window.setTimeout(() => {
+      wheelAccumX = 0;
+      wheelAccumY = 0;
+    }, 200);
+  },
+  { passive: false }
+);
 
 window.addEventListener(
   "keydown",

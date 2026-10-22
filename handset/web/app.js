@@ -83,26 +83,53 @@ wireRemoteControls();
 
 const btnSettings = document.querySelector("#btn-settings");
 const closeSettings = document.querySelector("#close-settings");
-const popoverBackdrop = document.querySelector("#popover-backdrop");
 const controlPane = document.querySelector("#control-pane");
 
 function toggleSettings(open) {
   if (!controlPane) return;
-  const shouldOpen = open !== undefined ? open : !controlPane.classList.contains("open");
+  const isHidden = controlPane.hidden;
+  const shouldOpen = open !== undefined ? open : isHidden;
+  controlPane.hidden = !shouldOpen;
   controlPane.classList.toggle("open", shouldOpen);
-  popoverBackdrop?.classList.toggle("open", shouldOpen);
   controlPane.setAttribute("aria-hidden", String(!shouldOpen));
-  popoverBackdrop?.setAttribute("aria-hidden", String(!shouldOpen));
+  btnSettings?.classList.toggle("active", shouldOpen);
+  if (window.pywebview?.api?.set_drawer) {
+    window.pywebview.api.set_drawer(shouldOpen);
+  }
 }
 
-btnSettings?.addEventListener("click", () => toggleSettings(true));
+btnSettings?.addEventListener("click", () => toggleSettings());
 closeSettings?.addEventListener("click", () => toggleSettings(false));
-popoverBackdrop?.addEventListener("click", () => toggleSettings(false));
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && controlPane?.classList.contains("open")) {
+  if (e.key === "Escape" && !controlPane?.hidden) {
     toggleSettings(false);
   }
 });
+
+// Native Window Controls (Minimize, Close, Full Size)
+document.querySelector("#win-min")?.addEventListener("click", () => {
+  window.pywebview?.api?.minimize();
+});
+document.querySelector("#win-close")?.addEventListener("click", () => {
+  if (window.pywebview?.api?.close) {
+    window.pywebview.api.close();
+  } else {
+    window.close();
+  }
+});
+
+const appRoot = document.querySelector("#app-root");
+function toggleFullSize() {
+  appRoot?.classList.toggle("is-fullsize");
+  if (window.pywebview?.api?.toggle_fullscreen) {
+    window.pywebview.api.toggle_fullscreen();
+  } else if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  } else {
+    document.exitFullscreen?.().catch(() => {});
+  }
+}
+document.querySelector("#btn-fullsize")?.addEventListener("click", toggleFullSize);
 
 toggleGuide?.addEventListener("click", () => {
   const open = runGuide.hidden;

@@ -2,15 +2,13 @@
   color-scheme: dark;
   --bg: #111116;
   --bg-acrylic: rgba(30, 30, 35, 0.78);
-  --bg-flyout: rgba(32, 32, 38, 0.88);
+  --bg-flyout: rgba(25, 25, 30, 0.88);
   --surface: rgba(255, 255, 255, 0.05);
   --surface-hover: rgba(255, 255, 255, 0.08);
   --surface-active: rgba(255, 255, 255, 0.12);
   --line: rgba(255, 255, 255, 0.09);
   --border-acrylic: rgba(255, 255, 255, 0.09);
-  --border-flyout: rgba(255, 255, 255, 0.12);
   --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-  --shadow-flyout: 0 12px 36px 0 rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.2);
   --text: #ffffff;
   --text-secondary: #e0e0e0;
   --muted: #a0a0a8;
@@ -21,9 +19,6 @@
   --ok: #6ccb5f;
   --warn: #fce100;
   --bad: #ff99a4;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
   --font: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif;
   --mono: 'Cascadia Code', 'Segoe UI Mono', ui-monospace, monospace;
 }
@@ -63,29 +58,34 @@ a:hover { text-decoration: underline; }
   background: #000;
 }
 
-/* 1. Top Toolbar WinUI 3 (~36px) */
+/* 1. WinUI 3 Liquid Glass Top Toolbar (~36px Frameless Drag Region) */
 .app-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  padding: 0 4px 0 10px;
   height: 36px;
   min-height: 36px;
   max-height: 36px;
   background: rgba(30, 30, 35, 0.78);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-  z-index: 20;
+  z-index: 50;
   flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.pywebview-drag-region {
+  -webkit-app-region: drag;
 }
 
 .app-title-area {
   display: flex;
   align-items: center;
   gap: 6px;
+  -webkit-app-region: no-drag;
 }
 
 .pill {
@@ -107,7 +107,8 @@ a:hover { text-decoration: underline; }
 .app-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  -webkit-app-region: no-drag;
 }
 
 .bar-btn {
@@ -115,7 +116,7 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 5px;
   height: 26px;
-  padding: 0 9px;
+  padding: 0 8px;
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -125,6 +126,7 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   transition: all 0.15s ease;
   user-select: none;
+  -webkit-app-region: no-drag;
 }
 
 .bar-btn svg {
@@ -166,6 +168,7 @@ a:hover { text-decoration: underline; }
   padding: 0;
   cursor: pointer;
   transition: all 0.15s ease;
+  -webkit-app-region: no-drag;
 }
 
 .icon-btn:hover {
@@ -178,6 +181,48 @@ a:hover { text-decoration: underline; }
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* Native Window Controls */
+.window-controls {
+  display: flex;
+  align-items: center;
+  margin-left: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.win-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.win-btn.win-close:active {
+  background: #a82315;
+}
+
 button {
   font: inherit;
   cursor: pointer;
@@ -186,7 +231,30 @@ button {
   transition: background 0.15s, transform 0.1s;
 }
 
-/* 2. Murni Display Edge-to-Edge (Tanpa Mockup HP Tiruan) */
+/* 2. Main Horizontal Flex Container (Display Kiri + Drawer Kanan) */
+.main-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  width: 100%;
+  height: calc(100vh - 36px);
+  overflow: hidden;
+  position: relative;
+}
+
+.display-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  background: #000;
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 3. Murni Display Edge-to-Edge */
 .workspace {
   flex: 1 1 auto;
   width: 100%;
@@ -319,19 +387,19 @@ button {
   max-width: 90%;
   pointer-events: none;
   z-index: 5;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
   padding: 2px 10px;
   border-radius: 999px;
 }
 .stage-note:empty { display: none; }
 .stage-note.warn { color: var(--warn); }
 
-/* 3. Bottom Navigation Bar WinUI 3 (~44px CommandBar) */
+/* 4. Bottom Navigation CommandBar WinUI 3 (~44px) */
 .quick-nav {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   height: 44px;
   min-height: 44px;
   max-height: 44px;
@@ -339,11 +407,10 @@ button {
   background: rgba(30, 30, 35, 0.78);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 -4px 20px 0 rgba(0, 0, 0, 0.25);
   margin: 0;
-  padding: 0 12px;
+  padding: 0 8px;
   user-select: none;
   z-index: 20;
   flex-shrink: 0;
@@ -354,14 +421,15 @@ button {
   color: #f3f3f3;
   border: 1px solid transparent;
   border-radius: 6px;
-  padding: 6px 16px;
+  padding: 6px 10px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .quick-nav .nav-btn:hover {
@@ -385,63 +453,40 @@ button {
   opacity: 1;
 }
 
-/* 4. Flyout Modal Pengaturan (Flyout Fluent 2) */
-.popover-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.25);
-  z-index: 80;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.18s ease;
-}
-
-.popover-backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.control-pane.popover {
-  position: fixed;
-  top: 42px;
-  left: 8px;
-  right: 8px;
-  max-width: 355px;
-  margin: 0 auto;
-  max-height: calc(100vh - 96px);
-  border-radius: 10px;
-  background: rgba(30, 30, 35, 0.88);
+/* 5. Side Drawer Settings (Sebelah Kanan, Tidak Menutupi Layar Video) */
+.side-drawer {
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
+  height: 100%;
+  background: rgba(25, 25, 30, 0.92);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.2);
-  z-index: 100;
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-8px) scale(0.98);
-  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 30;
+  flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.control-pane.popover.open {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0) scale(1);
+.side-drawer[hidden] {
+  display: none;
 }
 
-.popover-bar {
+.drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px 8px;
+  padding: 10px 14px;
+  height: 44px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
 
-.popover-title {
+.drawer-title {
   margin: 0;
   font-size: 13.5px;
   font-weight: 600;
@@ -452,14 +497,14 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
   border: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   transition: all 0.15s ease;
 }
 
@@ -468,19 +513,19 @@ button {
   color: #fff;
 }
 
-.popover-content {
-  flex: 1;
+.drawer-content {
+  flex: 1 1 auto;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.popover-content::-webkit-scrollbar {
+.drawer-content::-webkit-scrollbar {
   width: 5px;
 }
-.popover-content::-webkit-scrollbar-thumb {
+.drawer-content::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 4px;
 }
@@ -785,4 +830,26 @@ button {
 .kb-toggle.is-on {
   color: var(--ok);
   border-color: rgba(108, 203, 95, 0.35);
+}
+
+/* 6. Full Size / Responsive Scaling Mode */
+.app.is-fullsize .main-body {
+  justify-content: center;
+}
+
+.app.is-fullsize .display-col {
+  width: auto;
+  max-width: 100%;
+  align-items: center;
+}
+
+.app.is-fullsize .workspace {
+  justify-content: center;
+}
+
+.app.is-fullsize .screen-stage {
+  height: calc(100vh - 36px - 44px);
+  width: auto;
+  aspect-ratio: 9 / 19.5;
+  margin: 0 auto;
 }
