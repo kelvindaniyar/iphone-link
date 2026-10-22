@@ -4,7 +4,7 @@
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
 > **Status:** Siap Uji Manual Tahap 7  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `3c2ff85` (`fix(ui): perbaiki rantai flexbox tinggi video 100 persen dan responsive scaling mode fullsize`)  
+> **Commit Terbaru:** `f2368c8` (`fix(webview2): matikan cache webview2, kunci iframe absolut 100 persen, dan bersihkan teks header`)  
 
 ---
 
@@ -16,7 +16,7 @@
 5. [Tahap 4: Revisi Tata Letak Compact Snug Container](#5-tahap-4-revisi-tata-letak-compact-snug-container)
 6. [Tahap 5: Rombak Total Tema — WinUI 3 Fluent Liquid Glass (Edge-to-Edge)](#6-tahap-5-rombak-total-tema--winui-3-fluent-liquid-glass-edge-to-edge)
 7. [Tahap 6: Native Frameless Pywebview, Side-Drawer Settings, Trackpad Scroll & Swipe Nav](#7-tahap-6-native-frameless-pywebview-side-drawer-settings-trackpad-scroll--swipe-nav)
-8. [Tahap 7: Perbaikan Visual Rantai Flexbox 100% & Mode Full Size Responsif](#8-tahap-7-perbaikan-visual-rantai-flexbox-100--mode-full-size-responsif)
+8. [Tahap 7: Perbaikan Visual Rantai Flexbox 100%, Bypass Cache WebView2 & Mode Full Size](#8-tahap-7-perbaikan-visual-rantai-flexbox-100-bypass-cache-webview2--mode-full-size)
 9. [Struktur Riwayat Git Commit](#9-struktur-riwayat-git-commit)
 10. [Daftar File yang Dimodifikasi](#10-daftar-file-yang-dimodifikasi)
 11. [Panduan Menjalankan & Verifikasi Manual](#11-panduan-menjalankan--verifikasi-manual)
