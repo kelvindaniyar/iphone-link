@@ -402,10 +402,10 @@ async function mirrorPost(path, payload) {
 
 async function swipe(direction) {
   const yMid = 32768;
-  const xStart = direction === "left" ? 60000 : 5000;
-  const xEnd = direction === "left" ? 5000 : 60000;
-  const steps = 10;
-  const dt = 20;
+  const xStart = direction === "left" ? 65535 : 0;
+  const xEnd = direction === "left" ? 10000 : 52000;
+  const steps = 14;
+  const dt = 16;
   await mirrorPost("/touch", { type: "contact", x: xStart, y: yMid });
   for (let i = 1; i <= steps; i++) {
     const x = Math.round(xStart + (xEnd - xStart) * (i / steps));
@@ -420,6 +420,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Coordinates are HID units (0..65535). iOS only treats a swipe as a system
 // gesture when the contact starts on the very edge of the screen.
 const GESTURES = {
+  back: { from: [0, 32768], to: [42000, 32768], steps: 14, dt: 16 },
   notifications: { from: [16000, 0], to: [16000, 42000], steps: 12, dt: 16 },
   control: { from: [58000, 0], to: [58000, 42000], steps: 12, dt: 16 },
 };
@@ -435,7 +436,7 @@ async function pressHome(times) {
 
 async function gesture(name) {
   if (name === "home") return pressHome(1);
-  if (name === "switcher") return pressHome(2);
+  if (name === "switcher" || name === "recent") return pressHome(2);
   const g = GESTURES[name];
   if (!g) return;
   const [x0, y0] = g.from;
@@ -490,6 +491,19 @@ function wireRemoteControls() {
   });
   document.querySelectorAll("[data-gesture]").forEach((btn) => {
     btn.addEventListener("click", () => gesture(btn.dataset.gesture));
+  });
+  // Mouse Back button (button 3) and Alt+ArrowLeft shortcut
+  window.addEventListener("pointerdown", (e) => {
+    if (e.button === 3) {
+      e.preventDefault();
+      gesture("back");
+    }
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey && e.key === "ArrowLeft") {
+      e.preventDefault();
+      gesture("back");
+    }
   });
   document.querySelector("#fullscreen")?.addEventListener("click", toggleFullscreen);
   document.querySelector("#fs-exit")?.addEventListener("click", toggleFullscreen);

@@ -130,6 +130,21 @@ async function pressHome(times = 1) {
   }
 }
 
+async function triggerBackGesture() {
+  const yMid = 32768;
+  const xStart = 0;
+  const xEnd = 42000;
+  const steps = 14;
+  const dt = 16;
+  await postJson("/touch", { type: "contact", x: xStart, y: yMid });
+  for (let i = 1; i <= steps; i++) {
+    const x = Math.round(xStart + (xEnd - xStart) * (i / steps));
+    await new Promise((r) => setTimeout(r, dt));
+    await postJson("/touch", { type: "contact", x, y: yMid });
+  }
+  await postJson("/touch", { type: "release", x: xEnd, y: yMid });
+}
+
 function releaseActive() {
   if (activePointer === null) return;
   activePointer = null;
@@ -151,8 +166,12 @@ function releaseActive() {
 // Listen on the whole document so a drag can start on the black margin just
 // below the picture; coordinates clamp onto the screen edge.
 document.addEventListener("pointerdown", (e) => {
+  if (e.button === 3) {
+    e.preventDefault();
+    triggerBackGesture();
+    return;
+  }
   if (e.button !== 0) return;
-  e.preventDefault();
   canvas.focus({ preventScroll: true });
   try {
     document.body.setPointerCapture(e.pointerId);
@@ -164,6 +183,13 @@ document.addEventListener("pointerdown", (e) => {
     return;
   }
   sendTouch("contact", lastCoords);
+});
+
+window.addEventListener("auxclick", (e) => {
+  if (e.button === 3) {
+    e.preventDefault();
+    triggerBackGesture();
+  }
 });
 
 function onMove(e) {
@@ -204,6 +230,18 @@ document.addEventListener("contextmenu", (e) => {
   pressHome();
 });
 
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.altKey && (e.key === "ArrowLeft" || e.code === "ArrowLeft")) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerBackGesture();
+    }
+  },
+  true,
+);
+
 window.HandsetKeys.attach({
   post: (payload) => postJson("/key", payload),
   enabled: () => {
@@ -219,7 +257,9 @@ window.addEventListener("message", (e) => {
   if (e.origin !== window.location.origin) return;
   const d = e.data;
   if (!d || d.source !== "handset") return;
-  if (d.cmd === "rotate") {
+  if (d.cmd === "back") {
+    triggerBackGesture();
+  } else if (d.cmd === "rotate") {
     visualRotation = (visualRotation + (d.deg || 0)) % 360;
     if (lastFrame) drawFrame(lastFrame);
     fitCanvas();
