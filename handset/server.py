@@ -446,6 +446,7 @@ class Handler(BaseHTTPRequestHandler):
             frame_data_url = payload.get("frameDataUrl")
             frame_history = payload.get("frameHistory") or []
             wait_result = bool(payload.get("waitResult", False))
+            skip_ocr = bool(payload.get("skipOcr", False))
 
             # Trigger native iOS hotkey
             ok = trigger_ios_shortcut(action)
@@ -454,6 +455,10 @@ class Handler(BaseHTTPRequestHandler):
             if action in ("copy", "cut"):
                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+
+                if skip_ocr or not frame_data_url:
+                    self._json({"ok": ok, "action": action, "internal": True})
+                    return
 
                 extracted_text = None
 

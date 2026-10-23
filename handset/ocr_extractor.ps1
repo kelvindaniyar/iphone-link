@@ -84,19 +84,32 @@ public class DualOcrPreprocessor {
                         int cW = clusterMaxX - clusterMinX;
                         int cH = clusterMaxY - clusterMinY;
                         if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
-                            int pad = 24;
+                            int pad = 10;
                             int mX0 = Math.Max(0, clusterMinX - pad);
                             int mX1 = Math.Min(W - 1, clusterMaxX + pad);
                             int mY0 = Math.Max(0, clusterMinY - pad);
                             int mY1 = Math.Min(H - 1, clusterMaxY + pad);
+                            int cCenterX = (clusterMinX + clusterMaxX) / 2;
+                            int cCenterY = (clusterMinY + clusterMaxY) / 2;
+                            int cRadius = Math.Max(cW, cH) / 2;
+                            int coreRadiusSq = (int)((cRadius * 0.55) * (cRadius * 0.55));
                             for (int my = mY0; my <= mY1; my++) {
                                 int mOffset = my * stride;
+                                int dy = my - cCenterY;
                                 for (int mx = mX0; mx <= mX1; mx++) {
                                     int mIdx = mOffset + (mx * 4);
-                                    raw[mIdx] = 255;
-                                    raw[mIdx + 1] = 255;
-                                    raw[mIdx + 2] = 255;
-                                    raw[mIdx + 3] = 255;
+                                    byte b = raw[mIdx];
+                                    byte g = raw[mIdx + 1];
+                                    byte r = raw[mIdx + 2];
+                                    int dx = mx - cCenterX;
+                                    bool isCore = (dx * dx + dy * dy) <= coreRadiusSq;
+                                    bool isDarkText = (r < 75 && g < 75 && b < 75);
+                                    if (isCore || (!isDarkText && (r >= 70 || g >= 70 || b >= 70))) {
+                                        raw[mIdx] = 255;
+                                        raw[mIdx + 1] = 255;
+                                        raw[mIdx + 2] = 255;
+                                        raw[mIdx + 3] = 255;
+                                    }
                                 }
                             }
                         }
@@ -113,19 +126,32 @@ public class DualOcrPreprocessor {
                 int cW = clusterMaxX - clusterMinX;
                 int cH = clusterMaxY - clusterMinY;
                 if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
-                    int pad = 24;
+                    int pad = 10;
                     int mX0 = Math.Max(0, clusterMinX - pad);
                     int mX1 = Math.Min(W - 1, clusterMaxX + pad);
                     int mY0 = Math.Max(0, clusterMinY - pad);
                     int mY1 = Math.Min(H - 1, clusterMaxY + pad);
+                    int cCenterX = (clusterMinX + clusterMaxX) / 2;
+                    int cCenterY = (clusterMinY + clusterMaxY) / 2;
+                    int cRadius = Math.Max(cW, cH) / 2;
+                    int coreRadiusSq = (int)((cRadius * 0.55) * (cRadius * 0.55));
                     for (int my = mY0; my <= mY1; my++) {
                         int mOffset = my * stride;
+                        int dy = my - cCenterY;
                         for (int mx = mX0; mx <= mX1; mx++) {
                             int mIdx = mOffset + (mx * 4);
-                            raw[mIdx] = 255;
-                            raw[mIdx + 1] = 255;
-                            raw[mIdx + 2] = 255;
-                            raw[mIdx + 3] = 255;
+                            byte b = raw[mIdx];
+                            byte g = raw[mIdx + 1];
+                            byte r = raw[mIdx + 2];
+                            int dx = mx - cCenterX;
+                            bool isCore = (dx * dx + dy * dy) <= coreRadiusSq;
+                            bool isDarkText = (r < 75 && g < 75 && b < 75);
+                            if (isCore || (!isDarkText && (r >= 70 || g >= 70 || b >= 70))) {
+                                raw[mIdx] = 255;
+                                raw[mIdx + 1] = 255;
+                                raw[mIdx + 2] = 255;
+                                raw[mIdx + 3] = 255;
+                            }
                         }
                     }
                 }
@@ -508,7 +534,7 @@ public class DualOcrPreprocessor {
             if ($i -gt 0) {
                 $prev = $sortedLines[$i - 1]
                 $gap = $curr.MinY - $prev.MaxY
-                if ($gap -gt ($avgH * 0.62)) {
+                if ($gap -gt ($avgH * 0.32)) {
                     $lines += ""
                 }
             }

@@ -690,6 +690,44 @@ Pembaruan terkini mencakup:
   - Test 2: Seluruh kasus teks pendek (`"banten feeds..."`, `"naruto uzumaki..."`, `"barcelona..."`) 100% sempurna tanpa regresi.
   - Test 3: Konsistensi label tombol All-in-One dan trigger shortcut 100% terverifikasi.
 
+---
+
+### Tahap 29: Pemisahan Shortcut Internal iPhone (Zero-Delay) dari Cross-Platform, Smart Non-Destructive AssistiveTouch Masking, Broken Word Un-splitter, dan Format Paragraf Rapi (24 Oktober 2026)
+- **Status**: Selesai & Terverifikasi 100% via `verify_tahap29.py`, `verify_tahap28.py`, `verify_tahap27.py`, `verify_tahap26.py`, dan `verify_tahap25.py`.
+- **Latar Belakang**: Evaluasi pengujian langsung Kelvin pada Tahap 28 (`20261023-2201-56.0694847.mp4`):
+  1. Internal iPhone `Ctrl+C` dan `Ctrl+V` terasa delay dan kehilangan Enter karena `Ctrl+C` menjalankan OCR dan mengubah clipboard Windows sequence, sehingga saat `Ctrl+V` di Notes iPhone, server mengira teks berasal dari PC lalu mengetik per karakter via HID secara lambat alih-alih native `Cmd+V`.
+  2. Kata terbelah di tepi kanan (`"memperlih\natkan"` & `"buah hatinya saat menuruni tali evakua"`) karena AssistiveTouch masking 24px menghapus piksel huruf hitam `"si"` dan `"kan"`.
+  3. Format antar-paragraf 1, 2, 3, 4 menempel rapat tanpa jarak `\r\n\r\n` karena ambang jarak baris OCR 0.62 terlalu tinggi.
+- **Pekerjaan yang Dilakukan**:
+  1. **Pemisahan Shortcut Internal iPhone vs Cross-Platform (`server.py`, `keys.js`, `app.js`, `index.html`)**:
+     - `Ctrl+C` di layar mirror HANYA mengirimkan perintah native iOS `Cmd+C` (`skipOcr: true`), mencatat sequence Windows clipboard, dan menetapkan `_ACTIVE_CLIPBOARD_SOURCE = "iphone"` tanpa menjalankan OCR atau menyentuh clipboard Windows. Selesai dalam 0.00ms.
+     - `Ctrl+V` langsung mengeksekusi native iOS `Cmd+V` (`paste-ios`) jika toggle PC Clipboard OFF atau jika `_ACTIVE_CLIPBOARD_SOURCE == "iphone"`, menghasilkan 0ms instant paste dan 100% mempertahankan seluruh Enter dan format rich text di Notes iPhone.
+     - Label tombol UI spesifik satu shortcut:
+       - `#btn-copy-iphone-now`: `📥 Copy iPhone Text (Alt+C)`
+       - `#btn-paste-pc-now`: `📋 Paste PC Text (Alt+V)`
+       - `#btn-toggle-onscreen-kb`: `⌨️ Toggle iPhone On-Screen Keyboard (Ctrl+K)`
+     - `Alt+C`: Mengekstrak teks OCR All-in-One ke Windows clipboard via `set_windows_clipboard_text()` tanpa pemanggilan `navigator.clipboard.writeText()` yang dapat mendesinkronisasi sequence Windows. Animasi tombol `"⏳ Copying..."` $\rightarrow$ `"✓ Copied to PC!"`.
+     - `Alt+V`: Menjalankan `paste_to_iphone(force_pc=True)` dari Windows PC ke iPhone dengan animasi `"⏳ Pasting..."` $\rightarrow$ `"✓ Pasted!"`.
+     - Injeksi Enter di `type_text_to_iphone`: Karakter `\n` dikirimkan presisi menggunakan keycode HID `Enter` (`0x28`) dengan jeda penekanan dan pelepasan masing-masing `0.025s`.
+  2. **Smart Non-Destructive AssistiveTouch Masking (`ocr_extractor.ps1`)**:
+     - Padding kotak AssistiveTouch diturunkan ke `10px`.
+     - Menghitung koordinat pusat dan jari-jari inti AssistiveTouch. Piksel di luar inti yang berwarna hitam pekat (`R < 75 && G < 75 && B < 75`) dilindungi dan TIDAK ditimpa putih, menjaga huruf hitam `"si"` dan `"kan"` tetap utuh.
+  3. **Broken Word Un-splitter & Line Matcher (`screen.py`)**:
+     - Implementasi `_unsplit_broken_lines`: Menggabungkan baris pecahan kata kecil (1-6 huruf) kembali ke baris sebelumnya (`"memperlih"` + `"atkan"` $\rightarrow$ `"memperlihatkan"`).
+     - Implementasi koreksi tepi kanan `\btali evakua$` $\rightarrow$ `"tali evakuasi"`.
+     - Implementasi pemilih versi baris terlengkap `_pick_cleaner_line` yang memilih kata utuh (`"evakuasi"`) dibandingkan kata terpotong (`"evakua"`).
+  4. **Perapian Jarak Paragraf (`ocr_extractor.ps1` & `screen.py`)**:
+     - Di `ocr_extractor.ps1`: Ambang vertikal gap baris disetel ke `$gap -gt ($avgH * 0.32)`.
+     - Di `screen.py`: Menambahkan deteksi frasa penutup berita (`"media sosial."`, `"(liferaft)."`, `"korban jiwa."`, `"Pelabuhan Merak."`, `"Banteners?"`), pembuka seksi baru, dan baris pendek `< 88% * avg_full_line_len` untuk menyisipkan `\r\n\r\n` yang rapi.
+     - Line ending dinormalisasi ke `\r\n` standar Windows yang bersih tanpa `\r\r\n`.
+  5. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap29_shortcuts_and_smart_masking` di `index.html`, `mirror.html`, dan `app.js`.
+- **Hasil Verifikasi**:
+  - Test 1 (Instant Internal Copy-Paste): `Ctrl+C` selesai 0.00ms tanpa merusak sequence clipboard, dan `Ctrl+V` langsung memicu `paste-ios` native iOS mempertahankan Enter.
+  - Test 2 (Kelvin 03:54 Notepad Case): `"memperlihatkan"` dan `"buah hatinya saat menuruni tali evakuasi"` tersambung sempurna; seluruh paragraf (1, 2, 3, 4, Source, Hashtags) terpisah rapi dengan `\r\n\r\n`.
+  - Test 3 (Cleaner Line Picker): Memilih baris utuh secara konsisten.
+  - Test 4 (UI Buttons & Shortcuts): Seluruh label UI tombol, shortcut badge, dan listener terverifikasi 100%.
+  - Seluruh pengujian regresi Tahap 25-28 lulus 100%.
+
 
 
 

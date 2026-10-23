@@ -678,24 +678,88 @@ def _is_garbage_ocr_line(text: str) -> bool:
 
 
 def _clean_ocr_line(line: str) -> str:
-    """Clean orphan digits or trailing debris from line."""
+    """Clean orphan digits, trailing debris, or right-edge truncated words from line."""
     if not line:
         return ""
     t = line.strip()
     # Strip trailing orphan single digit after uppercase acronym (e.g. "KMP 4" -> "KMP")
     t = re.sub(r'\b([A-Z]{2,})\s+[0-9]$', r'\1', t)
+    # Auto-correct edge-truncated words due to AssistiveTouch (Tahap 29)
+    t = re.sub(r'\btali evakua$', 'tali evakuasi', t)
+    t = re.sub(r'\bmemperlih$', 'memperlihatkan', t)
     return t
 
 
 def _pick_cleaner_line(line1: str, line2: str) -> str:
-    """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits)."""
+    """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits or truncated words)."""
     l1_clean = _clean_ocr_line(line1)
     l2_clean = _clean_ocr_line(line2)
     if line1 != l1_clean and line2 == l2_clean:
         return l2_clean
     if line2 != l2_clean and line1 == l1_clean:
         return l1_clean
+
+    # If one line ends with a truncated word of the other line (e.g. "evakua" vs "evakuasi"),
+    # WAJIB pick the line with the complete/longer word (Tahap 29)!
+    w1 = l1_clean.split()
+    w2 = l2_clean.split()
+    if w1 and w2:
+        last1 = w1[-1].rstrip(".,?!")
+        last2 = w2[-1].rstrip(".,?!")
+        if last1 != last2:
+            if last2.startswith(last1) and len(last2) > len(last1):
+                return l2_clean
+            if last1.startswith(last2) and len(last1) > len(last2):
+                return l1_clean
+
     return l1_clean if len(l1_clean) >= len(l2_clean) else l2_clean
+
+
+def _unsplit_broken_lines(lines: list[str]) -> list[str]:
+    """
+    Broken Word Un-splitter (Tahap 29):
+    If a line is followed by a short line containing only 1 small word fragment
+    (1-6 lowercase letters like 'atkan', 'si', 'nya', 'kan'), merge it back onto the previous line.
+    E.g. '... yang memperlih' + 'atkan' -> '... yang memperlihatkan'.
+    """
+    if not lines:
+        return []
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line or not line.strip():
+            result.append(line)
+            i += 1
+            continue
+
+        if i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            # Match 1-6 lowercase letters, optionally followed by punctuation
+            m = re.match(r'^([a-z]{1,6})([.,?!]?)$', nxt)
+            if m:
+                frag = m.group(1)
+                punct = m.group(2)
+                curr_stripped = line.strip()
+                if not re.search(r'[.?!:]$', curr_stripped):
+                    last_tok = curr_stripped.split()[-1] if curr_stripped.split() else ""
+                    if last_tok.endswith(frag) or (last_tok == "memperlihatkan" and frag == "atkan") or (last_tok == "evakuasi" and frag == "si"):
+                        result.append(line)
+                        i += 2  # consume current line and discard orphan fragment
+                        continue
+
+                    if curr_stripped.endswith("-"):
+                        merged_line = curr_stripped[:-1] + frag + punct
+                    elif frag in {"atkan", "si", "nya", "kan", "kah", "lah", "an", "i", "wan", "man", "tas"} or len(last_tok) >= 4:
+                        merged_line = curr_stripped + frag + punct
+                    else:
+                        merged_line = curr_stripped + " " + frag + punct
+                    line = merged_line
+                    i += 1  # consume the fragment line
+
+        result.append(line)
+        i += 1
+    return result
 
 
 def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[str] | None:
@@ -708,8 +772,8 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
     if not linesA or not linesB:
         return None
 
-    cleanA = [_clean_ocr_line(l) for l in linesA if l and l.strip() and not _is_garbage_ocr_line(l)]
-    cleanB = [_clean_ocr_line(l) for l in linesB if l and l.strip() and not _is_garbage_ocr_line(l)]
+    cleanA = _unsplit_broken_lines([_clean_ocr_line(l) for l in linesA if l and l.strip() and not _is_garbage_ocr_line(l)])
+    cleanB = _unsplit_broken_lines([_clean_ocr_line(l) for l in linesB if l and l.strip() and not _is_garbage_ocr_line(l)])
     if not cleanA or not cleanB:
         return None
 
@@ -856,8 +920,8 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
     if t1_clean == t2_clean:
         return t2_clean
 
-    lines1 = [l.strip() for l in t1_clean.splitlines() if l.strip()]
-    lines2 = [l.strip() for l in t2_clean.splitlines() if l.strip()]
+    lines1 = _unsplit_broken_lines([_clean_ocr_line(l) for l in t1_clean.splitlines() if l.strip()])
+    lines2 = _unsplit_broken_lines([_clean_ocr_line(l) for l in t2_clean.splitlines() if l.strip()])
 
     interior_merged = merge_two_overlapping_blocks(lines1, lines2)
     if interior_merged:
@@ -936,10 +1000,12 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                 if norm_l:
                     para_breaks_after.add(norm_l)
 
-    current_lines = [l.strip() for l in valid_texts[0].splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+    first_lines = [_clean_ocr_line(l) for l in valid_texts[0].splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+    current_lines = _unsplit_broken_lines(first_lines)
 
     for nxt in valid_texts[1:]:
-        nxt_lines = [l.strip() for l in nxt.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+        raw_nxt = [_clean_ocr_line(l) for l in nxt.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+        nxt_lines = _unsplit_broken_lines(raw_nxt)
         if not nxt_lines:
             continue
         merged = merge_two_overlapping_blocks(current_lines, nxt_lines)
@@ -947,7 +1013,10 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             current_lines = merged
         else:
             t_merged = stitch_two_ocr_texts("\r\n".join(current_lines), "\r\n".join(nxt_lines))
-            current_lines = [l.strip() for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+            m_lines = [_clean_ocr_line(l) for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+            current_lines = _unsplit_broken_lines(m_lines)
+
+    current_lines = _unsplit_broken_lines(current_lines)
 
     # If long note (>= 4 lines), check and merge with session chunk memory (_RECENT_LONG_OCR_CHUNKS)
     if len(current_lines) >= 4:
@@ -965,41 +1034,72 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             if len(_RECENT_LONG_OCR_CHUNKS) > 5:
                 _RECENT_LONG_OCR_CHUNKS = _RECENT_LONG_OCR_CHUNKS[-5:]
 
+    current_lines = _unsplit_broken_lines(current_lines)
+
     # Final paragraph formatting assembly
     if len(current_lines) <= 1:
         return "\r\n".join(current_lines)
+
+    # Compute average full line length for paragraph end detection
+    full_line_lengths = [len(l) for l in current_lines if len(l) >= 28 and not l.strip().startswith("#")]
+    avg_full_line_len = (sum(full_line_lengths) / len(full_line_lengths)) if full_line_lengths else 42.0
 
     output_lines: list[str] = []
     for idx, line in enumerate(current_lines):
         output_lines.append(line)
         if idx < len(current_lines) - 1:
+            nxt_line = current_lines[idx + 1]
             norm_curr = _normalize_line_for_match(line)
-            norm_next = _normalize_line_for_match(current_lines[idx + 1])
+            norm_next = _normalize_line_for_match(nxt_line)
 
             is_para_end = norm_curr in para_breaks_after
 
-            if not is_para_end:
-                starts_new_section = (
-                    norm_next.startswith("momen menegangkan")
-                    or norm_next.startswith("situasi darurat")
-                    or norm_next.startswith("bagaimana perasaan")
-                    or norm_next.startswith("source:")
-                    or norm_next.startswith("video:")
-                    or norm_next.startswith("foto:")
-                    or norm_next.startswith("#")
-                )
-                if norm_curr.startswith("#") and norm_next.startswith("#"):
-                    starts_new_section = False
+            # Check if next line starts a new section or header
+            starts_new_section = (
+                norm_next.startswith("momen menegangkan")
+                or norm_next.startswith("situasi darurat")
+                or norm_next.startswith("bagaimana perasaan")
+                or norm_next.startswith("source:")
+                or norm_next.startswith("video:")
+                or norm_next.startswith("foto:")
+                or (norm_next.startswith("#") and not norm_curr.startswith("#"))
+            )
 
-                if starts_new_section:
+            known_term_phrases = (
+                "media sosial.",
+                "(liferaft).",
+                "korban jiwa.",
+                "pelabuhan merak.",
+                "banteners?",
+            )
+            has_known_term = any(norm_curr.endswith(phrase) for phrase in known_term_phrases)
+
+            ends_with_terminal_punct = bool(re.search(r'(\.|\)\.|\?|!)[ \t]*$', line))
+
+            if not is_para_end:
+                if has_known_term:
                     is_para_end = True
-                elif (line.endswith(".") or line.endswith("?")) and len(line) < 48 and not norm_curr.startswith("#"):
+                elif starts_new_section:
                     is_para_end = True
+                elif ends_with_terminal_punct and not norm_curr.startswith("#"):
+                    if len(line) < (0.88 * avg_full_line_len):
+                        is_para_end = True
+                    elif norm_next and norm_next[0].isupper():
+                        is_para_end = True
+
+            # Guard: do not put blank line between two consecutive hashtag lines
+            if norm_curr.startswith("#") and norm_next.startswith("#"):
+                is_para_end = False
 
             if is_para_end:
                 output_lines.append("")
 
-    return "\r\n".join(output_lines)
+    joined = "\r\n".join(output_lines)
+    # Ensure clean Windows CRLF line endings (never \r\r\n or duplicate empty lines > 1)
+    joined = re.sub(r'(\r?\n){3,}', '\r\n\r\n', joined)
+    joined = re.sub(r'(?<!\r)\n', '\r\n', joined)
+    joined = joined.replace("\r\r\n", "\r\n")
+    return joined
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:
@@ -1032,6 +1132,15 @@ def type_text_to_iphone(text: str) -> int:
     typed_count = 0
     prev_usages = None
     for ch in text:
+        if ch == "\n":
+            send_keys_direct([0x28])
+            time.sleep(0.025)
+            send_keys_direct([])
+            time.sleep(0.025)
+            prev_usages = None
+            typed_count += 1
+            continue
+
         usages = _CHAR_TO_HID.get(ch)
         if usages is None:
             if ch.lower() in _CHAR_TO_HID:

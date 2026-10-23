@@ -1,7 +1,7 @@
 {
   "latest_mirror.js": {
     "source": "mirror.js",
-    "frameCount": 7380,
+    "frameCount": 12060,
     "f_type": "VideoFrame",
     "f_dims": {
       "codedW": 1216,
@@ -38,54 +38,20 @@
       "h": 760,
       "dpr": 1.5
     },
-    "received_at": "2026-10-24 03:14:40"
+    "received_at": "2026-10-24 05:07:17"
   },
-  "latest_mirror_frame": {
+  "latest_mirror_decoder_configured": {
     "source": "mirror.js",
-    "frameCount": 7380,
-    "f_type": "VideoFrame",
-    "f_dims": {
-      "codedW": 1216,
-      "codedH": 2656,
-      "displayW": 1216,
-      "displayH": 2656,
-      "visibleRect": {
-        "x": 0,
-        "y": 0,
-        "width": 1216,
-        "height": 2656
-      }
-    },
-    "canvas_attr": {
-      "width": 1216,
-      "height": 2656,
-      "styleW": "calc(100% + 3px)",
-      "styleH": "calc(100% + 9px)"
-    },
-    "canvas_rect": {
-      "top": 0,
-      "left": 0,
-      "width": 383,
-      "height": 769
-    },
-    "body_rect": {
-      "top": 0,
-      "left": 0,
-      "width": 380,
-      "height": 760
-    },
-    "win_inner": {
-      "w": 380,
-      "h": 760,
-      "dpr": 1.5
-    },
-    "received_at": "2026-10-24 03:14:40"
+    "event": "decoder_configured",
+    "codec": "hev1.1.6.L150.B0",
+    "state": "configured",
+    "received_at": "2026-10-24 05:03:09"
   },
-  "last_updated": "2026-10-24 03:14:40",
+  "last_updated": "2026-10-24 05:07:17",
   "history": [
     {
       "source": "mirror.js",
-      "frameCount": 3840,
+      "frameCount": 8160,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -122,11 +88,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:16"
+      "received_at": "2026-10-24 05:05:49"
     },
     {
       "source": "mirror.js",
-      "frameCount": 3900,
+      "frameCount": 8220,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -163,11 +129,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:17"
+      "received_at": "2026-10-24 05:05:50"
     },
     {
       "source": "mirror.js",
-      "frameCount": 3960,
+      "frameCount": 8280,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -204,11 +170,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:18"
+      "received_at": "2026-10-24 05:05:52"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4020,
+      "frameCount": 8340,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -245,11 +211,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:19"
+      "received_at": "2026-10-24 05:05:53"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4080,
+      "frameCount": 8400,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -286,11 +252,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:20"
+      "received_at": "2026-10-24 05:05:54"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4140,
+      "frameCount": 8460,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -327,11 +293,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:21"
+      "received_at": "2026-10-24 05:05:55"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4200,
+      "frameCount": 8520,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -368,11 +334,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:28"
+      "received_at": "2026-10-24 05:05:56"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4260,
+      "frameCount": 8640,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -409,11 +375,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:29"
+      "received_at": "2026-10-24 05:05:58"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4320,
+      "frameCount": 8700,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -450,11 +416,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:30"
+      "received_at": "2026-10-24 05:05:59"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4380,
+      "frameCount": 8760,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -491,11 +457,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:31"
+      "received_at": "2026-10-24 05:06:00"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4440,
+      "frameCount": 8820,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -532,11 +498,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:32"
+      "received_at": "2026-10-24 05:06:01"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4500,
+      "frameCount": 8880,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -573,11 +539,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:33"
+      "received_at": "2026-10-24 05:06:02"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4560,
+      "frameCount": 8940,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -614,11 +580,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:37"
+      "received_at": "2026-10-24 05:06:03"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4620,
+      "frameCount": 9000,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -655,11 +621,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:38"
+      "received_at": "2026-10-24 05:06:04"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4680,
+      "frameCount": 9060,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -696,11 +662,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:39"
+      "received_at": "2026-10-24 05:06:06"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4740,
+      "frameCount": 9120,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -737,11 +703,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:40"
+      "received_at": "2026-10-24 05:06:07"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4800,
+      "frameCount": 9180,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -778,11 +744,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:41"
+      "received_at": "2026-10-24 05:06:08"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4860,
+      "frameCount": 9240,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -819,11 +785,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:42"
+      "received_at": "2026-10-24 05:06:09"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4920,
+      "frameCount": 9300,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -860,11 +826,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:44"
+      "received_at": "2026-10-24 05:06:10"
     },
     {
       "source": "mirror.js",
-      "frameCount": 4980,
+      "frameCount": 9360,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -901,11 +867,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:45"
+      "received_at": "2026-10-24 05:06:11"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5040,
+      "frameCount": 9480,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -942,11 +908,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:46"
+      "received_at": "2026-10-24 05:06:13"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5100,
+      "frameCount": 9540,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -983,11 +949,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:47"
+      "received_at": "2026-10-24 05:06:14"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5160,
+      "frameCount": 9600,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1024,11 +990,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:48"
+      "received_at": "2026-10-24 05:06:15"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5220,
+      "frameCount": 9660,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1065,11 +1031,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:49"
+      "received_at": "2026-10-24 05:06:16"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5280,
+      "frameCount": 9720,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1106,11 +1072,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:50"
+      "received_at": "2026-10-24 05:06:17"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5340,
+      "frameCount": 9780,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1147,11 +1113,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:51"
+      "received_at": "2026-10-24 05:06:19"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5400,
+      "frameCount": 9840,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1188,11 +1154,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:52"
+      "received_at": "2026-10-24 05:06:20"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5460,
+      "frameCount": 9900,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1229,11 +1195,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:53"
+      "received_at": "2026-10-24 05:06:21"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5520,
+      "frameCount": 9960,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1270,11 +1236,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:54"
+      "received_at": "2026-10-24 05:06:22"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5580,
+      "frameCount": 10020,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1311,11 +1277,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:55"
+      "received_at": "2026-10-24 05:06:23"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5640,
+      "frameCount": 10080,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1352,11 +1318,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:56"
+      "received_at": "2026-10-24 05:06:24"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5700,
+      "frameCount": 10140,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1393,11 +1359,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:58"
+      "received_at": "2026-10-24 05:06:25"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5760,
+      "frameCount": 10200,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1434,11 +1400,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:13:59"
+      "received_at": "2026-10-24 05:06:26"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5820,
+      "frameCount": 10260,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1475,11 +1441,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:00"
+      "received_at": "2026-10-24 05:06:27"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5880,
+      "frameCount": 10320,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1516,11 +1482,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:01"
+      "received_at": "2026-10-24 05:06:28"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5940,
+      "frameCount": 10380,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1557,11 +1523,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:02"
+      "received_at": "2026-10-24 05:06:29"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6000,
+      "frameCount": 10440,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1598,11 +1564,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:03"
+      "received_at": "2026-10-24 05:06:31"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6060,
+      "frameCount": 10560,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1639,11 +1605,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:04"
+      "received_at": "2026-10-24 05:06:33"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6120,
+      "frameCount": 10620,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1680,11 +1646,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:05"
+      "received_at": "2026-10-24 05:06:34"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6180,
+      "frameCount": 10680,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1721,11 +1687,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:06"
+      "received_at": "2026-10-24 05:06:35"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6240,
+      "frameCount": 10740,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1762,11 +1728,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:07"
+      "received_at": "2026-10-24 05:06:36"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6300,
+      "frameCount": 10800,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1803,11 +1769,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:08"
+      "received_at": "2026-10-24 05:06:37"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6360,
+      "frameCount": 10860,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1844,11 +1810,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:09"
+      "received_at": "2026-10-24 05:06:38"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6420,
+      "frameCount": 10920,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1885,11 +1851,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:10"
+      "received_at": "2026-10-24 05:06:39"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6480,
+      "frameCount": 10980,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1926,11 +1892,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:11"
+      "received_at": "2026-10-24 05:06:40"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6540,
+      "frameCount": 11040,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -1967,11 +1933,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:12"
+      "received_at": "2026-10-24 05:06:46"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6600,
+      "frameCount": 11100,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2008,11 +1974,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:13"
+      "received_at": "2026-10-24 05:06:47"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6660,
+      "frameCount": 11160,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2049,11 +2015,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:20"
+      "received_at": "2026-10-24 05:06:48"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6720,
+      "frameCount": 11220,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2090,11 +2056,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:21"
+      "received_at": "2026-10-24 05:06:49"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6780,
+      "frameCount": 11280,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2131,11 +2097,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:22"
+      "received_at": "2026-10-24 05:06:50"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6840,
+      "frameCount": 11340,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2172,11 +2138,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:23"
+      "received_at": "2026-10-24 05:06:52"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6900,
+      "frameCount": 11460,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2213,11 +2179,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:24"
+      "received_at": "2026-10-24 05:07:00"
     },
     {
       "source": "mirror.js",
-      "frameCount": 6960,
+      "frameCount": 11520,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2254,11 +2220,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:25"
+      "received_at": "2026-10-24 05:07:01"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7020,
+      "frameCount": 11580,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2295,11 +2261,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:26"
+      "received_at": "2026-10-24 05:07:02"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7080,
+      "frameCount": 11700,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2336,11 +2302,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:35"
+      "received_at": "2026-10-24 05:07:04"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7140,
+      "frameCount": 11760,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2377,11 +2343,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:36"
+      "received_at": "2026-10-24 05:07:12"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7200,
+      "frameCount": 11820,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2418,11 +2384,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:37"
+      "received_at": "2026-10-24 05:07:13"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7260,
+      "frameCount": 11940,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2459,11 +2425,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:38"
+      "received_at": "2026-10-24 05:07:15"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7320,
+      "frameCount": 12000,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2500,11 +2466,11 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:39"
+      "received_at": "2026-10-24 05:07:16"
     },
     {
       "source": "mirror.js",
-      "frameCount": 7380,
+      "frameCount": 12060,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
@@ -2541,7 +2507,7 @@
         "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-24 03:14:40"
+      "received_at": "2026-10-24 05:07:17"
     }
   ],
   "latest_app.js": {
@@ -2644,6 +2610,80 @@
       "innerHeight": 803,
       "devicePixelRatio": 1.5
     },
-    "received_at": "2026-10-24 03:11:53"
+    "received_at": "2026-10-24 05:03:10"
+  },
+  "latest_mirror_first_frame_output": {
+    "source": "mirror.js",
+    "event": "first_frame_output",
+    "codedW": 1216,
+    "codedH": 2656,
+    "displayW": 1216,
+    "displayH": 2656,
+    "received_at": "2026-10-24 05:03:09"
+  },
+  "latest_mirror_frame": {
+    "source": "mirror.js",
+    "frameCount": 12060,
+    "f_type": "VideoFrame",
+    "f_dims": {
+      "codedW": 1216,
+      "codedH": 2656,
+      "displayW": 1216,
+      "displayH": 2656,
+      "visibleRect": {
+        "x": 0,
+        "y": 0,
+        "width": 1216,
+        "height": 2656
+      }
+    },
+    "canvas_attr": {
+      "width": 1216,
+      "height": 2656,
+      "styleW": "calc(100% + 3px)",
+      "styleH": "calc(100% + 9px)"
+    },
+    "canvas_rect": {
+      "top": 0,
+      "left": 0,
+      "width": 383,
+      "height": 769
+    },
+    "body_rect": {
+      "top": 0,
+      "left": 0,
+      "width": 380,
+      "height": 760
+    },
+    "win_inner": {
+      "w": 380,
+      "h": 760,
+      "dpr": 1.5
+    },
+    "received_at": "2026-10-24 05:07:17"
+  },
+  "latest_mirror_mirror_js_loaded": {
+    "source": "mirror.js",
+    "event": "mirror_js_loaded",
+    "innerWidth": 380,
+    "innerHeight": 723,
+    "dpr": 1.5,
+    "received_at": "2026-10-24 05:03:09"
+  },
+  "latest_mirror_codec_check": {
+    "source": "mirror.js",
+    "event": "codec_check",
+    "codec": "hev1.1.6.L150.B0",
+    "supported": true,
+    "descriptionLength": 133,
+    "parsedDimensions": {
+      "width": 1216,
+      "height": 2656
+    },
+    "configuredDimensions": {
+      "width": 1216,
+      "height": 2656
+    },
+    "received_at": "2026-10-24 05:03:09"
   }
 }

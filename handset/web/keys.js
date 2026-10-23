@@ -120,12 +120,12 @@
     return [];
   }
 
-  async function triggerShortcut(action, frameDataUrl = null, waitResult = false, frameHistory = []) {
+  async function triggerShortcut(action, frameDataUrl = null, waitResult = false, frameHistory = [], skipOcr = false) {
     try {
       const resp = await fetch("/api/keyboard/shortcut", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, frameDataUrl, frameHistory, waitResult }),
+        body: JSON.stringify({ action, frameDataUrl, frameHistory, waitResult, skipOcr }),
       });
       return await resp.json();
     } catch (err) {
@@ -203,7 +203,7 @@
           return;
         }
 
-        // Cross-platform shortcuts (Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z)
+        // Cross-platform shortcuts
         if (window.HandsetKeyboardSettings?.crossPlatformShortcuts) {
           // If Control key alone is pressed, DO NOT forward 0xE0 to iOS to avoid modifier conflicts
           if (e.code === "ControlLeft" || e.code === "ControlRight") {
@@ -213,52 +213,64 @@
           const isCtrlOrMeta = (e.ctrlKey || e.metaKey);
           const isAlt = e.altKey;
 
-          if (isCtrlOrMeta || isAlt) {
+          // Cross-platform shortcuts via Alt:
+          // Alt + C: Copy iPhone Text to PC Clipboard (triggers OCR with UI feedback)
+          if (isAlt && !isCtrlOrMeta && e.code === "KeyC") {
+            e.preventDefault();
+            e.stopPropagation();
+            ignoreKeyUpUntil = Date.now() + 400;
+            pressed.clear();
+            flush();
+            if (typeof window.top?.triggerCopyIphoneTextWithFeedback === "function") {
+              window.top.triggerCopyIphoneTextWithFeedback();
+            } else if (typeof window.triggerCopyIphoneTextWithFeedback === "function") {
+              window.triggerCopyIphoneTextWithFeedback();
+            }
+            return;
+          }
+
+          // Alt + V: Force Paste PC Clipboard Text to iPhone (with UI feedback)
+          if (isAlt && !isCtrlOrMeta && e.code === "KeyV") {
+            e.preventDefault();
+            e.stopPropagation();
+            ignoreKeyUpUntil = Date.now() + 500;
+            pressed.clear();
+            flush();
+            if (typeof window.top?.triggerPastePcTextWithFeedback === "function") {
+              window.top.triggerPastePcTextWithFeedback();
+            } else if (typeof window.triggerPastePcTextWithFeedback === "function") {
+              window.triggerPastePcTextWithFeedback();
+            } else {
+              triggerPasteFromPc(true);
+            }
+            return;
+          }
+
+          // Pure Internal iPhone Shortcuts via Ctrl/Cmd (Zero-Delay, Native iOS):
+          if (isCtrlOrMeta && !isAlt) {
+            // Ctrl + C: Instant native iOS Copy (Cmd+C, skip OCR, keep Windows clipboard intact)
             if (e.code === "KeyC") {
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
-              if (typeof window.top?.triggerCopyIphoneTextWithFeedback === "function") {
-                window.top.triggerCopyIphoneTextWithFeedback();
-              } else if (typeof window.triggerCopyIphoneTextWithFeedback === "function") {
-                window.triggerCopyIphoneTextWithFeedback();
-              } else {
-                (async () => {
-                  await flushTypedQueue();
-                  const frameDataUrl = captureMirrorCanvasDataUrl();
-                  const frameHistory = getMirrorFrameHistory();
-                  const res = await triggerShortcut("copy", frameDataUrl, true, frameHistory);
-                  if (res?.text && navigator.clipboard?.writeText) {
-                    try { await navigator.clipboard.writeText(res.text); } catch (_) {}
-                  }
-                })();
-              }
+              triggerShortcut("copy", null, false, [], true);
               return;
             }
+
+            // Ctrl + V: Smart Paste (instant native iOS Cmd+V if internal copy, or PC text if copied on PC)
             if (e.code === "KeyV") {
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 500;
               pressed.clear();
               flush();
-              if (isAlt || window.HandsetKeyboardSettings?.pastePcClipboard) {
-                if (typeof window.top?.triggerPastePcTextWithFeedback === "function") {
-                  window.top.triggerPastePcTextWithFeedback();
-                } else if (typeof window.triggerPastePcTextWithFeedback === "function") {
-                  window.triggerPastePcTextWithFeedback();
-                } else {
-                  triggerPasteFromPc(false);
-                }
-              } else {
-                triggerShortcut("paste-ios");
-              }
+              triggerPasteFromPc(false);
               return;
             }
-          }
 
-          if (isCtrlOrMeta && !isAlt) {
+            // Ctrl + A: Native iOS Select All
             if (e.code === "KeyA") {
               e.preventDefault();
               e.stopPropagation();
@@ -268,21 +280,19 @@
               triggerShortcut("select-all");
               return;
             }
+
+            // Ctrl + X: Native iOS Cut (Cmd+X, skip OCR)
             if (e.code === "KeyX") {
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
-              await flushTypedQueue();
-              const frameDataUrl = captureMirrorCanvasDataUrl();
-              const frameHistory = getMirrorFrameHistory();
               pressed.clear();
               flush();
-              const res = await triggerShortcut("cut", frameDataUrl, true, frameHistory);
-              if (res?.text && navigator.clipboard?.writeText) {
-                try { await navigator.clipboard.writeText(res.text); } catch (_) {}
-              }
+              triggerShortcut("cut", null, false, [], true);
               return;
             }
+
+            // Ctrl + Z: Native iOS Undo
             if (e.code === "KeyZ") {
               e.preventDefault();
               e.stopPropagation();
