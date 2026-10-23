@@ -1,0 +1,209 @@
+{
+  "latest_app.js": {
+    "source": "app.js",
+    "elements": {
+      "mainBody": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 767.3333740234375
+        },
+        "computedHeight": "767.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "flex",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "displayCol": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 767.3333740234375
+        },
+        "computedHeight": "767.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "flex",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "workspace": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 723.3333740234375
+        },
+        "computedHeight": "723.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "block",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "stage": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 723.3333740234375
+        },
+        "computedHeight": "723.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "block",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "phoneShell": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 723.3333740234375
+        },
+        "computedHeight": "723.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "block",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "phoneScreen": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 723.3333740234375
+        },
+        "computedHeight": "723.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "block",
+        "computedPosition": "relative",
+        "aspectRatio": "auto"
+      },
+      "screenView": {
+        "rect": {
+          "top": 36,
+          "left": 0,
+          "width": 366,
+          "height": 723.3333740234375
+        },
+        "computedHeight": "723.333px",
+        "computedWidth": "366px",
+        "computedDisplay": "block",
+        "computedPosition": "absolute",
+        "aspectRatio": "auto"
+      }
+    },
+    "window": {
+      "innerWidth": 366,
+      "innerHeight": 803,
+      "devicePixelRatio": 1.5
+    },
+    "received_at": "2026-10-23 07:54:30"
+  },
+  "last_updated": "2026-10-23 07:54:30",
+  "history": [
+    {
+      "source": "app.js",
+      "elements": {
+        "mainBody": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 767.3333740234375
+          },
+          "computedHeight": "767.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "flex",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "displayCol": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 767.3333740234375
+          },
+          "computedHeight": "767.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "flex",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "workspace": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 723.3333740234375
+          },
+          "computedHeight": "723.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "block",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "stage": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 723.3333740234375
+          },
+          "computedHeight": "723.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "block",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "phoneShell": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 723.3333740234375
+          },
+          "computedHeight": "723.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "block",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "phoneScreen": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 723.3333740234375
+          },
+          "computedHeight": "723.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "block",
+          "computedPosition": "relative",
+          "aspectRatio": "auto"
+        },
+        "screenView": {
+          "rect": {
+            "top": 36,
+            "left": 0,
+            "width": 366,
+            "height": 723.3333740234375
+          },
+          "computedHeight": "723.333px",
+          "computedWidth": "366px",
+          "computedDisplay": "block",
+          "computedPosition": "absolute",
+          "aspectRatio": "auto"
+        }
+      },
+      "window": {
+        "innerWidth": 366,
+        "innerHeight": 803,
+        "devicePixelRatio": 1.5
+      },
+      "received_at": "2026-10-23 07:54:30"
+    }
+  ]
+}

@@ -23,6 +23,22 @@ function setStatus(text, tone) {
   statusEl.className = "mirror-status" + (tone ? ` ${tone}` : "");
 }
 
+function postDebugLog(event, data = {}) {
+  try {
+    fetch("/debug-metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "mirror.js", event, ...data }),
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+postDebugLog("mirror_js_loaded", {
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight,
+  dpr: window.devicePixelRatio,
+});
+
 function fitCanvas() {
   if (!canvas.width || !canvas.height) return;
   const parent = canvas.parentElement || document.body;
@@ -387,6 +403,56 @@ async function fetchCodecWithRetry() {
   throw new Error(lastErr || "codec unreachable");
 }
 
+function sendMirrorMetrics(f, count) {
+  try {
+    let vr = null;
+    if (f.visibleRect) {
+      vr = {
+        x: f.visibleRect.x,
+        y: f.visibleRect.y,
+        width: f.visibleRect.width,
+        height: f.visibleRect.height,
+      };
+    }
+    const cr = canvas.getBoundingClientRect();
+    const br = document.body ? document.body.getBoundingClientRect() : null;
+    const payload = {
+      source: "mirror.js",
+      frameCount: count,
+      f_type: f.constructor ? f.constructor.name : typeof f,
+      f_dims: {
+        codedW: f.codedWidth,
+        codedH: f.codedHeight,
+        displayW: f.displayWidth,
+        displayH: f.displayHeight,
+        w: f.width,
+        h: f.height,
+        visibleRect: vr,
+      },
+      canvas_attr: {
+        width: canvas.width,
+        height: canvas.height,
+        styleW: canvas.style.width,
+        styleH: canvas.style.height,
+      },
+      canvas_rect: cr ? { top: cr.top, left: cr.left, width: cr.width, height: cr.height } : null,
+      body_rect: br ? { top: br.top, left: br.left, width: br.width, height: br.height } : null,
+      win_inner: {
+        w: window.innerWidth,
+        h: window.innerHeight,
+        dpr: window.devicePixelRatio,
+      },
+    };
+    fetch("/debug-metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  } catch (err) {
+    console.error("sendMirrorMetrics error:", err);
+  }
+}
+
 function drawFrame(f) {
   const sideways = Math.abs(visualRotation % 180) === 90;
   const fw = f.displayWidth;
@@ -407,6 +473,10 @@ function drawFrame(f) {
   if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
   ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH);
   ctx.restore();
+
+  if (frameCount === 1 || frameCount === 15) {
+    sendMirrorMetrics(f, frameCount);
+  }
 }
 
 function drawPending() {
@@ -462,6 +532,7 @@ async function run(generation) {
 
   const decoderConfig = { codec, description, optimizeForLatency: true };
   const support = await VideoDecoder.isConfigSupported({ codec, description });
+  postDebugLog("codec_check", { codec, supported: support.supported });
   if (!support.supported) {
     setStatus("This browser cannot decode the iPhone video stream.", "warn");
     return;

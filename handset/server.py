@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -46,6 +47,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/screen":
             self._json(screen_status())
             return
+        if path == "/debug-metrics":
+            log_path = ROOT.parent.parent / "debug_metrics.json"
+            if log_path.is_file():
+                try:
+                    self._json(json.loads(log_path.read_text(encoding="utf-8")))
+                    return
+                except Exception:
+                    pass
+            self._json({"history": []})
+            return
         if path.startswith("/api/devices/"):
             udid = unquote(path.removeprefix("/api/devices/")).strip("/")
             if not udid or "/" in udid:
@@ -57,6 +68,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/debug-metrics":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except Exception:
+                payload = {}
+            self._record_debug_metrics(payload)
+            self._json({"ok": True})
+            return
         if path == MIRROR_PREFIX or path.startswith(f"{MIRROR_PREFIX}/"):
             self._proxy_mirror("POST")
             return
@@ -88,6 +109,38 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:
         return
+
+    def _record_debug_metrics(self, payload: dict) -> None:
+        payload["received_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        source = payload.get("source", "unknown")
+        print(f"\n==================== [DEBUG-METRICS: {source}] ====================", flush=True)
+        print(json.dumps(payload, indent=2), flush=True)
+        print("==================================================================\n", flush=True)
+        
+        log_path = ROOT.parent.parent / "debug_metrics.json"
+        data = {}
+        if log_path.is_file():
+            try:
+                data = json.loads(log_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        
+        data[f"latest_{source}"] = payload
+        data["last_updated"] = payload["received_at"]
+        history = data.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(payload)
+        if len(history) > 60:
+            history = history[-60:]
+        data["history"] = history
+        
+        try:
+            log_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"Failed to write debug_metrics.json: {e}", flush=True)
 
     def _device(self, udid: str) -> None:
         try:

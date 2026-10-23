@@ -1,8 +1,17 @@
 """Native Frameless Launcher for Pane using pywebview (Edge WebView2 on Windows)."""
 
+import os
 import sys
 import time
 import urllib.request
+
+# Anti-crop flags: matikan bug D3D11 hardware video decode & GPU memory buffer di Edge WebView2
+os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+    "--disable-accelerated-video-decode "
+    "--disable-gpu-memory-buffer-video-frames "
+    "--enable-features=PlatformHEVCDecoderSupport"
+)
+
 import webview
 
 

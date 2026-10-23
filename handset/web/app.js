@@ -316,6 +316,50 @@ function renderDetail(device) {
   if (list.childElementCount) detail.append(list);
 }
 
+function sendAppMetrics() {
+  try {
+    const getEl = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const s = window.getComputedStyle(el);
+      return {
+        rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+        computedHeight: s.height,
+        computedWidth: s.width,
+        computedDisplay: s.display,
+        computedPosition: s.position,
+        aspectRatio: s.aspectRatio,
+      };
+    };
+
+    const metrics = {
+      source: "app.js",
+      elements: {
+        mainBody: getEl(".main-body"),
+        displayCol: getEl(".display-col"),
+        workspace: getEl(".workspace"),
+        stage: getEl(".stage"),
+        phoneShell: getEl("#phone-shell"),
+        phoneScreen: getEl("#phone-screen"),
+        screenView: getEl("iframe#screen-view"),
+      },
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      },
+    };
+    fetch("/debug-metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(metrics),
+    }).catch(() => {});
+  } catch (err) {
+    console.error("sendAppMetrics error:", err);
+  }
+}
+
 function renderScreen(screen) {
   if (!screen) return;
   const mirroring = screen.phase === "running";
@@ -354,6 +398,10 @@ function renderScreen(screen) {
     setTimeout(() => {
       screenView.contentWindow?.postMessage({ type: "resize" }, "*");
     }, 200);
+
+    // Kirim telemetri ukuran elemen DOM saat mirroring aktif
+    setTimeout(sendAppMetrics, 100);
+    setTimeout(sendAppMetrics, 600);
     return;
   }
 
