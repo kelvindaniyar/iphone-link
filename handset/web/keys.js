@@ -19,11 +19,46 @@
     return m;
   })();
 
-  // Ctrl (or Win/Cmd) + these keys becomes Cmd + key on the iPhone, so
-  // select-all, copy, paste, cut and undo work inside iOS text fields.
-  // Every other Ctrl shortcut stays with the browser.
+  // Apple Command / GUI modifier (Left GUI = 0xe3, HID modifier 0x08).
   const CMD = 0xe3;
   const CMD_KEYS = new Set(["KeyA", "KeyC", "KeyV", "KeyX", "KeyZ"]);
+
+  // Global Keyboard Settings (persisted and synced across parent and iframe)
+  window.HandsetKeyboardSettings = window.HandsetKeyboardSettings || {
+    crossPlatformShortcuts: true,
+    pastePcClipboard: true,
+    keepOnscreenKeyboard: false,
+  };
+
+  async function triggerPasteFromPc() {
+    try {
+      let clipText = null;
+      if (navigator.clipboard?.readText) {
+        try {
+          clipText = await navigator.clipboard.readText();
+        } catch (_) {}
+      }
+      await fetch("/api/keyboard/paste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: clipText }),
+      });
+    } catch (err) {
+      console.warn("triggerPasteFromPc error:", err);
+    }
+  }
+
+  async function triggerToggleOnscreenKeyboard() {
+    try {
+      await fetch("/api/keyboard/toggle-onscreen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    } catch (err) {
+      console.warn("triggerToggleOnscreenKeyboard error:", err);
+    }
+  }
 
   function isTextField(el) {
     return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
@@ -32,6 +67,7 @@
   function attach({ post, enabled }) {
     const pressed = new Set();
     let chain = Promise.resolve();
+    let keepKbTimer = null;
 
     const flush = () => {
       const snapshot = [...pressed];
@@ -43,18 +79,71 @@
       flush();
     };
 
+    const checkKeepOnscreenKeyboard = () => {
+      if (!window.HandsetKeyboardSettings?.keepOnscreenKeyboard) return;
+      if (pressed.size === 0) {
+        clearTimeout(keepKbTimer);
+        keepKbTimer = setTimeout(() => {
+          triggerToggleOnscreenKeyboard();
+        }, 300);
+      }
+    };
+
     window.addEventListener(
       "keydown",
       (e) => {
         if (!enabled() || isTextField(e.target)) return;
+
+        // Shortcut Ctrl + K: Toggle iPhone On-Screen Keyboard
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyK") {
+          e.preventDefault();
+          e.stopPropagation();
+          triggerToggleOnscreenKeyboard();
+          return;
+        }
+
         const shortcut = e.ctrlKey || e.metaKey;
-        if (shortcut && !CMD_KEYS.has(e.code)) return;
+        if (shortcut) {
+          // If cross-platform shortcuts are disabled, allow standard browser actions
+          if (!window.HandsetKeyboardSettings?.crossPlatformShortcuts) return;
+
+          // If not one of the supported iOS command keys, ignore
+          if (!CMD_KEYS.has(e.code)) return;
+
+          // Special handling for Ctrl+V (Paste)
+          if (e.code === "KeyV") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.HandsetKeyboardSettings?.pastePcClipboard) {
+              triggerPasteFromPc();
+            } else {
+              // Native iOS paste
+              if (e.repeat) return;
+              pressed.add(CMD);
+              pressed.add(0x19);
+              flush();
+            }
+            return;
+          }
+
+          // Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+Z
+          const usage = CODE_TO_HID[e.code];
+          if (usage === undefined) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          pressed.add(CMD);
+          pressed.add(usage);
+          flush();
+          return;
+        }
+
+        // Regular keystroke
         const usage = CODE_TO_HID[e.code];
         if (usage === undefined) return;
         e.preventDefault();
         e.stopPropagation();
         if (e.repeat) return;
-        if (shortcut) pressed.add(CMD);
         pressed.add(usage);
         flush();
       },
@@ -74,7 +163,10 @@
           e.preventDefault();
           changed = true;
         }
-        if (changed) flush();
+        if (changed) {
+          flush();
+          checkKeepOnscreenKeyboard();
+        }
       },
       true,
     );
@@ -86,5 +178,9 @@
     return { releaseAll };
   }
 
-  window.HandsetKeys = { attach };
+  window.HandsetKeys = {
+    attach,
+    pasteFromPc: triggerPasteFromPc,
+    toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,
+  };
 })();

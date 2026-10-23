@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_trackpad_speed_ui";
+const MIRROR_PAGE = "/mirror.html?v=20261023_tahap18_shortcuts_keyboard";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -34,6 +34,22 @@ try {
 } catch (_) {
   currentTrackpadSpeed = 100;
 }
+
+// Cross-Platform Keyboard Shortcuts & Clipboard Settings
+let currentKeyboardSettings = {
+  crossPlatformShortcuts: true,
+  pastePcClipboard: true,
+  keepOnscreenKeyboard: false,
+};
+try {
+  const sShortcuts = localStorage.getItem("pane-shortcuts");
+  if (sShortcuts !== null) currentKeyboardSettings.crossPlatformShortcuts = sShortcuts === "true";
+  const sPaste = localStorage.getItem("pane-paste-pc");
+  if (sPaste !== null) currentKeyboardSettings.pastePcClipboard = sPaste === "true";
+  const sKeepKb = localStorage.getItem("pane-keep-keyboard");
+  if (sKeepKb !== null) currentKeyboardSettings.keepOnscreenKeyboard = sKeepKb === "true";
+} catch (_) {}
+window.HandsetKeyboardSettings = currentKeyboardSettings;
 
 // 4-Sided Crop Management (Top, Bottom, Left, Right)
 const DEFAULT_CROP = { top: 0, bottom: 0, left: 0, right: 0 };
@@ -74,6 +90,20 @@ async function fetchUserSettings() {
       if (res.trackpadSpeed !== undefined) {
         applyTrackpadSpeed(res.trackpadSpeed, true);
       }
+      if (
+        res.crossPlatformShortcuts !== undefined ||
+        res.pastePcClipboard !== undefined ||
+        res.keepOnscreenKeyboard !== undefined
+      ) {
+        applyKeyboardSettings(
+          {
+            crossPlatformShortcuts: res.crossPlatformShortcuts,
+            pastePcClipboard: res.pastePcClipboard,
+            keepOnscreenKeyboard: res.keepOnscreenKeyboard,
+          },
+          true
+        );
+      }
       if (res.audioVolume !== undefined) {
         const volSlider = document.querySelector("#audio-vol-slider");
         const volVal = document.querySelector("#audio-vol-val");
@@ -102,6 +132,9 @@ async function saveUserSettings() {
       fitMode: currentFitMode,
       theme: currentTheme,
       trackpadSpeed: currentTrackpadSpeed,
+      crossPlatformShortcuts: currentKeyboardSettings.crossPlatformShortcuts,
+      pastePcClipboard: currentKeyboardSettings.pastePcClipboard,
+      keepOnscreenKeyboard: currentKeyboardSettings.keepOnscreenKeyboard,
     });
 
     applyCrop(currentCrop, true);
@@ -434,11 +467,141 @@ function initTrackpadSpeedControls() {
   btnSave?.addEventListener("click", saveTrackpadSpeed);
 }
 
+function applyKeyboardSettings(settings, syncInputs = false) {
+  if (settings) {
+    if (settings.crossPlatformShortcuts !== undefined) {
+      currentKeyboardSettings.crossPlatformShortcuts = Boolean(settings.crossPlatformShortcuts);
+    }
+    if (settings.pastePcClipboard !== undefined) {
+      currentKeyboardSettings.pastePcClipboard = Boolean(settings.pastePcClipboard);
+    }
+    if (settings.keepOnscreenKeyboard !== undefined) {
+      currentKeyboardSettings.keepOnscreenKeyboard = Boolean(settings.keepOnscreenKeyboard);
+    }
+  }
+
+  window.HandsetKeyboardSettings = currentKeyboardSettings;
+  localStorage.setItem("pane-shortcuts", String(currentKeyboardSettings.crossPlatformShortcuts));
+  localStorage.setItem("pane-paste-pc", String(currentKeyboardSettings.pastePcClipboard));
+  localStorage.setItem("pane-keep-keyboard", String(currentKeyboardSettings.keepOnscreenKeyboard));
+
+  if (syncInputs) {
+    document.querySelectorAll("[data-shortcut-choice]").forEach((btn) => {
+      const active = (btn.dataset.shortcutChoice === "true") === currentKeyboardSettings.crossPlatformShortcuts;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+
+    document.querySelectorAll("[data-paste-pc-choice]").forEach((btn) => {
+      const active = (btn.dataset.pastePcChoice === "true") === currentKeyboardSettings.pastePcClipboard;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+
+    document.querySelectorAll("[data-keep-keyboard-choice]").forEach((btn) => {
+      const active = (btn.dataset.keepKeyboardChoice === "true") === currentKeyboardSettings.keepOnscreenKeyboard;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+  }
+
+  try {
+    screenView?.contentWindow?.postMessage(
+      { type: "set-keyboard-settings", settings: currentKeyboardSettings },
+      "*"
+    );
+  } catch (_) {}
+}
+
+async function saveKeyboardSettings() {
+  try {
+    await postJson("/api/settings", {
+      crossPlatformShortcuts: currentKeyboardSettings.crossPlatformShortcuts,
+      pastePcClipboard: currentKeyboardSettings.pastePcClipboard,
+      keepOnscreenKeyboard: currentKeyboardSettings.keepOnscreenKeyboard,
+    });
+  } catch (err) {
+    console.warn("saveKeyboardSettings error:", err);
+  }
+}
+
+function initKeyboardSettingsControls() {
+  document.querySelectorAll("[data-shortcut-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyKeyboardSettings({ crossPlatformShortcuts: btn.dataset.shortcutChoice === "true" }, true);
+      saveKeyboardSettings();
+    });
+  });
+
+  document.querySelectorAll("[data-paste-pc-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyKeyboardSettings({ pastePcClipboard: btn.dataset.pastePcChoice === "true" }, true);
+      saveKeyboardSettings();
+    });
+  });
+
+  document.querySelectorAll("[data-keep-keyboard-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyKeyboardSettings({ keepOnscreenKeyboard: btn.dataset.keepKeyboardChoice === "true" }, true);
+      saveKeyboardSettings();
+    });
+  });
+
+  const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
+  btnPastePcNow?.addEventListener("click", async () => {
+    btnPastePcNow.disabled = true;
+    const oldText = btnPastePcNow.textContent;
+    btnPastePcNow.textContent = "Pastes PC Text…";
+    try {
+      if (window.HandsetKeys?.pasteFromPc) {
+        await window.HandsetKeys.pasteFromPc();
+      } else {
+        await postJson("/api/keyboard/paste", {});
+      }
+      btnPastePcNow.textContent = "✓ Pasted!";
+      btnPastePcNow.classList.add("is-saved");
+    } catch (_) {
+      btnPastePcNow.textContent = "Paste Failed";
+    } finally {
+      setTimeout(() => {
+        btnPastePcNow.textContent = oldText;
+        btnPastePcNow.classList.remove("is-saved");
+        btnPastePcNow.disabled = false;
+      }, 1200);
+    }
+  });
+
+  const btnToggleOnscreen = document.querySelector("#btn-toggle-onscreen-kb");
+  btnToggleOnscreen?.addEventListener("click", async () => {
+    btnToggleOnscreen.disabled = true;
+    const oldText = btnToggleOnscreen.textContent;
+    btnToggleOnscreen.textContent = "Toggling…";
+    try {
+      if (window.HandsetKeys?.toggleOnscreenKeyboard) {
+        await window.HandsetKeys.toggleOnscreenKeyboard();
+      } else {
+        await postJson("/api/keyboard/toggle-onscreen", {});
+      }
+      btnToggleOnscreen.textContent = "✓ Toggled!";
+      btnToggleOnscreen.classList.add("is-saved");
+    } catch (_) {
+      btnToggleOnscreen.textContent = "Failed";
+    } finally {
+      setTimeout(() => {
+        btnToggleOnscreen.textContent = oldText;
+        btnToggleOnscreen.classList.remove("is-saved");
+        btnToggleOnscreen.disabled = false;
+      }, 1000);
+    }
+  });
+}
+
 function syncSettingsToIframe() {
   syncThemeToIframe();
   applyFitMode(currentFitMode);
   applyCrop(currentCrop, true);
   applyTrackpadSpeed(currentTrackpadSpeed, true);
+  applyKeyboardSettings(currentKeyboardSettings, true);
 }
 
 screenView?.addEventListener("load", syncSettingsToIframe);
@@ -447,8 +610,10 @@ applyTheme(currentTheme);
 applyFitMode(currentFitMode);
 applyCrop(currentCrop, true);
 applyTrackpadSpeed(currentTrackpadSpeed, true);
+applyKeyboardSettings(currentKeyboardSettings, true);
 initCropControls();
 initTrackpadSpeedControls();
+initKeyboardSettingsControls();
 initAudioControls();
 fetchUserSettings();
 

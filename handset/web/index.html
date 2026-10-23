@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_trackpad_speed_ui">
+  <link rel="stylesheet" href="/app.css?v=20261023_tahap18_shortcuts_keyboard">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -255,6 +255,62 @@
             </div>
           </section>
 
+          <!-- Keyboard & Cross-Platform Shortcuts Card -->
+          <section class="card panel-keyboard-shortcuts" id="panel-keyboard-shortcuts">
+            <span class="drawer-section-label">Keyboard & Shortcuts</span>
+
+            <!-- Toggle 1: Cross-Platform Shortcuts -->
+            <div class="setting-toggle-item">
+              <div class="setting-toggle-header">
+                <span class="setting-label">⚡ Cross-Platform Shortcuts</span>
+                <span class="setting-hint">Ctrl ➔ Cmd</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Cross-Platform Shortcuts">
+                <button type="button" class="seg is-active" data-shortcut-choice="true" role="radio" aria-checked="true">ON</button>
+                <button type="button" class="seg" data-shortcut-choice="false" role="radio" aria-checked="false">OFF</button>
+              </div>
+            </div>
+
+            <!-- Toggle 2: Ctrl+V Pastes PC Clipboard -->
+            <div class="setting-toggle-item" style="margin-top: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">📋 Ctrl+V Pastes PC Clipboard</span>
+                <span class="setting-hint">PC ➔ iPhone</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Paste PC Clipboard">
+                <button type="button" class="seg is-active" data-paste-pc-choice="true" role="radio" aria-checked="true">ON</button>
+                <button type="button" class="seg" data-paste-pc-choice="false" role="radio" aria-checked="false">OFF</button>
+              </div>
+              <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now">
+                📋 Paste PC Text Now
+              </button>
+            </div>
+
+            <!-- Toggle 3: Keep iPhone Keyboard Visible -->
+            <div class="setting-toggle-item" style="margin-top: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">📱 Keep iPhone Keyboard Visible</span>
+                <span class="setting-hint">On-Screen Keyboard</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Keep Onscreen Keyboard">
+                <button type="button" class="seg" data-keep-keyboard-choice="true" role="radio" aria-checked="false">ON</button>
+                <button type="button" class="seg is-active" data-keep-keyboard-choice="false" role="radio" aria-checked="true">OFF</button>
+              </div>
+              <button type="button" class="ctl ctl-sm btn-action-block" id="btn-toggle-onscreen-kb">
+                ⌨️ Toggle iPhone On-Screen Keyboard
+              </button>
+            </div>
+
+            <!-- Badge / Shortcut List -->
+            <div class="shortcuts-badge-list">
+              <span class="shortcut-pill">Ctrl+A (Select All)</span>
+              <span class="shortcut-pill">Ctrl+C (Copy)</span>
+              <span class="shortcut-pill">Ctrl+V (Paste)</span>
+              <span class="shortcut-pill">Ctrl+Z (Undo)</span>
+              <span class="shortcut-pill">Ctrl+K (Keyboard)</span>
+            </div>
+          </section>
+
           <section class="card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
@@ -343,7 +399,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_trackpad_speed_ui"></script>
-  <script src="/app.js?v=20261023_trackpad_speed_ui"></script>
+  <script src="/keys.js?v=20261023_tahap18_shortcuts_keyboard"></script>
+  <script src="/app.js?v=20261023_tahap18_shortcuts_keyboard"></script>
 </body>
 </html>

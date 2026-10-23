@@ -498,6 +498,12 @@ window.addEventListener("message", (e) => {
     }
     return;
   }
+  if (d.type === "set-keyboard-settings") {
+    if (d.settings) {
+      window.HandsetKeyboardSettings = { ...window.HandsetKeyboardSettings, ...d.settings };
+    }
+    return;
+  }
 
   if (e.origin !== window.location.origin) return;
   if (d.source !== "handset") return;

@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import json
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -34,7 +35,96 @@ DEFAULT_SETTINGS = {
     "audioSinkEnabled": False,
     "audioVolume": 100,
     "trackpadSpeed": 100,
+    "crossPlatformShortcuts": True,
+    "pastePcClipboard": True,
+    "keepOnscreenKeyboard": False,
 }
+
+
+def get_windows_clipboard_text() -> str | None:
+    """Read plain/unicode text from the Windows PC clipboard."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if not user32.OpenClipboard(0):
+            return None
+        try:
+            CF_UNICODETEXT = 13
+            h_clip = user32.GetClipboardData(CF_UNICODETEXT)
+            if not h_clip:
+                return None
+            p_text = kernel32.GlobalLock(h_clip)
+            if not p_text:
+                return None
+            try:
+                return ctypes.c_wchar_p(p_text).value
+            finally:
+                kernel32.GlobalUnlock(h_clip)
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:
+        print(f"get_windows_clipboard_text error: {e}", flush=True)
+        return None
+
+
+def paste_to_iphone(text: str | None = None) -> dict:
+    """Send text to the iPhone pasteboard, then trigger Cmd + V (0xe3 + 0x19)."""
+    if text is None:
+        text = get_windows_clipboard_text()
+    if text:
+        try:
+            req = urllib.request.Request(
+                f"http://{STREAM_HOST}:{STREAM_PORT}/clipboard",
+                data=json.dumps({"text": text}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                pass
+        except Exception as e:
+            print(f"paste_to_iphone set clipboard notice: {e}", flush=True)
+
+    # Trigger Cmd (0xe3) + V (0x19)
+    try:
+        req_down = urllib.request.Request(
+            f"http://{STREAM_HOST}:{STREAM_PORT}/key",
+            data=json.dumps({"usages": [0xE3, 0x19]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_down, timeout=3) as resp:
+            pass
+        time.sleep(0.04)
+        req_up = urllib.request.Request(
+            f"http://{STREAM_HOST}:{STREAM_PORT}/key",
+            data=json.dumps({"usages": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_up, timeout=3) as resp:
+            pass
+        return {"ok": True, "pasted": True, "length": len(text) if text else 0}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def toggle_onscreen_keyboard() -> dict:
+    """Send HID Consumer button signals (0x029D AL Keyboard Layout & 0x00B8 Eject) to toggle iOS virtual keyboard."""
+    success = False
+    for btn_name in ("keyboard-toggle", "eject"):
+        try:
+            req = urllib.request.Request(
+                f"http://{STREAM_HOST}:{STREAM_PORT}/button",
+                data=json.dumps({"name": btn_name, "state": "press"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                success = True
+        except Exception:
+            pass
+    return {"ok": success}
 
 
 def load_user_settings() -> dict:
@@ -68,6 +158,8 @@ def save_user_settings(new_settings: dict) -> dict:
                 current["trackpadSpeed"] = max(30, min(200, int(v or 100)))
             except Exception:
                 current["trackpadSpeed"] = 100
+        elif k in ("crossPlatformShortcuts", "pastePcClipboard", "keepOnscreenKeyboard"):
+            current[k] = bool(v)
         elif k in current:
             current[k] = v
     try:
@@ -169,6 +261,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/audio/pair":
             self._json(audio_manager.open_bluetooth_settings())
+            return
+        if path == "/api/keyboard/paste":
+            self._json(paste_to_iphone(payload.get("text")))
+            return
+        if path == "/api/keyboard/toggle-onscreen":
+            self._json(toggle_onscreen_keyboard())
             return
 
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None

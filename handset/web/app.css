@@ -977,7 +977,8 @@ iframe[hidden],
 
 .segmented-theme,
 .segmented-fit,
-.segmented-speed {
+.segmented-speed,
+.segmented-toggle {
   margin-bottom: 0 !important;
 }
 
@@ -1042,6 +1043,83 @@ iframe[hidden],
 .btn-save-speed.is-saved {
   background: #16a34a !important;
   border-color: #22c55e !important;
+}
+
+/* Keyboard & Cross-Platform Shortcuts Panel */
+.panel-keyboard-shortcuts {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.setting-toggle-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setting-toggle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setting-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.setting-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.segmented-toggle {
+  grid-template-columns: 1fr 1fr !important;
+  margin-bottom: 4px !important;
+}
+
+.btn-action-block {
+  width: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px !important;
+  font-size: 11.5px !important;
+  font-weight: 500;
+  margin-top: 2px;
+  transition: all 0.15s ease;
+}
+
+.btn-action-block:active {
+  transform: scale(0.98);
+}
+
+.btn-action-block.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
+  color: #fff !important;
+}
+
+.shortcuts-badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.shortcut-pill {
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border-acrylic);
+  white-space: nowrap;
 }
 
 /* WinUI 3 Segmented Control (Radio Group) */

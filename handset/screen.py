@@ -118,8 +118,12 @@ def _open_tunnel(udid: str, transport: str):
 
 
 async def _serve(udid: str, transport: str) -> None:
-    from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer
+    from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
+
+    # HID Consumer Control (0x0C): 0x029D (AL Keyboard Layout), 0x00B8 (Eject) to toggle iOS virtual keyboard
+    _NAMED_BUTTONS["keyboard-toggle"] = (12, 0x029D, 0.05)
+    _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
 
     for attempt in range(2):
         async with _open_tunnel(udid, transport) as rsd:
