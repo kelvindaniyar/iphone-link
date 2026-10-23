@@ -1,6 +1,6 @@
 @echo off
 setlocal
-set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-accelerated-video-decode --disable-gpu-memory-buffer-video-frames --enable-features=PlatformHEVCDecoderSupport"
+set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
 taskkill /F /IM python.exe >nul 2>&1
 title Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
 

@@ -5,10 +5,8 @@ import sys
 import time
 import urllib.request
 
-# Anti-crop flags: matikan bug D3D11 hardware video decode & GPU memory buffer di Edge WebView2
+# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
-    "--disable-accelerated-video-decode "
-    "--disable-gpu-memory-buffer-video-frames "
     "--enable-features=PlatformHEVCDecoderSupport"
 )
 

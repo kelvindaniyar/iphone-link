@@ -128,6 +128,10 @@ class Handler(BaseHTTPRequestHandler):
             data = {}
         
         data[f"latest_{source}"] = payload
+        if source == "mirror.js" and "frameCount" in payload:
+            data["latest_mirror_frame"] = payload
+        elif source == "mirror.js" and "event" in payload:
+            data[f"latest_mirror_{payload['event']}"] = payload
         data["last_updated"] = payload["received_at"]
         history = data.get("history", [])
         if not isinstance(history, list):

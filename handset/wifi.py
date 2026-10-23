@@ -49,16 +49,16 @@ def _patch_bonjour() -> None:
     original_bind = bonjour._bind_ipv4
     original_send = bonjour._send_query_all
 
-    async def bind_ipv4(queue):
-        transport, sock = await original_bind(queue)
+    async def bind_ipv4(*args, **kwargs):
+        transport, sock = await original_bind(*args, **kwargs)
         group = socket.inet_aton(_MDNS_GROUP)
         for ip in _local_ipv4():
             with contextlib.suppress(OSError):
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, struct.pack("=4s4s", group, socket.inet_aton(ip)))
         return transport, sock
 
-    async def send_query_all(transports, pkt):
-        sent = await original_send(transports, pkt)
+    async def send_query_all(transports, pkt, *args, **kwargs):
+        sent = await original_send(transports, pkt, *args, **kwargs)
         for _, sock in transports:
             if sock.family != socket.AF_INET:
                 continue

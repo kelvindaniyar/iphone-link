@@ -474,7 +474,7 @@ function drawFrame(f) {
   ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH);
   ctx.restore();
 
-  if (frameCount === 1 || frameCount === 15) {
+  if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {
     sendMirrorMetrics(f, frameCount);
   }
 }
@@ -532,7 +532,11 @@ async function run(generation) {
 
   const decoderConfig = { codec, description, optimizeForLatency: true };
   const support = await VideoDecoder.isConfigSupported({ codec, description });
-  postDebugLog("codec_check", { codec, supported: support.supported });
+  postDebugLog("codec_check", {
+    codec,
+    supported: support.supported,
+    descriptionLength: description ? (description.byteLength || description.length) : 0,
+  });
   if (!support.supported) {
     setStatus("This browser cannot decode the iPhone video stream.", "warn");
     return;
@@ -544,6 +548,14 @@ async function run(generation) {
   const buildDecoder = () =>
     new VideoDecoder({
       output: (frame) => {
+        if (frameCount === 0) {
+          postDebugLog("first_frame_output", {
+            codedW: frame.codedWidth,
+            codedH: frame.codedHeight,
+            displayW: frame.displayWidth,
+            displayH: frame.displayHeight,
+          });
+        }
         if (pendingFrame) {
           try {
             pendingFrame.close();
@@ -556,7 +568,10 @@ async function run(generation) {
         }
         frameCount += 1;
       },
-      error: () => {
+      error: (err) => {
+        postDebugLog("decoder_error", {
+          message: err ? (err.message || String(err)) : "VideoDecoder reported error",
+        });
         needsResync = true;
         if (!autoRestartUsed && frameCount < 5) {
           autoRestartUsed = true;
@@ -569,6 +584,7 @@ async function run(generation) {
 
   let decoder = buildDecoder();
   decoder.configure(decoderConfig);
+  postDebugLog("decoder_configured", { codec, state: decoder.state });
   setStatus("Waiting for video…");
 
   let resp = null;
