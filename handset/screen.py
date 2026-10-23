@@ -544,74 +544,79 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             if ratio >= 0.55:
                 return active_line
 
-    if not raw_ocr:
+    if not raw_ocr.strip():
         return active_line if has_valid_active else ""
 
-    ocr_lines = [l.strip() for l in raw_ocr.splitlines() if len(l.strip()) >= 3]
-    if not ocr_lines:
-        ocr_lines = [l.strip() for l in raw_ocr.splitlines() if l.strip()]
+    raw_lines = [l.strip() for l in raw_ocr.splitlines()]
 
-    # If no valid candidates in history buffer, return clean OCR text directly
+    # If no valid candidates in history buffer, return clean OCR text preserving empty lines
     if not candidates:
-        result = "\r\n".join(ocr_lines)
-        return result
+        cleaned_lines = [_clean_ocr_line(l) if l else "" for l in raw_lines]
+        return "\r\n".join(cleaned_lines)
 
-    # --- Priority 2: Match OCR against historical candidates in typed_history / buffer ---
-    full_ocr = " ".join(ocr_lines).strip()
-    full_ocr_lower = full_ocr.lower()
-    ocr_words = set(full_ocr_lower.split())
+    # For single short line, we can do full match against candidate sentences
+    non_empty = [l for l in raw_lines if l]
+    if len(non_empty) <= 1:
+        full_ocr = non_empty[0] if non_empty else ""
+        full_ocr_lower = full_ocr.lower()
+        ocr_words = set(full_ocr_lower.split())
 
-    best_cand = None
-    best_score = 0.0
+        best_cand = None
+        best_score = 0.0
 
-    for cand in candidates:
-        c_strip = cand.strip()
-        if len(c_strip) < 3:
-            continue
-        if len(full_ocr) >= 5 and not _is_length_comparable(c_strip, full_ocr):
-            continue
-        c_lower = c_strip.lower()
+        for cand in candidates:
+            c_strip = cand.strip()
+            if len(c_strip) < 3:
+                continue
+            if len(full_ocr) >= 5 and not _is_length_comparable(c_strip, full_ocr):
+                continue
+            c_lower = c_strip.lower()
 
-        # Exact match
-        if c_lower == full_ocr_lower:
-            return c_strip
+            # Exact match
+            if c_lower == full_ocr_lower:
+                return c_strip
 
-        # Containment (for multi-word sentences)
-        if len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
-            score = 0.95
-        else:
-            sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
-            c_words = set(c_lower.split())
-            w_ratio = 0.0
-            if c_words and ocr_words:
-                overlap = c_words.intersection(ocr_words)
-                w_ratio = len(overlap) / float(max(len(c_words), len(ocr_words)))
-            score = max(sm_ratio, w_ratio)
+            # Containment (for multi-word sentences)
+            if len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
+                score = 0.95
+            else:
+                sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
+                c_words = set(c_lower.split())
+                w_ratio = 0.0
+                if c_words and ocr_words:
+                    overlap = c_words.intersection(ocr_words)
+                    w_ratio = len(overlap) / float(max(len(c_words), len(ocr_words)))
+                score = max(sm_ratio, w_ratio)
 
-        if has_valid_active and c_strip.lower() == active_line.lower():
-            score += 0.08
+            if has_valid_active and c_strip.lower() == active_line.lower():
+                score += 0.08
 
-        if score > best_score:
-            best_score = score
-            best_cand = c_strip
+            if score > best_score:
+                best_score = score
+                best_cand = c_strip
 
-    if best_score >= 0.55 and best_cand:
-        return best_cand
+        if best_score >= 0.55 and best_cand:
+            return best_cand
 
-    # --- Priority 3: Line-by-line correction ---
+    # --- Priority 3: Line-by-line correction strictly preserving empty lines ---
     corrected_lines = []
-    for line in ocr_lines:
-        l_lower = line.lower()
-        line_best = line
+    for line in raw_lines:
+        if not line:
+            corrected_lines.append("")
+            continue
+
+        c_line = _clean_ocr_line(line)
+        l_lower = c_line.lower()
+        line_best = c_line
         line_ratio = 0.0
         for cand in candidates:
             c_strip = cand.strip()
             if len(c_strip) < 3:
                 continue
-            if len(line) >= 5 and not _is_length_comparable(c_strip, line):
+            if len(c_line) >= 5 and not _is_length_comparable(c_strip, c_line):
                 continue
             c_lower = c_strip.lower()
-            if len(line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
+            if len(c_line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
                 line_best = c_strip
                 line_ratio = 1.0
                 break
@@ -622,14 +627,14 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         if line_ratio >= 0.55:
             corrected_lines.append(line_best)
         else:
-            corrected_lines.append(line)
+            corrected_lines.append(c_line)
 
     result = "\r\n".join(corrected_lines)
     # STRICT SAFETY GUARD: Never return 1 or 2 chars if longer text exists
-    if len(result) <= 2:
+    if len(result.strip()) <= 2:
         if has_valid_active:
             return active_line
-        if raw_ocr and len(raw_ocr) > len(result):
+        if raw_ocr.strip() and len(raw_ocr.strip()) > len(result.strip()):
             return raw_ocr
     return result
 
@@ -678,7 +683,7 @@ def _is_garbage_ocr_line(text: str) -> bool:
 
 
 def _clean_ocr_line(line: str) -> str:
-    """Clean orphan digits, trailing debris, or right-edge truncated words from line."""
+    """Clean orphan digits, trailing debris, right-edge truncated words, or selection handle typos."""
     if not line:
         return ""
     t = line.strip()
@@ -687,6 +692,9 @@ def _clean_ocr_line(line: str) -> str:
     # Auto-correct edge-truncated words due to AssistiveTouch (Tahap 29)
     t = re.sub(r'\btali evakua$', 'tali evakuasi', t)
     t = re.sub(r'\bmemperlih$', 'memperlihatkan', t)
+    # Fix selection handle occlusion & OCR typos (Tahap 30)
+    t = re.sub(r'(?:^|\b)tik-detik\b', 'detik-detik', t)
+    t = re.sub(r'\b(?:i1wa|j1wa|ilwa|jiw4)\b', 'jiwa', t)
     return t
 
 
@@ -694,6 +702,19 @@ def _pick_cleaner_line(line1: str, line2: str) -> str:
     """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits or truncated words)."""
     l1_clean = _clean_ocr_line(line1)
     l2_clean = _clean_ocr_line(line2)
+
+    # Prioritize complete "detik-detik" over truncated "tik-detik" (Tahap 30)
+    if "detik-detik" in l1_clean and "detik-detik" not in l2_clean:
+        return l1_clean
+    if "detik-detik" in l2_clean and "detik-detik" not in l1_clean:
+        return l2_clean
+
+    # Prioritize clean "jiwa" over OCR typo "i1wa" (Tahap 30)
+    if "jiwa" in l1_clean and "jiwa" not in l2_clean:
+        return l1_clean
+    if "jiwa" in l2_clean and "jiwa" not in l1_clean:
+        return l2_clean
+
     if line1 != l1_clean and line2 == l2_clean:
         return l2_clean
     if line2 != l2_clean and line1 == l1_clean:
@@ -1095,7 +1116,93 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                 output_lines.append("")
 
     joined = "\r\n".join(output_lines)
-    # Ensure clean Windows CRLF line endings (never \r\r\n or duplicate empty lines > 1)
+    return ensure_paragraph_formatting(joined, para_breaks_after)
+
+
+def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = None) -> str:
+    """
+    Final Paragraph Formatter (Tahap 30):
+    Called AS THE VERY LAST STEP before sending to Windows Clipboard.
+    Guarantees clean double newlines (\\r\\n\\r\\n) between paragraphs and single newlines (\\r\\n) within paragraphs and hashtags.
+    """
+    if not text or not text.strip():
+        return ""
+
+    raw_lines = [l.strip() for l in text.splitlines()]
+    non_empty_lines: list[str] = []
+    has_blank_after: set[int] = set()
+
+    for idx, l in enumerate(raw_lines):
+        if l:
+            non_empty_lines.append(l)
+        else:
+            if non_empty_lines:
+                has_blank_after.add(len(non_empty_lines) - 1)
+
+    if not non_empty_lines:
+        return ""
+
+    if len(non_empty_lines) <= 1:
+        return non_empty_lines[0]
+
+    # Compute average full line length
+    full_line_lengths = [len(l) for l in non_empty_lines if len(l) >= 28 and not l.startswith("#")]
+    avg_full_line_len = (sum(full_line_lengths) / len(full_line_lengths)) if full_line_lengths else 42.0
+
+    para_end_regex = re.compile(r'(?:media\s+sosial|liferaft|rakit\s+darurat|korban\s+\w+|Banteners)\s*[.)?!"]*$', re.IGNORECASE)
+
+    output_lines: list[str] = []
+    for i, line in enumerate(non_empty_lines):
+        output_lines.append(line)
+        if i < len(non_empty_lines) - 1:
+            nxt = non_empty_lines[i + 1]
+            norm_curr = _normalize_line_for_match(line)
+            norm_next = _normalize_line_for_match(nxt)
+
+            is_para_end = False
+
+            # Condition 1: Already had an empty line after line i
+            if i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks):
+                is_para_end = True
+
+            # Condition 2: Next line begins a new section / header
+            if (
+                norm_next.startswith("momen menegangkan")
+                or norm_next.startswith("situasi darurat")
+                or norm_next.startswith("bagaimana perasaan")
+                or norm_next.startswith("source:")
+                or norm_next.startswith("sumber:")
+                or norm_next.startswith("video:")
+                or norm_next.startswith("foto:")
+            ):
+                is_para_end = True
+
+            # Condition 3: line is text, but next line starts with # (start of hashtag block)
+            if not line.startswith("#") and nxt.startswith("#"):
+                is_para_end = True
+
+            # Condition 4: Matches paragraph closing phrase (e.g. korban jiwa., liferaft., Banteners?)
+            if para_end_regex.search(line):
+                is_para_end = True
+
+            # Condition 5: Ends with . or ? and length < 85% of full line and next line starts with capital
+            if (
+                re.search(r'[.?][ \t]*$', line)
+                and len(line) < (0.85 * avg_full_line_len)
+                and re.match(r'^[A-Z]', nxt)
+                and not line.startswith("#")
+            ):
+                is_para_end = True
+
+            # Guard: between consecutive hashtag lines, NEVER put a blank line!
+            if line.startswith("#") and nxt.startswith("#"):
+                is_para_end = False
+
+            if is_para_end:
+                output_lines.append("")
+
+    joined = "\r\n".join(output_lines)
+    # Normalize Windows CRLF line endings
     joined = re.sub(r'(\r?\n){3,}', '\r\n\r\n', joined)
     joined = re.sub(r'(?<!\r)\n', '\r\n', joined)
     joined = joined.replace("\r\r\n", "\r\n")

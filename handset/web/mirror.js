@@ -802,8 +802,8 @@ window.captureFullResFrameDataUrl = function () {
   return null;
 };
 
-// --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 27) ---
-window._ViewportHistory = []; // Capacity 15 snapshots, expires 60s
+// --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 30) ---
+window._ViewportHistory = []; // Capacity 24 snapshots, expires 180s (3 minutes)
 let _lastEventSampleTs = 0;
 
 function computeViewportSignature() {
@@ -848,30 +848,47 @@ function sampleViewportIfChanged(force = false, minInterval = 0) {
     if (frameCount === 0) return;
     if (typeof window.captureFullResFrameDataUrl !== "function") return;
 
-    // Prune history older than 60s
+    // Prune history older than 180s (3 minutes)
     if (window._ViewportHistory.length > 0) {
-      window._ViewportHistory = window._ViewportHistory.filter(item => (now - item.ts) <= 60000);
+      window._ViewportHistory = window._ViewportHistory.filter(item => (now - item.ts) <= 180000);
     }
 
     const sig = computeViewportSignature();
     if (!sig) return;
 
-    let shouldCapture = false;
     if (window._ViewportHistory.length === 0) {
-      shouldCapture = true;
-    } else {
-      const lastItem = window._ViewportHistory[window._ViewportHistory.length - 1];
-      const delta = getSignatureDelta(sig, lastItem.sig);
-      if (delta >= 6.0 || (force && delta >= 2.0)) {
-        shouldCapture = true;
-      }
-    }
-
-    if (shouldCapture) {
       const dataUrl = window.captureFullResFrameDataUrl();
       if (dataUrl) {
         window._ViewportHistory.push({ ts: now, sig, dataUrl });
-        if (window._ViewportHistory.length > 15) {
+      }
+      return;
+    }
+
+    // Global comparison against ALL items in _ViewportHistory
+    let minDiff = 999999;
+    let closestIndex = -1;
+    for (let i = 0; i < window._ViewportHistory.length; i++) {
+      const d = getSignatureDelta(sig, window._ViewportHistory[i].sig);
+      if (d < minDiff) {
+        minDiff = d;
+        closestIndex = i;
+      }
+    }
+
+    // If minDiff < 7.5 (already recorded viewport position), refresh slot timestamp & dataUrl without pushing a new slot!
+    if (minDiff < 7.5 && closestIndex >= 0) {
+      const dataUrl = window.captureFullResFrameDataUrl();
+      if (dataUrl) {
+        window._ViewportHistory[closestIndex].ts = now;
+        window._ViewportHistory[closestIndex].sig = sig;
+        window._ViewportHistory[closestIndex].dataUrl = dataUrl;
+      }
+    } else {
+      // Truly new scroll position: push new slot
+      const dataUrl = window.captureFullResFrameDataUrl();
+      if (dataUrl) {
+        window._ViewportHistory.push({ ts: now, sig, dataUrl });
+        if (window._ViewportHistory.length > 24) {
           window._ViewportHistory.shift();
         }
       }
@@ -912,7 +929,7 @@ window.getRecentSelectionFrames = function () {
     // Guarantee latest viewport is checked
     sampleViewportIfChanged(true, 0);
 
-    const validHistory = (window._ViewportHistory || []).filter(item => (now - item.ts) <= 60000);
+    const validHistory = (window._ViewportHistory || []).filter(item => (now - item.ts) <= 180000);
     if (validHistory.length === 0) {
       if (typeof window.captureFullResFrameDataUrl === "function") {
         const cur = window.captureFullResFrameDataUrl();
@@ -921,13 +938,20 @@ window.getRecentSelectionFrames = function () {
       return [];
     }
 
-    if (validHistory.length <= 4) {
+    if (validHistory.length <= 5) {
       return validHistory.map(item => item.dataUrl);
     }
 
-    // Select up to 4 frames with distinct signatures, ordered chronologically (top -> mid -> bottom)
+    // Select up to 5 frames with distinct signatures, ordered chronologically (top -> mid -> bottom)
     const n = validHistory.length;
-    const candidateIndices = Array.from(new Set([0, Math.floor(n * 0.33), Math.floor(n * 0.67), n - 1])).sort((a, b) => a - b);
+    const candidateIndices = Array.from(new Set([
+      0,
+      Math.floor(n * 0.25),
+      Math.floor(n * 0.50),
+      Math.floor(n * 0.75),
+      n - 1
+    ])).sort((a, b) => a - b);
+
     const chosen = [];
     for (const idx of candidateIndices) {
       const item = validHistory[idx];
@@ -937,13 +961,13 @@ window.getRecentSelectionFrames = function () {
       }
     }
 
-    // If fewer than 2 frames due to high similarity threshold, backfill chronological frames
-    if (chosen.length < Math.min(4, validHistory.length)) {
+    // If fewer than 5 frames due to high similarity threshold, backfill chronological frames
+    if (chosen.length < Math.min(5, validHistory.length)) {
       for (let i = 0; i < validHistory.length; i++) {
         const item = validHistory[i];
         if (!chosen.includes(item)) {
           chosen.push(item);
-          if (chosen.length >= 4) break;
+          if (chosen.length >= 5) break;
         }
       }
       chosen.sort((a, b) => a.ts - b.ts);

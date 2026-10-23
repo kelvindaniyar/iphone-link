@@ -15,6 +15,7 @@ from handset.mux import MuxError
 from handset.screen import (
     auto_correct_ocr_text,
     commit_and_reset_current_typed_line,
+    ensure_paragraph_formatting,
     get_debug_typed_state,
     record_typed_char,
     record_typed_text,
@@ -209,14 +210,8 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
 
         stdout_raw = res.stdout or ""
         frame_chunks = stdout_raw.split("---FRAME_SPLIT---")
-        results = []
-        for chunk in frame_chunks:
-            txt = chunk.strip()
-            results.append(txt)
-
-        while len(results) < len(tmp_files):
-            results.append("")
-        return results[:len(tmp_files)]
+        results = [chunk.strip() for chunk in frame_chunks if chunk.strip()]
+        return results
     except Exception as e:
         print(f"extract_text_batch error: {e}", flush=True)
         return []
@@ -237,6 +232,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
         raw_text = results[0] if results else ""
         if raw_text:
             corrected_text = auto_correct_ocr_text(raw_text)
+            corrected_text = ensure_paragraph_formatting(corrected_text)
         else:
             corrected_text = auto_correct_ocr_text("")
 
@@ -465,38 +461,48 @@ class Handler(BaseHTTPRequestHandler):
                 def _do_extract(frame_url: str, hist_urls: list[str]):
                     global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
                     try:
-                        latest_text = extract_text_from_frame(frame_url, save_debug=True)
-                        final_text = latest_text
+                        recent_hist = [h for h in hist_urls if h and h != frame_url][:4] if hist_urls else []
+                        frames_to_batch = recent_hist + [frame_url]
 
-                        # Requirement B: Strict check for multi-frame stitching:
-                        # Do NOT run OCR on frameHistory if the latest frame has only 1-4 lines!
-                        # Run multi-frame stitching ONLY if latest frame has >= 5 lines or >= 180 chars!
-                        non_empty_lines = [l for l in (latest_text or "").splitlines() if l.strip()]
-                        line_count = len(non_empty_lines)
-                        char_count = len(latest_text or "")
+                        # Single-Pass Batch OCR: executes PowerShell ONLY ONCE (< 2s)!
+                        batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
+                        valid_texts = [t for t in batch_texts if t and t.strip()]
+                        if not valid_texts:
+                            return None
 
-                        if (line_count >= 5 or char_count >= 180) and hist_urls:
-                            recent_hist = [h for h in hist_urls if h and h != frame_url]
-                            if recent_hist:
-                                # Batch call in a single PowerShell process: history frames use Full-Viewport, last frame uses Highlight-Crop
-                                frames_to_batch = recent_hist[:3] + [frame_url]
-                                batch_texts = extract_text_batch(frames_to_batch, save_debug=False)
-                                valid_texts = [t for t in batch_texts if t and t.strip()]
-                                if len(valid_texts) >= 2:
-                                    stitched = stitch_multiline_ocr_frames(valid_texts)
-                                    if stitched and len(stitched) >= char_count:
-                                        final_text = stitched
-                                        print(f"Batch-stitched {len(valid_texts)} OCR frames into {len(final_text)} chars ({len(final_text.splitlines())} lines)", flush=True)
-                        elif line_count >= 4:
-                            stitched = stitch_multiline_ocr_frames([final_text])
-                            if stitched and len(stitched) >= len(final_text):
-                                final_text = stitched
+                        if len(valid_texts) == 1:
+                            raw_text = valid_texts[0]
+                            final_text = auto_correct_ocr_text(raw_text)
+                        else:
+                            stitched = stitch_multiline_ocr_frames(valid_texts)
+                            final_text = stitched if stitched else valid_texts[-1]
+                            final_text = auto_correct_ocr_text(final_text)
+
+                        # PERBAIKAN 1: Call ensure_paragraph_formatting PALING AKHIR
+                        final_text = ensure_paragraph_formatting(final_text)
+
+                        # Save debug info
+                        try:
+                            import json
+                            project_root = Path(__file__).resolve().parent.parent
+                            active_line, buffer_tail = get_debug_typed_state()
+                            result_info = {
+                                "raw_ocr_text": valid_texts[-1],
+                                "batch_count": len(valid_texts),
+                                "corrected_text": final_text,
+                                "typed_active_line": active_line,
+                                "typed_buffer_tail": buffer_tail,
+                            }
+                            with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                                json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+                        except Exception as err:
+                            print(f"debug_ocr_result.json save error: {err}", flush=True)
 
                         if final_text:
                             if set_windows_clipboard_text(final_text):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
-                                print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars)", flush=True)
+                                print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
                         return final_text
                     except Exception as err:
                         print(f"Async extract error: {err}", flush=True)

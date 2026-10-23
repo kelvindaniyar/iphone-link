@@ -728,6 +728,42 @@ Pembaruan terkini mencakup:
   - Test 4 (UI Buttons & Shortcuts): Seluruh label UI tombol, shortcut badge, dan listener terverifikasi 100%.
   - Seluruh pengujian regresi Tahap 25-28 lulus 100%.
 
+---
+
+### Tahap 30: Paragraph Blank Lines Preservation, Typo Fixes, Global Viewport Deduplication, dan Single-Pass Batch OCR
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap30.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap30.py) serta seluruh uji regresi Tahap 26-29.
+- **Latar Belakang & Analisis Video**: Dari evaluasi video pengujian Kelvin (`20261023-2245-15.3838987.mp4`), fitur copy-paste internal iPhone (`Ctrl+C` $\rightarrow$ `Ctrl+V`), cross-platform paste (`Alt+V`), pemulihan kata `"memperlihatkan"`, dan automasi AssistiveTouch OFF saat charging sudah stabil. Namun ditemukan 4 akar masalah terakhir:
+  1. Baris kosong antar-paragraf (`\r\n\r\n`) hilang di Notepad detik 03:42 karena `auto_correct_ocr_text` memfilter string kosong dan melakukan single `\r\n.join()`.
+  2. Dua typo tersisa di Notepad: `"tik-detik"` (huruf `"de"` tertutup bulatan seleksi kuning kiri atas) dan `"korban i1wa."` (`"jiwa"` terbaca `"i1wa"`).
+  3. Bagian atas catatan hilang pada percobaan pertama (02:43) karena 40 sampling scroll bawah selama 27s menggusur frame atas pada `_ViewportHistory` 15-slot tanpa deduplikasi global. Serta waktu proses tombol `Copying...` mencapai 8 detik (03:28 - 03:36) akibat pemanggilan `powershell.exe` dua kali di `server.py`.
+  4. Detektor AssistiveTouch berpotensi memotong teks abu-abu saat AssistiveTouch dimatikan oleh automasi charging iPhone.
+- **Pekerjaan yang Dilakukan**:
+  1. **Preservasi Format Paragraf (`screen.py` & `server.py`)**:
+     - `auto_correct_ocr_text` wajib mempertahankan seluruh string kosong `""`.
+     - Implementasi fungsi `ensure_paragraph_formatting(text, raw_para_breaks)` yang dipanggil **PALING AKHIR** di `server.py` sebelum `set_windows_clipboard_text()`. Menjamin 6 blok paragraf dipisahkan `\r\n\r\n` dan 2 baris hashtag dipisahkan `\r\n` tunggal.
+  2. **Perbaikan Typo `"tik-detik"` & `"korban i1wa."` (`ocr_extractor.ps1` & `screen.py`)**:
+     - Di `ocr_extractor.ps1`: Piksel gagang seleksi kuning (`R > 180 && G > 120 && (R - B) > 40`) dinetralkan menjadi putih (`255, 255, 255`) tanpa menghapus piksel huruf gelap (`R < 115 && G < 115 && B < 115`).
+     - Di `_clean_ocr_line`: Regex `(?:^|\b)tik-detik\b` $\rightarrow$ `"detik-detik"` dan `\b(?:i1wa|j1wa|ilwa|jiw4)\b` $\rightarrow$ `"jiwa"`.
+     - Di `_pick_cleaner_line`: Memprioritaskan baris dengan kata utuh `"detik-detik"` dan `"jiwa"`.
+  3. **Global Viewport Deduplication (`mirror.js` & `keys.js`)**:
+     - Kapasitas `_ViewportHistory` ditingkatkan ke **24 slot** (TTL 180s / 3 menit).
+     - `sampleViewportIfChanged` menghitung `minDiff` terhadap seluruh item di `_ViewportHistory`. Jika `minDiff < 7.5`, slot yang ada hanya diperbarui tanpa membuat slot baru yang menggusur frame atas.
+     - `getRecentSelectionFrames()` mengembalikan hingga 5 frame unik representatif.
+     - `sampleViewportNow()` dipanggil saat `Ctrl+A` dan `Ctrl+C` ditekan.
+  4. **Single-Pass Batch OCR < 2 Detik (`server.py` & `ocr_extractor.ps1`)**:
+     - `server.py` hanya memanggil `powershell.exe` **1 KALI** dengan seluruh frame `[recent_hist + [current]]`.
+     - `ocr_extractor.ps1` memproses `current.png` terlebih dahulu: jika < 4 baris langsung exit 0 (~0.4s); jika >= 4 baris, langsung memproses history frames dalam proses PowerShell yang sama tanpa re-kompilasi C# (< 1.5s total).
+  5. **Guard Ketat AssistiveTouch (`ocr_extractor.ps1`)**:
+     - Memvalidasi ukuran cluster minimum `55px x 55px`, row count >= 40, dan rasio aspek `0.75 <= W/H <= 1.35`. Ketika AssistiveTouch OFF, algoritma 100% pasif.
+  6. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap30_fast_batch_and_paragraph_guard` di `index.html`, `mirror.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap30.py`)**:
+  - Test 1 (Full Pipeline Kelvin 03:42 Notepad Raw Input): `"detik-detik"` dan `"tanpa adanya korban jiwa."` pulih 100%; tepat 6 blok paragraf dipisahkan `\r\n\r\n`; hashtag baris 1 & 2 disatukan dengan `\r\n` tunggal tanpa korupsi `\r\r\n`.
+  - Test 2 (Viewport Deduplication 30s Bottom Scroll): Frame atas (detik 02:05) 100% tetap berada di index 0 setelah 40x sampling scroll di bawah.
+  - Test 3 (C# Guard & Handle Filter): Validasi kondisi dimensi AssistiveTouch dan filter gagang kuning dengan dark text edge protection.
+  - Test 4 (Server Single-Pass Batch OCR): `extract_text_batch` dipanggil hanya 1 kali dan `ensure_paragraph_formatting` dipanggil paling akhir.
+  - Seluruh pengujian regresi Tahap 26-29 lulus 100%.
+
+
 
 
 

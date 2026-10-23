@@ -83,7 +83,8 @@ public class DualOcrPreprocessor {
                     } else {
                         int cW = clusterMaxX - clusterMinX;
                         int cH = clusterMaxY - clusterMinY;
-                        if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
+                        float aspect = (cH > 0) ? ((float)cW / (float)cH) : 0f;
+                        if (cW >= 55 && cH >= 55 && clusterRowCount >= 40 && aspect >= 0.75f && aspect <= 1.35f) {
                             int pad = 10;
                             int mX0 = Math.Max(0, clusterMinX - pad);
                             int mX1 = Math.Min(W - 1, clusterMaxX + pad);
@@ -125,7 +126,8 @@ public class DualOcrPreprocessor {
             if (clusterMinY != -1) {
                 int cW = clusterMaxX - clusterMinX;
                 int cH = clusterMaxY - clusterMinY;
-                if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
+                float aspect = (cH > 0) ? ((float)cW / (float)cH) : 0f;
+                if (cW >= 55 && cH >= 55 && clusterRowCount >= 40 && aspect >= 0.75f && aspect <= 1.35f) {
                     int pad = 10;
                     int mX0 = Math.Max(0, clusterMinX - pad);
                     int mX1 = Math.Min(W - 1, clusterMaxX + pad);
@@ -285,16 +287,29 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Natural: direct copy
-                natPixels[nIdx] = b;
-                natPixels[nIdx + 1] = g;
-                natPixels[nIdx + 2] = r;
-                natPixels[nIdx + 3] = 255;
+                // Selection handle filter (Tahap 30):
+                // Yellow-orange selection handle lollipop: R > 180 && G > 120 && (R - B) > 40
+                // Dark text edge guard: R < 115 && G < 115 && B < 115
+                bool isHandle = (r > 180) && (g > 120) && ((r - b) > 40);
+                bool isDarkText = (r < 115) && (g < 115) && (b < 115);
 
-                // Red-filtered
+                // Natural: direct copy, but neutralize handle to white without erasing dark text
+                if (isHandle && !isDarkText) {
+                    natPixels[nIdx] = 255;
+                    natPixels[nIdx + 1] = 255;
+                    natPixels[nIdx + 2] = 255;
+                    natPixels[nIdx + 3] = 255;
+                } else {
+                    natPixels[nIdx] = b;
+                    natPixels[nIdx + 1] = g;
+                    natPixels[nIdx + 2] = r;
+                    natPixels[nIdx + 3] = 255;
+                }
+
+                // Red-filtered:
                 bool isColorNoise = (r > 175) && (((r - b) > 35) || ((r - g) > 30));
                 byte v;
-                if (r >= 210 || isColorNoise) {
+                if ((isHandle && !isDarkText) || r >= 210 || isColorNoise) {
                     v = 255;
                 } else {
                     int scaled = (int)((r - 25) * 255.0 / (210 - 25));
@@ -555,17 +570,16 @@ public class DualOcrPreprocessor {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $projectRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..'))
 
-    for ($idx = 0; $idx -lt $pathList.Count; $idx++) {
-        $imgP = $pathList[$idx].Trim()
-        if (!(Test-Path $imgP)) {
-            continue
-        }
-        $fullPath = (Resolve-Path $imgP).Path
-        $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
+    if ($pathList.Count -eq 0) {
+        exit 0
+    }
 
-        $isLast = ($idx -eq ($pathList.Count - 1))
-        # If batching multiple frames, history frames use Full-Viewport Content Crop; last frame uses Highlight-Crop
-        $isFullViewport = ($pathList.Count -gt 1 -and -not $isLast)
+    function Process-SingleFrame([string]$imageFilePath, [bool]$isLast, [bool]$isFullViewport) {
+        if (!(Test-Path $imageFilePath)) {
+            return @()
+        }
+        $fullPath = (Resolve-Path $imageFilePath).Path
+        $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
 
         $candNat = $null
         $candRed = $null
@@ -591,24 +605,50 @@ public class DualOcrPreprocessor {
         }
 
         # If it's the last (current) frame, save debug_ocr_cleaned.png
-        if ($isLast) {
+        if ($isLast -and $bestBmp -ne $null) {
             $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
             $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
         }
 
         $srcBmp.Dispose()
-        $candNat.Dispose()
-        $candRed.Dispose()
+        if ($candNat -ne $null) { $candNat.Dispose() }
+        if ($candRed -ne $null) { $candRed.Dispose() }
 
-        if ($bestLines.Count -gt 0) {
-            $resultText = $bestLines -join "`r`n"
-            [Console]::WriteLine($resultText)
+        return $bestLines
+    }
+
+    $lastIdx = $pathList.Count - 1
+    # Process current frame (at $lastIdx) first:
+    $currentLines = @(Process-SingleFrame $pathList[$lastIdx].Trim() $true $false)
+    $nonEmptyCurrent = @($currentLines | Where-Object { $_.Trim().Length -gt 0 })
+    $charCountCurrent = ($currentLines -join "").Length
+
+    # If only 1 frame, OR if current frame is short (< 4 non-empty lines and < 150 chars):
+    # Output immediately and exit! (Ultra-fast single pass ~0.4s)
+    if ($pathList.Count -eq 1 -or ($nonEmptyCurrent.Count -lt 4 -and $charCountCurrent -lt 150)) {
+        if ($currentLines.Count -gt 0) {
+            [Console]::WriteLine($currentLines -join "`r`n")
         }
+        exit 0
+    }
 
-        if ($idx -lt ($pathList.Count - 1)) {
-            [Console]::WriteLine("---FRAME_SPLIT---")
+    # Otherwise, it's long text (>= 4 lines or >= 150 chars) and multiple frames are provided.
+    # Process history frames 0 .. ($lastIdx - 1) in the exact same process
+    $allOutputs = @()
+    for ($i = 0; $i -lt $lastIdx; $i++) {
+        $histLines = @(Process-SingleFrame $pathList[$i].Trim() $false $true)
+        if ($histLines.Count -gt 0) {
+            $allOutputs += ($histLines -join "`r`n")
         }
     }
+
+    # Append current frame text
+    if ($currentLines.Count -gt 0) {
+        $allOutputs += ($currentLines -join "`r`n")
+    }
+
+    # Output frames separated by ---FRAME_SPLIT---
+    [Console]::WriteLine($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")
 } catch {
     # Fail silently without breaking server
 }

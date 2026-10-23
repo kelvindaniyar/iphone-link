@@ -246,6 +246,18 @@
             return;
           }
 
+          function sampleViewportNow() {
+            try {
+              if (typeof window.sampleViewportIfChanged === "function") {
+                window.sampleViewportIfChanged(true, 0);
+              }
+              const iframe = document.getElementById("mirror-frame") || document.querySelector("iframe");
+              if (typeof iframe?.contentWindow?.sampleViewportIfChanged === "function") {
+                iframe.contentWindow.sampleViewportIfChanged(true, 0);
+              }
+            } catch (_) {}
+          }
+
           // Pure Internal iPhone Shortcuts via Ctrl/Cmd (Zero-Delay, Native iOS):
           if (isCtrlOrMeta && !isAlt) {
             // Ctrl + C: Instant native iOS Copy (Cmd+C, skip OCR, keep Windows clipboard intact)
@@ -255,6 +267,7 @@
               ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
+              sampleViewportNow();
               triggerShortcut("copy", null, false, [], true);
               return;
             }
@@ -277,6 +290,7 @@
               ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
+              sampleViewportNow();
               triggerShortcut("select-all");
               return;
             }
