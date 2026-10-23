@@ -69,6 +69,10 @@
     }
   }
 
+  document.addEventListener("pointerdown", () => {
+    flushTypedQueue();
+  });
+
   function captureMirrorCanvasDataUrl() {
     try {
       // 1. Check native full-resolution capture from mirror.js in current window

@@ -604,6 +604,35 @@ Pembaruan terkini mencakup:
    - Seluruh pengujian regresi kalimat pendek (`"valentino rossi"`, `"jokowi pria solo from iphone 17 pro"`) lulus 100%.
    - Simulasi 2 frame catatan berita KMP Batumandi sukses menggabungkan seluruh 6 bagian dari Paragraf 1 sampai hashtag `#cilegon` secara utuh tanpa ada kalimat yang hilang.
 
+---
+
+## Tahap 26: Pinned Frame Architecture, Single-Process Batch OCR (< 1.5s), Anti-Duplicate Buffer Reset, dan Anti-Garbage Filter
+
+**Status**: SELESAI & TERVERIFIKASI 100% MELALUI 3 SKENARIO REALIS KELVIN  
+**Laporan Lengkap**: [`LAPORAN_TAHAP_26_PINNED_FRAMES_BATCH_OCR_DAN_ANTI_GARBAGE.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_26_PINNED_FRAMES_BATCH_OCR_DAN_ANTI_GARBAGE.md)
+
+1. **Highlight Bounded Cropping Murni (Solusi Bug 1: Kasus `"jokowi gibran"`)**:
+   - Menghapus aturan `if (minY < 0.35 * H) cropY = 0.105 * H`.
+   - Scan highlight dimulai pada $Y \ge 0.115 \times H$ (lewat dari toolbar Notes).
+   - `cropY` dan `cropH` dikunci murni mengikuti koordinat vertikal highlight sebenarnya (`minY - 0.015*H` s.d. `maxY + 0.030*H`), sehingga seleksi 1 baris di bawah baris lain tidak pernah memborong baris yang tidak di-highlight di atasnya.
+2. **Anti-Duplicate Buffer Reset & Length Guard (Solusi Bug 2: Kasus `"naruto uzumaki"`)**:
+   - Membuat `commit_and_reset_current_typed_line()` di `screen.py` yang otomatis dipanggil saat user menyentuh/klik layar (`/mirror/touch`), menekan shortcut (`Ctrl+A`, `Ctrl+C`, `Ctrl+X`, `Ctrl+V`), atau jeda ketik $> 6.0$ detik.
+   - Menambahkan penjaga kesebandingan panjang string di `auto_correct_ocr_text`: selisih panjang maksimal $\max(3, 0.20 \times \text{target})$, mencegah kandidat 40 karakter menimpa OCR 26 karakter.
+3. **Pinned Frame Architecture di `mirror.js` (Solusi Bug 3a)**:
+   - Mengganti ring buffer 5 slot dengan struktur pinned frame: `_PinnedTopFrames` menyimpan riwayat scroll/wheel hingga 45 detik.
+   - `_firstDragFrame` dikunci permanen pada awal drag seleksi sehingga snapshot bagian atas catatan (Paragraf 1 & 2) terlindungi 100% dan tidak pernah tertimpa oleh event `pointermove` di bagian bawah layar.
+4. **Single-Process Batch OCR & Dual Crop Mode (Solusi Bug 3b - Kecepatan 1.35s)**:
+   - `ocr_extractor.ps1` mendukung `-ImagePaths "f1.png|f2.png|current.png"` dalam 1 kali eksekusi `powershell.exe`, mengompilasi C# hanya 1 kali, dan mengeksekusi kandidat Red-channel terlebih dahulu.
+   - Frame riwayat menggunakan **Full-Viewport Content Crop** ($0.115 \times H$ s.d. $0.85 \times H$) untuk mengekstrak seluruh teks catatan yang tampak di posisi atas catatan, sementara frame terakhir menggunakan **Highlight Crop**.
+   - Waktu eksekusi batch turun dari 11 detik menjadi **1.35 detik**.
+5. **Anti-Garbage Filter Scroll Edge (Solusi Artefak `"1.1n1 j un 11"`)**:
+   - Mendeteksi baris teratas hasil OCR yang tidak memiliki kata $\ge 4$ karakter dan mengandung angka acak / fragmen pendek terpotong di tepi scroll Notes, lalu membuangnya secara otomatis.
+6. **Verifikasi 3 Skenario Realis**:
+   - Skenario 1 (`"jokowi gibran"`): Lolos (0.47s, hanya `"jokowi gibran"` yang disalin).
+   - Skenario 2 (`"naruto uzumaki"`): Lolos (bersih tanpa duplikasi buffer).
+   - Skenario 3 (Caption KMP Batumandi): Lolos (1.35s, frame atas terlindungi 10 detik pointermove, 100% teks utuh dari `"Rekaman video amatir..."` s.d. `"#cilegon"` tanpa sampah `"1.1n1 j un 11"`).
+
+
 
 
 

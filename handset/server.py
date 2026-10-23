@@ -14,6 +14,7 @@ from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
     auto_correct_ocr_text,
+    commit_and_reset_current_typed_line,
     get_debug_typed_state,
     record_typed_char,
     record_typed_text,
@@ -156,73 +157,106 @@ def set_windows_clipboard_text(text: str) -> bool:
         return False
 
 
+def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> list[str]:
+    """Extract text from one or more iPhone frames in a single PowerShell process.
+    The last frame in frame_data_urls uses Highlight-Crop; earlier frames use Full-Viewport Content Crop.
+    Returns a list of extracted strings (one per input frame).
+    """
+    if not frame_data_urls:
+        return []
+    try:
+        import base64, tempfile, subprocess, os, json
+        valid_frames = []
+        tmp_files = []
+        project_root = Path(__file__).resolve().parent.parent
+
+        for idx, furl in enumerate(frame_data_urls):
+            if not furl or "," not in furl:
+                continue
+            header, b64data = furl.split(",", 1)
+            raw_bytes = base64.b64decode(b64data)
+            if len(raw_bytes) < 100:
+                continue
+            suffix = ".png" if "image/png" in header else ".jpg"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(raw_bytes)
+            tmp.close()
+            tmp_files.append(tmp.name)
+            valid_frames.append((idx, tmp.name, raw_bytes))
+
+        if not tmp_files:
+            return []
+
+        if save_debug and valid_frames:
+            try:
+                with open(project_root / "debug_ocr_raw.png", "wb") as f_raw:
+                    f_raw.write(valid_frames[-1][2])
+            except Exception:
+                pass
+
+        joined_paths = "|".join(tmp_files)
+        script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+        timeout_sec = 6.0 if len(tmp_files) <= 1 else 9.0
+
+        res = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, "-ImagePaths", joined_paths],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
+
+        stdout_raw = res.stdout or ""
+        frame_chunks = stdout_raw.split("---FRAME_SPLIT---")
+        results = []
+        for chunk in frame_chunks:
+            txt = chunk.strip()
+            results.append(txt)
+
+        while len(results) < len(tmp_files):
+            results.append("")
+        return results[:len(tmp_files)]
+    except Exception as e:
+        print(f"extract_text_batch error: {e}", flush=True)
+        return []
+    finally:
+        for tpath in tmp_files:
+            try:
+                os.remove(tpath)
+            except Exception:
+                pass
+
+
 def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str | None:
     """Extract highlighted/selected text from iPhone screen frame using Windows 11 WinRT OCR."""
     if not frame_data_url or "," not in frame_data_url:
         return None
     try:
-        import base64, tempfile, subprocess, os, json
-        header, b64data = frame_data_url.split(",", 1)
-        raw_bytes = base64.b64decode(b64data)
-        if len(raw_bytes) < 100:
-            return None
-
-        project_root = Path(__file__).resolve().parent.parent
+        results = extract_text_batch([frame_data_url], save_debug=save_debug)
+        raw_text = results[0] if results else ""
+        if raw_text:
+            corrected_text = auto_correct_ocr_text(raw_text)
+        else:
+            corrected_text = auto_correct_ocr_text("")
 
         if save_debug:
-            # 1. Save debug_ocr_raw.png to project root
-            raw_debug_path = project_root / "debug_ocr_raw.png"
             try:
-                with open(raw_debug_path, "wb") as f_raw:
-                    f_raw.write(raw_bytes)
-            except Exception:
-                pass
+                import json
+                project_root = Path(__file__).resolve().parent.parent
+                active_line, buffer_tail = get_debug_typed_state()
+                result_info = {
+                    "raw_ocr_text": raw_text,
+                    "corrected_text": corrected_text,
+                    "typed_active_line": active_line,
+                    "typed_buffer_tail": buffer_tail,
+                }
+                with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                    json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+            except Exception as err:
+                print(f"debug_ocr_result.json save error: {err}", flush=True)
 
-        suffix = ".png" if "image/png" in header else ".jpg"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-            tmp_path = f.name
-            f.write(raw_bytes)
-
-        script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
-        raw_text = ""
-        corrected_text = ""
-        try:
-            res = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, tmp_path],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=4.0,
-            )
-            raw_text = (res.stdout or "").strip()
-            if raw_text:
-                corrected_text = auto_correct_ocr_text(raw_text)
-            else:
-                # Fallback to active typed line if recently typed
-                corrected_text = auto_correct_ocr_text("")
-
-            if save_debug:
-                # 2. Save debug_ocr_result.json to project root
-                try:
-                    active_line, buffer_tail = get_debug_typed_state()
-                    result_info = {
-                        "raw_ocr_text": raw_text,
-                        "corrected_text": corrected_text,
-                        "typed_active_line": active_line,
-                        "typed_buffer_tail": buffer_tail,
-                    }
-                    with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
-                        json.dump(result_info, f_res, ensure_ascii=False, indent=2)
-                except Exception as err:
-                    print(f"debug_ocr_result.json save error: {err}", flush=True)
-
-            return corrected_text if corrected_text else None
-        finally:
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
+        return corrected_text if corrected_text else None
     except Exception as e:
         print(f"extract_text_from_frame error: {e}", flush=True)
         return None
@@ -407,6 +441,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(audio_manager.open_bluetooth_settings())
             return
         if path == "/api/keyboard/shortcut":
+            commit_and_reset_current_typed_line()
             action = str(payload.get("action", ""))
             frame_data_url = payload.get("frameDataUrl")
             frame_history = payload.get("frameHistory") or []
@@ -428,29 +463,25 @@ class Handler(BaseHTTPRequestHandler):
                         latest_text = extract_text_from_frame(frame_url, save_debug=True)
                         final_text = latest_text
 
-                        # Check fast-path vs multi-line note stitching
-                        active_line, _ = get_debug_typed_state()
-                        active_line = (active_line or "").strip()
+                        # Requirement B: Strict check for multi-frame stitching:
+                        # Do NOT run OCR on frameHistory if the latest frame has only 1-4 lines!
+                        # Run multi-frame stitching ONLY if latest frame has >= 5 lines or >= 180 chars!
                         non_empty_lines = [l for l in (latest_text or "").splitlines() if l.strip()]
+                        line_count = len(non_empty_lines)
+                        char_count = len(latest_text or "")
 
-                        is_short_or_active = (len(non_empty_lines) <= 2) or (
-                            active_line and len(active_line) >= 3 and active_line.lower() in (latest_text or "").lower()
-                        )
-
-                        if not is_short_or_active and len(non_empty_lines) >= 3 and hist_urls:
-                            history_texts = []
-                            recent_hist = [h for h in hist_urls if h and h != frame_url][-3:]
-                            for h_url in recent_hist:
-                                h_text = extract_text_from_frame(h_url, save_debug=False)
-                                if h_text and h_text.strip():
-                                    history_texts.append(h_text)
-
-                            if history_texts:
-                                all_texts = history_texts + [latest_text]
-                                stitched = stitch_multiline_ocr_frames(all_texts)
-                                if stitched and len(stitched) >= len(latest_text or ""):
-                                    final_text = stitched
-                                    print(f"Stitched {len(all_texts)} OCR frames into {len(final_text)} chars ({len(final_text.splitlines())} lines)", flush=True)
+                        if (line_count >= 5 or char_count >= 180) and hist_urls:
+                            recent_hist = [h for h in hist_urls if h and h != frame_url]
+                            if recent_hist:
+                                # Batch call in a single PowerShell process: history frames use Full-Viewport, last frame uses Highlight-Crop
+                                frames_to_batch = recent_hist[:2] + [frame_url]
+                                batch_texts = extract_text_batch(frames_to_batch, save_debug=False)
+                                valid_texts = [t for t in batch_texts if t and t.strip()]
+                                if len(valid_texts) >= 2:
+                                    stitched = stitch_multiline_ocr_frames(valid_texts)
+                                    if stitched and len(stitched) >= char_count:
+                                        final_text = stitched
+                                        print(f"Batch-stitched {len(valid_texts)} OCR frames into {len(final_text)} chars ({len(final_text.splitlines())} lines)", flush=True)
 
                         if final_text:
                             if set_windows_clipboard_text(final_text):
@@ -480,6 +511,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "action": action})
             return
         if path == "/api/keyboard/paste":
+            commit_and_reset_current_typed_line()
             self._json(
                 paste_to_iphone(
                     payload.get("text"),
@@ -623,6 +655,10 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy_mirror(self, method: str) -> None:
         target = self._mirror_upstream_path()
         upstream_path = target.split("?", 1)[0]
+
+        # Reset active typing line on user screen interactions (touches/taps/drags)
+        if upstream_path == "/touch" and method in ("POST", "PUT"):
+            commit_and_reset_current_typed_line()
 
         # Alias without .bin extension to prevent IDM / download managers from intercepting stream
         if upstream_path in ("/live", "/live/"):

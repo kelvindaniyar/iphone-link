@@ -1,6 +1,6 @@
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$ImagePath
+    [string]$ImagePath = "",
+    [string]$ImagePaths = ""
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -16,7 +16,15 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
 public class DualOcrPreprocessor {
-    public static void PrepareCandidates(Bitmap src, out Bitmap cand1Natural, out Bitmap cand2RedFiltered, out bool foundHighlight, out int cropY, out int cropH) {
+    public static void PrepareCandidates(
+        Bitmap src,
+        bool isFullViewport,
+        out Bitmap cand1Natural,
+        out Bitmap cand2RedFiltered,
+        out bool foundHighlight,
+        out int cropY,
+        out int cropH
+    ) {
         int W = src.Width;
         int H = src.Height;
 
@@ -123,8 +131,8 @@ public class DualOcrPreprocessor {
             }
         }
 
-        // 2. Scan highlights starting at Y >= 0.125 * H to avoid top toolbar yellow icons
-        int scanTopY = (int)(H * 0.125);
+        // 2. Scan highlights starting at Y >= 0.115 * H (past top toolbar)
+        int scanTopY = (int)(H * 0.115);
         int scanBottomY = (int)(H * 0.88);
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
@@ -133,25 +141,27 @@ public class DualOcrPreprocessor {
         int maxY = 0;
         foundHighlight = false;
 
-        for (int y = scanTopY; y <= scanBottomY; y += 2) {
-            int rowOffset = y * stride;
-            for (int x = leftX; x <= rightX; x += 3) {
-                int idx = rowOffset + (x * 4);
-                byte b = raw[idx];
-                byte g = raw[idx + 1];
-                byte r = raw[idx + 2];
+        if (!isFullViewport) {
+            for (int y = scanTopY; y <= scanBottomY; y += 2) {
+                int rowOffset = y * stride;
+                for (int x = leftX; x <= rightX; x += 3) {
+                    int idx = rowOffset + (x * 4);
+                    byte b = raw[idx];
+                    byte g = raw[idx + 1];
+                    byte r = raw[idx + 2];
 
-                // Notes pale yellow highlight: R > 220, G > 205, B < 238, R - B >= 12
-                bool isPaleYellow = (r > 220) && (g > 205) && (b < 238) && ((r - b) >= 12);
-                // Notes lollipop handle yellow-orange: R > 200, G > 140, R - B >= 40
-                bool isLollipop = (r > 200) && (g > 140) && ((r - b) >= 40);
-                // Standard iOS blue selection: B > 140, B - R >= 22
-                bool isBlue = (b > 140) && ((b - r) >= 22);
+                    // Notes pale yellow highlight: R > 220, G > 205, B < 238, R - B >= 12
+                    bool isPaleYellow = (r > 220) && (g > 205) && (b < 238) && ((r - b) >= 12);
+                    // Notes lollipop handle yellow-orange: R > 200, G > 140, R - B >= 40
+                    bool isLollipop = (r > 200) && (g > 140) && ((r - b) >= 40);
+                    // Standard iOS blue selection: B > 140, B - R >= 22
+                    bool isBlue = (b > 140) && ((b - r) >= 22);
 
-                if (isPaleYellow || isLollipop || isBlue) {
-                    foundHighlight = true;
-                    if (y < minY) minY = y;
-                    if (y > maxY) maxY = y;
+                    if (isPaleYellow || isLollipop || isBlue) {
+                        foundHighlight = true;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
                 }
             }
         }
@@ -160,17 +170,15 @@ public class DualOcrPreprocessor {
         int cropX = Math.Max(0, (int)(W * 0.03));
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
-        if (foundHighlight) {
-            if (minY < (int)(H * 0.35) || ((maxY - minY) > (int)(H * 0.10))) {
-                cropY = (int)(H * 0.105);
-            } else {
-                cropY = Math.Max((int)(H * 0.105), minY - (int)(H * 0.035));
-            }
-            int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.04));
+        if (!isFullViewport && foundHighlight) {
+            // Strictly follow actual highlight vertical bounds!
+            cropY = Math.Max((int)(H * 0.115), minY - (int)(H * 0.015));
+            int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.030));
             cropH = Math.Max(20, bottomLimit - cropY);
         } else {
-            cropY = (int)(H * 0.105);
-            cropH = (int)(H * 0.775);
+            // Full-Viewport Content Crop (for history frames or unhighlighted notes)
+            cropY = (int)(H * 0.115);
+            cropH = (int)(H * 0.735); // 0.115*H to 0.85*H
         }
 
         // Candidate 1: Natural crop without aggressive pixel removal
@@ -343,8 +351,26 @@ public class DualOcrPreprocessor {
             return @()
         }
 
-        # Sort lines by MinY
-        $sortedLines = $parsedLines | Sort-Object MinY
+        # Sort lines by MinY (explicitly wrap with @() for single line items)
+        $sortedLines = @($parsedLines | Sort-Object MinY)
+
+        # Anti-Garbage Filter for partially clipped top line at scroll edge (e.g. "1.1n1 j un 11" or "u 11 1")
+        if ($sortedLines.Count -ge 2) {
+            $topText = $sortedLines[0].Text.Trim()
+            $topTokens = $topText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
+            $longWords = @($topTokens | Where-Object { $_ -match '^[A-Za-z]{4,}$' })
+            $digitCount = ($topText -replace '[^0-9]', '').Length
+
+            $nextText = $sortedLines[1].Text.Trim()
+            $nextTokens = $nextText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
+            $nextLongWords = @($nextTokens | Where-Object { $_ -match '^[A-Za-z]{4,}$' })
+
+            # If top line has NO 4+ letter words AND (has digits OR next line is a normal sentence with 4+ letter words)
+            $isGarbageTop = ($longWords.Count -eq 0) -and ($digitCount -ge 2 -or $nextLongWords.Count -ge 2 -or $topText.Length -lt 15)
+            if ($isGarbageTop) {
+                $sortedLines = @($sortedLines[1..($sortedLines.Count - 1)])
+            }
+        }
 
         $sumH = 0
         foreach ($item in $sortedLines) {
@@ -367,53 +393,70 @@ public class DualOcrPreprocessor {
         return $lines
     }
 
-    if (!(Test-Path $ImagePath)) {
-        exit 0
+    $pathList = @()
+    if ($ImagePaths) {
+        $pathList = $ImagePaths.Split('|', [StringSplitOptions]::RemoveEmptyEntries)
+    } elseif ($ImagePath -and $ImagePath.Contains('|')) {
+        $pathList = $ImagePath.Split('|', [StringSplitOptions]::RemoveEmptyEntries)
+    } elseif ($ImagePath) {
+        $pathList = @($ImagePath)
     }
-
-    $fullPath = (Resolve-Path $ImagePath).Path
-    $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
-
-    $candNat = $null
-    $candRed = $null
-    $foundHighlight = $false
-    $cropY = 0
-    $cropH = 0
-    [DualOcrPreprocessor]::PrepareCandidates($srcBmp, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropY, [ref]$cropH)
-    $srcBmp.Dispose()
-
-    # Run OCR on Candidate 1 (Natural) and Candidate 2 (Red-Filtered)
-    $lines1 = Run-Ocr $candNat
-    $lines2 = Run-Ocr $candRed
-
-    $len1 = ($lines1 -join ' ').Trim().Length
-    $len2 = ($lines2 -join ' ').Trim().Length
-
-    # Select the candidate with highest textual yield / quality
-    $bestBmp = $candNat
-    $bestLines = $lines1
-
-    if ($len2 -ge $len1 -and $len2 -gt 0) {
-        $bestBmp = $candRed
-        $bestLines = $lines2
-    } elseif ($len1 -gt 0) {
-        $bestBmp = $candNat
-        $bestLines = $lines1
-    }
-
-    # Save best cleaned debug image to project root
-    $projectRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..'))
-    $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
-    $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
-
-    $candNat.Dispose()
-    $candRed.Dispose()
 
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    if ($bestLines.Count -gt 0) {
-        $resultText = $bestLines -join "`r`n"
-        [Console]::WriteLine($resultText)
+    $projectRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..'))
+
+    for ($idx = 0; $idx -lt $pathList.Count; $idx++) {
+        $imgP = $pathList[$idx].Trim()
+        if (!(Test-Path $imgP)) {
+            continue
+        }
+        $fullPath = (Resolve-Path $imgP).Path
+        $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
+
+        $isLast = ($idx -eq ($pathList.Count - 1))
+        # If batching multiple frames, history frames use Full-Viewport Content Crop; last frame uses Highlight-Crop
+        $isFullViewport = ($pathList.Count -gt 1 -and -not $isLast)
+
+        $candNat = $null
+        $candRed = $null
+        $foundHighlight = $false
+        $cropY = 0
+        $cropH = 0
+
+        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropY, [ref]$cropH)
+        $srcBmp.Dispose()
+
+        # Fast candidate execution: Red-filtered first (best for Notes Light Mode & spellcheck removal)
+        $bestLines = @(Run-Ocr $candRed)
+        $bestBmp = $candRed
+        if ($bestLines.Count -eq 0 -and $candNat -ne $null) {
+            # Fallback to Natural candidate if Red-filtered gave nothing (e.g. Dark Mode)
+            $linesNat = @(Run-Ocr $candNat)
+            if ($linesNat.Count -gt 0) {
+                $bestLines = $linesNat
+                $bestBmp = $candNat
+            }
+        }
+
+        # If it's the last (current) frame, save debug_ocr_cleaned.png
+        if ($isLast) {
+            $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
+            $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+
+        $candNat.Dispose()
+        $candRed.Dispose()
+
+        if ($bestLines.Count -gt 0) {
+            $resultText = $bestLines -join "`r`n"
+            [Console]::WriteLine($resultText)
+        }
+
+        if ($idx -lt ($pathList.Count - 1)) {
+            [Console]::WriteLine("---FRAME_SPLIT---")
+        }
     }
 } catch {
     # Fail silently without breaking server
 }
+

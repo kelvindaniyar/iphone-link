@@ -253,6 +253,7 @@ async function triggerBackGesture() {
 }
 
 function releaseActive() {
+  if (typeof endDragSelectionSnapshot === "function") endDragSelectionSnapshot();
   if (activePointer === null) return;
   activePointer = null;
   if (edgeSwipe) {
@@ -422,8 +423,8 @@ canvas.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
-    if (typeof recordSelectionSnapshot === "function") {
-      recordSelectionSnapshot(false);
+    if (typeof recordScrollSnapshot === "function") {
+      recordScrollSnapshot();
     }
 
     const absX = Math.abs(e.deltaX);
@@ -801,38 +802,137 @@ window.captureFullResFrameDataUrl = function () {
   return null;
 };
 
-// --- Multi-Frame Selection & Scroll Ring Buffer ---
-window._ScrollFrameHistory = [];
-let _lastSnapshotTs = 0;
+// --- Pinned Frame History for Long Note Stitching (Tahap 26) ---
+window._PinnedTopFrames = []; // Max 4 unique frames, kept for 45s from scroll/wheel
+let _firstDragFrame = null;   // Locked at start of drag selection
+let _earlyMidFrame = null;    // Locked at ~700ms into drag selection
+let _lateMidFrame = null;     // Updated periodically (every 700ms) during ongoing drag
+let _dragStartTs = 0;
+let _lastDragSnapshotTs = 0;
+let _isDraggingSelection = false;
+let _lastWheelSnapshotTs = 0;
 
-function recordSelectionSnapshot(force = false) {
+function recordScrollSnapshot() {
   try {
     const now = Date.now();
-    if (!force && (now - _lastSnapshotTs) < 450) {
-      return;
-    }
+    if (now - _lastWheelSnapshotTs < 600) return;
     if (typeof window.captureFullResFrameDataUrl !== "function") return;
     const dataUrl = window.captureFullResFrameDataUrl();
     if (!dataUrl) return;
-    _lastSnapshotTs = now;
-    if (!window._ScrollFrameHistory) window._ScrollFrameHistory = [];
-    window._ScrollFrameHistory.push({ ts: now, dataUrl });
-    if (window._ScrollFrameHistory.length > 5) {
-      window._ScrollFrameHistory.shift();
+    _lastWheelSnapshotTs = now;
+    if (!window._PinnedTopFrames) window._PinnedTopFrames = [];
+    const last = window._PinnedTopFrames[window._PinnedTopFrames.length - 1];
+    if (!last || last.dataUrl !== dataUrl) {
+      window._PinnedTopFrames.push({ ts: now, dataUrl });
+      if (window._PinnedTopFrames.length > 4) {
+        window._PinnedTopFrames.shift();
+      }
     }
   } catch (err) {
-    console.warn("recordSelectionSnapshot error:", err);
+    console.warn("recordScrollSnapshot error:", err);
   }
 }
-window.recordSelectionSnapshot = recordSelectionSnapshot;
+window.recordScrollSnapshot = recordScrollSnapshot;
+
+function startDragSelectionSnapshot() {
+  try {
+    const now = Date.now();
+    _isDraggingSelection = true;
+    _dragStartTs = now;
+    _lastDragSnapshotTs = now;
+    if (typeof window.captureFullResFrameDataUrl !== "function") return;
+    const dataUrl = window.captureFullResFrameDataUrl();
+    if (!dataUrl) return;
+
+    // Always pin the initial frame when drag/click starts
+    _firstDragFrame = { ts: now, dataUrl };
+    _earlyMidFrame = null;
+    _lateMidFrame = null;
+
+    if (!window._PinnedTopFrames) window._PinnedTopFrames = [];
+    const last = window._PinnedTopFrames[window._PinnedTopFrames.length - 1];
+    if (!last || last.dataUrl !== dataUrl) {
+      window._PinnedTopFrames.push({ ts: now, dataUrl });
+      if (window._PinnedTopFrames.length > 4) {
+        window._PinnedTopFrames.shift();
+      }
+    }
+  } catch (err) {
+    console.warn("startDragSelectionSnapshot error:", err);
+  }
+}
+window.startDragSelectionSnapshot = startDragSelectionSnapshot;
+
+function updateDragSelectionSnapshot() {
+  try {
+    if (!_isDraggingSelection) return;
+    const now = Date.now();
+    // Throttle to 700ms
+    if (now - _lastDragSnapshotTs < 700) return;
+    if (typeof window.captureFullResFrameDataUrl !== "function") return;
+    const dataUrl = window.captureFullResFrameDataUrl();
+    if (!dataUrl) return;
+
+    _lastDragSnapshotTs = now;
+    // Lock early mid frame (~700ms after drag start)
+    if (!_earlyMidFrame) {
+      _earlyMidFrame = { ts: now, dataUrl };
+    } else {
+      // Late mid frame (updated as drag continues, never overwriting firstDragFrame or earlyMidFrame!)
+      _lateMidFrame = { ts: now, dataUrl };
+    }
+  } catch (err) {
+    console.warn("updateDragSelectionSnapshot error:", err);
+  }
+}
+window.updateDragSelectionSnapshot = updateDragSelectionSnapshot;
+
+function endDragSelectionSnapshot() {
+  _isDraggingSelection = false;
+}
+window.endDragSelectionSnapshot = endDragSelectionSnapshot;
+
+window.recordSelectionSnapshot = function (force = false) {
+  if (force) {
+    startDragSelectionSnapshot();
+  } else {
+    updateDragSelectionSnapshot();
+  }
+};
 
 window.getRecentSelectionFrames = function () {
   try {
     const now = Date.now();
-    if (!window._ScrollFrameHistory) window._ScrollFrameHistory = [];
-    // Last 25 seconds
-    const valid = window._ScrollFrameHistory.filter(f => (now - f.ts) <= 25000);
-    return valid.map(f => f.dataUrl);
+    // Valid within 45 seconds
+    const maxAge = 45000;
+    const resultUrls = [];
+    const seen = new Set();
+
+    function addFrame(f) {
+      if (f && f.dataUrl && (now - f.ts) <= maxAge && !seen.has(f.dataUrl)) {
+        seen.add(f.dataUrl);
+        resultUrls.push(f.dataUrl);
+      }
+    }
+
+    // 1. Add Pinned Top Frames (from scroll / earlier top view)
+    if (window._PinnedTopFrames) {
+      window._PinnedTopFrames = window._PinnedTopFrames.filter((f) => (now - f.ts) <= maxAge);
+      for (const f of window._PinnedTopFrames) {
+        addFrame(f);
+      }
+    }
+
+    // 2. Add First Drag Frame (Top of drag selection)
+    addFrame(_firstDragFrame);
+
+    // 3. Add Early Mid Frame (Middle of drag selection)
+    addFrame(_earlyMidFrame);
+
+    // 4. Add Late Mid Frame (Pre-bottom of drag selection)
+    addFrame(_lateMidFrame);
+
+    return resultUrls;
   } catch (err) {
     console.warn("getRecentSelectionFrames error:", err);
     return [];

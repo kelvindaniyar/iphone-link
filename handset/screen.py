@@ -389,12 +389,34 @@ def load_typed_history() -> None:
 load_typed_history()
 
 
+def commit_and_reset_current_typed_line() -> None:
+    """Commit current typed accumulator into buffer if valid (>=3 chars) and reset accumulator."""
+    global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
+    import time
+    with _TYPED_BUFFER_LOCK:
+        trimmed = _CURRENT_TYPED_LINE.strip()
+        if len(trimmed) >= 3:
+            if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
+                _TYPED_LINES_BUFFER.append(trimmed)
+            if len(_TYPED_LINES_BUFFER) > 60:
+                _TYPED_LINES_BUFFER.pop(0)
+        _CURRENT_TYPED_LINE = ""
+        _LAST_TYPED_ACTIVE_LINE = ""
+    save_typed_history()
+
+
 def record_typed_char(char: str) -> None:
     """Record a typed character, Backspace, or Enter into the shadow buffer."""
     global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
     import time
     if not char:
         return
+
+    now = time.time()
+    # If pause > 6.0s since last keystroke, commit previous typing and start fresh!
+    if _LAST_TYPED_TIMESTAMP > 0 and (now - _LAST_TYPED_TIMESTAMP) > 6.0:
+        commit_and_reset_current_typed_line()
+
     with _TYPED_BUFFER_LOCK:
         if char == "Backspace":
             if _CURRENT_TYPED_LINE:
@@ -435,6 +457,11 @@ def record_typed_text(text: str) -> None:
     import time
     if not text:
         return
+
+    now = time.time()
+    if _LAST_TYPED_TIMESTAMP > 0 and (now - _LAST_TYPED_TIMESTAMP) > 6.0:
+        commit_and_reset_current_typed_line()
+
     with _TYPED_BUFFER_LOCK:
         if "\n" in text or "\r" in text:
             lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -477,6 +504,12 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer with strict length safety."""
     import difflib, time
 
+    def _is_length_comparable(cand: str, target: str) -> bool:
+        if len(target) < 5:
+            return True
+        allowed = max(3, int(len(target) * 0.20))
+        return abs(len(cand) - len(target)) <= allowed
+
     candidates = get_typed_candidates()
 
     with _TYPED_BUFFER_LOCK:
@@ -495,14 +528,18 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         raw_lower = raw_ocr.lower()
         act_lower = active_line.lower()
 
-        # If exact match or active_line is contained in OCR (e.g. multi-line OCR containing the active sentence)
-        if act_lower == raw_lower or (len(act_lower) >= 6 and act_lower in raw_lower):
-            return active_line
+        # Strict length comparability check for active line
+        if len(raw_ocr) >= 5 and not _is_length_comparable(active_line, raw_ocr):
+            pass # Disallow replacing clean OCR with excessively longer candidate
+        else:
+            # If exact match or active_line is contained in OCR (e.g. multi-line OCR containing the active sentence)
+            if act_lower == raw_lower or (len(act_lower) >= 6 and act_lower in raw_lower):
+                return active_line
 
-        # SequenceMatcher match against full raw_ocr
-        ratio = difflib.SequenceMatcher(None, raw_lower, act_lower).ratio()
-        if ratio >= 0.55:
-            return active_line
+            # SequenceMatcher match against full raw_ocr
+            ratio = difflib.SequenceMatcher(None, raw_lower, act_lower).ratio()
+            if ratio >= 0.55:
+                return active_line
 
     if not raw_ocr:
         return active_line if has_valid_active else ""
@@ -527,6 +564,8 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     for cand in candidates:
         c_strip = cand.strip()
         if len(c_strip) < 3:
+            continue
+        if len(full_ocr) >= 5 and not _is_length_comparable(c_strip, full_ocr):
             continue
         c_lower = c_strip.lower()
 
@@ -565,6 +604,8 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         for cand in candidates:
             c_strip = cand.strip()
             if len(c_strip) < 3:
+                continue
+            if len(line) >= 5 and not _is_length_comparable(c_strip, line):
                 continue
             c_lower = c_strip.lower()
             if len(line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
@@ -684,7 +725,8 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
 def get_debug_typed_state() -> tuple[str, list[str]]:
     """Return active line and buffer tail for debug JSON output."""
     with _TYPED_BUFFER_LOCK:
-        return _LAST_TYPED_ACTIVE_LINE, list(_TYPED_LINES_BUFFER[-5:] if _TYPED_LINES_BUFFER else [])
+        active = _CURRENT_TYPED_LINE.strip() if _CURRENT_TYPED_LINE else _LAST_TYPED_ACTIVE_LINE
+        return active, list(_TYPED_LINES_BUFFER[-5:] if _TYPED_LINES_BUFFER else [])
 
 
 def type_text_to_iphone(text: str) -> int:
