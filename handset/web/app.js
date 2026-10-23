@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap27_viewport_history_and_line_verifier";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap28_gap_filling_stitcher_and_shortcuts";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -523,35 +523,15 @@ function initKeyboardSettingsControls() {
     });
   });
 
-  const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
-  btnPastePcNow?.addEventListener("click", async () => {
-    btnPastePcNow.disabled = true;
-    const oldText = btnPastePcNow.textContent;
-    btnPastePcNow.textContent = "Pastes PC Text…";
-    try {
-      if (window.HandsetKeys?.pasteFromPc) {
-        await window.HandsetKeys.pasteFromPc(true);
-      } else {
-        await postJson("/api/keyboard/paste", { force: true });
-      }
-      btnPastePcNow.textContent = "✓ Pasted!";
-      btnPastePcNow.classList.add("is-saved");
-    } catch (_) {
-      btnPastePcNow.textContent = "Paste Failed";
-    } finally {
-      setTimeout(() => {
-        btnPastePcNow.textContent = oldText;
-        btnPastePcNow.classList.remove("is-saved");
-        btnPastePcNow.disabled = false;
-      }, 1200);
-    }
-  });
+  const COPY_IPHONE_LABEL = "📥 Copy iPhone Text (Ctrl+C / Alt+C)";
+  const PASTE_PC_LABEL = "📋 Paste PC Text (Ctrl+V / Alt+V)";
 
-  const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
-  btnCopyIphone?.addEventListener("click", async () => {
-    btnCopyIphone.disabled = true;
-    const oldText = btnCopyIphone.textContent;
-    btnCopyIphone.textContent = "Copying…";
+  window.triggerCopyIphoneTextWithFeedback = async function () {
+    const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
+    if (btnCopyIphone) {
+      btnCopyIphone.disabled = true;
+      btnCopyIphone.textContent = "⏳ Copying…";
+    }
     try {
       if (typeof window.HandsetKeys?.flushTypedQueue === "function") {
         await window.HandsetKeys.flushTypedQueue();
@@ -568,19 +548,77 @@ function initKeyboardSettingsControls() {
         if (navigator.clipboard?.writeText) {
           try { await navigator.clipboard.writeText(res.text); } catch (_) {}
         }
-        btnCopyIphone.textContent = "✓ Copied to PC!";
+        if (btnCopyIphone) btnCopyIphone.textContent = "✓ Copied to PC!";
       } else {
-        btnCopyIphone.textContent = "✓ Copied (iOS)";
+        if (btnCopyIphone) btnCopyIphone.textContent = "✓ Copied (iOS)";
       }
-      btnCopyIphone.classList.add("is-saved");
+      if (btnCopyIphone) btnCopyIphone.classList.add("is-saved");
+      return res;
     } catch (_) {
-      btnCopyIphone.textContent = "Copy Failed";
+      if (btnCopyIphone) btnCopyIphone.textContent = "Copy Failed";
     } finally {
       setTimeout(() => {
-        btnCopyIphone.textContent = oldText;
-        btnCopyIphone.classList.remove("is-saved");
-        btnCopyIphone.disabled = false;
+        if (btnCopyIphone) {
+          btnCopyIphone.textContent = COPY_IPHONE_LABEL;
+          btnCopyIphone.classList.remove("is-saved");
+          btnCopyIphone.disabled = false;
+        }
       }, 1500);
+    }
+  };
+
+  window.triggerPastePcTextWithFeedback = async function () {
+    const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
+    if (btnPastePcNow) {
+      btnPastePcNow.disabled = true;
+      btnPastePcNow.textContent = "⏳ Pasting…";
+    }
+    try {
+      if (window.HandsetKeys?.pasteFromPc) {
+        await window.HandsetKeys.pasteFromPc(true);
+      } else if (window.HandsetKeys?.triggerPasteFromPc) {
+        await window.HandsetKeys.triggerPasteFromPc(false);
+      } else {
+        await postJson("/api/keyboard/paste", { force: true });
+      }
+      if (btnPastePcNow) {
+        btnPastePcNow.textContent = "✓ Pasted!";
+        btnPastePcNow.classList.add("is-saved");
+      }
+    } catch (_) {
+      if (btnPastePcNow) btnPastePcNow.textContent = "Paste Failed";
+    } finally {
+      setTimeout(() => {
+        if (btnPastePcNow) {
+          btnPastePcNow.textContent = PASTE_PC_LABEL;
+          btnPastePcNow.classList.remove("is-saved");
+          btnPastePcNow.disabled = false;
+        }
+      }, 1200);
+    }
+  };
+
+  const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
+  btnPastePcNow?.addEventListener("click", () => {
+    window.triggerPastePcTextWithFeedback();
+  });
+
+  const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
+  btnCopyIphone?.addEventListener("click", () => {
+    window.triggerCopyIphoneTextWithFeedback();
+  });
+
+  // Global keydown on window to catch shortcuts even when focus is not in mirror iframe
+  window.addEventListener("keydown", (e) => {
+    const target = e.target;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+
+    if (((e.ctrlKey || e.metaKey) && e.code === "KeyC") || (e.altKey && e.code === "KeyC")) {
+      e.preventDefault();
+      window.triggerCopyIphoneTextWithFeedback();
+    } else if ((e.altKey && e.code === "KeyV") || ((e.ctrlKey || e.metaKey) && e.code === "KeyV")) {
+      e.preventDefault();
+      window.triggerPastePcTextWithFeedback();
     }
   });
 

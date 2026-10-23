@@ -660,6 +660,37 @@ Pembaruan terkini mencakup:
   - Test 2A (Viewport History Anti-Reset): 5x pointerdown berturut-turut di layar bawah terbukti tidak menghapus frame atas.
   - Test 2B (KMP Batumandi Stitching): 100% utuh dari `"Rekaman video amatir..."` hingga `"#cilegon"`, tanpa artefak `"aO/O3124an"` baik dalam urutan Top->Bottom maupun Bottom->Top.
 
+---
+
+### Tahap 28: Gap-Filling Segment Stitcher, Paragraph Break Preservation, Debris Filtering, dan All-in-One Shortcut (24 Oktober 2026)
+- **Status**: Selesai & Terverifikasi 100% via `verify_tahap28.py`, `verify_tahap27.py`, dan `verify_tahap26.py`.
+- **Latar Belakang**: Pengujian video Tahap 27 oleh Kelvin menunjukkan:
+  - Copy baris spesifik tunggal sudah 100% sempurna tanpa typo.
+  - Caption panjang KMP Batumandi tersambung dari awal sampai akhir, namun memiliki 4 cacat di Notepad (baris `"Momen menegangkan..."` hilang akibat tertutup popup balon iOS, pemisah paragraf `\r\n\r\n` hilang, sampah toolbar bawah `"me1a1ui jendela-kecil miliknva"` & header tanggal atas muncul, dan angka `" 4"` nyasar di belakang `"KMP"`) serta permintaan shortcut tombol All-in-One.
+- **Pekerjaan yang Dilakukan**:
+  1. **Tombol All-in-One & Shortcut Keyboard (`Ctrl+C` / `Alt+C` & `Alt+V`)**:
+     - Ubah label tombol di `index.html` dan `app.js` menjadi `📥 Copy iPhone Text (Ctrl+C / Alt+C)` dan `📋 Paste PC Text (Ctrl+V / Alt+V)`.
+     - Implementasi `window.triggerCopyIphoneTextWithFeedback` dan `window.triggerPastePcTextWithFeedback` di `app.js`.
+     - Event listener global `keydown` di `app.js` dan delegasi shortcut di `keys.js` menyalakan animasi visual `"⏳ Copying..."` $\rightarrow$ `"✓ Copied to PC!"` $\rightarrow$ kembali ke label awal.
+  2. **Gap-Filling Segment Stitcher di `screen.py`**:
+     - Membangun anchor monoton naik $(i_k, j_k)$. Jika celah di antara anchor pada salah satu frame kosong karena tertutup popup balon iOS (`gapA == []`), sistem menambalnya dari frame lain yang lengkap (`gapB == ["Momen menegangkan tersebut diabadikan"]`).
+  3. **Preservasi Baris Kosong Pemisah Paragraf (`\r\n\r\n`)**:
+     - Di `ocr_extractor.ps1`: Ambang vertikal gap baris disetel ke `$gap -gt ($avgH * 0.62)`.
+     - Di `screen.py`: Mencatat `para_breaks_after` dan mendeteksi batas alami paragraf (akhiran `.` atau `?` atau sebelum kata seksi baru) untuk menyisipkan pemisah paragraf ganda yang rapi.
+  4. **Pembersihan Debris Toolbar & Header**:
+     - Crop full-viewport di `ocr_extractor.ps1` disetel ke $Y = 0.145 \times H \dots 0.768 \times H$ (tidak lagi memotong tanggal atas atau toolbar bawah).
+     - Filter regex tanggal iOS Notes dan kata-kata halusinasi OCR (`v3one`, `oil13i1`, `me1a1ui`, `miliknva`, `jendela-kecil`, `Device Hub`).
+     - Penguncian ekor teks pada batas hashtag `#cilegon`.
+  5. **Eliminasi Angka Nyasar `" 4"` (AssistiveTouch Masking 24px)**:
+     - Zona AssistiveTouch di `ocr_extractor.ps1` diperluas ke $X > 0.74 \times W$ dengan padding putih 24px.
+     - Fungsi `_clean_ocr_line` dan `_pick_cleaner_line` di `screen.py` membersihkan angka satu digit yatim di akhir akronim (`"KMP 4"` $\rightarrow$ `"KMP"`).
+  6. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap28_gap_filling_stitcher_and_shortcuts` di `index.html`, `mirror.html`, dan `app.js`.
+- **Hasil Verifikasi**:
+  - Test 1: Baris `"Momen menegangkan tersebut diabadikan"` pulih di awal Paragraf 2, seluruh sampah header/toolbar/angka 4 bersih total, dan pemisah paragraf `\r\n\r\n` tertata rapi.
+  - Test 2: Seluruh kasus teks pendek (`"banten feeds..."`, `"naruto uzumaki..."`, `"barcelona..."`) 100% sempurna tanpa regresi.
+  - Test 3: Konsistensi label tombol All-in-One dan trigger shortcut 100% terverifikasi.
+
+
 
 
 

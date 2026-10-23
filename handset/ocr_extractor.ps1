@@ -38,7 +38,7 @@ public class DualOcrPreprocessor {
         // 1. Detect and Mask AssistiveTouch floating button in Left Zone (X < 0.20 * W) or Right Zone (X > 0.80 * W)
         // Neutral gray: |R - G| <= 14 && |G - B| <= 14 && |R - B| <= 14 && R >= 48 && R <= 195
         for (int side = 0; side < 2; side++) {
-            int zoneXStart = (side == 0) ? 0 : (int)(W * 0.80);
+            int zoneXStart = (side == 0) ? 0 : (int)(W * 0.74);
             int zoneXEnd = (side == 0) ? (int)(W * 0.20) : W;
 
             int clusterMinY = -1;
@@ -84,7 +84,7 @@ public class DualOcrPreprocessor {
                         int cW = clusterMaxX - clusterMinX;
                         int cH = clusterMaxY - clusterMinY;
                         if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
-                            int pad = 8;
+                            int pad = 24;
                             int mX0 = Math.Max(0, clusterMinX - pad);
                             int mX1 = Math.Min(W - 1, clusterMaxX + pad);
                             int mY0 = Math.Max(0, clusterMinY - pad);
@@ -113,7 +113,7 @@ public class DualOcrPreprocessor {
                 int cW = clusterMaxX - clusterMinX;
                 int cH = clusterMaxY - clusterMinY;
                 if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
-                    int pad = 8;
+                    int pad = 24;
                     int mX0 = Math.Max(0, clusterMinX - pad);
                     int mX1 = Math.Min(W - 1, clusterMaxX + pad);
                     int mY0 = Math.Max(0, clusterMinY - pad);
@@ -230,8 +230,10 @@ public class DualOcrPreprocessor {
             cropH = Math.Max(20, bottomLimit - cropY);
         } else {
             // Full-Viewport Content Crop (for history frames or unhighlighted notes)
-            cropY = (int)(H * 0.115);
-            cropH = (int)(H * 0.735); // 0.115*H to 0.85*H
+            // Exclude top banner / date (< 0.145 * H) and bottom floating toolbar (> 0.768 * H)
+            cropY = (int)(H * 0.145);
+            int cropBottom = (int)(H * 0.768);
+            cropH = Math.Max(20, cropBottom - cropY);
         }
 
         // Candidate 1: Natural crop without aggressive pixel removal
@@ -405,7 +407,7 @@ public class DualOcrPreprocessor {
         $stream.Dispose()
         Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
 
-        $dateRegex = '^\d{1,2}\s+[A-Za-z]+\s+\d{4}\s+(at|pukul)\s+\d{1,2}[.:]\d{2}'
+        $dateRegex = '(?i)^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?'
         $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
         $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
 
@@ -415,7 +417,8 @@ public class DualOcrPreprocessor {
             if (!$t) { continue }
             if ($t -match $dateRegex -or $t -match $timeRegex) { continue }
             if ($t -match $calloutRegex) { continue }
-            if ($t -match 'This device was viewed remotely') { continue }
+            if ($t -match '(?i)(jendela-kecil|Device Hub|This device was viewed remotely|remotely from Mac)') { continue }
+            if ($t -match '\b(v3one|oil13i1|111e113n|me1a1ui|miliknva|aO/O3124an)\b') { continue }
             if ($t -match '^[<✓>]+$' -or $t -eq 'Notes' -or $t -eq 'Catatan' -or $t -eq 'Done' -or $t -eq 'Selesai') { continue }
 
             # Filter iOS callout menu balloon lines (e.g. "Cut Co", "Paste Delete", "Cut Copy Paste")
@@ -505,7 +508,7 @@ public class DualOcrPreprocessor {
             if ($i -gt 0) {
                 $prev = $sortedLines[$i - 1]
                 $gap = $curr.MinY - $prev.MaxY
-                if ($gap -gt ($avgH * 0.75)) {
+                if ($gap -gt ($avgH * 0.62)) {
                     $lines += ""
                 }
             }

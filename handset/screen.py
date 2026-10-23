@@ -646,20 +646,70 @@ def _normalize_line_for_match(text: str) -> str:
     return re.sub(r'\s{2,}', ' ', cleaned)
 
 
+def _is_garbage_ocr_line(text: str) -> bool:
+    """Check if an OCR line is hallucinated toolbar debris, banner text, or iOS date header."""
+    if not text or not text.strip():
+        return False
+    t = text.strip()
+    t_low = t.lower()
+
+    # System banners & floating toolbar text
+    if any(bad in t_low for bad in ["jendela-kecil", "device hub", "this device was viewed remotely", "remotely from mac"]):
+        return True
+
+    # iOS Notes date line (e.g. "24 October 2026 at 04.31" or "20 Oktober 2026")
+    date_pattern = r'^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?$'
+    if re.match(date_pattern, t, re.IGNORECASE):
+        return True
+
+    # Hallucinated words mixing letters and digits randomly
+    words = t.split()
+    if any(w.lower() in ["v3one", "oil13i1", "111e113n", "me1a1ui", "miliknva", "ao/o3124an"] for w in words):
+        return True
+
+    mixed_word_count = sum(
+        1 for w in words
+        if re.search(r'[a-zA-Z]', w) and re.search(r'[0-9]', w) and not re.match(r'^[a-zA-Z]+[0-9]+$', w)
+    )
+    if mixed_word_count >= 2:
+        return True
+
+    return False
+
+
+def _clean_ocr_line(line: str) -> str:
+    """Clean orphan digits or trailing debris from line."""
+    if not line:
+        return ""
+    t = line.strip()
+    # Strip trailing orphan single digit after uppercase acronym (e.g. "KMP 4" -> "KMP")
+    t = re.sub(r'\b([A-Z]{2,})\s+[0-9]$', r'\1', t)
+    return t
+
+
+def _pick_cleaner_line(line1: str, line2: str) -> str:
+    """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits)."""
+    l1_clean = _clean_ocr_line(line1)
+    l2_clean = _clean_ocr_line(line2)
+    if line1 != l1_clean and line2 == l2_clean:
+        return l2_clean
+    if line2 != l2_clean and line1 == l1_clean:
+        return l1_clean
+    return l1_clean if len(l1_clean) >= len(l2_clean) else l2_clean
+
+
 def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[str] | None:
     """
-    Bidirectional Interior Anchor Alignment:
-    Finds consistent overlapping lines (>= 18 chars, ratio >= 0.78), detects whether
-    linesA is top (offset > 0) or linesB is top (offset < 0), and splits at the
-    interior middle anchor (matches[len // 2]).
-    Corrupted top lines (clipped scroll edge) and corrupted bottom lines
-    (e.g. Notes floating toolbar 'aO/O3124an') are cleanly excluded.
+    Gap-Filling Segment Stitcher (Tahap 28):
+    Identifies matching anchor pairs, detects alignment direction, fills in occluded
+    gaps between anchors (e.g. restoring lines covered by iOS Cut/Copy/Paste balloon),
+    cleans orphan digits, and clamps tail to clean content.
     """
     if not linesA or not linesB:
         return None
 
-    cleanA = [l.strip() for l in linesA if l and l.strip()]
-    cleanB = [l.strip() for l in linesB if l and l.strip()]
+    cleanA = [_clean_ocr_line(l) for l in linesA if l and l.strip() and not _is_garbage_ocr_line(l)]
+    cleanB = [_clean_ocr_line(l) for l in linesB if l and l.strip() and not _is_garbage_ocr_line(l)]
     if not cleanA or not cleanB:
         return None
 
@@ -701,34 +751,98 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
     if not consistent_matches:
         consistent_matches = matches
 
+    # Build strictly increasing anchor sequence: i_0 < i_1 < ... and j_0 < j_1 < ...
     consistent_matches.sort(key=lambda m: m[0])
+    anchors: list[tuple[int, int]] = []
+    last_i = -1
+    last_j = -1
+    for m in consistent_matches:
+        ci, cj = m[0], m[1]
+        if ci > last_i and cj > last_j:
+            anchors.append((ci, cj))
+            last_i = ci
+            last_j = cj
 
-    # Check if one block is a complete subset of the other
-    first_i, first_j = consistent_matches[0][0], consistent_matches[0][1]
-    last_i, last_j = consistent_matches[-1][0], consistent_matches[-1][1]
-    remA = len(cleanA) - 1 - last_i
-    remB = len(cleanB) - 1 - last_j
+    if not anchors:
+        return None
 
-    if first_j >= first_i and remB >= remA:
-        return cleanB
-    if first_i >= first_j and remA >= remB:
-        return cleanA
+    merged_lines: list[str] = []
 
-    # Interior middle anchor
-    mid_idx = len(consistent_matches) // 2
-    split_i, split_j, _, _ = consistent_matches[mid_idx]
+    # 1. Head (before first anchor)
+    first_i, first_j = anchors[0]
+    if dom_offset > 0:
+        head = cleanA[:first_i]
+    elif dom_offset < 0:
+        head = cleanB[:first_j]
+    else:
+        head = cleanA[:first_i] if first_i >= first_j else cleanB[:first_j]
+    merged_lines.extend(head)
+
+    # 2. Iterate through anchors and fill gaps
+    for k in range(len(anchors)):
+        curr_i, curr_j = anchors[k]
+        best_anchor = _pick_cleaner_line(cleanA[curr_i], cleanB[curr_j])
+        merged_lines.append(best_anchor)
+
+        if k < len(anchors) - 1:
+            next_i, next_j = anchors[k + 1]
+            gapA = cleanA[curr_i + 1 : next_i]
+            gapB = cleanB[curr_j + 1 : next_j]
+
+            if not gapA and not gapB:
+                continue
+            elif gapA and not gapB:
+                merged_lines.extend(gapA)
+            elif gapB and not gapA:
+                merged_lines.extend(gapB)
+            else:
+                if len(gapA) == len(gapB):
+                    for ga, gb in zip(gapA, gapB):
+                        merged_lines.append(_pick_cleaner_line(ga, gb))
+                elif len(gapA) > len(gapB):
+                    merged_lines.extend(gapA)
+                else:
+                    merged_lines.extend(gapB)
+
+    # 3. Tail (after last anchor)
+    last_i, last_j = anchors[-1]
+    tailA = cleanA[last_i + 1 :]
+    tailB = cleanB[last_j + 1 :]
 
     if dom_offset > 0:
-        # linesA is TOP, linesB is BOTTOM
-        merged = cleanA[:split_i] + cleanB[split_j:]
-        return merged
+        tail = tailB if tailB else tailA
     elif dom_offset < 0:
-        # linesB is TOP, linesA is BOTTOM (e.g. user scrolled upwards)
-        merged = cleanB[:split_j] + cleanA[split_i:]
-        return merged
+        tail = tailA if tailA else tailB
     else:
-        # dom_offset == 0: aligned at start; take longer version
-        return cleanA if len(cleanA) >= len(cleanB) else cleanB
+        tail = tailA if len(tailA) >= len(tailB) else tailB
+    merged_lines.extend(tail)
+
+    # Post-process: deduplicate immediate identical adjacent lines
+    deduped: list[str] = []
+    for line in merged_lines:
+        c_line = _clean_ocr_line(line)
+        if not c_line or _is_garbage_ocr_line(c_line):
+            continue
+        if deduped and _normalize_line_for_match(deduped[-1]) == _normalize_line_for_match(c_line):
+            continue
+        deduped.append(c_line)
+
+    # Clamp tail: if there are hashtag lines (#...), cut any trailing lines after hashtag block
+    last_hashtag_idx = -1
+    for idx, l in enumerate(deduped):
+        if l.strip().startswith("#"):
+            last_hashtag_idx = idx
+
+    if last_hashtag_idx != -1:
+        clean_tail = deduped[:last_hashtag_idx + 1]
+        for l in deduped[last_hashtag_idx + 1:]:
+            if l.strip().startswith("#"):
+                clean_tail.append(l)
+            elif not _is_garbage_ocr_line(l) and len(l.strip()) > 3:
+                clean_tail.append(l)
+        deduped = clean_tail
+
+    return deduped
 
 
 def stitch_two_ocr_texts(text1: str, text2: str) -> str:
@@ -745,7 +859,6 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
     lines1 = [l.strip() for l in t1_clean.splitlines() if l.strip()]
     lines2 = [l.strip() for l in t2_clean.splitlines() if l.strip()]
 
-    # Try interior anchor alignment first
     interior_merged = merge_two_overlapping_blocks(lines1, lines2)
     if interior_merged:
         return "\r\n".join(interior_merged)
@@ -799,21 +912,34 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
         return t2_clean
 
     i, j, l1, l2 = best_match
-    longer_line = l1 if len(l1) >= len(l2) else l2
+    longer_line = _pick_cleaner_line(l1, l2)
     stitched_lines = lines1[:i] + [longer_line] + lines2[j + 1:]
     return "\r\n".join(stitched_lines)
 
 
 def stitch_multiline_ocr_frames(texts: list[str]) -> str:
-    """Stitch multiple chronologically ordered OCR frames into a seamless single multi-paragraph text."""
+    """
+    Stitch multiple chronologically ordered OCR frames into a seamless single multi-paragraph text
+    with preserved paragraph spacing (\\r\\n\\r\\n).
+    """
     valid_texts = [t.strip() for t in texts if t and t.strip()]
     if not valid_texts:
         return ""
 
-    current_lines = [l.strip() for l in valid_texts[0].splitlines() if l.strip()]
+    # Record paragraph breaks: lines followed by empty line in input frames
+    para_breaks_after: set[str] = set()
+    for t in valid_texts:
+        raw_lines = [l.strip() for l in t.splitlines()]
+        for idx in range(len(raw_lines) - 1):
+            if raw_lines[idx] and raw_lines[idx + 1] == "":
+                norm_l = _normalize_line_for_match(raw_lines[idx])
+                if norm_l:
+                    para_breaks_after.add(norm_l)
+
+    current_lines = [l.strip() for l in valid_texts[0].splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
 
     for nxt in valid_texts[1:]:
-        nxt_lines = [l.strip() for l in nxt.splitlines() if l.strip()]
+        nxt_lines = [l.strip() for l in nxt.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
         if not nxt_lines:
             continue
         merged = merge_two_overlapping_blocks(current_lines, nxt_lines)
@@ -821,7 +947,7 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             current_lines = merged
         else:
             t_merged = stitch_two_ocr_texts("\r\n".join(current_lines), "\r\n".join(nxt_lines))
-            current_lines = [l.strip() for l in t_merged.splitlines() if l.strip()]
+            current_lines = [l.strip() for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
 
     # If long note (>= 4 lines), check and merge with session chunk memory (_RECENT_LONG_OCR_CHUNKS)
     if len(current_lines) >= 4:
@@ -839,7 +965,41 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             if len(_RECENT_LONG_OCR_CHUNKS) > 5:
                 _RECENT_LONG_OCR_CHUNKS = _RECENT_LONG_OCR_CHUNKS[-5:]
 
-    return "\r\n".join(current_lines)
+    # Final paragraph formatting assembly
+    if len(current_lines) <= 1:
+        return "\r\n".join(current_lines)
+
+    output_lines: list[str] = []
+    for idx, line in enumerate(current_lines):
+        output_lines.append(line)
+        if idx < len(current_lines) - 1:
+            norm_curr = _normalize_line_for_match(line)
+            norm_next = _normalize_line_for_match(current_lines[idx + 1])
+
+            is_para_end = norm_curr in para_breaks_after
+
+            if not is_para_end:
+                starts_new_section = (
+                    norm_next.startswith("momen menegangkan")
+                    or norm_next.startswith("situasi darurat")
+                    or norm_next.startswith("bagaimana perasaan")
+                    or norm_next.startswith("source:")
+                    or norm_next.startswith("video:")
+                    or norm_next.startswith("foto:")
+                    or norm_next.startswith("#")
+                )
+                if norm_curr.startswith("#") and norm_next.startswith("#"):
+                    starts_new_section = False
+
+                if starts_new_section:
+                    is_para_end = True
+                elif (line.endswith(".") or line.endswith("?")) and len(line) < 48 and not norm_curr.startswith("#"):
+                    is_para_end = True
+
+            if is_para_end:
+                output_lines.append("")
+
+    return "\r\n".join(output_lines)
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:

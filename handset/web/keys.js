@@ -210,28 +210,30 @@
             return;
           }
 
-          if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-            if (e.code === "KeyA") {
-              e.preventDefault();
-              e.stopPropagation();
-              ignoreKeyUpUntil = Date.now() + 400;
-              pressed.clear();
-              flush();
-              triggerShortcut("select-all");
-              return;
-            }
+          const isCtrlOrMeta = (e.ctrlKey || e.metaKey);
+          const isAlt = e.altKey;
+
+          if (isCtrlOrMeta || isAlt) {
             if (e.code === "KeyC") {
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
-              await flushTypedQueue();
-              const frameDataUrl = captureMirrorCanvasDataUrl();
-              const frameHistory = getMirrorFrameHistory();
               pressed.clear();
               flush();
-              const res = await triggerShortcut("copy", frameDataUrl, true, frameHistory);
-              if (res?.text && navigator.clipboard?.writeText) {
-                try { await navigator.clipboard.writeText(res.text); } catch (_) {}
+              if (typeof window.top?.triggerCopyIphoneTextWithFeedback === "function") {
+                window.top.triggerCopyIphoneTextWithFeedback();
+              } else if (typeof window.triggerCopyIphoneTextWithFeedback === "function") {
+                window.triggerCopyIphoneTextWithFeedback();
+              } else {
+                (async () => {
+                  await flushTypedQueue();
+                  const frameDataUrl = captureMirrorCanvasDataUrl();
+                  const frameHistory = getMirrorFrameHistory();
+                  const res = await triggerShortcut("copy", frameDataUrl, true, frameHistory);
+                  if (res?.text && navigator.clipboard?.writeText) {
+                    try { await navigator.clipboard.writeText(res.text); } catch (_) {}
+                  }
+                })();
               }
               return;
             }
@@ -241,12 +243,29 @@
               ignoreKeyUpUntil = Date.now() + 500;
               pressed.clear();
               flush();
-              // If pastePcClipboard is disabled, execute native iOS Cmd+V directly
-              if (!window.HandsetKeyboardSettings?.pastePcClipboard) {
-                triggerShortcut("paste-ios");
+              if (isAlt || window.HandsetKeyboardSettings?.pastePcClipboard) {
+                if (typeof window.top?.triggerPastePcTextWithFeedback === "function") {
+                  window.top.triggerPastePcTextWithFeedback();
+                } else if (typeof window.triggerPastePcTextWithFeedback === "function") {
+                  window.triggerPastePcTextWithFeedback();
+                } else {
+                  triggerPasteFromPc(false);
+                }
               } else {
-                triggerPasteFromPc(false);
+                triggerShortcut("paste-ios");
               }
+              return;
+            }
+          }
+
+          if (isCtrlOrMeta && !isAlt) {
+            if (e.code === "KeyA") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
+              pressed.clear();
+              flush();
+              triggerShortcut("select-all");
               return;
             }
             if (e.code === "KeyX") {
