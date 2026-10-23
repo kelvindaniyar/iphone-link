@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_tahap16_audiosink_savecrop">
+  <link rel="stylesheet" href="/app.css?v=20261023_trackpad_speed_ui">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -31,29 +31,8 @@
           </svg>
           <span>Stop</span>
         </button>
-        <button type="button" class="icon-btn" id="refresh" title="Refresh connection" aria-label="Refresh">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-          </svg>
-        </button>
-        <button type="button" class="icon-btn" id="btn-theme" title="Toggle Theme (Dark / Light)" aria-label="Toggle Theme">
-          <svg class="theme-icon-sun" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line>
-            <line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-          </svg>
-          <svg class="theme-icon-moon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-          </svg>
-        </button>
         <button type="button" class="icon-btn" id="btn-audio-top" title="Toggle Audio Sink (iPhone ➔ PC)" aria-label="Audio Sink">
-          <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+          <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
           </svg>
@@ -251,6 +230,31 @@
             <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="width: 100%; margin-top: 6px;">⚙️ Pair Bluetooth in Windows</button>
           </section>
 
+          <!-- Trackpad Gesture Speed Card (3 Presets + Slider + Number Input + Persistent Save) -->
+          <section class="card panel-trackpad-speed" id="panel-trackpad-speed">
+            <span class="drawer-section-label">Trackpad Gesture Speed</span>
+            <div class="segmented segmented-speed" role="radiogroup" aria-label="Trackpad Gesture Speed Preset">
+              <button type="button" class="seg" data-speed-choice="65" role="radio" aria-checked="false">Slow (65%)</button>
+              <button type="button" class="seg is-active" data-speed-choice="100" role="radio" aria-checked="true">Default (100%)</button>
+              <button type="button" class="seg" data-speed-choice="140" role="radio" aria-checked="false">Fast (140%)</button>
+            </div>
+
+            <div class="speed-slider-wrap">
+              <div class="crop-label-row">
+                <span>Speed Sensitivity</span>
+                <div class="crop-input-wrap">
+                  <input type="number" id="trackpad-speed-num" min="30" max="200" step="5" value="100">
+                  <span class="unit">%</span>
+                </div>
+              </div>
+              <input type="range" id="trackpad-speed-slider" min="30" max="200" step="5" value="100">
+            </div>
+
+            <div class="speed-btn-row" style="margin-top: 8px;">
+              <button type="button" class="ctl ctl-sm ctl-accent btn-save-speed" id="btn-save-speed" style="width: 100%;">💾 Save Speed</button>
+            </div>
+          </section>
+
           <section class="card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
@@ -307,6 +311,12 @@
           <details class="card card-details" id="device-card">
             <summary>Device & Connection Details</summary>
             <div class="details-body">
+              <button type="button" class="ctl ctl-sm" id="refresh" style="width: 100%; margin-bottom: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                <span>Refresh Devices</span>
+              </button>
               <ul class="device-list" id="devices"></ul>
               <div class="device-detail" id="detail" hidden></div>
               <dl class="kv" id="status" style="margin-top: 10px;"></dl>
@@ -333,7 +343,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_tahap16_audiosink_savecrop"></script>
-  <script src="/app.js?v=20261023_tahap16_audiosink_savecrop"></script>
+  <script src="/keys.js?v=20261023_trackpad_speed_ui"></script>
+  <script src="/app.js?v=20261023_trackpad_speed_ui"></script>
 </body>
 </html>

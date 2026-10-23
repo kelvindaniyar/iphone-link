@@ -16,18 +16,24 @@ const workspace = document.querySelector("#workspace");
 const remotePanel = document.querySelector("#remote-panel");
 const restartScreen = document.querySelector("#restart-screen");
 const stopScreen = document.querySelector("#stop-screen");
-const btnTheme = document.querySelector("#btn-theme");
-const iconSun = btnTheme?.querySelector(".theme-icon-sun");
-const iconMoon = btnTheme?.querySelector(".theme-icon-moon");
 const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_tahap16_audiosink_savecrop";
+const MIRROR_PAGE = "/mirror.html?v=20261023_trackpad_speed_ui";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
 let currentFitMode = localStorage.getItem("pane-fit-mode") || "fill";
+let currentTrackpadSpeed = 100;
+try {
+  const savedSpeed = parseInt(localStorage.getItem("pane-trackpad-speed"), 10);
+  if (!isNaN(savedSpeed) && savedSpeed >= 30 && savedSpeed <= 200) {
+    currentTrackpadSpeed = savedSpeed;
+  }
+} catch (_) {
+  currentTrackpadSpeed = 100;
+}
 
 // 4-Sided Crop Management (Top, Bottom, Left, Right)
 const DEFAULT_CROP = { top: 0, bottom: 0, left: 0, right: 0 };
@@ -65,6 +71,9 @@ async function fetchUserSettings() {
       if (res.theme) {
         applyTheme(res.theme);
       }
+      if (res.trackpadSpeed !== undefined) {
+        applyTrackpadSpeed(res.trackpadSpeed, true);
+      }
       if (res.audioVolume !== undefined) {
         const volSlider = document.querySelector("#audio-vol-slider");
         const volVal = document.querySelector("#audio-vol-val");
@@ -92,6 +101,7 @@ async function saveUserSettings() {
       crop: currentCrop,
       fitMode: currentFitMode,
       theme: currentTheme,
+      trackpadSpeed: currentTrackpadSpeed,
     });
 
     applyCrop(currentCrop, true);
@@ -130,6 +140,8 @@ function renderAudio(audio) {
     if (iconOn && iconOff) {
       iconOn.hidden = !isEnabled;
       iconOff.hidden = isEnabled;
+      iconOn.style.display = isEnabled ? "block" : "none";
+      iconOff.style.display = isEnabled ? "none" : "block";
     }
   }
 
@@ -228,11 +240,6 @@ function applyTheme(theme) {
   appEl?.setAttribute("data-theme", currentTheme);
   localStorage.setItem("pane-theme", currentTheme);
 
-  if (iconSun && iconMoon) {
-    iconSun.hidden = currentTheme === "light";
-    iconMoon.hidden = currentTheme !== "light";
-  }
-
   document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
     const active = btn.dataset.themeChoice === currentTheme;
     btn.classList.toggle("is-active", active);
@@ -325,10 +332,113 @@ function initCropControls() {
   });
 }
 
+function applyTrackpadSpeed(speed, syncInputs = false) {
+  let val = parseInt(speed, 10);
+  if (isNaN(val)) val = 100;
+  val = Math.max(30, Math.min(200, val));
+  currentTrackpadSpeed = val;
+  localStorage.setItem("pane-trackpad-speed", String(currentTrackpadSpeed));
+
+  if (syncInputs) {
+    const slider = document.querySelector("#trackpad-speed-slider");
+    const numInput = document.querySelector("#trackpad-speed-num");
+    if (slider) slider.value = String(currentTrackpadSpeed);
+    if (numInput) numInput.value = String(currentTrackpadSpeed);
+  }
+
+  document.querySelectorAll("[data-speed-choice]").forEach((btn) => {
+    const choice = parseInt(btn.dataset.speedChoice, 10);
+    const active = choice === currentTrackpadSpeed;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+
+  try {
+    screenView?.contentWindow?.postMessage(
+      { type: "set-trackpad-speed", speed: currentTrackpadSpeed },
+      "*"
+    );
+  } catch (_) {}
+}
+
+async function saveTrackpadSpeed() {
+  const btnSave = document.querySelector("#btn-save-speed");
+  try {
+    if (btnSave) {
+      btnSave.disabled = true;
+      btnSave.textContent = "Saving…";
+    }
+    localStorage.setItem("pane-trackpad-speed", String(currentTrackpadSpeed));
+
+    await postJson("/api/settings", {
+      trackpadSpeed: currentTrackpadSpeed,
+    });
+
+    applyTrackpadSpeed(currentTrackpadSpeed, true);
+
+    if (btnSave) {
+      btnSave.textContent = "✓ Speed Saved!";
+      btnSave.classList.add("is-saved");
+      setTimeout(() => {
+        btnSave.textContent = "💾 Save Speed";
+        btnSave.classList.remove("is-saved");
+        btnSave.disabled = false;
+      }, 1500);
+    }
+  } catch (err) {
+    console.warn("saveTrackpadSpeed error:", err);
+    if (btnSave) {
+      btnSave.textContent = "Error saving";
+      btnSave.disabled = false;
+    }
+  }
+}
+
+function initTrackpadSpeedControls() {
+  const slider = document.querySelector("#trackpad-speed-slider");
+  const numInput = document.querySelector("#trackpad-speed-num");
+
+  if (slider) {
+    slider.value = String(currentTrackpadSpeed);
+    slider.addEventListener("input", (e) => {
+      const val = parseInt(e.target.value, 10) || 100;
+      if (numInput) numInput.value = String(val);
+      applyTrackpadSpeed(val, false);
+    });
+  }
+
+  if (numInput) {
+    numInput.value = String(currentTrackpadSpeed);
+    const handleNumChange = (e) => {
+      let val = parseInt(e.target.value, 10);
+      if (isNaN(val)) val = 100;
+      val = Math.max(30, Math.min(200, val));
+      e.target.value = String(val);
+      if (slider) slider.value = String(val);
+      applyTrackpadSpeed(val, false);
+    };
+    numInput.addEventListener("input", handleNumChange);
+    numInput.addEventListener("change", handleNumChange);
+  }
+
+  document.querySelectorAll("[data-speed-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const choice = parseInt(btn.dataset.speedChoice, 10);
+      if (!isNaN(choice)) {
+        applyTrackpadSpeed(choice, true);
+      }
+    });
+  });
+
+  const btnSave = document.querySelector("#btn-save-speed");
+  btnSave?.addEventListener("click", saveTrackpadSpeed);
+}
+
 function syncSettingsToIframe() {
   syncThemeToIframe();
   applyFitMode(currentFitMode);
   applyCrop(currentCrop, true);
+  applyTrackpadSpeed(currentTrackpadSpeed, true);
 }
 
 screenView?.addEventListener("load", syncSettingsToIframe);
@@ -336,13 +446,11 @@ screenView?.addEventListener("load", syncSettingsToIframe);
 applyTheme(currentTheme);
 applyFitMode(currentFitMode);
 applyCrop(currentCrop, true);
+applyTrackpadSpeed(currentTrackpadSpeed, true);
 initCropControls();
+initTrackpadSpeedControls();
 initAudioControls();
 fetchUserSettings();
-
-btnTheme?.addEventListener("click", () => {
-  applyTheme(currentTheme === "dark" ? "light" : "dark");
-});
 
 document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
   btn.addEventListener("click", () => {

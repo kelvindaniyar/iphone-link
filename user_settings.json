@@ -8,5 +8,6 @@
   "fitMode": "fill",
   "theme": "dark",
   "audioSinkEnabled": false,
-  "audioVolume": 100
+  "audioVolume": 100,
+  "trackpadSpeed": 100
 }

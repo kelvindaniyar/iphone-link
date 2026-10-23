@@ -33,6 +33,7 @@ DEFAULT_SETTINGS = {
     "theme": "dark",
     "audioSinkEnabled": False,
     "audioVolume": 100,
+    "trackpadSpeed": 100,
 }
 
 
@@ -62,6 +63,11 @@ def save_user_settings(new_settings: dict) -> dict:
                 "left": max(0, min(120, int(v.get("left", 0) or 0))),
                 "right": max(0, min(120, int(v.get("right", 0) or 0))),
             }
+        elif k == "trackpadSpeed":
+            try:
+                current["trackpadSpeed"] = max(30, min(200, int(v or 100)))
+            except Exception:
+                current["trackpadSpeed"] = 100
         elif k in current:
             current[k] = v
     try:

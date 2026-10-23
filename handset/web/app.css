@@ -250,6 +250,11 @@ a:hover { text-decoration: underline; }
   border-color: rgba(74, 222, 128, 0.4);
 }
 
+#btn-audio-top svg[hidden],
+#btn-audio-top svg.is-hidden {
+  display: none !important;
+}
+
 /* Native Window Controls */
 .window-controls {
   display: flex;
@@ -971,8 +976,72 @@ iframe[hidden],
 }
 
 .segmented-theme,
-.segmented-fit {
+.segmented-fit,
+.segmented-speed {
   margin-bottom: 0 !important;
+}
+
+.segmented-speed {
+  grid-template-columns: 1fr 1fr 1fr !important;
+}
+
+/* Trackpad Gesture Speed Panel */
+.panel-trackpad-speed {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.speed-slider-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.speed-slider-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 3px 0 1px;
+  cursor: pointer;
+}
+
+.speed-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.speed-slider-wrap input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.btn-save-speed {
+  background: #0078d4 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-save-speed:hover {
+  background: #1886d9 !important;
+}
+
+.btn-save-speed.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
 }
 
 /* WinUI 3 Segmented Control (Radio Group) */

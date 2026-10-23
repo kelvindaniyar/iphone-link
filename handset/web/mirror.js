@@ -342,6 +342,13 @@ let pendingWheelY = 0;
 let lastHorizontalSwipeTime = 0;
 let accWheelX = 0;
 let hSwipeTimer = null;
+let trackpadSpeedMultiplier = 1.0;
+try {
+  const savedSpeed = parseInt(localStorage.getItem("pane-trackpad-speed"), 10);
+  if (!isNaN(savedSpeed) && savedSpeed >= 30 && savedSpeed <= 200) {
+    trackpadSpeedMultiplier = savedSpeed / 100;
+  }
+} catch (_) {}
 
 async function performFastHorizontalSwipe(direction) {
   const yMid = 32768;
@@ -379,7 +386,8 @@ async function pumpVerticalWheel() {
       startY = Math.max(16000, Math.min(49000, lastCoords.y));
     }
 
-    const distance = Math.max(6000, Math.min(22000, Math.round(Math.abs(curDeltaY) * 75)));
+    const baseDistance = Math.max(6000, Math.min(22000, Math.round(Math.abs(curDeltaY) * 75)));
+    const distance = Math.max(2000, Math.min(45000, Math.round(baseDistance * trackpadSpeedMultiplier)));
     const dy = curDeltaY > 0 ? -distance : distance;
     const endX = startX;
     const endY = Math.max(2500, Math.min(63000, startY + dy));
@@ -480,6 +488,14 @@ window.addEventListener("message", (e) => {
   }
   if (d.type === "set-crop") {
     applyCropStyles(d.crop);
+    return;
+  }
+  if (d.type === "set-trackpad-speed") {
+    const s = parseInt(d.speed, 10);
+    if (!isNaN(s) && s >= 30 && s <= 200) {
+      trackpadSpeedMultiplier = s / 100;
+      try { localStorage.setItem("pane-trackpad-speed", String(s)); } catch (_) {}
+    }
     return;
   }
 
