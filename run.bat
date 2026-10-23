@@ -1,5 +1,6 @@
 @echo off
 setlocal
+taskkill /F /IM python.exe >nul 2>&1
 title Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
 
 cd /d "%~dp0"
@@ -17,7 +18,11 @@ if exist "venv\Scripts\activate.bat" (
 )
 
 echo [2/3] Menjalankan server Pane di background...
-start "Pane Server" /min python -m handset.server
+if exist "venv\Scripts\python.exe" (
+    start "Pane Server" /min .\venv\Scripts\python -m handset.server
+) else (
+    start "Pane Server" /min python -m handset.server
+)
 
 echo Menunggu server siap...
 timeout /t 1 /nobreak >nul
@@ -28,5 +33,8 @@ if exist "venv\Scripts\python.exe" (
 ) else (
     python handset/gui.py
 )
+
+echo Menutup background server...
+taskkill /F /IM python.exe >nul 2>&1
 
 endlocal

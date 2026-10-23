@@ -11,3 +11,4 @@ venv/
 *.plist
 *.pairrecord
 pair_records/
+*.egg-info/

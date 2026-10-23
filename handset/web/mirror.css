@@ -4,15 +4,15 @@
 
 html,
 body {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  background: #000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: #000 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
 body {
@@ -22,10 +22,10 @@ body {
 }
 
 #c {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  display: block;
+  display: block !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  object-fit: contain !important;
   touch-action: none;
   outline: none;
   image-rendering: high-quality;

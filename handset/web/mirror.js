@@ -24,8 +24,8 @@ function setStatus(text, tone) {
 }
 
 function fitCanvas() {
-  const winW = window.innerWidth;
-  const winH = window.innerHeight;
+  const winW = document.documentElement.clientWidth || window.innerWidth;
+  const winH = document.documentElement.clientHeight || window.innerHeight;
   if (!winW || !winH) return;
   const naturalW = canvas.width || 1170;
   const naturalH = canvas.height || 2532;
@@ -385,8 +385,8 @@ async function fetchCodecWithRetry() {
 
 function drawFrame(f) {
   const sideways = Math.abs(visualRotation % 180) === 90;
-  const fw = f.displayWidth;
-  const fh = f.displayHeight;
+  const fw = f.displayWidth || f.codedWidth || f.width || 1170;
+  const fh = f.displayHeight || f.codedHeight || f.height || 2532;
   const targetW = sideways ? fh : fw;
   const targetH = sideways ? fw : fh;
   if (targetW !== canvas.width || targetH !== canvas.height) {
@@ -401,7 +401,7 @@ function drawFrame(f) {
   ctx.save();
   ctx.translate(dstW / 2, dstH / 2);
   if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
-  ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH);
+  ctx.drawImage(f, 0, 0, fw, fh, -fpW / 2, -fpH / 2, fpW, fpH);
   ctx.restore();
 }
 

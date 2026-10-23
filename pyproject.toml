@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pane"
+version = "0.2.0"
+description = "Mirror and control iPhone on Windows"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pymobiledevice3>=11.28",
+    "pywebview>=5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["handset*"]
