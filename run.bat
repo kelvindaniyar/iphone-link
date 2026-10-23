@@ -1,7 +1,6 @@
 @echo off
 setlocal
 set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
-set "WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0"
 taskkill /F /IM python.exe >nul 2>&1
 title Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
 
@@ -34,6 +33,15 @@ if exist "venv\Scripts\python.exe" (
     .\venv\Scripts\python handset/gui.py
 ) else (
     python handset/gui.py
+)
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ===================================================
+    echo [ERROR] Aplikasi berhenti dengan kode error: %ERRORLEVEL%
+    echo ===================================================
+    echo.
+    pause
 )
 
 echo Menutup background server...

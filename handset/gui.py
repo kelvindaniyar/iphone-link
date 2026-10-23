@@ -6,11 +6,10 @@ import threading
 import time
 import urllib.request
 
-# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif dan background transparan
+# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
     "--enable-features=PlatformHEVCDecoderSupport"
 )
-os.environ["WEBVIEW2_DEFAULT_BACKGROUND_COLOR"] = "0"
 
 import webview
 
@@ -65,15 +64,17 @@ class WindowApi:
 
 
 def apply_dwm_effects(title="iPhone Mirroring"):
-    """Terapkan efek DWM Windows 11 (Mica / Acrylic Blur + Rounded Corners) pada HWND."""
+    """Terapkan efek DWM Windows 11 (sudut membulat + dark mode) secara aman pada HWND."""
     try:
         import ctypes
         from ctypes import wintypes
-        time.sleep(0.6)
+        time.sleep(0.7)
         hwnd = ctypes.windll.user32.FindWindowW(None, title)
         if not hwnd:
             return
-        dwmapi = ctypes.windll.dwmapi
+        dwmapi = getattr(ctypes.windll, "dwmapi", None)
+        if not dwmapi:
+            return
         # 1. Sudut membulat Windows 11 (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2)
         dwmapi.DwmSetWindowAttribute(
             wintypes.HWND(hwnd),
@@ -81,14 +82,7 @@ def apply_dwm_effects(title="iPhone Mirroring"):
             ctypes.byref(ctypes.c_int(2)),
             ctypes.sizeof(ctypes.c_int),
         )
-        # 2. Windows 11 System Backdrop Acrylic (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_ACRYLIC = 3)
-        dwmapi.DwmSetWindowAttribute(
-            wintypes.HWND(hwnd),
-            38,
-            ctypes.byref(ctypes.c_int(3)),
-            ctypes.sizeof(ctypes.c_int),
-        )
-        # 3. Immersive Dark Mode default (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+        # 2. Immersive Dark Mode default (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
         dwmapi.DwmSetWindowAttribute(
             wintypes.HWND(hwnd),
             20,
@@ -118,7 +112,7 @@ def main():
     # Tunggu server aktif jika baru diluncurkan
     wait_for_server()
 
-    # Jadwalkan penerapan efek DWM blur saat HWND window siap
+    # Jadwalkan penerapan efek DWM sudut membulat saat HWND window siap
     threading.Thread(target=apply_dwm_effects, args=("iPhone Mirroring",), daemon=True).start()
 
     window = webview.create_window(
@@ -130,9 +124,7 @@ def main():
         frameless=True,
         easy_drag=True,
         min_size=(348, 600),
-        transparent=True,
-        vibrancy=True,
-        background_color="#00000000",
+        background_color="#0f172a",
     )
     api.set_window(window)
 
