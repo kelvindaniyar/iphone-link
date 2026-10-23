@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 13 (Fix Startup Crash Hex Triplet, Error Trapping run.bat, & Stabilisasi GUI)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 14 (Tema Sync Induk-Iframe, Edge-to-Edge Trim, & Dynamic Device Aspect)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `db61aa3` (`fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling`)  
+> **Commit Terbaru:** `d6cbc8c` (`feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing`)  
 
 ---
 
@@ -23,9 +23,10 @@
 12. [Tahap 11: Solusi Tuntas Injeksi Dimensi DecoderConfig, Un-Crop VideoFrame Zero-Copy, dan Pemulihan Nav Bar Fullsize](#12-tahap-11-solusi-tuntas-injeksi-dimensi-decoderconfig-un-crop-videoframe-zero-copy-dan-pemulihan-nav-bar-fullsize)
 13. [Tahap 12: Eliminasi Black Bar 16px, Fitur Disconnect Mirroring, White Mode, dan True Liquid Glass DWM](#13-tahap-12-eliminasi-black-bar-16px-fitur-disconnect-mirroring-white-mode-dan-true-liquid-glass-dwm)
 14. [Tahap 13: Perbaikan Startup Crash ValueError Hex Triplet, Error Trapping run.bat, dan Stabilisasi Tema](#14-tahap-13-perbaikan-startup-crash-valueerror-hex-triplet-error-trapping-runbat-dan-stabilisasi-tema)
-15. [Struktur Riwayat Git Commit](#15-struktur-riwayat-git-commit)
-16. [Daftar File yang Dimodifikasi](#16-daftar-file-yang-dimodifikasi)
-17. [Panduan Menjalankan & Verifikasi Manual](#17-panduan-menjalankan--verifikasi-manual)
+15. [Tahap 14: Eliminasi White/Black Bar Tema, Display Fit Full-Bleed Edge Trim, dan Dynamic Multi-Device Aspect Sizing](#15-tahap-14-eliminasi-whiteblack-bar-tema-display-fit-full-bleed-edge-trim-dan-dynamic-multi-device-aspect-sizing)
+16. [Struktur Riwayat Git Commit](#16-struktur-riwayat-git-commit)
+17. [Daftar File yang Dimodifikasi](#17-daftar-file-yang-dimodifikasi)
+18. [Panduan Menjalankan & Verifikasi Manual](#18-panduan-menjalankan--verifikasi-manual)
 
 ---
 
@@ -269,10 +270,32 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 15. Struktur Riwayat Git Commit
+## 15. Tahap 14: Eliminasi White/Black Bar Tema, Display Fit Full-Bleed Edge Trim, dan Dynamic Multi-Device Aspect Sizing
+
+> **Status:** Terimplementasi pada commit `d6cbc8c`. Terverifikasi 100% via terminal execution (0 crash, 0 exception, auto-resize dynamic aspect).
+
+1. **Eliminasi White Bar di Dark Mode & Black Bar di Light Mode**:
+   - Di [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css), mengganti `background: transparent` menjadi warna solid yang identik dengan tema induk: `#0b0e17` untuk Dark Mode dan `#f8fafc` untuk Light Mode. Menghilangkan kebocoran warna putih default WebView2.
+   - Di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css), `.display-col`, `.workspace`, `.stage`, `#phone-shell`, `#phone-screen`, dan `iframe` menggunakan `background: var(--bg) !important;` dengan `border: none;`. Border pemisah drawer dan quick-nav di Light Mode disesuaikan menjadi border tipis transparan `rgba(15, 23, 42, 0.08)` (menghapus black bar di kanan dan bawah).
+   - Di [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js), `syncThemeToIframe()` menyinkronkan atribut `data-theme` langsung ke dalam dokumen iframe dan via `postMessage`.
+2. **Display Fit Mode & Auto-Trim Overscan Macroblock**:
+   - Di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js), menambahkan mode **`fill` (Edge-to-Edge Full Bleed)** dan **`contain` (Original Ratio)**.
+   - Menambahkan variabel `edgeTrim` (0 - 24 px, default 10 px) yang memangkas padding hitam overscan codec HEVC di tepi kanan dan bawah pada `ctx.drawImage`.
+   - Pemetaan kursor sentuh (`touchCoords`) tetap proporsional dan 100% akurat ke rentang HID iOS ($0 - 65535$).
+3. **Dynamic Window Auto-Sizing untuk Semua Tipe iPhone**:
+   - Stream mengirimkan `video-dimensions` saat frame pertama diterima.
+   - `app.js` menghitung `aspect = width / height` dan `idealDisplayWidth = Math.round(stageH * aspect)`, menetapkan CSS variable `--display-width` secara dinamis, dan memanggil `sync_device_aspect` ke backend Python.
+   - Di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py), `sync_device_aspect(display_width, drawer_open)` mengubah ukuran jendela native dengan kompensasi DPI scaling dan `min_size=(280, 600)`.
+   - Di Side Drawer Settings ([`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html)), ditambahkan kontrol **"Display Fit & Aspect"**: tombol `[ Edge-to-Edge (Full) | Original Ratio ]` dan slider `Crop Right/Bottom Edge (0 - 24 px)` tersimpan di `localStorage`.
+
+---
+
+## 16. Struktur Riwayat Git Commit
 
 ```
-* db61aa3 (HEAD -> feature/macos-sequoia-ui) fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling
+* d6cbc8c (HEAD -> feature/macos-sequoia-ui) feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing
+* 301d0bf docs: tambahkan LAPORAN_TAHAP_13 dan perbarui LAPORAN_PROGRESS master
+* db61aa3 fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling
 * 07ba5d9 docs: tambahkan LAPORAN_TAHAP_12 dan perbarui LAPORAN_PROGRESS master
 * a872b1d feat(ui): remove 16px black bars, add disconnect button, white mode theme, and true liquid glass transparency
 * ac90c34 docs: dokumentasikan perbaikan tahap 11 uncrop VideoFrame zero-copy dan nav bar fullsize
@@ -300,25 +323,25 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 16. Daftar File yang Dimodifikasi
+## 17. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Dimensi 348x840, `background_color="#0f172a"` (fix ValueError hex), drawer 708px, safe DWM ctypes handler. |
-| 2 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Penambahan error trapping `%ERRORLEVEL% NEQ 0` dengan `pause` dan pembersihan zombie process. |
-| 3 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Handler `stop_screen()`, pembatalan task asyncio bersih, pelepasan display session iOS. |
-| 4 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint GET/POST `/api/screen/stop` dan `/mirror/stop`. |
-| 5 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | `html, body` menjadi `background: transparent !important`. |
-| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Background transparan, kunci 348px display-col, palet Dark & White Mode stabil, tombol stop merah, blur 32px. |
-| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika toggle tema, sinkronisasi DWM, handling stop mirror, update state tombol. |
-| 8 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol Stop Top Bar, toggle tema Top Bar, selector tema Drawer. |
-| 9 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster `v=20261023_theme_stop_fix`. |
-| 10 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | *Tidak diubah sama sekali (100% utuh menjaga stabilitas HEVC & gesture)*. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Method `sync_device_aspect` kompensasi DPI, auto-resize jendela mengikuti rasio perangkat, `min_size=(280, 600)`. |
+| 2 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Sinkronisasi tema Dark (`#0b0e17`) & Light (`#f8fafc`), dukungan class `.fit-fill` dan `.fit-contain`. |
+| 3 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Deteksi resolusi & pengiriman `video-dimensions`, pemangkasan overscan `edgeTrim` (0-24px), sinkronisasi tema. |
+| 4 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Lebar `.display-col` dinamis `--display-width`, background `var(--bg)`, perbaikan border halus Light Mode, styling slider. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Penanganan `video-dimensions`, sinkronisasi tema/fit/trim ke iframe, kontrol slider overscan di drawer. |
+| 6 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Panel kontrol `Display Fit & Aspect` (segmented fit choice + slider overscan), cache buster `v=20261023_fit_aspect_fix`. |
+| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster `v=20261023_fit_aspect_fix`. |
+| 8 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Error trapping `%ERRORLEVEL% NEQ 0` dengan `pause` dan pembersihan zombie process. |
+| 9 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Handler `stop_screen()`, pembatalan task asyncio bersih, pelepasan display session iOS. |
+| 10 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint GET/POST `/api/screen/stop` dan `/mirror/stop`. |
 | 11 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri riwayat pengujian. |
 
 ---
 
-## 17. Panduan Menjalankan & Verifikasi Manual
+## 18. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
