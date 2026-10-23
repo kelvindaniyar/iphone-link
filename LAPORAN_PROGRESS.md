@@ -293,7 +293,8 @@ Pembaruan terkini mencakup:
 ## 16. Struktur Riwayat Git Commit
 
 ```
-* d6cbc8c (HEAD -> feature/macos-sequoia-ui) feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing
+* 4bfb7ba (HEAD -> feature/macos-sequoia-ui) fix(mirror): restore zero-delay 5-param drawImage, implement 4-sided crop with number inputs, fix window drag and bar truncation
+* d6cbc8c feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing
 * 301d0bf docs: tambahkan LAPORAN_TAHAP_13 dan perbarui LAPORAN_PROGRESS master
 * db61aa3 fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling
 * 07ba5d9 docs: tambahkan LAPORAN_TAHAP_12 dan perbarui LAPORAN_PROGRESS master
@@ -323,21 +324,19 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 17. Daftar File yang Dimodifikasi
+## 17. Daftar File yang Dimodifikasi (Tahap 15)
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Method `sync_device_aspect` kompensasi DPI, auto-resize jendela mengikuti rasio perangkat, `min_size=(280, 600)`. |
-| 2 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Sinkronisasi tema Dark (`#0b0e17`) & Light (`#f8fafc`), dukungan class `.fit-fill` dan `.fit-contain`. |
-| 3 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Deteksi resolusi & pengiriman `video-dimensions`, pemangkasan overscan `edgeTrim` (0-24px), sinkronisasi tema. |
-| 4 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Lebar `.display-col` dinamis `--display-width`, background `var(--bg)`, perbaikan border halus Light Mode, styling slider. |
-| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Penanganan `video-dimensions`, sinkronisasi tema/fit/trim ke iframe, kontrol slider overscan di drawer. |
-| 6 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Panel kontrol `Display Fit & Aspect` (segmented fit choice + slider overscan), cache buster `v=20261023_fit_aspect_fix`. |
-| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster `v=20261023_fit_aspect_fix`. |
-| 8 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Error trapping `%ERRORLEVEL% NEQ 0` dengan `pause` dan pembersihan zombie process. |
-| 9 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Handler `stop_screen()`, pembatalan task asyncio bersih, pelepasan display session iOS. |
-| 10 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint GET/POST `/api/screen/stop` dan `/mirror/stop`. |
-| 11 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri riwayat pengujian. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | `easy_drag=False`, `width=380, height=840`, `min_size=(380, 700)`, drawer width 740, Win32 native `start_window_drag`. |
+| 2 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Restorasi 5-parameter `ctx.drawImage` murni (zero GPU readback delay), zero-cost CSS clipping 4-sisi, listener `set-crop`. |
+| 3 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Pembungkus `<div id="crop-wrapper">`, cache buster `v=20261023_zerodelay_crop`. |
+| 4 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Aturan CSS `#crop-wrapper`, hapus `!important` pada fit-fill agar style crop JS presisi. |
+| 5 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | 4 kontrol crop (Top, Bottom, Left, Right) slider + number input, tombol reset crop, cache buster diperbarui. |
+| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Sembunyikan `#pill-device`, kompres tombol Top Bar muat 380px, Grid 4-kolom `.quick-nav`, styling input crop. |
+| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Native window drag hanya di area kosong `.app-bar`, stopPropagation pada input/drawer, matikan auto sync_device_aspect, sync 4-sided crop. |
+| 8 | [`LAPORAN_TAHAP_15_FIX_ZERO_DELAY_4SIDE_CROP_DAN_BAR_TRUNCATION.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_15_FIX_ZERO_DELAY_4SIDE_CROP_DAN_BAR_TRUNCATION.md) | Laporan lengkap teknis Tahap 15. |
+
 
 ---
 
