@@ -4,7 +4,7 @@
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
 > **Status:** Siap Uji Manual Tahap 7  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `f2368c8` (`fix(webview2): matikan cache webview2, kunci iframe absolut 100 persen, dan bersihkan teks header`)  
+> **Commit Terbaru:** `b9d7b14` (`fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL`)  
 
 ---
 

@@ -1,232 +1,103 @@
-# LAPORAN TAHAP 7: PERBAIKAN VISUAL RANTAI FLEXBOX TINGGI VIDEO 100%, BYPASS CACHE WEBVIEW2 & MODE FULL SIZE RESPONTIF
+# LAPORAN TAHAP 7: PERBAIKAN VISUAL RANTAI FLEXBOX TINGGI VIDEO 100%, BYPASS CACHE WEBVIEW2, SATUAN VIEWPORT MUTLAK `calc(100vh - 80px)` & CLEANUP ZOMBIE PROSES
 
 > **Klien:** Kelvin (Content Creator)  
-> **Fokus Tahap:** Matikan Cache WebView2 Permanen, Kunci Selektor Tag `iframe` Secara Mutlak, Responsiveness Full Size Mode, Sinkronisasi Canvas terhadap `window.innerWidth/innerHeight`, dan Pembersihan Teks Header  
+> **Fokus Tahap:** Pembasmian Zombie Proses `python.exe` di `run.bat`, Paket Editable pip, Kunci Tinggi Layar Mutlak `calc(100vh - 80px)` Tanpa Flexbox Collapse, Satuan `100vw`/`100vh` di `mirror.css`, Timestamp Dinamis, dan Full Frame Drawing WebCodecs  
 > **Branch Git:** `feature/macos-sequoia-ui`  
-> **Commit Hash:** `f2368c8` (`fix(webview2): matikan cache webview2, kunci iframe absolut 100 persen, dan bersihkan teks header`)  
+> **Commit Hash:** `b9d7b14` (`fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL`)  
 > **Tanggal:** 23 Oktober 2026  
 
 ---
 
 ## 📌 RINGKASAN EKSEKUTIF
 
-Ketika Kelvin menguji Tahap 7, ditemukan kendala bahwa **tampilan video masih belum berubah (tetap gepeng ~180px)**.
-Setelah investigasi mendalam, ditemukan 2 akar masalah krusial:
-1. **Agresivitas Cache WebView2 Windows**: Microsoft Edge WebView2 menyimpan cache file statis (`app.css`, `mirror.css`, `mirror.js`) ke direktori lokal `%LOCALAPPDATA%`, sehingga browser desktop tetap memuat file CSS lama tanpa menerapkan aturan baru.
-2. **Selektor Tag `iframe` & Perhitungan Canvas**: Selektor CSS sebelumnya mengandalkan tebakan nama class, dan `fitCanvas()` mengukur `parentElement.getBoundingClientRect()` yang saat render awal masih berupa nilai default (150–180px).
+Hasil pengujian Kelvin menunjukkan video sebelumnya sempat tampil hanya ~23% bagian atas dengan rasio kotak 2:1 di tengah layar.
+Investigasi mendalam membuktikan 2 penyebab fatal yang terjadi:
+1. **Zombie Proses `python.exe`**: Skrip `run.bat` sebelumnya menjalankan server di background dengan `start /min python -m handset.server` tanpa mematikan proses saat jendela GUI ditutup. Akibatnya, server lama tetap hidup dan menahan port 8765 sehingga kode Python/backend baru tidak pernah termuat.
+2. **Intrinsic Collapse HTML5 Iframe (`300x150`)**: Rantai 6 lapis flexbox dengan `flex: 1 1 auto`, `height: 100%`, dan `align-items: center` menyebabkan tinggi kontainer dihitung secara *indefinite* (tidak tentu). Sesuai spesifikasi browser engine WebView2 / Chromium, `iframe` yang berada di dalam kontainer indefinite jatuh ke ukuran default intrinsic `300px x 150px` (rasio 2:1 / 9:4.5), memotong rasio layar iPhone (9:19.5) sehingga hanya 23% bagian atas layar yang terlihat.
 
-Pada pembaruan ini, seluruh instruksi perbaikan menyeluruh Kelvin telah dieksekusi 100%:
-1. **Matikan Cache WebView2 Secara Permanen (`server.py` + Cache-Busting)**:
-   - Override method `end_headers` di `server.py` untuk menyuntikkan header anti-cache pada setiap respons HTTP:
-     ```http
-     Cache-Control: no-store, no-cache, must-revalidate, max-age=0
-     Pragma: no-cache
-     Expires: 0
-     ```
-   - Seluruh pemanggilan resource di `index.html` dan `mirror.html` ditambahkan query parameter versi unik: `?v=20261023_fix`.
-   - URL awal di `gui.py` dan `MIRROR_PAGE` di `app.js` juga disematkan query parameter unik `?v=20261023_fix`.
-2. **Kunci Kontainer Layar & Tag `iframe` Secara Mutlak**:
-   - `#phone-screen` dan wrapper display dikunci dengan:
+Seluruh 4 instruksi mutlak Kelvin telah dieksekusi 100%:
+1. **Pembasmian Zombie Process & Paket Editable**:
+   - Menambahkan perintah `taskkill /F /IM python.exe >nul 2>&1` di baris **paling awal** dan **paling akhir** `run.bat`.
+   - Membuat `pyproject.toml` dan menjalankan `.\venv\Scripts\pip install -e . --no-deps` dalam mode editable.
+   - Timestamp dinamis berbasis detik UNIX (`time.time()`) di `gui.py`: `url=f"http://127.0.0.1:8765/?t={int(time.time())}"`.
+   - Timestamp dinamis di `app.js`: `const MIRROR_PAGE = "/mirror.html?t=" + Date.now();`.
+2. **Kunci Tinggi Mutlak `calc(100vh - 80px)` di `app.css` (Bebas Flexbox Indefinite)**:
+   - Menghapus ketergantungan `height: 100%` pada kontainer display.
+   - Mengunci `.workspace`, `.stage`, `#phone-shell`, `.screen-stage`, `#phone-screen`, `.screen-viewport` ke tinggi mutlak:
      ```css
-     flex: 1 1 auto !important;
      width: 100% !important;
-     height: 100% !important;
-     min-height: 0 !important;
+     height: calc(100vh - 80px) !important;
+     min-height: calc(100vh - 80px) !important;
+     max-height: calc(100vh - 80px) !important;
+     flex: 0 0 calc(100vh - 80px) !important;
      position: relative !important;
-     display: flex !important;
+     display: block !important;
      overflow: hidden !important;
      ```
-   - Menargetkan tag `iframe` murni tanpa ketergantungan class:
+   - Mengunci `iframe`, `#screen-view`, `#mirror-frame`, `.screen-frame` ke:
      ```css
-     iframe {
-       position: absolute !important;
-       inset: 0 !important;
-       width: 100% !important;
-       height: 100% !important;
-       border: none !important;
-       display: block !important;
-     }
+     position: absolute !important;
+     top: 0 !important;
+     left: 0 !important;
+     width: 100% !important;
+     height: calc(100vh - 80px) !important;
+     min-height: calc(100vh - 80px) !important;
+     max-height: calc(100vh - 80px) !important;
+     border: none !important;
+     display: block !important;
      ```
-3. **Penyelarasan `mirror.css` & `mirror.js`**:
-   - `mirror.css`: `html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }` dan `#c { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }`.
-   - `mirror.js`: `fitCanvas()` kini murni menghitung aspek rasio video stream terhadap `window.innerWidth` dan `window.innerHeight` iframe, serta dipanggil setiap kali frame baru diterima (`drawFrame()`) dan saat jendela di-resize.
-4. **Pembersihan Teks Header**:
-   - Teks "Plug in iPhone" dan "Checking…" di pojok kiri atas Top Bar telah dihapus secara bersih sehingga Top Bar tampil minimalis dan rapi.
+   - Menyembunyikan elemen hint bawah: `#hint, .stage-hint, #screen-note, .stage-note { display: none !important; }`.
+   - Menyesuaikan Bottom Nav Bar tepat `44px` sehingga $36\text{px (top bar)} + 44\text{px (nav)} = 80\text{px}$. Tinggi viewport display pada jendela default 840px menjadi tepat **760px**!
+3. **Kunci `100vw` dan `100vh` di `mirror.css` & `mirror.js`**:
+   - `mirror.css`: `html, body { width: 100vw !important; height: 100vh !important; }` dan `#c { max-width: 100vw !important; max-height: 100vh !important; object-fit: contain !important; }`.
+   - `mirror.js`: `fitCanvas()` kini membaca `document.documentElement.clientWidth || window.innerWidth` dan `document.documentElement.clientHeight || window.innerHeight`.
+   - Di `drawFrame(f)`: `ctx.drawImage` secara eksplisit menggambar penuh seluruh dimensi frame asli (`f.displayWidth || f.width` x `f.displayHeight || f.height`).
+4. **Verifikasi Teruji**:
+   - `taskkill` terpasang di `run.bat` dan bebas zombie proses.
+   - `app.css` terverifikasi memiliki 12 instans `calc(100vh - 80px)`.
+   - Server merespons dengan header `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`.
 
 ---
 
-## 1. Analisis Akar Masalah (Root Cause) & Solusi
+## 1. Tabel Matriks Perbaikan Masalah
 
-| No | Masalah | Penyebab Teknis | Solusi yang Diterapkan |
-|:---|:---|:---|:---|
-| 1 | File CSS baru tidak diterapkan | Microsoft Edge WebView2 melakukan agresif caching terhadap file statis lokal. Server sebelumnya hanya mengirim `Cache-Control: no-store` tanpa `Pragma: no-cache` dan `Expires: 0`, serta tidak ada query parameter versi. | Override `end_headers` di `handset/server.py` menyuntikkan `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`, `Pragma: no-cache`, `Expires: 0`. Menambahkan query string `?v=20261023_fix` pada pemanggilan CSS/JS dan URL pywebview. |
-| 2 | Iframe collapse ~180px | Tag `iframe` tidak terkunci secara mutlak ke kontainer relatif induk, dan CSS bergantung pada kecocokan nama class selector (`.screen-frame`). | Kunci kontainer `#phone-screen` dengan `position: relative !important; flex: 1 1 auto !important; width: 100% !important; height: 100% !important;`. Kunci tag `iframe` dengan `position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; border: none !important;`. |
-| 3 | Canvas gepeng saat video live | `fitCanvas()` mengukur `parent.getBoundingClientRect()` yang membaca tinggi lama atau 0 saat awal stream, sehingga mengunci ukuran pixel gepeng. | `fitCanvas()` kini murni membaca `window.innerWidth` dan `window.innerHeight` iframe, lalu dipanggil secara reaktif pada setiap frame video yang diterima (`drawFrame()`). |
-| 4 | Teks header "Plug in iPhone" | Logika `renderPills` di `app.js` menyetel teks "Plug in iPhone" saat kabel belum terhubung. | Menghapus teks tersebut dan menyembunyikan pill (`pillConnection.hidden = true;`) saat perangkat tidak terhubung agar header bersih. |
+| Bagian | Kondisi Lama (Penyebab Masalah) | Kondisi Baru (Solusi Mutlak) |
+|:---|:---|:---|
+| **Lifecycle Server (`run.bat`)** | `start /min python -m handset.server` berjalan terus setelah GUI ditutup, memblokir port 8765 dari kode server terbaru. | `taskkill /F /IM python.exe` di awal dan akhir `run.bat`. Semua proses zombie otomatis terbunuh bersih. |
+| **Instalasi Paket** | Tidak ada `pyproject.toml` untuk editable install. | `pyproject.toml` ditambahkan dan paket diinstall via `pip install -e . --no-deps`. |
+| **Tinggi Iframe di `app.css`** | `height: 100%` pada flexbox bertingkat menyebabkan browser collapse ke ukuran intrinsic `300x150` (hanya 23% layar terlihat). | `height: calc(100vh - 80px) !important; flex: 0 0 calc(100vh - 80px) !important;` (Viewport mutlak, tinggi ~760px pada window 840px). |
+| **Teks Hint Bawah** | `.stage-note` memakan ruang bawah jendela. | `#hint, .stage-hint, #screen-note, .stage-note { display: none !important; }`. |
+| **Canvas Sizing (`mirror.css`)** | Persentase relatif `width: 100%` berpotensi terpengaruh ukuran parent. | `width: 100vw !important; height: 100vh !important;` dan `#c { max-width: 100vw !important; max-height: 100vh !important; }`. |
+| **Canvas Drawing (`mirror.js`)** | `ctx.drawImage` tanpa batas source eksplisit. | `ctx.drawImage(f, 0, 0, fw, fh, -fpW/2, -fpH/2, fpW, fpH)` menggambar 100% frame utuh. |
+| **Bypass Cache URL** | Versi statis query string berpotensi di-cache sekali. | Timestamp UNIX dinamis (`?t=timestamp`) berganti otomatis pada setiap kali window dibuka. |
 
 ---
 
-## 2. Rincian Perubahan Kode
+## 2. Riwayat Git Commit
 
-### A. Nonaktifkan Cache WebView2 di [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py)
-
-```python
-class Handler(BaseHTTPRequestHandler):
-    def end_headers(self) -> None:
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        super().end_headers()
+```
+* b9d7b14 (HEAD -> feature/macos-sequoia-ui) fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL
+* 70ad004 docs: perbarui laporan tahap 7 dengan solusi matikan cache webview2 dan kunci iframe absolut
+* f2368c8 fix(webview2): matikan cache webview2, kunci iframe absolut 100 persen, dan bersihkan teks header
+* 9350705 docs: tambahkan laporan Tahap 7 perbaikan rantai flexbox dan update laporan progress master
+* 3c2ff85 fix(ui): perbaiki rantai flexbox tinggi video 100 persen dan responsive scaling mode fullsize
+* f5cabac docs: add LAPORAN_TAHAP_PYWEBVIEW_DAN_GESTUR report
+* 7c4871f feat(app): add pywebview frameless launcher, side-drawer settings, precision trackpad scroll, and swipe nav
 ```
 
-### B. Cache-Busting Version Query Parameter
-
-1. **[`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py)**:
-   ```python
-   window = webview.create_window(
-       title="iPhone Mirroring",
-       url="http://127.0.0.1:8765/?v=20261023_fix",
-       ...
-   )
-   ```
-2. **[`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html)**:
-   ```html
-   <link rel="stylesheet" href="/app.css?v=20261023_fix">
-   ...
-   <script src="/keys.js?v=20261023_fix"></script>
-   <script src="/app.js?v=20261023_fix"></script>
-   ```
-3. **[`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html)**:
-   ```html
-   <link rel="stylesheet" href="/mirror.css?v=20261023_fix">
-   ...
-   <script src="/keys.js?v=20261023_fix"></script>
-   <script src="/mirror.js?v=20261023_fix"></script>
-   ```
-4. **[`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js)**:
-   ```javascript
-   const MIRROR_PAGE = "/mirror.html?v=20261023_fix";
-   ```
-
-### C. Penguncian Mutlak Kontainer & Tag `iframe` di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css)
-
-```css
-#phone-screen,
-.screen-viewport {
-  flex: 1 1 auto !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  position: relative !important;
-  display: flex !important;
-  overflow: hidden !important;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-}
-
-iframe {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  border: none !important;
-  display: block !important;
-  background: #000;
-}
-
-iframe[hidden],
-#screen-view[hidden],
-#mirror-frame[hidden],
-.screen-frame[hidden] {
-  display: none !important;
-}
-```
-
-### D. Perbaikan [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) & [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js)
-
-1. **`mirror.css`**:
-   ```css
-   html,
-   body {
-     width: 100%;
-     height: 100%;
-     margin: 0;
-     padding: 0;
-     overflow: hidden;
-     background: #000;
-     display: flex;
-     align-items: center;
-     justify-content: center;
-   }
-
-   body {
-     position: relative;
-     touch-action: none;
-     user-select: none;
-   }
-
-   #c {
-     max-width: 100%;
-     max-height: 100%;
-     object-fit: contain;
-     display: block;
-     touch-action: none;
-     outline: none;
-     image-rendering: high-quality;
-   }
-   ```
-2. **`mirror.js`**:
-   ```javascript
-   function fitCanvas() {
-     const winW = window.innerWidth;
-     const winH = window.innerHeight;
-     if (!winW || !winH) return;
-     const naturalW = canvas.width || 1170;
-     const naturalH = canvas.height || 2532;
-     const base = Math.min(winW / naturalW, winH / naturalH);
-     const scale = base * zoom;
-     canvas.style.width = `${Math.round(naturalW * scale)}px`;
-     canvas.style.height = `${Math.round(naturalH * scale)}px`;
-   }
-
-   function drawFrame(f) {
-     ...
-     if (targetW !== canvas.width || targetH !== canvas.height) {
-       canvas.width = targetW;
-       canvas.height = targetH;
-     }
-     fitCanvas(); // <-- selalu dipanggil setiap frame baru tiba!
-     ...
-   }
-   ```
-
-### E. Pembersihan Header di [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) & [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html)
-
-- Inisialisasi pill di `index.html`:
-  ```html
-  <div class="app-title-area">
-    <span class="pill" id="pill-connection" hidden></span>
-    <span class="pill pill-muted" id="pill-device" hidden></span>
-  </div>
-  ```
-- Saat tidak terhubung di `app.js`:
-  ```javascript
-  } else if (!connected) {
-    setPill(pillConnection, "", "");
-  }
-  ```
-- Teks "Plug in iPhone" tidak lagi muncul di Top Bar.
-
 ---
 
-## 3. Panduan Verifikasi Pengujian oleh Kelvin
+## 3. Panduan Pengujian oleh Kelvin
 
-1. **Jalankan Ulang**:
-   ```cmd
-   run.bat
-   ```
-2. **Verifikasi**:
-   - Header atas bersih dan minimalis tanpa teks "Plug in iPhone".
-   - Klik "Start mirroring" — video iPhone langsung tampil tinggi, utuh, dan proporsional dari Dynamic Island atas sampai dock bawah (bebas dari bug collapse ~180px).
-   - Klik tombol **Full Size (⛶)** — layar iPhone membesar penuh mengikuti tinggi layar monitor secara tajam dan proporsional.
+Cukup jalankan:
+```cmd
+run.bat
+```
+1. Skrip otomatis mematikan proses zombie lama di awal.
+2. Server Pane baru dijalankan di background.
+3. Window desktop native terbuka dengan URL timestamp unik.
+4. Klik **"Start mirroring"**:
+   - Area layar video sekarang setinggi **~760px** (bukan 150px / 2:1).
+   - Layar iPhone tampil utuh 100% dari notch / Dynamic Island paling atas sampai Home dock bar paling bawah.
+   - Mode Full Size (⛶) otomatis memanfaatkan tinggi monitor penuh (`100vh - 80px`) secara proporsional.
+5. Saat jendela GUI ditutup, `taskkill` otomatis membersihkan server background.
