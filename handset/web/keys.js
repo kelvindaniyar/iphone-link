@@ -29,15 +29,19 @@
   let typedQueue = "";
   let typedTimer = null;
 
-  function flushTypedQueue() {
+  async function flushTypedQueue() {
+    clearTimeout(typedTimer);
+    typedTimer = null;
     if (!typedQueue) return;
     const text = typedQueue;
     typedQueue = "";
-    fetch("/api/keyboard/typed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    }).catch(() => {});
+    try {
+      await fetch("/api/keyboard/typed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+    } catch (_) {}
   }
 
   function queueTypedKey(key) {
@@ -61,20 +65,31 @@
     if (typeof key === "string" && key.length === 1) {
       typedQueue += key;
       clearTimeout(typedTimer);
-      typedTimer = setTimeout(flushTypedQueue, 40);
+      typedTimer = setTimeout(flushTypedQueue, 30);
     }
   }
 
   function captureMirrorCanvasDataUrl() {
     try {
-      // 1. In mirror.html (inside iframe)
+      // 1. Check native full-resolution capture from mirror.js in current window
+      if (typeof window.captureFullResFrameDataUrl === "function") {
+        const url = window.captureFullResFrameDataUrl();
+        if (url) return url;
+      }
+      // 2. Check native full-resolution capture from iframe window
+      const iframe = document.getElementById("screen-view");
+      const iframeWin = iframe?.contentWindow;
+      if (typeof iframeWin?.captureFullResFrameDataUrl === "function") {
+        const url = iframeWin.captureFullResFrameDataUrl();
+        if (url) return url;
+      }
+      // 3. In mirror.html (inside iframe) direct canvas
       const localCanvas = document.getElementById("c");
       if (localCanvas && localCanvas.width > 0 && localCanvas.height > 0) {
         return localCanvas.toDataURL("image/png");
       }
-      // 2. In index.html (parent frame)
-      const iframe = document.getElementById("screen-view");
-      const iframeDoc = iframe?.contentDocument || iframe?.contentWindow?.document;
+      // 4. In index.html (parent frame) direct canvas
+      const iframeDoc = iframe?.contentDocument || iframeWin?.document;
       const iframeCanvas = iframeDoc?.getElementById("c");
       if (iframeCanvas && iframeCanvas.width > 0 && iframeCanvas.height > 0) {
         return iframeCanvas.toDataURL("image/png");
@@ -156,7 +171,7 @@
 
     window.addEventListener(
       "keydown",
-      (e) => {
+      async (e) => {
         if (!enabled() || isTextField(e.target)) return;
 
         // Shortcut Ctrl + K: Toggle iPhone On-Screen Keyboard cleanly
@@ -189,7 +204,7 @@
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
-              flushTypedQueue();
+              await flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
@@ -214,7 +229,7 @@
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
-              flushTypedQueue();
+              await flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();

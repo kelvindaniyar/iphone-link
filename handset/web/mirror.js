@@ -758,6 +758,34 @@ function drawFrame(f) {
   }
 }
 
+window.captureFullResFrameDataUrl = function () {
+  try {
+    if (canvas && canvas.width >= 600 && canvas.height >= 1000) {
+      return canvas.toDataURL("image/png");
+    }
+    if (lastFrame) {
+      const rawW = (lastFrame.codedWidth && lastFrame.codedHeight > lastFrame.displayHeight)
+        ? lastFrame.codedWidth
+        : (lastFrame.displayWidth || lastFrame.codedWidth || 1216);
+      const rawH = (lastFrame.codedHeight && lastFrame.codedHeight > lastFrame.displayHeight)
+        ? lastFrame.codedHeight
+        : (lastFrame.displayHeight || lastFrame.codedHeight || 2656);
+      const off = document.createElement("canvas");
+      off.width = rawW;
+      off.height = rawH;
+      const offCtx = off.getContext("2d");
+      offCtx.drawImage(lastFrame, 0, 0, rawW, rawH);
+      return off.toDataURL("image/png");
+    }
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      return canvas.toDataURL("image/png");
+    }
+  } catch (err) {
+    console.warn("captureFullResFrameDataUrl error:", err);
+  }
+  return null;
+};
+
 function drawPending() {
   rafScheduled = false;
   const f = pendingFrame;

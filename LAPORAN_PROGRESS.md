@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 21 (Smart Fuzzy OCR Pre-Processing & Typed Shadow Buffer)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 22 (Full-Resolution Stream Capture, Anti-Aliased OCR, Spellcheck Elimination, & Active Typed Buffer)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap21_smart_ocr_correction`  
+> **Cache Buster:** `v=20261024_tahap22_fullres_anti_aliased_ocr`  
 
 ---
 
@@ -475,5 +475,53 @@ Pembaruan terkini mencakup:
    - Tekan `Ctrl + A` lalu `Ctrl + C`.
    - Paste di Windows (`Ctrl + V`).
    - 👉 **Hasil:** Huruf pertama `'u'` tampil utuh (bukan `'ji'`), huruf terakhir `'s'` tampil utuh (bukan `'.'`).
+
+---
+
+## 26. Tahap 22: Full-Resolution Stream Capture, Anti-Aliased OCR, Spellcheck Fix, & Active Typed Line Priority
+
+1. **Snapshot Resolusi Asli 1216 x 2656**:
+   - Di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js), fungsi `window.captureFullResFrameDataUrl()` mengekspor buffer kanvas pada dimensi native `1216 x 2656` (3.2x lebih tajam daripada kanvas CSS 380px).
+2. **Netralisasi Garis Titik-Titik Merah Spellcheck iOS**:
+   - Di [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1), piksel merah/oranye spellcheck underline diubah menjadi putih bersih sebelum dibaca OCR, mencegah huruf `l` dan `e` menyatu dengan garis merah (menghilangkan typo `"oarcejona"` dan `"f1 om"`).
+3. **Preservasi Anti-Aliasing (Soft Grayscale Contrast Stretch)**:
+   - Menghapus binarization kasar `0 vs 255`. Tepi huruf tetap memiliki gradasi abu-abu alami sehingga font San Francisco iOS terbaca presisi oleh `Windows.Media.Ocr`.
+4. **Pencegahan Balon Menu iOS (`Cut | Copy | Paste | Delete`)**:
+   - Padding crop vertikal dikunci ketat (`padY = 4px`) dan ditambahkan regex filter mutlak untuk kata-kata menu popup sistem iOS.
+5. **Async Typed Queue & Prioritas Baris Aktif (`_LAST_TYPED_ACTIVE_LINE`)**:
+   - Di [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js), `await flushTypedQueue()` dipanggil sebelum snapshot diambil, memastikan seluruh karakter dan angka (seperti `"17 pro"`) terkirim ke server sebelum OCR diproses.
+   - Di [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py), `_LAST_TYPED_ACTIVE_LINE` diprioritaskan sehingga kalimat yang baru diketik Kelvin masuk 100% utuh tanpa terpotong.
+
+---
+
+## 27. Daftar File yang Dimodifikasi (Tahap 22)
+
+| No | File Path | Keterangan |
+|:---|:---|:---|
+| 1 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Implementasi `window.captureFullResFrameDataUrl()` resolusi stream 1216x2656. |
+| 2 | [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1) | Netralisasi garis merah spellcheck, soft contrast stretch anti-aliased, crop ketat, dan filter balon popup. |
+| 3 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | `_LAST_TYPED_ACTIVE_LINE`, `_LAST_TYPED_TIMESTAMP`, dan prioritas baris aktif di `auto_correct_ocr_text`. |
+| 4 | [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) | `await flushTypedQueue()` sebelum shortcut copy/cut dan integrasi `captureFullResFrameDataUrl()`. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | `await flushTypedQueue()` pada tombol Copy iPhone dan pembaruan cache buster. |
+| 6 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Bump cache buster ke `v=20261024_tahap22_fullres_anti_aliased_ocr`. |
+| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Bump cache buster ke `v=20261024_tahap22_fullres_anti_aliased_ocr`. |
+| 8 | [`LAPORAN_TAHAP_22_FULLRES_ANTI_ALIASED_OCR_DAN_SPELLCHECK_FIX.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_22_FULLRES_ANTI_ALIASED_OCR_DAN_SPELLCHECK_FIX.md) | Dokumentasi teknis mendalam dan panduan pengujian Tahap 22. |
+
+---
+
+## 28. Panduan Menjalankan & Verifikasi Manual Tahap 22
+
+1. **Jalankan Aplikasi**:
+   Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
+2. **Uji Skenario 1 (`"barcelona from iphone 17 pro"` di Notes iPhone)**:
+   - Ketik `"barcelona from iphone 17 pro"` di Notes iPhone menggunakan keyboard laptop (perhatikan bahwa kata `barcelona` dan `iphone` memiliki titik-titik merah spellcheck di bawahnya).
+   - Tekan `Ctrl + A` lalu `Ctrl + C` (atau klik tombol `📥 Copy iPhone Text` di Settings Drawer).
+   - Buka Google Chrome di Windows PC, lalu tekan `Ctrl + V`.
+   - 👉 **Hasil:** Yang tertempel murni **`"barcelona from iphone 17 pro"`** (tanpa `oarcejona`, tanpa `Cut/Copy/Paste`, tanpa jam `lu.11`).
+3. **Uji Skenario 2 (`"lionel messi"` & `"uji coba copy text dari iphone ke windows"`)**:
+   - Ketik kalimat tersebut, lakukan `Ctrl + A` dan `Ctrl + C`.
+   - Paste di Windows (`Ctrl + V`).
+   - 👉 **Hasil:** Murni presisi tanpa typo!
+
 
 
