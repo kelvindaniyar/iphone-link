@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_tahap18_shortcuts_keyboard";
+const MIRROR_PAGE = "/mirror.html?v=20261023_tahap19_shortcuts_hid_typing";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -39,15 +39,12 @@ try {
 let currentKeyboardSettings = {
   crossPlatformShortcuts: true,
   pastePcClipboard: true,
-  keepOnscreenKeyboard: false,
 };
 try {
   const sShortcuts = localStorage.getItem("pane-shortcuts");
   if (sShortcuts !== null) currentKeyboardSettings.crossPlatformShortcuts = sShortcuts === "true";
   const sPaste = localStorage.getItem("pane-paste-pc");
   if (sPaste !== null) currentKeyboardSettings.pastePcClipboard = sPaste === "true";
-  const sKeepKb = localStorage.getItem("pane-keep-keyboard");
-  if (sKeepKb !== null) currentKeyboardSettings.keepOnscreenKeyboard = sKeepKb === "true";
 } catch (_) {}
 window.HandsetKeyboardSettings = currentKeyboardSettings;
 
@@ -92,14 +89,12 @@ async function fetchUserSettings() {
       }
       if (
         res.crossPlatformShortcuts !== undefined ||
-        res.pastePcClipboard !== undefined ||
-        res.keepOnscreenKeyboard !== undefined
+        res.pastePcClipboard !== undefined
       ) {
         applyKeyboardSettings(
           {
             crossPlatformShortcuts: res.crossPlatformShortcuts,
             pastePcClipboard: res.pastePcClipboard,
-            keepOnscreenKeyboard: res.keepOnscreenKeyboard,
           },
           true
         );
@@ -134,7 +129,6 @@ async function saveUserSettings() {
       trackpadSpeed: currentTrackpadSpeed,
       crossPlatformShortcuts: currentKeyboardSettings.crossPlatformShortcuts,
       pastePcClipboard: currentKeyboardSettings.pastePcClipboard,
-      keepOnscreenKeyboard: currentKeyboardSettings.keepOnscreenKeyboard,
     });
 
     applyCrop(currentCrop, true);
@@ -475,15 +469,11 @@ function applyKeyboardSettings(settings, syncInputs = false) {
     if (settings.pastePcClipboard !== undefined) {
       currentKeyboardSettings.pastePcClipboard = Boolean(settings.pastePcClipboard);
     }
-    if (settings.keepOnscreenKeyboard !== undefined) {
-      currentKeyboardSettings.keepOnscreenKeyboard = Boolean(settings.keepOnscreenKeyboard);
-    }
   }
 
   window.HandsetKeyboardSettings = currentKeyboardSettings;
   localStorage.setItem("pane-shortcuts", String(currentKeyboardSettings.crossPlatformShortcuts));
   localStorage.setItem("pane-paste-pc", String(currentKeyboardSettings.pastePcClipboard));
-  localStorage.setItem("pane-keep-keyboard", String(currentKeyboardSettings.keepOnscreenKeyboard));
 
   if (syncInputs) {
     document.querySelectorAll("[data-shortcut-choice]").forEach((btn) => {
@@ -494,12 +484,6 @@ function applyKeyboardSettings(settings, syncInputs = false) {
 
     document.querySelectorAll("[data-paste-pc-choice]").forEach((btn) => {
       const active = (btn.dataset.pastePcChoice === "true") === currentKeyboardSettings.pastePcClipboard;
-      btn.classList.toggle("is-active", active);
-      btn.setAttribute("aria-checked", String(active));
-    });
-
-    document.querySelectorAll("[data-keep-keyboard-choice]").forEach((btn) => {
-      const active = (btn.dataset.keepKeyboardChoice === "true") === currentKeyboardSettings.keepOnscreenKeyboard;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-checked", String(active));
     });
@@ -518,7 +502,6 @@ async function saveKeyboardSettings() {
     await postJson("/api/settings", {
       crossPlatformShortcuts: currentKeyboardSettings.crossPlatformShortcuts,
       pastePcClipboard: currentKeyboardSettings.pastePcClipboard,
-      keepOnscreenKeyboard: currentKeyboardSettings.keepOnscreenKeyboard,
     });
   } catch (err) {
     console.warn("saveKeyboardSettings error:", err);
@@ -540,13 +523,6 @@ function initKeyboardSettingsControls() {
     });
   });
 
-  document.querySelectorAll("[data-keep-keyboard-choice]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      applyKeyboardSettings({ keepOnscreenKeyboard: btn.dataset.keepKeyboardChoice === "true" }, true);
-      saveKeyboardSettings();
-    });
-  });
-
   const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
   btnPastePcNow?.addEventListener("click", async () => {
     btnPastePcNow.disabled = true;
@@ -554,9 +530,9 @@ function initKeyboardSettingsControls() {
     btnPastePcNow.textContent = "Pastes PC Text…";
     try {
       if (window.HandsetKeys?.pasteFromPc) {
-        await window.HandsetKeys.pasteFromPc();
+        await window.HandsetKeys.pasteFromPc(true);
       } else {
-        await postJson("/api/keyboard/paste", {});
+        await postJson("/api/keyboard/paste", { force: true });
       }
       btnPastePcNow.textContent = "✓ Pasted!";
       btnPastePcNow.classList.add("is-saved");

@@ -344,23 +344,52 @@ Pembaruan terkini mencakup:
 | 9 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | Menambahkan konfigurasi default keyboard. |
 | 10 | [`LAPORAN_TAHAP_18_CROSS_PLATFORM_SHORTCUTS_DAN_KEYBOARD.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_18_CROSS_PLATFORM_SHORTCUTS_DAN_KEYBOARD.md) | Laporan teknis lengkap Tahap 18. |
 
+---
+
+## 18. Tahap 19: Perbaikan Kritis Shortcut Keyboard & Direct HID Typing Injection
+
+1. **Eliminasi Bug Emoji**:
+   - Menghapus tuntas kode Consumer `0x029D` (`AL Keyboard Layout` / Globe key) yang memunculkan popup Emoji.
+   - Menggunakan kode `0x00B8` (`Eject`) secara eksklusif untuk toggle keyboard virtual layar iOS.
+   - Menghapus toggle `Keep iPhone Keyboard Visible` dari UI, settings, dan logic debounce.
+2. **Dukungan Penuh Shortcut `Ctrl+A`, `Ctrl+C`, `Ctrl+V`, `Ctrl+X`, `Ctrl+Z` di Notes iPhone**:
+   - Memblokir pengiriman modifier `0xE0` (`ControlLeft/Right`) ke iOS saat `crossPlatformShortcuts` aktif agar tidak bentrok dengan `Command (0xE3)`.
+   - Endpoint baru `POST /api/keyboard/shortcut` mengeksekusi sekuens penekanan modifier bertahap (`[]` -> `[0xE3]` -> `[0xE3, key]` -> `[0xE3]` -> `[]`) langsung pada instance server stream aktif via `asyncio.run_coroutine_threadsafe`.
+3. **Copy-Paste dari Windows ke iPhone via Direct HID Typing Injection**:
+   - Menggantikan Pasteboard Service yang diblokir iOS dengan **`type_text_to_iphone()`** yang menginjeksi 97 karakter ASCII langsung melalui HID key reports dengan jeda ~8ms.
+   - Logika cerdas `Ctrl+V`: mengetikkan teks PC saat teks baru disalin di Windows, dan mengeksekusi native `Cmd+V` saat user baru saja melakukan Copy/Cut di dalam iPhone.
 
 ---
 
-## 18. Panduan Menjalankan & Verifikasi Manual
+## 19. Daftar File yang Dimodifikasi (Tahap 19)
+
+| No | File Path | Keterangan |
+|:---|:---|:---|
+| 1 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Referensi `_ACTIVE_SERVER`, hapus `0x029D`, fungsi `send_keys_direct`, `send_button_direct`, `trigger_ios_shortcut`, dan `type_text_to_iphone`. |
+| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Hapus `keepOnscreenKeyboard`, endpoint `POST /api/keyboard/shortcut`, dan smart `paste_to_iphone()`. |
+| 3 | [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) | Supresi modifier Control `0xE0`, routing hotkey ke API shortcut, dan eliminasi keep keyboard timer. |
+| 4 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Hapus toggle Keep Keyboard, pertahankan tombol aksi Toggle On-Screen Keyboard, bump cache buster. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Hapus state keepOnscreenKeyboard, dukung force PC paste pada tombol Paste Now, bump cache buster. |
+| 6 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Bump cache buster ke `v=20261023_tahap19_shortcuts_hid_typing`. |
+| 7 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | Menghapus field `keepOnscreenKeyboard`. |
+| 8 | [`LAPORAN_TAHAP_19_FIX_SHORTCUTS_DAN_DIRECT_HID_TYPING.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_19_FIX_SHORTCUTS_DAN_DIRECT_HID_TYPING.md) | Laporan pengujian dan dokumentasi teknis Tahap 19. |
+
+---
+
+## 20. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
 2. **Cek Tampilan Standar (Default)**:
    - Jendela frameless terbuka dengan ukuran presisi `380 x 840`.
    - Mulai mirroring dengan klik layar tengah atau tombol ⚙️ → "Start mirroring".
-   - Layar iPhone tampil utuh dari ujung atas (Dynamic Island) sampai ujung bawah (dock) tanpa terpotong / gepeng ~180px.
-3. **Cek Mode Full Size / Maximize**:
-   - Klik tombol **Full Size (⛶)** di Top Bar kanan atas atau maksimalkan jendela.
-   - Layar iPhone membesar proporsional di tengah layar monitor tanpa distorsi.
-   - **Bottom CommandBar (`Swipe Left · Home · Recent · Swipe Right`) selalu terlihat jelas di dasar layar (44px) tanpa terdorong keluar layar di bawah taskbar Windows.**
-4. **Cek Trackpad & Navigasi**:
-   - Lakukan scroll 2 jari ke atas/bawah pada trackpad untuk scrolling feed Instagram.
-   - Klik tombol `◀ Swipe Left` dan `Swipe Right ▶` untuk geser foto / story.
-   - Klik tombol `⚙️` untuk membuka Side Drawer di kanan tanpa menutupi video iPhone.
+   - Layar iPhone tampil utuh dari ujung atas (Dynamic Island) sampai ujung bawah (dock) tanpa terpotong / gepeng.
+3. **Uji Shortcut Keyboard di Notes iPhone**:
+   - Ketikkan kalimat di aplikasi Notes iPhone.
+   - Tekan `Ctrl + A` (Select All), `Ctrl + C` (Copy), `Ctrl + V` (Paste), `Ctrl + Z` (Undo), `Ctrl + X` (Cut). Semua shortcut dieksekusi secara instan dan sempurna.
+4. **Uji Copy-Paste Teks dari PC Windows ke iPhone**:
+   - Salin teks `"persija"` di Google Chrome Windows PC.
+   - Fokus ke aplikasi mirroring / Notes iPhone dan tekan `Ctrl + V` atau tombol `📋 Paste PC Text Now`. Teks `"persija"` langsung terketik masuk ke iPhone.
+5. **Uji On-Screen Keyboard Toggle**:
+   - Tekan tombol `⌨️ Toggle iPhone On-Screen Keyboard` atau `Ctrl + K`. Keyboard virtual muncul/sembunyi tanpa beralih ke tampilan Emoji.
 

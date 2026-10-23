@@ -19,18 +19,25 @@
     return m;
   })();
 
-  // Apple Command / GUI modifier (Left GUI = 0xe3, HID modifier 0x08).
-  const CMD = 0xe3;
-  const CMD_KEYS = new Set(["KeyA", "KeyC", "KeyV", "KeyX", "KeyZ"]);
-
   // Global Keyboard Settings (persisted and synced across parent and iframe)
   window.HandsetKeyboardSettings = window.HandsetKeyboardSettings || {
     crossPlatformShortcuts: true,
     pastePcClipboard: true,
-    keepOnscreenKeyboard: false,
   };
 
-  async function triggerPasteFromPc() {
+  async function triggerShortcut(action) {
+    try {
+      await fetch("/api/keyboard/shortcut", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+    } catch (err) {
+      console.warn("triggerShortcut error:", err);
+    }
+  }
+
+  async function triggerPasteFromPc(force = false) {
     try {
       let clipText = null;
       if (navigator.clipboard?.readText) {
@@ -41,7 +48,7 @@
       await fetch("/api/keyboard/paste", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clipText }),
+        body: JSON.stringify({ text: clipText, force: force }),
       });
     } catch (err) {
       console.warn("triggerPasteFromPc error:", err);
@@ -67,26 +74,16 @@
   function attach({ post, enabled }) {
     const pressed = new Set();
     let chain = Promise.resolve();
-    let keepKbTimer = null;
 
     const flush = () => {
       const snapshot = [...pressed];
       chain = chain.then(() => post({ usages: snapshot })).catch(() => {});
     };
+
     const releaseAll = () => {
       if (!pressed.size) return;
       pressed.clear();
       flush();
-    };
-
-    const checkKeepOnscreenKeyboard = () => {
-      if (!window.HandsetKeyboardSettings?.keepOnscreenKeyboard) return;
-      if (pressed.size === 0) {
-        clearTimeout(keepKbTimer);
-        keepKbTimer = setTimeout(() => {
-          triggerToggleOnscreenKeyboard();
-        }, 300);
-      }
     };
 
     window.addEventListener(
@@ -94,7 +91,7 @@
       (e) => {
         if (!enabled() || isTextField(e.target)) return;
 
-        // Shortcut Ctrl + K: Toggle iPhone On-Screen Keyboard
+        // Shortcut Ctrl + K: Toggle iPhone On-Screen Keyboard cleanly
         if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyK") {
           e.preventDefault();
           e.stopPropagation();
@@ -102,40 +99,55 @@
           return;
         }
 
-        const shortcut = e.ctrlKey || e.metaKey;
-        if (shortcut) {
-          // If cross-platform shortcuts are disabled, allow standard browser actions
-          if (!window.HandsetKeyboardSettings?.crossPlatformShortcuts) return;
-
-          // If not one of the supported iOS command keys, ignore
-          if (!CMD_KEYS.has(e.code)) return;
-
-          // Special handling for Ctrl+V (Paste)
-          if (e.code === "KeyV") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (window.HandsetKeyboardSettings?.pastePcClipboard) {
-              triggerPasteFromPc();
-            } else {
-              // Native iOS paste
-              if (e.repeat) return;
-              pressed.add(CMD);
-              pressed.add(0x19);
-              flush();
-            }
+        // Cross-platform shortcuts (Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z)
+        if (window.HandsetKeyboardSettings?.crossPlatformShortcuts) {
+          // If Control key alone is pressed, DO NOT forward 0xE0 to iOS to avoid modifier conflicts
+          if (e.code === "ControlLeft" || e.code === "ControlRight") {
             return;
           }
 
-          // Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+Z
-          const usage = CODE_TO_HID[e.code];
-          if (usage === undefined) return;
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.repeat) return;
-          pressed.add(CMD);
-          pressed.add(usage);
-          flush();
-          return;
+          if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+            if (e.code === "KeyA") {
+              e.preventDefault();
+              e.stopPropagation();
+              pressed.clear();
+              flush();
+              triggerShortcut("select-all");
+              return;
+            }
+            if (e.code === "KeyC") {
+              e.preventDefault();
+              e.stopPropagation();
+              pressed.clear();
+              flush();
+              triggerShortcut("copy");
+              return;
+            }
+            if (e.code === "KeyV") {
+              e.preventDefault();
+              e.stopPropagation();
+              pressed.clear();
+              flush();
+              triggerPasteFromPc(false);
+              return;
+            }
+            if (e.code === "KeyX") {
+              e.preventDefault();
+              e.stopPropagation();
+              pressed.clear();
+              flush();
+              triggerShortcut("cut");
+              return;
+            }
+            if (e.code === "KeyZ") {
+              e.preventDefault();
+              e.stopPropagation();
+              pressed.clear();
+              flush();
+              triggerShortcut("undo");
+              return;
+            }
+          }
         }
 
         // Regular keystroke
@@ -153,19 +165,15 @@
     window.addEventListener(
       "keyup",
       (e) => {
-        let changed = false;
-        if (pressed.has(CMD) && !e.ctrlKey && !e.metaKey) {
-          pressed.delete(CMD);
-          changed = true;
+        if (e.code === "ControlLeft" || e.code === "ControlRight") {
+          if (window.HandsetKeyboardSettings?.crossPlatformShortcuts) {
+            return;
+          }
         }
         const usage = CODE_TO_HID[e.code];
         if (usage !== undefined && pressed.delete(usage)) {
           e.preventDefault();
-          changed = true;
-        }
-        if (changed) {
           flush();
-          checkKeepOnscreenKeyboard();
         }
       },
       true,
@@ -180,7 +188,8 @@
 
   window.HandsetKeys = {
     attach,
-    pasteFromPc: triggerPasteFromPc,
+    triggerShortcut,
+    pasteFromPc: (force = false) => triggerPasteFromPc(force),
     toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,
   };
 })();

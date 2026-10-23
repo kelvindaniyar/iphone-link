@@ -6,11 +6,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 767.3333740234375
         },
         "computedHeight": "767.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "flex",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -19,11 +19,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 767.3333740234375
         },
         "computedHeight": "767.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "flex",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -32,11 +32,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 723.3333740234375
         },
         "computedHeight": "723.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "block",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -45,11 +45,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 723.3333740234375
         },
         "computedHeight": "723.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "block",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -58,11 +58,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 723.3333740234375
         },
         "computedHeight": "723.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "block",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -71,11 +71,11 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 723.3333740234375
         },
         "computedHeight": "723.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "block",
         "computedPosition": "relative",
         "aspectRatio": "auto"
@@ -84,36 +84,34 @@
         "rect": {
           "top": 36,
           "left": 0,
-          "width": 366,
+          "width": 380,
           "height": 723.3333740234375
         },
         "computedHeight": "723.333px",
-        "computedWidth": "366px",
+        "computedWidth": "380px",
         "computedDisplay": "block",
         "computedPosition": "absolute",
         "aspectRatio": "auto"
       }
     },
     "window": {
-      "innerWidth": 366,
+      "innerWidth": 380,
       "innerHeight": 803,
       "devicePixelRatio": 1.5
     },
-    "received_at": "2026-10-23 08:24:46"
+    "received_at": "2026-10-23 23:21:53"
   },
-  "last_updated": "2026-10-23 08:25:25",
+  "last_updated": "2026-10-23 23:29:34",
   "history": [
     {
       "source": "mirror.js",
-      "frameCount": 1,
+      "frameCount": 19140,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
         "displayW": 1216,
         "displayH": 2656,
-        "w": 1216,
-        "h": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
@@ -124,2016 +122,2537 @@
       "canvas_attr": {
         "width": 1216,
         "height": 2656,
-        "styleW": "331px",
-        "styleH": "723px"
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
         "top": 0,
-        "left": 17.5,
-        "width": 331,
-        "height": 723
+        "left": 0,
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:21:29"
+      "received_at": "2026-10-23 23:28:21"
     },
     {
       "source": "mirror.js",
-      "event": "mirror_js_loaded",
-      "innerWidth": 366,
-      "innerHeight": 723,
-      "dpr": 1.5,
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "mirror.js",
-      "event": "codec_check",
-      "codec": "hev1.1.6.L150.B0",
-      "supported": true,
-      "descriptionLength": 133,
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "mirror.js",
-      "event": "decoder_configured",
-      "codec": "hev1.1.6.L150.B0",
-      "state": "configured",
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "app.js",
-      "elements": {
-        "mainBody": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "displayCol": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "workspace": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "stage": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneShell": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneScreen": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "screenView": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "absolute",
-          "aspectRatio": "auto"
-        }
-      },
-      "window": {
-        "innerWidth": 366,
-        "innerHeight": 803,
-        "devicePixelRatio": 1.5
-      },
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "mirror.js",
-      "event": "first_frame_output",
-      "codedW": 1216,
-      "codedH": 2656,
-      "displayW": 1280,
-      "displayH": 720,
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "mirror.js",
-      "frameCount": 1,
+      "frameCount": 19200,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "app.js",
-      "elements": {
-        "mainBody": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "displayCol": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "workspace": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "stage": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneShell": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneScreen": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "screenView": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "absolute",
-          "aspectRatio": "auto"
-        }
-      },
-      "window": {
-        "innerWidth": 366,
-        "innerHeight": 803,
-        "devicePixelRatio": 1.5
-      },
-      "received_at": "2026-10-23 08:24:45"
-    },
-    {
-      "source": "app.js",
-      "elements": {
-        "mainBody": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "displayCol": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "workspace": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "stage": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneShell": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneScreen": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "screenView": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "absolute",
-          "aspectRatio": "auto"
-        }
-      },
-      "window": {
-        "innerWidth": 366,
-        "innerHeight": 803,
-        "devicePixelRatio": 1.5
-      },
-      "received_at": "2026-10-23 08:24:46"
-    },
-    {
-      "source": "app.js",
-      "elements": {
-        "mainBody": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "displayCol": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 767.3333740234375
-          },
-          "computedHeight": "767.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "flex",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "workspace": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "stage": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneShell": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "phoneScreen": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "relative",
-          "aspectRatio": "auto"
-        },
-        "screenView": {
-          "rect": {
-            "top": 36,
-            "left": 0,
-            "width": 366,
-            "height": 723.3333740234375
-          },
-          "computedHeight": "723.333px",
-          "computedWidth": "366px",
-          "computedDisplay": "block",
-          "computedPosition": "absolute",
-          "aspectRatio": "auto"
-        }
-      },
-      "window": {
-        "innerWidth": 366,
-        "innerHeight": 803,
-        "devicePixelRatio": 1.5
-      },
-      "received_at": "2026-10-23 08:24:46"
+      "received_at": "2026-10-23 23:28:22"
     },
     {
       "source": "mirror.js",
-      "frameCount": 5,
+      "frameCount": 19260,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:46"
+      "received_at": "2026-10-23 23:28:23"
     },
     {
       "source": "mirror.js",
-      "frameCount": 15,
+      "frameCount": 19320,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:46"
+      "received_at": "2026-10-23 23:28:25"
     },
     {
       "source": "mirror.js",
-      "frameCount": 30,
+      "frameCount": 19380,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:47"
+      "received_at": "2026-10-23 23:28:26"
     },
     {
       "source": "mirror.js",
-      "frameCount": 60,
+      "frameCount": 19440,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:47"
+      "received_at": "2026-10-23 23:28:27"
     },
     {
       "source": "mirror.js",
-      "frameCount": 120,
+      "frameCount": 19500,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:48"
+      "received_at": "2026-10-23 23:28:28"
     },
     {
       "source": "mirror.js",
-      "frameCount": 180,
+      "frameCount": 19560,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:49"
+      "received_at": "2026-10-23 23:28:30"
     },
     {
       "source": "mirror.js",
-      "frameCount": 240,
+      "frameCount": 19620,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:51"
+      "received_at": "2026-10-23 23:28:31"
     },
     {
       "source": "mirror.js",
-      "frameCount": 300,
+      "frameCount": 19680,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:52"
+      "received_at": "2026-10-23 23:28:32"
     },
     {
       "source": "mirror.js",
-      "frameCount": 360,
+      "frameCount": 19740,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:53"
+      "received_at": "2026-10-23 23:28:33"
     },
     {
       "source": "mirror.js",
-      "frameCount": 420,
+      "frameCount": 19800,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:54"
+      "received_at": "2026-10-23 23:28:35"
     },
     {
       "source": "mirror.js",
-      "frameCount": 480,
+      "frameCount": 19860,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:55"
+      "received_at": "2026-10-23 23:28:36"
     },
     {
       "source": "mirror.js",
-      "frameCount": 540,
+      "frameCount": 19920,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:57"
+      "received_at": "2026-10-23 23:28:37"
     },
     {
       "source": "mirror.js",
-      "frameCount": 600,
+      "frameCount": 19980,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:24:58"
+      "received_at": "2026-10-23 23:28:38"
     },
     {
       "source": "mirror.js",
-      "frameCount": 660,
+      "frameCount": 20040,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:00"
+      "received_at": "2026-10-23 23:28:39"
     },
     {
       "source": "mirror.js",
-      "frameCount": 720,
+      "frameCount": 20100,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:01"
+      "received_at": "2026-10-23 23:28:41"
     },
     {
       "source": "mirror.js",
-      "frameCount": 780,
+      "frameCount": 20160,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:03"
+      "received_at": "2026-10-23 23:28:42"
     },
     {
       "source": "mirror.js",
-      "frameCount": 840,
+      "frameCount": 20220,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:04"
+      "received_at": "2026-10-23 23:28:43"
     },
     {
       "source": "mirror.js",
-      "frameCount": 900,
+      "frameCount": 20280,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "366px",
-        "styleH": "206px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 258.66668701171875,
+        "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 206
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 366,
-        "height": 723.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 366,
-        "h": 723,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:06"
+      "received_at": "2026-10-23 23:28:44"
     },
     {
       "source": "mirror.js",
-      "frameCount": 960,
+      "frameCount": 20340,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:07"
+      "received_at": "2026-10-23 23:28:46"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1020,
+      "frameCount": 20400,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:09"
+      "received_at": "2026-10-23 23:28:47"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1080,
+      "frameCount": 20460,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:10"
+      "received_at": "2026-10-23 23:28:48"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1140,
+      "frameCount": 20520,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:11"
+      "received_at": "2026-10-23 23:28:49"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1200,
+      "frameCount": 20580,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:12"
+      "received_at": "2026-10-23 23:28:51"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1260,
+      "frameCount": 20640,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:13"
+      "received_at": "2026-10-23 23:28:52"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1320,
+      "frameCount": 20700,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:15"
+      "received_at": "2026-10-23 23:28:53"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1380,
+      "frameCount": 20760,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:16"
+      "received_at": "2026-10-23 23:28:54"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1440,
+      "frameCount": 20820,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:17"
+      "received_at": "2026-10-23 23:28:56"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1500,
+      "frameCount": 20880,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:18"
+      "received_at": "2026-10-23 23:28:57"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1560,
+      "frameCount": 20940,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:19"
+      "received_at": "2026-10-23 23:28:58"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1620,
+      "frameCount": 21000,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:20"
+      "received_at": "2026-10-23 23:28:59"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1680,
+      "frameCount": 21060,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:22"
+      "received_at": "2026-10-23 23:29:01"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1740,
+      "frameCount": 21120,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:23"
+      "received_at": "2026-10-23 23:29:02"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1800,
+      "frameCount": 21180,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:24"
+      "received_at": "2026-10-23 23:29:03"
     },
     {
       "source": "mirror.js",
-      "frameCount": 1860,
+      "frameCount": 21240,
       "f_type": "VideoFrame",
       "f_dims": {
         "codedW": 1216,
         "codedH": 2656,
-        "displayW": 1280,
-        "displayH": 720,
+        "displayW": 1216,
+        "displayH": 2656,
         "visibleRect": {
           "x": 0,
           "y": 0,
           "width": 1216,
-          "height": 720
+          "height": 2656
         }
       },
       "canvas_attr": {
-        "width": 1280,
-        "height": 720,
-        "styleW": "456px",
-        "styleH": "257px"
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
       },
       "canvas_rect": {
-        "top": 365.16668701171875,
+        "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 257
+        "width": 383,
+        "height": 769
       },
       "body_rect": {
         "top": 0,
         "left": 0,
-        "width": 456,
-        "height": 987.3333740234375
+        "width": 380,
+        "height": 760
       },
       "win_inner": {
-        "w": 456,
-        "h": 987,
+        "w": 380,
+        "h": 760,
         "dpr": 1.5
       },
-      "received_at": "2026-10-23 08:25:25"
+      "received_at": "2026-10-23 23:29:04"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21300,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:06"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21360,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:07"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21420,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:08"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21480,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:09"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21540,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:11"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21600,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:12"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21660,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:13"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21720,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:14"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21780,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:16"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21840,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:17"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21900,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:18"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 21960,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:19"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22020,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:21"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22080,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:22"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22140,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:23"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22200,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:24"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22260,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:26"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22320,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:27"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22380,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:28"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22440,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:29"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22500,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:31"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22560,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:32"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22620,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:33"
+    },
+    {
+      "source": "mirror.js",
+      "frameCount": 22680,
+      "f_type": "VideoFrame",
+      "f_dims": {
+        "codedW": 1216,
+        "codedH": 2656,
+        "displayW": 1216,
+        "displayH": 2656,
+        "visibleRect": {
+          "x": 0,
+          "y": 0,
+          "width": 1216,
+          "height": 2656
+        }
+      },
+      "canvas_attr": {
+        "width": 1216,
+        "height": 2656,
+        "styleW": "calc(100% + 3px)",
+        "styleH": "calc(100% + 9px)"
+      },
+      "canvas_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 383,
+        "height": 769
+      },
+      "body_rect": {
+        "top": 0,
+        "left": 0,
+        "width": 380,
+        "height": 760
+      },
+      "win_inner": {
+        "w": 380,
+        "h": 760,
+        "dpr": 1.5
+      },
+      "received_at": "2026-10-23 23:29:34"
     }
   ],
   "latest_mirror.js": {
     "source": "mirror.js",
-    "frameCount": 1860,
+    "frameCount": 22680,
     "f_type": "VideoFrame",
     "f_dims": {
       "codedW": 1216,
       "codedH": 2656,
-      "displayW": 1280,
-      "displayH": 720,
+      "displayW": 1216,
+      "displayH": 2656,
       "visibleRect": {
         "x": 0,
         "y": 0,
         "width": 1216,
-        "height": 720
+        "height": 2656
       }
     },
     "canvas_attr": {
-      "width": 1280,
-      "height": 720,
-      "styleW": "456px",
-      "styleH": "257px"
+      "width": 1216,
+      "height": 2656,
+      "styleW": "calc(100% + 3px)",
+      "styleH": "calc(100% + 9px)"
     },
     "canvas_rect": {
-      "top": 365.16668701171875,
+      "top": 0,
       "left": 0,
-      "width": 456,
-      "height": 257
+      "width": 383,
+      "height": 769
     },
     "body_rect": {
       "top": 0,
       "left": 0,
-      "width": 456,
-      "height": 987.3333740234375
+      "width": 380,
+      "height": 760
     },
     "win_inner": {
-      "w": 456,
-      "h": 987,
+      "w": 380,
+      "h": 760,
       "dpr": 1.5
     },
-    "received_at": "2026-10-23 08:25:25"
-  },
-  "latest_mirror_frame": {
-    "source": "mirror.js",
-    "frameCount": 1860,
-    "f_type": "VideoFrame",
-    "f_dims": {
-      "codedW": 1216,
-      "codedH": 2656,
-      "displayW": 1280,
-      "displayH": 720,
-      "visibleRect": {
-        "x": 0,
-        "y": 0,
-        "width": 1216,
-        "height": 720
-      }
-    },
-    "canvas_attr": {
-      "width": 1280,
-      "height": 720,
-      "styleW": "456px",
-      "styleH": "257px"
-    },
-    "canvas_rect": {
-      "top": 365.16668701171875,
-      "left": 0,
-      "width": 456,
-      "height": 257
-    },
-    "body_rect": {
-      "top": 0,
-      "left": 0,
-      "width": 456,
-      "height": 987.3333740234375
-    },
-    "win_inner": {
-      "w": 456,
-      "h": 987,
-      "dpr": 1.5
-    },
-    "received_at": "2026-10-23 08:25:25"
-  },
-  "latest_mirror_mirror_js_loaded": {
-    "source": "mirror.js",
-    "event": "mirror_js_loaded",
-    "innerWidth": 366,
-    "innerHeight": 723,
-    "dpr": 1.5,
-    "received_at": "2026-10-23 08:24:45"
-  },
-  "latest_mirror_codec_check": {
-    "source": "mirror.js",
-    "event": "codec_check",
-    "codec": "hev1.1.6.L150.B0",
-    "supported": true,
-    "descriptionLength": 133,
-    "received_at": "2026-10-23 08:24:45"
-  },
-  "latest_mirror_decoder_configured": {
-    "source": "mirror.js",
-    "event": "decoder_configured",
-    "codec": "hev1.1.6.L150.B0",
-    "state": "configured",
-    "received_at": "2026-10-23 08:24:45"
+    "received_at": "2026-10-23 23:29:34"
   },
   "latest_mirror_first_frame_output": {
     "source": "mirror.js",
     "event": "first_frame_output",
     "codedW": 1216,
     "codedH": 2656,
-    "displayW": 1280,
-    "displayH": 720,
-    "received_at": "2026-10-23 08:24:45"
+    "displayW": 1216,
+    "displayH": 2656,
+    "received_at": "2026-10-23 23:21:52"
+  },
+  "latest_mirror_frame": {
+    "source": "mirror.js",
+    "frameCount": 22680,
+    "f_type": "VideoFrame",
+    "f_dims": {
+      "codedW": 1216,
+      "codedH": 2656,
+      "displayW": 1216,
+      "displayH": 2656,
+      "visibleRect": {
+        "x": 0,
+        "y": 0,
+        "width": 1216,
+        "height": 2656
+      }
+    },
+    "canvas_attr": {
+      "width": 1216,
+      "height": 2656,
+      "styleW": "calc(100% + 3px)",
+      "styleH": "calc(100% + 9px)"
+    },
+    "canvas_rect": {
+      "top": 0,
+      "left": 0,
+      "width": 383,
+      "height": 769
+    },
+    "body_rect": {
+      "top": 0,
+      "left": 0,
+      "width": 380,
+      "height": 760
+    },
+    "win_inner": {
+      "w": 380,
+      "h": 760,
+      "dpr": 1.5
+    },
+    "received_at": "2026-10-23 23:29:34"
   }
 }

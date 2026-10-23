@@ -12,7 +12,17 @@ from urllib.parse import unquote, urlparse
 
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
-from handset.screen import restart_screen, screen_status, start_screen, stop_screen
+from handset.screen import (
+    restart_screen,
+    screen_status,
+    send_button_direct,
+    send_keys_direct,
+    start_screen,
+    stop_screen,
+    toggle_onscreen_keyboard,
+    trigger_ios_shortcut,
+    type_text_to_iphone,
+)
 from handset.wifi import pair_for_wifi, wifi_paired_udids
 from handset.audio import audio_manager
 
@@ -37,8 +47,10 @@ DEFAULT_SETTINGS = {
     "trackpadSpeed": 100,
     "crossPlatformShortcuts": True,
     "pastePcClipboard": True,
-    "keepOnscreenKeyboard": False,
 }
+
+_IPHONE_INTERNAL_COPY = False
+_LAST_PC_CLIPBOARD_SEEN = ""
 
 
 def get_windows_clipboard_text() -> str | None:
@@ -68,63 +80,43 @@ def get_windows_clipboard_text() -> str | None:
         return None
 
 
-def paste_to_iphone(text: str | None = None) -> dict:
-    """Send text to the iPhone pasteboard, then trigger Cmd + V (0xe3 + 0x19)."""
-    if text is None:
-        text = get_windows_clipboard_text()
-    if text:
-        try:
-            req = urllib.request.Request(
-                f"http://{STREAM_HOST}:{STREAM_PORT}/clipboard",
-                data=json.dumps({"text": text}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                pass
-        except Exception as e:
-            print(f"paste_to_iphone set clipboard notice: {e}", flush=True)
+def paste_to_iphone(text: str | None = None, force_pc: bool = False) -> dict:
+    """Smart paste: Direct HID Typing Injection for Windows PC text or native Cmd+V for internal iOS copy."""
+    global _IPHONE_INTERNAL_COPY, _LAST_PC_CLIPBOARD_SEEN
+    settings = load_user_settings()
+    paste_pc_enabled = settings.get("pastePcClipboard", True)
 
-    # Trigger Cmd (0xe3) + V (0x19)
-    try:
-        req_down = urllib.request.Request(
-            f"http://{STREAM_HOST}:{STREAM_PORT}/key",
-            data=json.dumps({"usages": [0xE3, 0x19]}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req_down, timeout=3) as resp:
-            pass
-        time.sleep(0.04)
-        req_up = urllib.request.Request(
-            f"http://{STREAM_HOST}:{STREAM_PORT}/key",
-            data=json.dumps({"usages": []}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req_up, timeout=3) as resp:
-            pass
-        return {"ok": True, "pasted": True, "length": len(text) if text else 0}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    pc_text = text if text is not None else get_windows_clipboard_text()
+    if pc_text is None:
+        pc_text = ""
 
+    # Force PC clipboard typing (e.g. from "Paste PC Text Now" button)
+    if force_pc and pc_text:
+        _IPHONE_INTERNAL_COPY = False
+        _LAST_PC_CLIPBOARD_SEEN = pc_text
+        typed = type_text_to_iphone(pc_text)
+        return {"ok": True, "method": "typed", "length": typed}
 
-def toggle_onscreen_keyboard() -> dict:
-    """Send HID Consumer button signals (0x029D AL Keyboard Layout & 0x00B8 Eject) to toggle iOS virtual keyboard."""
-    success = False
-    for btn_name in ("keyboard-toggle", "eject"):
-        try:
-            req = urllib.request.Request(
-                f"http://{STREAM_HOST}:{STREAM_PORT}/button",
-                data=json.dumps({"name": btn_name, "state": "press"}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                success = True
-        except Exception:
-            pass
-    return {"ok": success}
+    # If PC clipboard paste is disabled, execute native iOS Cmd + V
+    if not paste_pc_enabled:
+        ok = trigger_ios_shortcut("paste-ios")
+        return {"ok": ok, "method": "ios-shortcut"}
+
+    # If user recently performed Copy/Cut inside iPhone and no new PC copy occurred
+    if _IPHONE_INTERNAL_COPY and pc_text == _LAST_PC_CLIPBOARD_SEEN:
+        ok = trigger_ios_shortcut("paste-ios")
+        return {"ok": ok, "method": "ios-shortcut-internal"}
+
+    # User copied new text on Windows PC (e.g. from Chrome)
+    if pc_text:
+        _IPHONE_INTERNAL_COPY = False
+        _LAST_PC_CLIPBOARD_SEEN = pc_text
+        typed = type_text_to_iphone(pc_text)
+        return {"ok": True, "method": "typed", "length": typed}
+
+    # Fallback to iOS Cmd+V if PC clipboard is empty
+    ok = trigger_ios_shortcut("paste-ios")
+    return {"ok": ok, "method": "ios-shortcut-fallback"}
 
 
 def load_user_settings() -> dict:
@@ -158,7 +150,7 @@ def save_user_settings(new_settings: dict) -> dict:
                 current["trackpadSpeed"] = max(30, min(200, int(v or 100)))
             except Exception:
                 current["trackpadSpeed"] = 100
-        elif k in ("crossPlatformShortcuts", "pastePcClipboard", "keepOnscreenKeyboard"):
+        elif k in ("crossPlatformShortcuts", "pastePcClipboard"):
             current[k] = bool(v)
         elif k in current:
             current[k] = v
@@ -262,11 +254,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/audio/pair":
             self._json(audio_manager.open_bluetooth_settings())
             return
+        if path == "/api/keyboard/shortcut":
+            action = str(payload.get("action", ""))
+            if action in ("copy", "cut"):
+                _IPHONE_INTERNAL_COPY = True
+                _LAST_PC_CLIPBOARD_SEEN = get_windows_clipboard_text() or ""
+            ok = trigger_ios_shortcut(action)
+            self._json({"ok": ok, "action": action})
+            return
         if path == "/api/keyboard/paste":
-            self._json(paste_to_iphone(payload.get("text")))
+            self._json(paste_to_iphone(payload.get("text"), force_pc=bool(payload.get("force", False))))
             return
         if path == "/api/keyboard/toggle-onscreen":
-            self._json(toggle_onscreen_keyboard())
+            ok = toggle_onscreen_keyboard()
+            self._json({"ok": ok})
             return
 
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None

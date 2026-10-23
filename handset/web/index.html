@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_tahap18_shortcuts_keyboard">
+  <link rel="stylesheet" href="/app.css?v=20261023_tahap19_shortcuts_hid_typing">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -286,26 +286,17 @@
               </button>
             </div>
 
-            <!-- Toggle 3: Keep iPhone Keyboard Visible -->
-            <div class="setting-toggle-item" style="margin-top: 8px;">
-              <div class="setting-toggle-header">
-                <span class="setting-label">📱 Keep iPhone Keyboard Visible</span>
-                <span class="setting-hint">On-Screen Keyboard</span>
-              </div>
-              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Keep Onscreen Keyboard">
-                <button type="button" class="seg" data-keep-keyboard-choice="true" role="radio" aria-checked="false">ON</button>
-                <button type="button" class="seg is-active" data-keep-keyboard-choice="false" role="radio" aria-checked="true">OFF</button>
-              </div>
-              <button type="button" class="ctl ctl-sm btn-action-block" id="btn-toggle-onscreen-kb">
-                ⌨️ Toggle iPhone On-Screen Keyboard
-              </button>
-            </div>
+            <!-- Action Button: Toggle iPhone On-Screen Keyboard -->
+            <button type="button" class="ctl ctl-sm btn-action-block" id="btn-toggle-onscreen-kb" style="margin-top: 10px;">
+              ⌨️ Toggle iPhone On-Screen Keyboard (Ctrl+K)
+            </button>
 
             <!-- Badge / Shortcut List -->
             <div class="shortcuts-badge-list">
               <span class="shortcut-pill">Ctrl+A (Select All)</span>
               <span class="shortcut-pill">Ctrl+C (Copy)</span>
               <span class="shortcut-pill">Ctrl+V (Paste)</span>
+              <span class="shortcut-pill">Ctrl+X (Cut)</span>
               <span class="shortcut-pill">Ctrl+Z (Undo)</span>
               <span class="shortcut-pill">Ctrl+K (Keyboard)</span>
             </div>
@@ -399,7 +390,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_tahap18_shortcuts_keyboard"></script>
-  <script src="/app.js?v=20261023_tahap18_shortcuts_keyboard"></script>
+  <script src="/keys.js?v=20261023_tahap19_shortcuts_hid_typing"></script>
+  <script src="/app.js?v=20261023_tahap19_shortcuts_hid_typing"></script>
 </body>
 </html>

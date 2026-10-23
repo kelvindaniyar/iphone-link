@@ -11,6 +11,5 @@
   "audioVolume": 100,
   "trackpadSpeed": 70,
   "crossPlatformShortcuts": true,
-  "pastePcClipboard": true,
-  "keepOnscreenKeyboard": false
+  "pastePcClipboard": true
 }

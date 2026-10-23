@@ -26,6 +26,7 @@ _LOCK = threading.Lock()
 _STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": None, "transport": None}
 _CURRENT_TASK: asyncio.Task | None = None
 _CURRENT_LOOP: asyncio.AbstractEventLoop | None = None
+_ACTIVE_SERVER = None
 
 
 def screen_status() -> dict:
@@ -35,13 +36,14 @@ def screen_status() -> dict:
 
 def stop_screen() -> dict:
     """Cleanly stop mirroring, terminate stream server, and reset state."""
-    global _CURRENT_TASK, _CURRENT_LOOP
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
     with _LOCK:
         if _CURRENT_TASK and _CURRENT_LOOP and _CURRENT_LOOP.is_running():
             try:
                 _CURRENT_LOOP.call_soon_threadsafe(_CURRENT_TASK.cancel)
             except Exception:
                 pass
+        _ACTIVE_SERVER = None
         _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
         return dict(_STATE)
 
@@ -121,9 +123,10 @@ async def _serve(udid: str, transport: str) -> None:
     from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
-    # HID Consumer Control (0x0C): 0x029D (AL Keyboard Layout), 0x00B8 (Eject) to toggle iOS virtual keyboard
-    _NAMED_BUTTONS["keyboard-toggle"] = (12, 0x029D, 0.05)
+    # HID Consumer Control (0x0C): 0x00B8 (Eject) to toggle iOS virtual keyboard cleanly
+    # (Do NOT use 0x029D AL Keyboard Layout as it acts as Globe key and switches to Emoji)
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
+    _NAMED_BUTTONS.pop("keyboard-toggle", None)
 
     for attempt in range(2):
         async with _open_tunnel(udid, transport) as rsd:
@@ -165,9 +168,10 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
             )
 
     server._eager_stream_start = _eager_video_only
-    global _CURRENT_TASK, _CURRENT_LOOP
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
     _CURRENT_LOOP = asyncio.get_running_loop()
     _CURRENT_TASK = asyncio.current_task()
+    _ACTIVE_SERVER = server
     try:
         _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
         await server.serve()
@@ -175,6 +179,201 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
         pass
     finally:
         _CURRENT_TASK = None
+        _ACTIVE_SERVER = None
+
+
+def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
+    """Send keyboard HID usages directly to active server or fallback to loopback HTTP."""
+    global _ACTIVE_SERVER, _CURRENT_LOOP
+    server = _ACTIVE_SERVER
+    loop = _CURRENT_LOOP
+    if server is not None and loop is not None and loop.is_running():
+        async def _send():
+            await server._ensure_keyboard()
+            assert server._uhs is not None and server._kb_service_id is not None
+            await server._uhs.send_keyboard(server._kb_service_id, usages)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), loop)
+            future.result(timeout=timeout)
+            return True
+        except Exception:
+            pass
+
+    with _LOCK:
+        if _STATE.get("phase") != "running":
+            return False
+
+    try:
+        import http.client, json
+        conn = http.client.HTTPConnection("127.0.0.1", 8766, timeout=timeout)
+        conn.request("POST", "/key", body=json.dumps({"usages": usages}).encode("utf-8"), headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def send_button_direct(name: str, state: str = "press", timeout: float = 0.5) -> bool:
+    """Send named button event directly to active server or fallback to loopback HTTP."""
+    global _ACTIVE_SERVER, _CURRENT_LOOP
+    server = _ACTIVE_SERVER
+    loop = _CURRENT_LOOP
+    if server is not None and loop is not None and loop.is_running():
+        async def _send():
+            from pymobiledevice3.remote.core_device.screen_stream import (
+                _NAMED_BUTTONS,
+                HID_BUTTON_STATE_DOWN,
+                HID_BUTTON_STATE_UP,
+            )
+            if name not in _NAMED_BUTTONS:
+                return
+            usage_page, usage_code, hold_seconds = _NAMED_BUTTONS[name]
+            await server._ensure_hid()
+            assert server._indigo is not None
+            if state == "press":
+                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
+                await asyncio.sleep(hold_seconds)
+                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
+            elif state == "down":
+                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
+            elif state == "up":
+                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), loop)
+            future.result(timeout=timeout)
+            return True
+        except Exception:
+            pass
+
+    with _LOCK:
+        if _STATE.get("phase") != "running":
+            return False
+
+    try:
+        import http.client, json
+        conn = http.client.HTTPConnection("127.0.0.1", 8766, timeout=timeout)
+        conn.request("POST", "/button", body=json.dumps({"name": name, "state": state}).encode("utf-8"), headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def toggle_onscreen_keyboard() -> bool:
+    """Toggle iOS onscreen keyboard cleanly using HID Eject (0x0C, 0x00B8)."""
+    return send_button_direct("eject")
+
+
+SHORTCUT_USAGES = {
+    "select-all": 0x04,  # a
+    "copy": 0x06,        # c
+    "paste-ios": 0x19,   # v
+    "cut": 0x1B,         # x
+    "undo": 0x1D,        # z
+}
+
+
+def trigger_ios_shortcut(action: str) -> bool:
+    """Send clean sequential modifier + key reports to iOS for reliable hotkey execution."""
+    import time
+    key_usage = SHORTCUT_USAGES.get(action)
+    if not key_usage:
+        return False
+    send_keys_direct([])
+    time.sleep(0.01)
+    send_keys_direct([0xE3])
+    time.sleep(0.03)
+    send_keys_direct([0xE3, key_usage])
+    time.sleep(0.05)
+    send_keys_direct([0xE3])
+    time.sleep(0.02)
+    send_keys_direct([])
+    return True
+
+
+_CHAR_TO_HID: dict[str, list[int]] = {}
+
+
+def _init_char_map() -> None:
+    global _CHAR_TO_HID
+    if _CHAR_TO_HID:
+        return
+    # Letters a-z (0x04 - 0x1D), A-Z (Shift 0xE1 + 0x04 - 0x1D)
+    for i in range(26):
+        low = chr(ord('a') + i)
+        up = chr(ord('A') + i)
+        code = 0x04 + i
+        _CHAR_TO_HID[low] = [code]
+        _CHAR_TO_HID[up] = [0xE1, code]
+    # Digits 1-9 (0x1E - 0x26), 0 (0x27)
+    for i in range(1, 10):
+        _CHAR_TO_HID[str(i)] = [0x1D + i]
+    _CHAR_TO_HID['0'] = [0x27]
+    # Shift digits
+    shift_digits = {
+        '!': 0x1E, '@': 0x1F, '#': 0x20, '$': 0x21, '%': 0x22,
+        '^': 0x23, '&': 0x24, '*': 0x25, '(': 0x26, ')': 0x27,
+    }
+    for ch, code in shift_digits.items():
+        _CHAR_TO_HID[ch] = [0xE1, code]
+    # Whitespace and symbols
+    symbols = {
+        ' ': [0x2C], '\n': [0x28], '\t': [0x2B],
+        '-': [0x2D], '_': [0xE1, 0x2D],
+        '=': [0x2E], '+': [0xE1, 0x2E],
+        '[': [0x2F], '{': [0xE1, 0x2F],
+        ']': [0x30], '}': [0xE1, 0x30],
+        '\\': [0x31], '|': [0xE1, 0x31],
+        ';': [0x33], ':': [0xE1, 0x33],
+        "'": [0x34], '"': [0xE1, 0x34],
+        '`': [0x35], '~': [0xE1, 0x35],
+        ',': [0x36], '<': [0xE1, 0x36],
+        '.': [0x37], '>': [0xE1, 0x37],
+        '/': [0x38], '?': [0xE1, 0x38],
+    }
+    _CHAR_TO_HID.update(symbols)
+
+
+_init_char_map()
+
+
+def type_text_to_iphone(text: str) -> int:
+    """Direct HID Typing Injection: converts text into rapid HID key presses (~8ms per char)."""
+    import time
+    if not text:
+        return 0
+    _init_char_map()
+    text = (
+        text.replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
+    send_keys_direct([])
+    time.sleep(0.01)
+    typed_count = 0
+    for ch in text:
+        usages = _CHAR_TO_HID.get(ch)
+        if usages is None:
+            if ch.lower() in _CHAR_TO_HID:
+                usages = _CHAR_TO_HID[ch.lower()]
+            else:
+                continue
+        send_keys_direct(usages)
+        time.sleep(0.008)
+        send_keys_direct([])
+        time.sleep(0.008)
+        typed_count += 1
+    send_keys_direct([])
+    return typed_count
 
 
 def _usb_udids() -> list[str]:
