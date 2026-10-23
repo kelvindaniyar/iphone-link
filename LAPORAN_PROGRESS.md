@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 18 (Cross-Platform Shortcuts, PC Clipboard Paste, & iOS On-Screen Keyboard Toggle)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 20 (Bidirectional Clipboard: iPhone ➔ PC via WinRT OCR & State Machine Sequence Number)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `74860c9` (`feat(keyboard): add cross-platform shortcuts, pc clipboard paste, and ios on-screen keyboard toggle`)  
+> **Cache Buster:** `v=20261024_tahap20_bidirectional_clipboard`  
 
 ---
 
@@ -376,20 +376,56 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 20. Panduan Menjalankan & Verifikasi Manual
+## 20. Tahap 20: Bidirectional Clipboard (iPhone ➔ PC WinRT OCR & State Machine Sequence Number)
+
+1. **State Machine Prioritas Clipboard Menggunakan `GetClipboardSequenceNumber()`**:
+   - Mendeteksi secara atomik dan akurat apakah user baru saja menyalin sesuatu di aplikasi Windows (seperti Chrome/Notepad) atau sedang berinteraksi di iPhone.
+   - Mengeliminasi bug teks lama PC tertempel setelah menekan `Ctrl+A` dan `Ctrl+C` di Notes iPhone.
+   - Menghormati 100% toggle `Ctrl+V Pastes PC Clipboard` ke `OFF` (selalu mengeksekusi `Cmd+V` internal iOS).
+2. **iPhone ➔ PC Text Extraction (Windows 11 Native WinRT `OcrEngine`)**:
+   - Mengambil frame snapshot kanvas seketika saat `Ctrl+C` / `Ctrl+X` ditekan.
+   - Script PowerShell native [`ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1) mendeteksi dan mengisolasi teks yang sedang diblok berlatar kuning (Notes) atau biru (Safari/teks standar), mengabaikan 100% jam status bar dan header tanggal.
+   - Injeksi langsung ke Clipboard Windows PC via `set_windows_clipboard_text()` Win32 API.
+3. **Pemberantasan Gangguan Keyup pada HID Typing**:
+   - Menambahkan window guard `ignoreKeyUpUntil` (350-500ms) di `keys.js` agar pelepasan tombol keyboard tidak memotong pengetikan `type_text_to_iphone()`.
+   - Menambahkan jeda awal 50ms dan jeda rilis karakter kembar 12ms di `screen.py`.
+4. **UI Cepat Side Drawer**:
+   - Menambahkan tombol berdampingan `📋 Paste PC Text` dan `📥 Copy iPhone Text` (`#btn-copy-iphone-now`) dengan status visual interaktif.
+
+---
+
+## 21. Daftar File yang Dimodifikasi (Tahap 20)
+
+| No | File Path | Keterangan |
+|:---|:---|:---|
+| 1 | [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1) | Script PowerShell native WinRT OCR dengan filter warna seleksi kuning/biru. |
+| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Implementasi `GetClipboardSequenceNumber()`, `set_windows_clipboard_text()`, State Machine Clipboard, dan integrasi OCR. |
+| 3 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Jeda awal 50ms dan penanganan rilis karakter kembar pada `type_text_to_iphone()`. |
+| 4 | [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) | `captureMirrorCanvasDataUrl()`, bypass `ignoreKeyUpUntil`, dan routing instan `Ctrl+V`. |
+| 5 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol `📥 Copy iPhone Text` & `📋 Paste PC Text` berdampingan + cache buster Tahap 20. |
+| 6 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Handler klik tombol `#btn-copy-iphone-now` dengan OCR synchronizer & feedback visual. |
+| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Pembaruan cache buster `v=20261024_tahap20_bidirectional_clipboard`. |
+| 8 | [`LAPORAN_TAHAP_20_BIDIRECTIONAL_CLIPBOARD_DAN_OCR.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_20_BIDIRECTIONAL_CLIPBOARD_DAN_OCR.md) | Dokumentasi teknis mendalam dan panduan pengujian Tahap 20. |
+
+---
+
+## 22. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
 2. **Cek Tampilan Standar (Default)**:
    - Jendela frameless terbuka dengan ukuran presisi `380 x 840`.
    - Mulai mirroring dengan klik layar tengah atau tombol ⚙️ → "Start mirroring".
-   - Layar iPhone tampil utuh dari ujung atas (Dynamic Island) sampai ujung bawah (dock) tanpa terpotong / gepeng.
-3. **Uji Shortcut Keyboard di Notes iPhone**:
-   - Ketikkan kalimat di aplikasi Notes iPhone.
-   - Tekan `Ctrl + A` (Select All), `Ctrl + C` (Copy), `Ctrl + V` (Paste), `Ctrl + Z` (Undo), `Ctrl + X` (Cut). Semua shortcut dieksekusi secara instan dan sempurna.
-4. **Uji Copy-Paste Teks dari PC Windows ke iPhone**:
-   - Salin teks `"persija"` di Google Chrome Windows PC.
-   - Fokus ke aplikasi mirroring / Notes iPhone dan tekan `Ctrl + V` atau tombol `📋 Paste PC Text Now`. Teks `"persija"` langsung terketik masuk ke iPhone.
-5. **Uji On-Screen Keyboard Toggle**:
-   - Tekan tombol `⌨️ Toggle iPhone On-Screen Keyboard` atau `Ctrl + K`. Keyboard virtual muncul/sembunyi tanpa beralih ke tampilan Emoji.
+3. **Uji Solusi Bug #1 (Copy dari iPhone ke Windows PC)**:
+   - Di Notes iPhone, blok teks catatan (atau tekan `Ctrl + A`).
+   - Tekan `Ctrl + C` (atau klik tombol `📥 Copy iPhone Text` di Settings Drawer).
+   - Buka browser Chrome / Notepad di Windows PC, tekan `Ctrl + V`. Teks dari Notes iPhone langsung tertempel di Windows!
+4. **Uji Solusi Bug #2 (Prioritas Internal iPhone setelah Paste Windows)**:
+   - Salin teks di Chrome Windows (misal: `"teks windows"`).
+   - Paste di Notes iPhone via `Ctrl + V`.
+   - Ketik atau blok teks baru di Notes iPhone, tekan `Ctrl + C`, lalu tekan `Ctrl + V`.
+   - Teks yang ter-paste dijamin teks baru dari Notes iPhone (bukan teks lama dari Windows!).
+5. **Uji Toggle `Ctrl+V Pastes PC Clipboard` ke OFF**:
+   - Set toggle ke `OFF`.
+   - Tekan `Ctrl + V` di layar iPhone. Sistem murni mengeksekusi `Cmd + V` internal iOS tanpa pernah mengetik teks PC.
 

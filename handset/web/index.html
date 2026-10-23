@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_tahap19_shortcuts_hid_typing">
+  <link rel="stylesheet" href="/app.css?v=20261024_tahap20_bidirectional_clipboard">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -281,9 +281,14 @@
                 <button type="button" class="seg is-active" data-paste-pc-choice="true" role="radio" aria-checked="true">ON</button>
                 <button type="button" class="seg" data-paste-pc-choice="false" role="radio" aria-checked="false">OFF</button>
               </div>
-              <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now">
-                📋 Paste PC Text Now
-              </button>
+              <div style="display: flex; gap: 6px; margin-top: 8px;">
+                <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now" style="flex: 1; margin-top: 0;">
+                  📋 Paste PC Text
+                </button>
+                <button type="button" class="ctl ctl-sm btn-action-block" id="btn-copy-iphone-now" style="flex: 1; margin-top: 0;">
+                  📥 Copy iPhone Text
+                </button>
+              </div>
             </div>
 
             <!-- Action Button: Toggle iPhone On-Screen Keyboard -->
@@ -390,7 +395,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_tahap19_shortcuts_hid_typing"></script>
-  <script src="/app.js?v=20261023_tahap19_shortcuts_hid_typing"></script>
+  <script src="/keys.js?v=20261024_tahap20_bidirectional_clipboard"></script>
+  <script src="/app.js?v=20261024_tahap20_bidirectional_clipboard"></script>
 </body>
 </html>

@@ -342,7 +342,7 @@ _init_char_map()
 
 
 def type_text_to_iphone(text: str) -> int:
-    """Direct HID Typing Injection: converts text into rapid HID key presses (~8ms per char)."""
+    """Direct HID Typing Injection: converts text into rapid HID key presses with clean twin key release."""
     import time
     if not text:
         return 0
@@ -357,9 +357,11 @@ def type_text_to_iphone(text: str) -> int:
         .replace("\r\n", "\n")
         .replace("\r", "\n")
     )
+    # Clear any active modifiers and pause cleanly before starting typing
     send_keys_direct([])
-    time.sleep(0.01)
+    time.sleep(0.05)
     typed_count = 0
+    prev_usages = None
     for ch in text:
         usages = _CHAR_TO_HID.get(ch)
         if usages is None:
@@ -367,10 +369,14 @@ def type_text_to_iphone(text: str) -> int:
                 usages = _CHAR_TO_HID[ch.lower()]
             else:
                 continue
+        # If identical to previous character (e.g. "ll" or "oo"), ensure a clean release pause
+        if usages == prev_usages:
+            time.sleep(0.012)
         send_keys_direct(usages)
-        time.sleep(0.008)
+        time.sleep(0.010)
         send_keys_direct([])
-        time.sleep(0.008)
+        time.sleep(0.010)
+        prev_usages = usages
         typed_count += 1
     send_keys_direct([])
     return typed_count

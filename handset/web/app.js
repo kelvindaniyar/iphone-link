@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_tahap19_shortcuts_hid_typing";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap20_bidirectional_clipboard";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -544,6 +544,36 @@ function initKeyboardSettingsControls() {
         btnPastePcNow.classList.remove("is-saved");
         btnPastePcNow.disabled = false;
       }, 1200);
+    }
+  });
+
+  const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
+  btnCopyIphone?.addEventListener("click", async () => {
+    btnCopyIphone.disabled = true;
+    const oldText = btnCopyIphone.textContent;
+    btnCopyIphone.textContent = "Copying…";
+    try {
+      const frameDataUrl = window.HandsetKeys?.captureMirrorCanvasDataUrl ? window.HandsetKeys.captureMirrorCanvasDataUrl() : null;
+      let res;
+      if (window.HandsetKeys?.triggerShortcut) {
+        res = await window.HandsetKeys.triggerShortcut("copy", frameDataUrl, true);
+      } else {
+        res = await postJson("/api/keyboard/shortcut", { action: "copy", frameDataUrl, waitResult: true });
+      }
+      if (res?.text) {
+        btnCopyIphone.textContent = "✓ Copied to PC!";
+      } else {
+        btnCopyIphone.textContent = "✓ Copied (iOS)";
+      }
+      btnCopyIphone.classList.add("is-saved");
+    } catch (_) {
+      btnCopyIphone.textContent = "Copy Failed";
+    } finally {
+      setTimeout(() => {
+        btnCopyIphone.textContent = oldText;
+        btnCopyIphone.classList.remove("is-saved");
+        btnCopyIphone.disabled = false;
+      }, 1500);
     }
   });
 

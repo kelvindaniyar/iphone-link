@@ -49,8 +49,17 @@ DEFAULT_SETTINGS = {
     "pastePcClipboard": True,
 }
 
-_IPHONE_INTERNAL_COPY = False
-_LAST_PC_CLIPBOARD_SEEN = ""
+def get_windows_clipboard_seq() -> int:
+    """Return the Windows clipboard sequence number (increments on every copy/cut)."""
+    try:
+        import ctypes
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return 0
+
+
+_ACTIVE_CLIPBOARD_SOURCE = "pc"  # "pc" or "iphone"
+_LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
 
 
 def get_windows_clipboard_text() -> str | None:
@@ -80,43 +89,146 @@ def get_windows_clipboard_text() -> str | None:
         return None
 
 
-def paste_to_iphone(text: str | None = None, force_pc: bool = False) -> dict:
+def set_windows_clipboard_text(text: str) -> bool:
+    """Write unicode text to the Windows PC clipboard safely in 64-bit."""
+    if not text:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = wintypes.BOOL
+        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        user32.SetClipboardData.restype = wintypes.HANDLE
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+
+        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = wintypes.LPVOID
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        kernel32.RtlMoveMemory.argtypes = [wintypes.LPVOID, wintypes.LPCVOID, ctypes.c_size_t]
+        kernel32.RtlMoveMemory.restype = None
+
+        if not user32.OpenClipboard(None):
+            return False
+        try:
+            if not user32.EmptyClipboard():
+                return False
+
+            encoded = text.encode("utf-16le") + b"\x00\x00"
+            GMEM_MOVEABLE = 0x0002
+            CF_UNICODETEXT = 13
+
+            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
+            if not h_mem:
+                return False
+
+            p_mem = kernel32.GlobalLock(h_mem)
+            if not p_mem:
+                return False
+
+            try:
+                kernel32.RtlMoveMemory(p_mem, encoded, len(encoded))
+            finally:
+                kernel32.GlobalUnlock(h_mem)
+
+            if not user32.SetClipboardData(CF_UNICODETEXT, h_mem):
+                return False
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:
+        print(f"set_windows_clipboard_text error: {e}", flush=True)
+        return False
+
+
+def extract_text_from_frame(frame_data_url: str) -> str | None:
+    """Extract highlighted/selected text from iPhone screen frame using Windows 11 WinRT OCR."""
+    if not frame_data_url or "," not in frame_data_url:
+        return None
+    try:
+        import base64, tempfile, subprocess, os
+        header, b64data = frame_data_url.split(",", 1)
+        raw_bytes = base64.b64decode(b64data)
+        if len(raw_bytes) < 100:
+            return None
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            tmp_path = f.name
+            f.write(raw_bytes)
+
+        script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+        try:
+            res = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, tmp_path],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=4.0,
+            )
+            text = (res.stdout or "").strip()
+            return text if text else None
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"extract_text_from_frame error: {e}", flush=True)
+        return None
+
+
+def paste_to_iphone(text: str | None = None, force_pc: bool = False, paste_pc_client_setting: bool | None = None) -> dict:
     """Smart paste: Direct HID Typing Injection for Windows PC text or native Cmd+V for internal iOS copy."""
-    global _IPHONE_INTERNAL_COPY, _LAST_PC_CLIPBOARD_SEEN
+    global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
     settings = load_user_settings()
-    paste_pc_enabled = settings.get("pastePcClipboard", True)
+    paste_pc_enabled = settings.get("pastePcClipboard", True) if paste_pc_client_setting is None else bool(paste_pc_client_setting)
 
-    pc_text = text if text is not None else get_windows_clipboard_text()
-    if pc_text is None:
-        pc_text = ""
+    # Rule 1: Explicit PC paste request (e.g. from "Paste PC Text Now" button)
+    if force_pc:
+        pc_text = text if text is not None else get_windows_clipboard_text()
+        if pc_text:
+            _ACTIVE_CLIPBOARD_SOURCE = "pc"
+            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+            typed = type_text_to_iphone(pc_text)
+            return {"ok": True, "method": "typed", "length": typed}
+        return {"ok": False, "error": "Clipboard is empty"}
 
-    # Force PC clipboard typing (e.g. from "Paste PC Text Now" button)
-    if force_pc and pc_text:
-        _IPHONE_INTERNAL_COPY = False
-        _LAST_PC_CLIPBOARD_SEEN = pc_text
-        typed = type_text_to_iphone(pc_text)
-        return {"ok": True, "method": "typed", "length": typed}
-
-    # If PC clipboard paste is disabled, execute native iOS Cmd + V
+    # Rule 2: If toggle "Ctrl+V Pastes PC Clipboard" is OFF -> MUST execute native iOS Cmd+V and NEVER type PC text
     if not paste_pc_enabled:
         ok = trigger_ios_shortcut("paste-ios")
-        return {"ok": ok, "method": "ios-shortcut"}
+        return {"ok": ok, "method": "ios-shortcut", "reason": "toggle-off"}
 
-    # If user recently performed Copy/Cut inside iPhone and no new PC copy occurred
-    if _IPHONE_INTERNAL_COPY and pc_text == _LAST_PC_CLIPBOARD_SEEN:
+    # Rule 3: Check sequence number to see if user copied something NEW in Windows
+    current_seq = get_windows_clipboard_seq()
+    if current_seq != _LAST_WIN_CLIPBOARD_SEQ:
+        _ACTIVE_CLIPBOARD_SOURCE = "pc"
+        _LAST_WIN_CLIPBOARD_SEQ = current_seq
+
+    # Rule 4: If active source is iPhone (user just copied/cut in iPhone and did not copy new PC text)
+    if _ACTIVE_CLIPBOARD_SOURCE == "iphone":
         ok = trigger_ios_shortcut("paste-ios")
-        return {"ok": ok, "method": "ios-shortcut-internal"}
+        return {"ok": ok, "method": "ios-shortcut", "reason": "iphone-source"}
 
-    # User copied new text on Windows PC (e.g. from Chrome)
+    # Rule 5: Active source is PC -> type PC clipboard text
+    pc_text = text if text is not None else get_windows_clipboard_text()
     if pc_text:
-        _IPHONE_INTERNAL_COPY = False
-        _LAST_PC_CLIPBOARD_SEEN = pc_text
         typed = type_text_to_iphone(pc_text)
         return {"ok": True, "method": "typed", "length": typed}
 
-    # Fallback to iOS Cmd+V if PC clipboard is empty
+    # Fallback to iOS paste if PC clipboard is empty
     ok = trigger_ios_shortcut("paste-ios")
-    return {"ok": ok, "method": "ios-shortcut-fallback"}
+    return {"ok": ok, "method": "ios-shortcut", "reason": "pc-empty-fallback"}
 
 
 def load_user_settings() -> dict:
@@ -256,14 +368,58 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/keyboard/shortcut":
             action = str(payload.get("action", ""))
-            if action in ("copy", "cut"):
-                _IPHONE_INTERNAL_COPY = True
-                _LAST_PC_CLIPBOARD_SEEN = get_windows_clipboard_text() or ""
+            frame_data_url = payload.get("frameDataUrl")
+            wait_result = bool(payload.get("waitResult", False))
+
+            # Trigger native iOS hotkey
             ok = trigger_ios_shortcut(action)
+
+            global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
+            if action in ("copy", "cut"):
+                _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+
+                extracted_text = None
+
+                def _do_extract(frame_url: str):
+                    global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
+                    try:
+                        text = extract_text_from_frame(frame_url)
+                        if text:
+                            if set_windows_clipboard_text(text):
+                                _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                                _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                                print(f"Copied iPhone selection to Windows PC clipboard ({len(text)} chars)", flush=True)
+                        return text
+                    except Exception as err:
+                        print(f"Async extract error: {err}", flush=True)
+                        return None
+
+                if frame_data_url:
+                    if wait_result:
+                        extracted_text = _do_extract(frame_data_url)
+                    else:
+                        import threading
+                        threading.Thread(target=_do_extract, args=(frame_data_url,), daemon=True).start()
+
+                self._json({
+                    "ok": ok,
+                    "action": action,
+                    "text": extracted_text,
+                    "length": len(extracted_text) if extracted_text else 0,
+                })
+                return
+
             self._json({"ok": ok, "action": action})
             return
         if path == "/api/keyboard/paste":
-            self._json(paste_to_iphone(payload.get("text"), force_pc=bool(payload.get("force", False))))
+            self._json(
+                paste_to_iphone(
+                    payload.get("text"),
+                    force_pc=bool(payload.get("force", False)),
+                    paste_pc_client_setting=payload.get("pastePcClipboard"),
+                )
+            )
             return
         if path == "/api/keyboard/toggle-onscreen":
             ok = toggle_onscreen_keyboard()

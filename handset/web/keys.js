@@ -25,15 +25,37 @@
     pastePcClipboard: true,
   };
 
-  async function triggerShortcut(action) {
+  function captureMirrorCanvasDataUrl() {
     try {
-      await fetch("/api/keyboard/shortcut", {
+      // 1. In mirror.html (inside iframe)
+      const localCanvas = document.getElementById("c");
+      if (localCanvas && localCanvas.width > 0 && localCanvas.height > 0) {
+        return localCanvas.toDataURL("image/jpeg", 0.85);
+      }
+      // 2. In index.html (parent frame)
+      const iframe = document.getElementById("screen-view");
+      const iframeDoc = iframe?.contentDocument || iframe?.contentWindow?.document;
+      const iframeCanvas = iframeDoc?.getElementById("c");
+      if (iframeCanvas && iframeCanvas.width > 0 && iframeCanvas.height > 0) {
+        return iframeCanvas.toDataURL("image/jpeg", 0.85);
+      }
+    } catch (e) {
+      console.warn("captureMirrorCanvasDataUrl notice:", e);
+    }
+    return null;
+  }
+
+  async function triggerShortcut(action, frameDataUrl = null, waitResult = false) {
+    try {
+      const resp = await fetch("/api/keyboard/shortcut", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, frameDataUrl, waitResult }),
       });
+      return await resp.json();
     } catch (err) {
       console.warn("triggerShortcut error:", err);
+      return { ok: false, error: String(err) };
     }
   }
 
@@ -45,25 +67,30 @@
           clipText = await navigator.clipboard.readText();
         } catch (_) {}
       }
-      await fetch("/api/keyboard/paste", {
+      const pastePcSetting = window.HandsetKeyboardSettings?.pastePcClipboard;
+      const resp = await fetch("/api/keyboard/paste", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clipText, force: force }),
+        body: JSON.stringify({ text: clipText, force: force, pastePcClipboard: pastePcSetting }),
       });
+      return await resp.json();
     } catch (err) {
       console.warn("triggerPasteFromPc error:", err);
+      return { ok: false, error: String(err) };
     }
   }
 
   async function triggerToggleOnscreenKeyboard() {
     try {
-      await fetch("/api/keyboard/toggle-onscreen", {
+      const resp = await fetch("/api/keyboard/toggle-onscreen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+      return await resp.json();
     } catch (err) {
       console.warn("triggerToggleOnscreenKeyboard error:", err);
+      return { ok: false, error: String(err) };
     }
   }
 
@@ -74,6 +101,7 @@
   function attach({ post, enabled }) {
     const pressed = new Set();
     let chain = Promise.resolve();
+    let ignoreKeyUpUntil = 0;
 
     const flush = () => {
       const snapshot = [...pressed];
@@ -95,6 +123,7 @@
         if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyK") {
           e.preventDefault();
           e.stopPropagation();
+          ignoreKeyUpUntil = Date.now() + 400;
           triggerToggleOnscreenKeyboard();
           return;
         }
@@ -110,6 +139,7 @@
             if (e.code === "KeyA") {
               e.preventDefault();
               e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
               triggerShortcut("select-all");
@@ -118,30 +148,41 @@
             if (e.code === "KeyC") {
               e.preventDefault();
               e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
+              const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
-              triggerShortcut("copy");
+              triggerShortcut("copy", frameDataUrl);
               return;
             }
             if (e.code === "KeyV") {
               e.preventDefault();
               e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 500;
               pressed.clear();
               flush();
-              triggerPasteFromPc(false);
+              // If pastePcClipboard is disabled, execute native iOS Cmd+V directly
+              if (!window.HandsetKeyboardSettings?.pastePcClipboard) {
+                triggerShortcut("paste-ios");
+              } else {
+                triggerPasteFromPc(false);
+              }
               return;
             }
             if (e.code === "KeyX") {
               e.preventDefault();
               e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
+              const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
-              triggerShortcut("cut");
+              triggerShortcut("cut", frameDataUrl);
               return;
             }
             if (e.code === "KeyZ") {
               e.preventDefault();
               e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
               triggerShortcut("undo");
@@ -165,6 +206,10 @@
     window.addEventListener(
       "keyup",
       (e) => {
+        if (Date.now() < ignoreKeyUpUntil) {
+          e.preventDefault();
+          return;
+        }
         if (e.code === "ControlLeft" || e.code === "ControlRight") {
           if (window.HandsetKeyboardSettings?.crossPlatformShortcuts) {
             return;
@@ -188,6 +233,7 @@
 
   window.HandsetKeys = {
     attach,
+    captureMirrorCanvasDataUrl,
     triggerShortcut,
     pasteFromPc: (force = false) => triggerPasteFromPc(force),
     toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,
