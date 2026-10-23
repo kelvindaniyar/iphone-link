@@ -25,19 +25,59 @@
     pastePcClipboard: true,
   };
 
+  // Typed Shadow Buffer tracking
+  let typedQueue = "";
+  let typedTimer = null;
+
+  function flushTypedQueue() {
+    if (!typedQueue) return;
+    const text = typedQueue;
+    typedQueue = "";
+    fetch("/api/keyboard/typed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).catch(() => {});
+  }
+
+  function queueTypedKey(key) {
+    if (key === "Backspace") {
+      if (typedQueue.length > 0) {
+        typedQueue = typedQueue.slice(0, -1);
+      } else {
+        fetch("/api/keyboard/typed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: "Backspace" }),
+        }).catch(() => {});
+      }
+      return;
+    }
+    if (key === "Enter") {
+      typedQueue += "\n";
+      flushTypedQueue();
+      return;
+    }
+    if (typeof key === "string" && key.length === 1) {
+      typedQueue += key;
+      clearTimeout(typedTimer);
+      typedTimer = setTimeout(flushTypedQueue, 40);
+    }
+  }
+
   function captureMirrorCanvasDataUrl() {
     try {
       // 1. In mirror.html (inside iframe)
       const localCanvas = document.getElementById("c");
       if (localCanvas && localCanvas.width > 0 && localCanvas.height > 0) {
-        return localCanvas.toDataURL("image/jpeg", 0.85);
+        return localCanvas.toDataURL("image/png");
       }
       // 2. In index.html (parent frame)
       const iframe = document.getElementById("screen-view");
       const iframeDoc = iframe?.contentDocument || iframe?.contentWindow?.document;
       const iframeCanvas = iframeDoc?.getElementById("c");
       if (iframeCanvas && iframeCanvas.width > 0 && iframeCanvas.height > 0) {
-        return iframeCanvas.toDataURL("image/jpeg", 0.85);
+        return iframeCanvas.toDataURL("image/png");
       }
     } catch (e) {
       console.warn("captureMirrorCanvasDataUrl notice:", e);
@@ -149,6 +189,7 @@
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
+              flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
@@ -173,6 +214,7 @@
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
+              flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
@@ -189,6 +231,15 @@
               return;
             }
           }
+        }
+
+        // Record regular keystroke into typed shadow buffer
+        if (e.key === "Backspace") {
+          queueTypedKey("Backspace");
+        } else if (e.key === "Enter") {
+          queueTypedKey("Enter");
+        } else if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+          queueTypedKey(e.key);
         }
 
         // Regular keystroke
@@ -235,6 +286,7 @@
     attach,
     captureMirrorCanvasDataUrl,
     triggerShortcut,
+    flushTypedQueue,
     pasteFromPc: (force = false) => triggerPasteFromPc(force),
     toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,
   };

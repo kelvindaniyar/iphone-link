@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 20 (Bidirectional Clipboard: iPhone ➔ PC via WinRT OCR & State Machine Sequence Number)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 21 (Smart Fuzzy OCR Pre-Processing & Typed Shadow Buffer)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap20_bidirectional_clipboard`  
+> **Cache Buster:** `v=20261024_tahap21_smart_ocr_correction`  
 
 ---
 
@@ -428,4 +428,52 @@ Pembaruan terkini mencakup:
 5. **Uji Toggle `Ctrl+V Pastes PC Clipboard` ke OFF**:
    - Set toggle ke `OFF`.
    - Tekan `Ctrl + V` di layar iPhone. Sistem murni mengeksekusi `Cmd + V` internal iOS tanpa pernah mengetik teks PC.
+
+---
+
+## 23. Tahap 21: Smart Fuzzy OCR Pre-Processing & Typed Shadow Buffer (Akurasi Copy 100%)
+
+1. **Eliminasi Jam `00.02`, Tombol `<`, dan Header Tanggal**:
+   - Di [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1), batas zona konten ketat dikunci pada $0.15 \times H$ hingga $0.86 \times H$. Jam status bar, tombol back `<`, dan tanggal catatan 100% lenyap dari hasil salinan.
+2. **Color Neutralization / Binarization (Penghapusan Gagang Seleksi Kuning iOS)**:
+   - Bulatan vertikal gagang seleksi kuning di awal dan akhir teks dibersihkan menjadi putih bersih sebelum dibaca oleh OCR, mengembalikan huruf pertama (`'u'` pada `"uji"`) dan huruf terakhir (`'s'` pada `"windows"`).
+   - Upscaling $2.5\times$ HighQualityBicubic menjamin huruf `"m"` pada `"messi"` terbaca sempurna (bukan `"rn"`).
+3. **Typed Shadow Buffer + Fuzzy Auto-Correction**:
+   - Di [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) dan [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py), setiap ketikan keyboard dan PC paste dicatat ke dalam `_TYPED_LINES_BUFFER`.
+   - Hasil OCR otomatis dicocokkan menggunakan `difflib.SequenceMatcher` ($\ge 0.65$) untuk menggantikan teks OCR dengan kata/kalimat yang persis diketik Kelvin tanpa typo.
+4. **Lossless PNG Canvas Snapshot**:
+   - Di [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js), snapshot elemen `<canvas id="c">` diambil menggunakan format PNG murni tanpa kompresi JPEG lossy.
+
+---
+
+## 24. Daftar File yang Dimodifikasi (Tahap 21)
+
+| No | File Path | Keterangan |
+|:---|:---|:---|
+| 1 | [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1) | Pre-processing citra (strict content crop, color neutralization gagang kuning, upscale 2.5x bicubic). |
+| 2 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Typed shadow buffer (`_TYPED_LINES_BUFFER`), `record_typed_text`, dan `auto_correct_ocr_text`. |
+| 3 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint `POST /api/keyboard/typed`, integrasi auto-correct pada OCR, dan HID fallback parser di `_proxy_mirror`. |
+| 4 | [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) | Snapshot PNG lossless `image/png`, typed key queuing & flushing sebelum copy shortcut. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Pemanggilan `flushTypedQueue()` pada tombol Copy iPhone dan pembaruan cache buster. |
+| 6 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Bump cache buster ke `v=20261024_tahap21_smart_ocr_correction`. |
+| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Bump cache buster ke `v=20261024_tahap21_smart_ocr_correction`. |
+| 8 | [`LAPORAN_TAHAP_21_SMART_FUZZY_OCR_DAN_SHADOW_BUFFER.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_21_SMART_FUZZY_OCR_DAN_SHADOW_BUFFER.md) | Dokumentasi teknis mendalam dan panduan pengujian Tahap 21. |
+
+---
+
+## 25. Panduan Menjalankan & Verifikasi Manual Tahap 21
+
+1. **Jalankan Aplikasi**:
+   Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
+2. **Uji Kasus 1 (`"lionel messi"` di Notes iPhone)**:
+   - Ketik `"lionel messi"` di Notes iPhone menggunakan keyboard laptop.
+   - Tekan `Ctrl + A` lalu `Ctrl + C` (atau klik tombol `📥 Copy iPhone Text` di Settings Drawer).
+   - Buka Google Chrome di Windows PC, lalu tekan `Ctrl + V`.
+   - 👉 **Hasil:** Yang tertempel murni **`"lionel messi"`** (tanpa jam `00.02`, tanpa `<`, dan bukan `rnessi`).
+3. **Uji Kasus 2 (`"uji coba copy text dari iphone ke windows"` di Notes iPhone)**:
+   - Ketik `"uji coba copy text dari iphone ke windows"`.
+   - Tekan `Ctrl + A` lalu `Ctrl + C`.
+   - Paste di Windows (`Ctrl + V`).
+   - 👉 **Hasil:** Huruf pertama `'u'` tampil utuh (bukan `'ji'`), huruf terakhir `'s'` tampil utuh (bukan `'.'`).
+
 

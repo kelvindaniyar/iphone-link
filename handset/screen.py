@@ -341,12 +341,106 @@ def _init_char_map() -> None:
 _init_char_map()
 
 
+
+_TYPED_LINES_BUFFER: list[str] = []
+_CURRENT_TYPED_LINE: str = ""
+_TYPED_BUFFER_LOCK = threading.Lock()
+
+
+def record_typed_char(char: str) -> None:
+    """Record a typed character, Backspace, or Enter into the shadow buffer."""
+    global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER
+    with _TYPED_BUFFER_LOCK:
+        if char == "Backspace":
+            _CURRENT_TYPED_LINE = _CURRENT_TYPED_LINE[:-1]
+        elif char in ("\n", "\r", "Enter"):
+            trimmed = _CURRENT_TYPED_LINE.strip()
+            if trimmed:
+                if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
+                    _TYPED_LINES_BUFFER.append(trimmed)
+                if len(_TYPED_LINES_BUFFER) > 60:
+                    _TYPED_LINES_BUFFER.pop(0)
+            _CURRENT_TYPED_LINE = ""
+        elif len(char) == 1:
+            _CURRENT_TYPED_LINE += char
+
+
+def record_typed_text(text: str) -> None:
+    """Record a block of typed/pasted text into the shadow buffer."""
+    global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER
+    if not text:
+        return
+    with _TYPED_BUFFER_LOCK:
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        for line in lines:
+            trimmed = line.strip()
+            if trimmed:
+                if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
+                    _TYPED_LINES_BUFFER.append(trimmed)
+                if len(_TYPED_LINES_BUFFER) > 60:
+                    _TYPED_LINES_BUFFER.pop(0)
+        _CURRENT_TYPED_LINE = ""
+
+
+def get_typed_candidates() -> list[str]:
+    """Return all candidate lines from the typed shadow buffer."""
+    with _TYPED_BUFFER_LOCK:
+        cands = list(_TYPED_LINES_BUFFER)
+        if _CURRENT_TYPED_LINE.strip():
+            cands.append(_CURRENT_TYPED_LINE.strip())
+        return cands
+
+
+def auto_correct_ocr_text(ocr_text: str) -> str:
+    """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer."""
+    import difflib
+    if not ocr_text:
+        return ocr_text
+    candidates = get_typed_candidates()
+    if not candidates:
+        return ocr_text
+
+    ocr_lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
+    if not ocr_lines:
+        return ocr_text
+
+    # 1. Full text fuzzy matching against candidate lines
+    full_ocr = " ".join(ocr_lines)
+    best_cand = None
+    best_ratio = 0.0
+    for cand in candidates:
+        r = difflib.SequenceMatcher(None, full_ocr.lower(), cand.lower()).ratio()
+        if r > best_ratio:
+            best_ratio = r
+            best_cand = cand
+    if best_ratio >= 0.65 and best_cand:
+        return best_cand
+
+    # 2. Line by line fuzzy matching
+    corrected_lines = []
+    for line in ocr_lines:
+        line_cand = line
+        line_ratio = 0.0
+        for cand in candidates:
+            r = difflib.SequenceMatcher(None, line.lower(), cand.lower()).ratio()
+            if r > line_ratio:
+                line_ratio = r
+                line_cand = cand
+        if line_ratio >= 0.65:
+            corrected_lines.append(line_cand)
+        else:
+            corrected_lines.append(line)
+
+    return "\r\n".join(corrected_lines)
+
+
 def type_text_to_iphone(text: str) -> int:
     """Direct HID Typing Injection: converts text into rapid HID key presses with clean twin key release."""
     import time
     if not text:
         return 0
     _init_char_map()
+    record_typed_text(text)
     text = (
         text.replace("“", '"')
         .replace("”", '"')

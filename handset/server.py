@@ -13,6 +13,9 @@ from urllib.parse import unquote, urlparse
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
+    auto_correct_ocr_text,
+    record_typed_char,
+    record_typed_text,
     restart_screen,
     screen_status,
     send_button_direct,
@@ -162,7 +165,8 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
         if len(raw_bytes) < 100:
             return None
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+        suffix = ".png" if "image/png" in header else ".jpg"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             tmp_path = f.name
             f.write(raw_bytes)
 
@@ -177,6 +181,8 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
                 timeout=4.0,
             )
             text = (res.stdout or "").strip()
+            if text:
+                text = auto_correct_ocr_text(text)
             return text if text else None
         finally:
             try:
@@ -425,6 +431,15 @@ class Handler(BaseHTTPRequestHandler):
             ok = toggle_onscreen_keyboard()
             self._json({"ok": ok})
             return
+        if path == "/api/keyboard/typed":
+            text_val = payload.get("text")
+            key_val = payload.get("key")
+            if text_val:
+                record_typed_text(str(text_val))
+            elif key_val:
+                record_typed_char(str(key_val))
+            self._json({"ok": True})
+            return
 
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
         if path == "/api/screen/restart":
@@ -562,6 +577,33 @@ class Handler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length and method in {"POST", "PUT"} else None
+
+        if upstream_path == "/key" and method == "POST" and body:
+            try:
+                kp = json.loads(body.decode("utf-8") or "{}")
+                usages = kp.get("usages")
+                if isinstance(usages, list):
+                    if 0x2A in usages:
+                        record_typed_char("Backspace")
+                    elif 0x28 in usages:
+                        record_typed_char("\n")
+                    elif 0x2C in usages:
+                        record_typed_char(" ")
+                    else:
+                        is_shift = (0xE1 in usages or 0xE5 in usages)
+                        for u in usages:
+                            if 0x04 <= u <= 0x1D:
+                                ch = chr(ord('A' if is_shift else 'a') + u - 0x04)
+                                record_typed_char(ch)
+                                break
+                            elif 0x1E <= u <= 0x26:
+                                record_typed_char(str(u - 0x1D))
+                                break
+                            elif u == 0x27:
+                                record_typed_char("0")
+                                break
+            except Exception:
+                pass
 
         headers: dict[str, str] = {}
         for name in ("Content-Type", "Accept"):

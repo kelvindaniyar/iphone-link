@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap20_bidirectional_clipboard";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap21_smart_ocr_correction";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -553,6 +553,7 @@ function initKeyboardSettingsControls() {
     const oldText = btnCopyIphone.textContent;
     btnCopyIphone.textContent = "Copying…";
     try {
+      window.HandsetKeys?.flushTypedQueue?.();
       const frameDataUrl = window.HandsetKeys?.captureMirrorCanvasDataUrl ? window.HandsetKeys.captureMirrorCanvasDataUrl() : null;
       let res;
       if (window.HandsetKeys?.triggerShortcut) {
