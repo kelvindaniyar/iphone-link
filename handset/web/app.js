@@ -23,14 +23,26 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_fit_aspect_fix";
+const MIRROR_PAGE = "/mirror.html?v=20261023_zerodelay_crop";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
 let currentFitMode = localStorage.getItem("pane-fit-mode") || "fill";
-let currentEdgeTrim = parseInt(localStorage.getItem("pane-edge-trim") || "10", 10);
-const edgeTrimSlider = document.querySelector("#edge-trim-slider");
-const edgeTrimVal = document.querySelector("#edge-trim-val");
+
+// 4-Sided Crop Management (Top, Bottom, Left, Right)
+const DEFAULT_CROP = { top: 0, bottom: 0, left: 0, right: 0 };
+let currentCrop = { ...DEFAULT_CROP };
+try {
+  const savedCrop = JSON.parse(localStorage.getItem("pane-crop-edges") || "{}");
+  currentCrop = {
+    top: Math.max(0, Math.min(120, parseInt(savedCrop.top, 10) || 0)),
+    bottom: Math.max(0, Math.min(120, parseInt(savedCrop.bottom, 10) || 0)),
+    left: Math.max(0, Math.min(120, parseInt(savedCrop.left, 10) || 0)),
+    right: Math.max(0, Math.min(120, parseInt(savedCrop.right, 10) || 0)),
+  };
+} catch (_) {
+  currentCrop = { ...DEFAULT_CROP };
+}
 
 function syncThemeToIframe() {
   try {
@@ -82,27 +94,78 @@ function applyFitMode(mode) {
   } catch (_) {}
 }
 
-function applyEdgeTrim(val) {
-  currentEdgeTrim = Math.max(0, Math.min(32, parseInt(val, 10) || 0));
-  localStorage.setItem("pane-edge-trim", String(currentEdgeTrim));
-  if (edgeTrimSlider) edgeTrimSlider.value = String(currentEdgeTrim);
-  if (edgeTrimVal) edgeTrimVal.textContent = `${currentEdgeTrim} px`;
+function applyCrop(crop, syncInputs = false) {
+  currentCrop = {
+    top: Math.max(0, Math.min(120, parseInt(crop?.top, 10) || 0)),
+    bottom: Math.max(0, Math.min(120, parseInt(crop?.bottom, 10) || 0)),
+    left: Math.max(0, Math.min(120, parseInt(crop?.left, 10) || 0)),
+    right: Math.max(0, Math.min(120, parseInt(crop?.right, 10) || 0)),
+  };
+  localStorage.setItem("pane-crop-edges", JSON.stringify(currentCrop));
+
+  if (syncInputs) {
+    ["top", "bottom", "left", "right"].forEach((side) => {
+      const slider = document.querySelector(`#crop-${side}-slider`);
+      const numInput = document.querySelector(`#crop-${side}-num`);
+      if (slider) slider.value = String(currentCrop[side]);
+      if (numInput) numInput.value = String(currentCrop[side]);
+    });
+  }
+
   try {
-    screenView?.contentWindow?.postMessage({ type: "set-edge-trim", trim: currentEdgeTrim }, "*");
+    screenView?.contentWindow?.postMessage({ type: "set-crop", crop: currentCrop }, "*");
   } catch (_) {}
+}
+
+function initCropControls() {
+  ["top", "bottom", "left", "right"].forEach((side) => {
+    const slider = document.querySelector(`#crop-${side}-slider`);
+    const numInput = document.querySelector(`#crop-${side}-num`);
+
+    if (slider) {
+      slider.value = String(currentCrop[side]);
+      slider.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10) || 0;
+        if (numInput) numInput.value = String(val);
+        currentCrop[side] = val;
+        applyCrop(currentCrop, false);
+      });
+    }
+
+    if (numInput) {
+      numInput.value = String(currentCrop[side]);
+      const handleNumChange = (e) => {
+        let val = parseInt(e.target.value, 10);
+        if (isNaN(val)) val = 0;
+        val = Math.max(0, Math.min(120, val));
+        e.target.value = String(val);
+        if (slider) slider.value = String(val);
+        currentCrop[side] = val;
+        applyCrop(currentCrop, false);
+      };
+      numInput.addEventListener("input", handleNumChange);
+      numInput.addEventListener("change", handleNumChange);
+    }
+  });
+
+  const btnReset = document.querySelector("#btn-reset-crop");
+  btnReset?.addEventListener("click", () => {
+    applyCrop(DEFAULT_CROP, true);
+  });
 }
 
 function syncSettingsToIframe() {
   syncThemeToIframe();
   applyFitMode(currentFitMode);
-  applyEdgeTrim(currentEdgeTrim);
+  applyCrop(currentCrop, true);
 }
 
 screenView?.addEventListener("load", syncSettingsToIframe);
 
 applyTheme(currentTheme);
 applyFitMode(currentFitMode);
-applyEdgeTrim(currentEdgeTrim);
+applyCrop(currentCrop, true);
+initCropControls();
 
 btnTheme?.addEventListener("click", () => {
   applyTheme(currentTheme === "dark" ? "light" : "dark");
@@ -118,10 +181,6 @@ document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
   btn.addEventListener("click", () => {
     applyFitMode(btn.dataset.fitChoice);
   });
-});
-
-edgeTrimSlider?.addEventListener("input", (e) => {
-  applyEdgeTrim(e.target.value);
 });
 
 let selectedUdid = null;
@@ -226,6 +285,32 @@ document.querySelector("#win-close")?.addEventListener("click", () => {
   } else {
     window.close();
   }
+});
+
+// Native Win32 Window Dragging (only on empty area of .app-bar)
+const appBar = document.querySelector(".app-bar");
+appBar?.addEventListener("mousedown", (e) => {
+  if (e.target.closest("button, input, select, a, .no-drag, [data-action], .win-btn, .bar-btn, .icon-btn")) {
+    return;
+  }
+  if (window.pywebview?.api?.start_window_drag) {
+    window.pywebview.api.start_window_drag();
+  }
+});
+
+// Stop propagation on side drawer and input elements to prevent hijacking drags or window move
+const sideDrawer = document.querySelector(".side-drawer");
+["mousedown", "pointerdown"].forEach((evtName) => {
+  sideDrawer?.addEventListener(evtName, (e) => {
+    e.stopPropagation();
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("mousedown", (e) => e.stopPropagation());
+    inp.addEventListener("pointerdown", (e) => e.stopPropagation());
+  });
 });
 
 const appRoot = document.querySelector("#app-root");
@@ -816,23 +901,11 @@ function handleDeviceDimensions(width, height) {
   if (!width || !height) return;
   const aspect = width / height;
   if (aspect < 0.35 || aspect > 2.5) return;
+  lastDeviceAspect = aspect;
 
-  const stageH = Math.max(500, window.innerHeight - 80);
-  let idealDisplayWidth = Math.round(stageH * aspect);
-  idealDisplayWidth = Math.max(280, Math.min(750, idealDisplayWidth));
-
-  document.documentElement.style.setProperty("--display-width", `${idealDisplayWidth}px`);
-  document.querySelector("#app-root")?.style.setProperty("--display-width", `${idealDisplayWidth}px`);
-
-  const isDrawerOpen = !controlPane?.hidden;
-  if (window.pywebview?.api?.sync_device_aspect) {
-    if (!lastDeviceAspect || Math.abs(lastDeviceAspect - aspect) > 0.005) {
-      lastDeviceAspect = aspect;
-      window.pywebview.api.sync_device_aspect(idealDisplayWidth, isDrawerOpen);
-    }
-  } else {
-    lastDeviceAspect = aspect;
-  }
+  // Pertahankan lebar kolom display tetap stabil di 380px tanpa auto-shrink jendela
+  document.documentElement.style.setProperty("--display-width", "380px");
+  document.querySelector("#app-root")?.style.setProperty("--display-width", "380px");
 }
 
 window.addEventListener("message", (e) => {
@@ -842,12 +915,8 @@ window.addEventListener("message", (e) => {
 });
 
 window.addEventListener("resize", () => {
-  if (lastDeviceAspect) {
-    const stageH = Math.max(500, window.innerHeight - 80);
-    const idealDisplayWidth = Math.max(280, Math.min(750, Math.round(stageH * lastDeviceAspect)));
-    document.documentElement.style.setProperty("--display-width", `${idealDisplayWidth}px`);
-    document.querySelector("#app-root")?.style.setProperty("--display-width", `${idealDisplayWidth}px`);
-  }
+  document.documentElement.style.setProperty("--display-width", "380px");
+  document.querySelector("#app-root")?.style.setProperty("--display-width", "380px");
 });
 
 load();

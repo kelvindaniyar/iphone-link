@@ -10,7 +10,18 @@ const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
 
 let fitMode = localStorage.getItem("pane-fit-mode") || "fill";
-let edgeTrim = parseInt(localStorage.getItem("pane-edge-trim") || "10", 10);
+let currentCrop = { top: 0, bottom: 0, left: 0, right: 0 };
+try {
+  const savedCrop = JSON.parse(localStorage.getItem("pane-crop-edges") || "{}");
+  if (savedCrop && typeof savedCrop === "object") {
+    currentCrop = {
+      top: Math.max(0, parseInt(savedCrop.top, 10) || 0),
+      bottom: Math.max(0, parseInt(savedCrop.bottom, 10) || 0),
+      left: Math.max(0, parseInt(savedCrop.left, 10) || 0),
+      right: Math.max(0, parseInt(savedCrop.right, 10) || 0),
+    };
+  }
+} catch (_) {}
 
 // Sync initial theme from parent if accessible
 try {
@@ -51,6 +62,21 @@ postDebugLog("mirror_js_loaded", {
   dpr: window.devicePixelRatio,
 });
 
+function applyCropStyles(crop) {
+  if (crop && typeof crop === "object") {
+    currentCrop = {
+      top: Math.max(0, parseInt(crop.top, 10) || 0),
+      bottom: Math.max(0, parseInt(crop.bottom, 10) || 0),
+      left: Math.max(0, parseInt(crop.left, 10) || 0),
+      right: Math.max(0, parseInt(crop.right, 10) || 0),
+    };
+    try {
+      localStorage.setItem("pane-crop-edges", JSON.stringify(currentCrop));
+    } catch (_) {}
+  }
+  fitCanvas();
+}
+
 function fitCanvas() {
   if (!canvas.width || !canvas.height) return;
   const parent = canvas.parentElement || document.body;
@@ -62,11 +88,25 @@ function fitCanvas() {
   const h = rect.height || window.innerHeight;
   if (!w || !h) return;
 
+  const { top, bottom, left, right } = currentCrop;
+  const hasCrop = top > 0 || bottom > 0 || left > 0 || right > 0;
+
   if (fitMode === "fill" && zoom === 1) {
     document.body.classList.add("fit-fill");
     document.body.classList.remove("fit-contain");
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
+    if (hasCrop) {
+      canvas.style.position = "absolute";
+      canvas.style.top = `-${top}px`;
+      canvas.style.left = `-${left}px`;
+      canvas.style.width = `calc(100% + ${left + right}px)`;
+      canvas.style.height = `calc(100% + ${top + bottom}px)`;
+    } else {
+      canvas.style.position = "";
+      canvas.style.top = "";
+      canvas.style.left = "";
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+    }
     return;
   }
 
@@ -74,8 +114,21 @@ function fitCanvas() {
   document.body.classList.add("fit-contain");
   const base = Math.min(w / naturalW, h / naturalH);
   const scale = base * zoom;
-  canvas.style.width = `${Math.round(naturalW * scale)}px`;
-  canvas.style.height = `${Math.round(naturalH * scale)}px`;
+  const cw = Math.round(naturalW * scale);
+  const ch = Math.round(naturalH * scale);
+  if (hasCrop) {
+    canvas.style.position = "absolute";
+    canvas.style.top = `-${top}px`;
+    canvas.style.left = `-${left}px`;
+    canvas.style.width = `${cw + left + right}px`;
+    canvas.style.height = `${ch + top + bottom}px`;
+  } else {
+    canvas.style.position = "";
+    canvas.style.top = "";
+    canvas.style.left = "";
+    canvas.style.width = `${cw}px`;
+    canvas.style.height = `${ch}px`;
+  }
 }
 
 window.addEventListener("resize", fitCanvas);
@@ -396,10 +449,8 @@ window.addEventListener("message", (e) => {
     if (lastFrame) drawFrame(lastFrame);
     return;
   }
-  if (d.type === "set-edge-trim") {
-    edgeTrim = Math.max(0, Math.min(32, parseInt(d.trim, 10) || 0));
-    try { localStorage.setItem("pane-edge-trim", String(edgeTrim)); } catch (_) {}
-    if (lastFrame) drawFrame(lastFrame);
+  if (d.type === "set-crop") {
+    applyCropStyles(d.crop);
     return;
   }
 
@@ -633,37 +684,15 @@ function drawFrame(f) {
       fitCanvas();
     }
 
-    if (dimsChanged || frameCount === 1) {
-      try {
-        window.parent.postMessage({
-          type: "video-dimensions",
-          width: targetW,
-          height: targetH,
-          rawW,
-          rawH,
-        }, "*");
-      } catch (_) {}
-    }
-
     const dstW = canvas.width;
     const dstH = canvas.height;
     const fpW = sideways ? dstH : dstW;
     const fpH = sideways ? dstW : dstH;
 
-    // Hitung pemotongan overscan padding kanan & bawah (edgeTrim)
-    const trimX = (edgeTrim > 0 && rawW > 300) ? Math.min(edgeTrim, 32) : 0;
-    const trimY = (edgeTrim > 0 && rawH > 300) ? Math.min(edgeTrim, 32) : 0;
-    const srcW = rawW - trimX;
-    const srcH = rawH - trimY;
-
     ctx.save();
     ctx.translate(dstW / 2, dstH / 2);
     if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
-    if (trimX > 0 || trimY > 0) {
-      ctx.drawImage(sourceFrame, 0, 0, srcW, srcH, -fpW / 2, -fpH / 2, fpW, fpH);
-    } else {
-      ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
-    }
+    ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
     ctx.restore();
 
     if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {

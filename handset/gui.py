@@ -19,11 +19,32 @@ class WindowApi:
 
     def __init__(self):
         self._window = None
-        self._current_display_width = 348
+        self._current_display_width = 380
         self._drawer_open = False
 
     def set_window(self, window):
         self._window = window
+
+    def _get_hwnd(self):
+        try:
+            import ctypes
+            return ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+        except Exception:
+            return None
+
+    def start_window_drag(self) -> None:
+        """Start native Windows window dragging without pywebview global hook."""
+        if self._window is None or sys.platform != "win32":
+            return
+        try:
+            hwnd = self._get_hwnd()
+            if hwnd:
+                import ctypes
+                from ctypes import wintypes
+                ctypes.windll.user32.ReleaseCapture()
+                ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), 0x00A1, 2, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
+        except Exception:
+            pass
 
     def minimize(self):
         if self._window:
@@ -38,24 +59,14 @@ class WindowApi:
             self._window.toggle_fullscreen()
 
     def sync_device_aspect(self, display_width: int, drawer_open: bool = False):
-        """Sesuaikan lebar jendela dengan lebar rasio aktif iPhone + drawer jika terbuka."""
+        """Sesuaikan lebar jendela jika diminta secara manual."""
         if not self._window:
             return
         try:
-            dw = max(280, min(800, int(display_width)))
+            dw = max(380, min(800, int(display_width)))
             self._current_display_width = dw
             self._drawer_open = bool(drawer_open)
             target_w = dw + (360 if self._drawer_open else 0)
-
-            # Kompensasi DPI scaling jika ada selisih antara native window.width dan webview innerWidth
-            try:
-                inner_w = self._window.evaluate_js("window.innerWidth")
-                if inner_w and self._window.width:
-                    ratio = self._window.width / inner_w
-                    target_w = int(round(target_w * ratio))
-            except Exception:
-                pass
-
             h = max(self._window.height or 840, 840)
             self._window.resize(target_w, h)
         except Exception as e:
@@ -64,7 +75,9 @@ class WindowApi:
     def set_drawer(self, is_open: bool):
         if self._window:
             self._drawer_open = bool(is_open)
-            self.sync_device_aspect(self._current_display_width, is_open)
+            target_width = 740 if self._drawer_open else 380
+            h = max(self._window.height or 840, 840)
+            self._window.resize(target_width, h)
 
     def set_theme(self, theme: str):
         """Update native Windows 11 DWM dark/light mode attribute."""
@@ -143,11 +156,11 @@ def main():
         title="iPhone Mirroring",
         url=f"http://127.0.0.1:8765/?t={int(time.time())}",
         js_api=api,
-        width=348,
+        width=380,
         height=840,
         frameless=True,
-        easy_drag=True,
-        min_size=(280, 600),
+        easy_drag=False,
+        min_size=(380, 700),
         background_color="#0f172a",
     )
     api.set_window(window)
