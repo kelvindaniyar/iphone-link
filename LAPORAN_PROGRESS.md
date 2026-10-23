@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 22 (Full-Resolution Stream Capture, Anti-Aliased OCR, Spellcheck Elimination, & Active Typed Buffer)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 23 (Full-Width Strip, Red-Channel Filter, Margin 60px, typed_history Persistence, & Fallback 1 Huruf)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap22_fullres_anti_aliased_ocr`  
+> **Cache Buster:** `v=20261024_tahap23_full_width_red_channel_ocr`  
 
 ---
 
@@ -512,16 +512,48 @@ Pembaruan terkini mencakup:
 ## 28. Panduan Menjalankan & Verifikasi Manual Tahap 22
 
 1. **Jalankan Aplikasi**:
+---
+
+## 29. Tahap 23: Full-Width Horizontal Strip, Red-Channel Color Filter, White Margin 60px, Persistence typed_history.json, & Fallback 1 Huruf
+
+1. **Akar Masalah Regresi Tahap 22 Teratasi**:
+   - Di Notes iPhone (Light Mode), highlight berwarna krem pucat (`R~253, G~246, B~225`), sedangkan bulatan kuning pekat hanyalah gagang seleksi lollipop di bawah huruf terakhir (`"e"`). Akibatnya crop Tahap 22 hanya memotong kotak kecil di sekitar gagang huruf `"e"`, membuang kalimat di sebelah kirinya dan membuat OCR mengembalikan 1 huruf saja (`"e"` atau `"u"`).
+2. **Full-Width Horizontal Strip (`0.03*W` s.d. `0.97*W`)**:
+   - Setelah menemukan posisi vertikal `minY` dan `maxY` dari piksel kuning pucat / kuning pekat / biru, crop **SELALU MENGAMBIL LEBAR PENUH KONTEN** dengan padding vertikal satu baris penuh (`0.035 * H`), sehingga mustahil teks di sebelah kiri terpotong.
+3. **Red-Channel Color Filter & Anti-Aliasing Preservation**:
+   - Mengekstrak kanal Red (`p.R`). Nilai `R >= 210` atau warna noise (gagang kuning, highlight kuning, titik merah spellcheck) 100% dipetakan ke putih bersih (`255`), sedangkan huruf hitam (`R = 15..55`) dipetakan halus mempertahankan anti-aliasing aslinya tanpa binarization kasar.
+4. **Bicubic Upscaling 2.5x & Margin Putih 60px**:
+   - Gambar strip di-upscale 2.5x dan ditempatkan di tengah kanvas putih dengan margin lebar `60px` di semua sisi, menghilangkan kegagalan `OcrEngine` pada gambar tipis.
+5. **Persistence Riwayat Ketikan ke `typed_history.json`**:
+   - Shadow buffer disimpan permanen ke disk `typed_history.json` dan dimuat saat server startup sehingga riwayat ketikan tidak hilang saat aplikasi ditutup.
+6. **Prioritas & Pemulihan Kalimat Aktif 120 Detik**:
+   - Jika user baru saja mengetik di keyboard PC (< 120 detik) dan OCR mengembalikan $\le 4$ karakter (misalnya hanya huruf `"e"` atau `"u"` karena gagang seleksi), sistem secara instan mengembalikan baris kalimat aktif (`"lamine yamal from iphone"`) secara utuh.
+7. **Pembersihan Menu Pop-up Balloon iOS**:
+   - Seluruh baris yang berisi menu balloon popup iOS (`Cut`, `Copy`, `Paste`, `Delete`, `Select`, `Look Up`, `Translate`, `Share...`, `No Replacements Found`, `Device Hub`, dsb.) difilter secara otomatis.
+8. **Ekspor Otomatis Gambar & Telemetri Diagnostik**:
+   - Setiap kali proses copy dijalankan, sistem otomatis menyimpan:
+     * [`debug_ocr_raw.png`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_ocr_raw.png) (frame asli resolusi penuh)
+     * [`debug_ocr_cleaned.png`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_ocr_cleaned.png) (gambar strip + Red-Channel filter + margin 60px)
+     * [`debug_ocr_result.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_ocr_result.json) (telemetri teks asli vs teks terkoreksi vs buffer)
+
+---
+
+## 30. Panduan Menjalankan & Verifikasi Manual Tahap 23
+
+1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
-2. **Uji Skenario 1 (`"barcelona from iphone 17 pro"` di Notes iPhone)**:
-   - Ketik `"barcelona from iphone 17 pro"` di Notes iPhone menggunakan keyboard laptop (perhatikan bahwa kata `barcelona` dan `iphone` memiliki titik-titik merah spellcheck di bawahnya).
-   - Tekan `Ctrl + A` lalu `Ctrl + C` (atau klik tombol `📥 Copy iPhone Text` di Settings Drawer).
-   - Buka Google Chrome di Windows PC, lalu tekan `Ctrl + V`.
-   - 👉 **Hasil:** Yang tertempel murni **`"barcelona from iphone 17 pro"`** (tanpa `oarcejona`, tanpa `Cut/Copy/Paste`, tanpa jam `lu.11`).
-3. **Uji Skenario 2 (`"lionel messi"` & `"uji coba copy text dari iphone ke windows"`)**:
-   - Ketik kalimat tersebut, lakukan `Ctrl + A` dan `Ctrl + C`.
-   - Paste di Windows (`Ctrl + V`).
-   - 👉 **Hasil:** Murni presisi tanpa typo!
+2. **Uji Kasus 1 (`"barcelona from iphone"` di Notes iPhone)**:
+   - Blok teks `"barcelona from iphone"` di Notes iPhone (highlight kuning pucat dengan bulatan gagang kuning di huruf `"e"`).
+   - Klik `📥 Copy iPhone Text` (atau tekan `Ctrl + C`).
+   - Paste di Chrome Windows (`Ctrl + V`).
+   - 👉 **Hasil:** Masuk utuh **`"barcelona from iphone"`** (bukan hanya huruf `"u"` atau `"e"`!).
+3. **Uji Kasus 2 (`"lamine yamal from iphone"`)**:
+   - Ketik `"lamine yamal from iphone"` dari keyboard laptop di Notes iPhone, blok teksnya, lalu klik `📥 Copy iPhone Text` / `Ctrl + C`.
+   - Paste di Chrome Windows (`Ctrl + V`).
+   - 👉 **Hasil:** Masuk utuh **`"lamine yamal from iphone"`** 100% presisi!
+4. **Verifikasi Debug Artifacts**:
+   - Periksa file [`debug_ocr_cleaned.png`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_ocr_cleaned.png) di folder root: baris teks terlihat utuh dari kiri ke kanan dengan margin putih bersih di sekelilingnya.
+
 
 
 

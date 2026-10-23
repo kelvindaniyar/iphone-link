@@ -14,6 +14,7 @@ from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
     auto_correct_ocr_text,
+    get_debug_typed_state,
     record_typed_char,
     record_typed_text,
     restart_screen,
@@ -159,11 +160,21 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
     if not frame_data_url or "," not in frame_data_url:
         return None
     try:
-        import base64, tempfile, subprocess, os
+        import base64, tempfile, subprocess, os, json
         header, b64data = frame_data_url.split(",", 1)
         raw_bytes = base64.b64decode(b64data)
         if len(raw_bytes) < 100:
             return None
+
+        project_root = Path(__file__).resolve().parent.parent
+
+        # 1. Save debug_ocr_raw.png to project root
+        raw_debug_path = project_root / "debug_ocr_raw.png"
+        try:
+            with open(raw_debug_path, "wb") as f_raw:
+                f_raw.write(raw_bytes)
+        except Exception:
+            pass
 
         suffix = ".png" if "image/png" in header else ".jpg"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
@@ -171,6 +182,8 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
             f.write(raw_bytes)
 
         script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+        raw_text = ""
+        corrected_text = ""
         try:
             res = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, tmp_path],
@@ -180,10 +193,28 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
                 errors="replace",
                 timeout=4.0,
             )
-            text = (res.stdout or "").strip()
-            if text:
-                text = auto_correct_ocr_text(text)
-            return text if text else None
+            raw_text = (res.stdout or "").strip()
+            if raw_text:
+                corrected_text = auto_correct_ocr_text(raw_text)
+            else:
+                # Fallback to active typed line if recently typed
+                corrected_text = auto_correct_ocr_text("")
+
+            # 2. Save debug_ocr_result.json to project root
+            try:
+                active_line, buffer_tail = get_debug_typed_state()
+                result_info = {
+                    "raw_ocr_text": raw_text,
+                    "corrected_text": corrected_text,
+                    "typed_active_line": active_line,
+                    "typed_buffer_tail": buffer_tail,
+                }
+                with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                    json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+            except Exception as err:
+                print(f"debug_ocr_result.json save error: {err}", flush=True)
+
+            return corrected_text if corrected_text else None
         finally:
             try:
                 os.remove(tmp_path)

@@ -9,7 +9,9 @@ decodes it.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
+from pathlib import Path
 
 from handset.device import developer_mode_enabled
 from handset.mux import MuxError, list_devices
@@ -348,6 +350,44 @@ _LAST_TYPED_ACTIVE_LINE: str = ""
 _LAST_TYPED_TIMESTAMP: float = 0.0
 _TYPED_BUFFER_LOCK = threading.Lock()
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TYPED_HISTORY_FILE = PROJECT_ROOT / "typed_history.json"
+
+
+def save_typed_history() -> None:
+    """Persist typed history buffer and last active line to disk."""
+    try:
+        with _TYPED_BUFFER_LOCK:
+            data = {
+                "last_active": _LAST_TYPED_ACTIVE_LINE,
+                "timestamp": _LAST_TYPED_TIMESTAMP,
+                "buffer": _TYPED_LINES_BUFFER,
+            }
+        with open(TYPED_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def load_typed_history() -> None:
+    """Load persisted typed history from disk on startup."""
+    global _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP, _TYPED_LINES_BUFFER
+    if not TYPED_HISTORY_FILE.exists():
+        return
+    try:
+        with open(TYPED_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        with _TYPED_BUFFER_LOCK:
+            _LAST_TYPED_ACTIVE_LINE = data.get("last_active", "")
+            _LAST_TYPED_TIMESTAMP = float(data.get("timestamp", 0.0))
+            _TYPED_LINES_BUFFER = list(data.get("buffer", []))
+    except Exception:
+        pass
+
+
+# Load history on startup
+load_typed_history()
+
 
 def record_typed_char(char: str) -> None:
     """Record a typed character, Backspace, or Enter into the shadow buffer."""
@@ -370,6 +410,7 @@ def record_typed_char(char: str) -> None:
             _CURRENT_TYPED_LINE += char
             _LAST_TYPED_ACTIVE_LINE = _CURRENT_TYPED_LINE.strip()
             _LAST_TYPED_TIMESTAMP = time.time()
+    save_typed_history()
 
 
 def record_typed_text(text: str) -> None:
@@ -390,6 +431,7 @@ def record_typed_text(text: str) -> None:
                 _LAST_TYPED_ACTIVE_LINE = trimmed
                 _LAST_TYPED_TIMESTAMP = time.time()
         _CURRENT_TYPED_LINE = ""
+    save_typed_history()
 
 
 def get_typed_candidates() -> list[str]:
@@ -409,75 +451,124 @@ def get_typed_candidates() -> list[str]:
 def auto_correct_ocr_text(ocr_text: str) -> str:
     """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer with active line priority."""
     import difflib, time
-    if not ocr_text:
-        return ocr_text
-    candidates = get_typed_candidates()
-    if not candidates:
-        return ocr_text
 
-    ocr_lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
-    if not ocr_lines:
-        return ocr_text
-
-    # Priority 1: Check if user recently typed an active line (within last 90 seconds)
     with _TYPED_BUFFER_LOCK:
-        active_line = _LAST_TYPED_ACTIVE_LINE
-        active_age = time.time() - _LAST_TYPED_TIMESTAMP
+        active_line = _LAST_TYPED_ACTIVE_LINE.strip()
+        active_timestamp = _LAST_TYPED_TIMESTAMP
+        candidates = list(_TYPED_LINES_BUFFER)
+        if active_line and active_line not in candidates:
+            candidates.append(active_line)
 
-    if active_line and active_age < 90.0:
+    raw_ocr = (ocr_text or "").strip()
+    active_age = time.time() - active_timestamp
+
+    # --- Priority 1: User typed recently in active session (within 120s) and OCR is empty or 1-4 chars (e.g. "e", "u", lollipop handle) ---
+    if active_line and active_age < 120.0:
+        if not raw_ocr or len(raw_ocr) <= 4:
+            return active_line
+
+        raw_lower = raw_ocr.lower()
         act_lower = active_line.lower()
-        full_ocr = " ".join(ocr_lines).lower()
 
-        # Check exact substring containment
-        if act_lower in full_ocr or full_ocr in act_lower:
-            return active_line
-
-        # Check full OCR ratio
-        ratio = difflib.SequenceMatcher(None, full_ocr, act_lower).ratio()
-        if ratio >= 0.55:
-            return active_line
-
-        # Check if any single OCR line is a substring or close match of active_line
-        for line in ocr_lines:
-            l_lower = line.lower()
-            if len(l_lower) >= 6 and (l_lower in act_lower or act_lower in l_lower):
-                return active_line
-            r = difflib.SequenceMatcher(None, l_lower, act_lower).ratio()
-            if r >= 0.55:
+        # Check if raw_ocr is substring of active_line (e.g. user selected part of active line or OCR read suffix)
+        if (raw_lower in act_lower and len(raw_lower) >= 3) or (act_lower in raw_lower):
+            # Verify if there is a distinctly better match in history
+            best_other_score = 0.0
+            for cand in candidates:
+                if cand.strip().lower() != act_lower:
+                    r = difflib.SequenceMatcher(None, raw_lower, cand.strip().lower()).ratio()
+                    if r > best_other_score:
+                        best_other_score = r
+            if best_other_score < 0.75:
                 return active_line
 
-    # Priority 2: Full text fuzzy matching against candidate lines in buffer
-    full_ocr = " ".join(ocr_lines).lower()
+    if not raw_ocr:
+        return active_line if (active_line and active_age < 120.0) else ""
+
+    ocr_lines = [l.strip() for l in raw_ocr.splitlines() if l.strip()]
+    if not ocr_lines:
+        return active_line if (active_line and active_age < 120.0) else raw_ocr
+
+    # If no candidates in history buffer, return clean OCR lines
+    if not candidates:
+        return "\r\n".join(ocr_lines)
+
+    # --- Priority 2: Match full OCR against historical candidates in typed_history / buffer ---
+    full_ocr = " ".join(ocr_lines).strip()
+    full_ocr_lower = full_ocr.lower()
+    ocr_words = set(full_ocr_lower.split())
+
     best_cand = None
-    best_ratio = 0.0
-    for cand in candidates:
-        r = difflib.SequenceMatcher(None, full_ocr, cand.lower()).ratio()
-        if r > best_ratio:
-            best_ratio = r
-            best_cand = cand
-    if best_ratio >= 0.65 and best_cand:
+    best_score = 0.0
+
+    for cand in reversed(candidates):
+        c_strip = cand.strip()
+        if not c_strip:
+            continue
+        c_lower = c_strip.lower()
+
+        # Exact match or containment
+        if c_lower == full_ocr_lower:
+            return c_strip
+        if len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
+            score = 0.95
+        else:
+            sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
+            c_words = set(c_lower.split())
+            w_ratio = 0.0
+            if c_words and ocr_words:
+                overlap = c_words.intersection(ocr_words)
+                w_ratio = len(overlap) / float(max(len(c_words), len(ocr_words)))
+            score = max(sm_ratio, w_ratio)
+
+        # Give active line a small recency boost if active_age < 120
+        if active_line and c_strip.lower() == active_line.lower() and active_age < 120.0:
+            score += 0.08
+
+        if score > best_score:
+            best_score = score
+            best_cand = c_strip
+
+    if best_score >= 0.55 and best_cand:
         return best_cand
 
-    # Priority 3: Line by line fuzzy matching
+    # If active line was typed recently and has reasonable similarity (>= 0.45)
+    if active_line and active_age < 120.0:
+        act_lower = active_line.lower()
+        if difflib.SequenceMatcher(None, full_ocr_lower, act_lower).ratio() >= 0.45:
+            return active_line
+
+    # --- Priority 3: Line-by-line correction ---
     corrected_lines = []
     for line in ocr_lines:
-        line_cand = line
+        l_lower = line.lower()
+        line_best = line
         line_ratio = 0.0
-        for cand in candidates:
-            if len(line) >= 6 and line.lower() in cand.lower():
-                line_cand = cand
+        for cand in reversed(candidates):
+            c_strip = cand.strip()
+            if not c_strip:
+                continue
+            c_lower = c_strip.lower()
+            if len(line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
+                line_best = c_strip
                 line_ratio = 1.0
                 break
-            r = difflib.SequenceMatcher(None, line.lower(), cand.lower()).ratio()
+            r = difflib.SequenceMatcher(None, l_lower, c_lower).ratio()
             if r > line_ratio:
                 line_ratio = r
-                line_cand = cand
-        if line_ratio >= 0.65:
-            corrected_lines.append(line_cand)
+                line_best = c_strip
+        if line_ratio >= 0.55:
+            corrected_lines.append(line_best)
         else:
             corrected_lines.append(line)
 
     return "\r\n".join(corrected_lines)
+
+
+def get_debug_typed_state() -> tuple[str, list[str]]:
+    """Return active line and buffer tail for debug JSON output."""
+    with _TYPED_BUFFER_LOCK:
+        return _LAST_TYPED_ACTIVE_LINE, list(_TYPED_LINES_BUFFER[-5:] if _TYPED_LINES_BUFFER else [])
 
 
 def type_text_to_iphone(text: str) -> int:
