@@ -77,6 +77,7 @@ function applyCropStyles(crop) {
   fitCanvas();
 }
 
+let cachedCanvasRect = null;
 function fitCanvas() {
   if (!canvas.width || !canvas.height) return;
   const parent = canvas.parentElement || document.body;
@@ -107,6 +108,7 @@ function fitCanvas() {
       canvas.style.width = "100%";
       canvas.style.height = "100%";
     }
+    cachedCanvasRect = canvas.getBoundingClientRect();
     return;
   }
 
@@ -129,6 +131,7 @@ function fitCanvas() {
     canvas.style.width = `${cw}px`;
     canvas.style.height = `${ch}px`;
   }
+  cachedCanvasRect = canvas.getBoundingClientRect();
 }
 
 window.addEventListener("resize", fitCanvas);
@@ -149,7 +152,7 @@ function setZoom(value) {
 }
 
 function touchCoords(e) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = cachedCanvasRect || canvas.getBoundingClientRect();
   const sx = ((e.clientX - rect.left) * canvas.width) / rect.width;
   const sy = ((e.clientY - rect.top) * canvas.height) / rect.height;
   const cw = canvas.width;
@@ -333,55 +336,71 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 });
 
-// Precision Touchpad (2-finger scroll / swipe) -> Synthetic HID touch drag
-let wheelBusy = false;
-let wheelAccumY = 0;
-let wheelAccumX = 0;
-let wheelTimer = null;
+// Precision Touchpad (2-finger scroll / swipe) -> Instant Non-blocking & Leading-edge
+let isWheelSending = false;
+let pendingWheelY = 0;
+let lastHorizontalSwipeTime = 0;
+let accWheelX = 0;
+let hSwipeTimer = null;
 
-async function performWheelSwipe(deltaX, deltaY, clientX, clientY) {
-  if (wheelBusy) return;
-  wheelBusy = true;
+async function performFastHorizontalSwipe(direction) {
+  const yMid = 32768;
+  const isLeft = direction === "left";
+  const xStart = isLeft ? 55000 : 10535;
+  const xEnd = isLeft ? 10535 : 55000;
+  const steps = 7;
+  const dt = 10;
+
   try {
-    let startPos = { x: 32768, y: 32768 };
-    if (clientX != null && clientY != null) {
-      try {
-        startPos = touchCoords({ clientX, clientY });
-      } catch (_) {}
-    }
-
-    startPos.x = Math.max(10000, Math.min(55535, startPos.x));
-    startPos.y = Math.max(16000, Math.min(49000, startPos.y));
-
-    const isVertical = Math.abs(deltaY) >= Math.abs(deltaX);
-    let dx = 0;
-    let dy = 0;
-
-    if (isVertical) {
-      const distance = Math.max(6000, Math.min(20000, Math.round(Math.abs(deltaY) * 80)));
-      dy = deltaY > 0 ? -distance : distance;
-    } else {
-      const distance = Math.max(6000, Math.min(20000, Math.round(Math.abs(deltaX) * 80)));
-      dx = deltaX > 0 ? -distance : distance;
-    }
-
-    const endX = Math.max(2500, Math.min(63000, startPos.x + dx));
-    const endY = Math.max(2500, Math.min(63000, startPos.y + dy));
-
-    const steps = 6;
-    const dt = 12;
-
-    await postJson("/touch", { type: "contact", x: startPos.x, y: startPos.y });
+    await postJson("/touch", { type: "contact", x: xStart, y: yMid });
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      const curX = Math.round(startPos.x + (endX - startPos.x) * t);
-      const curY = Math.round(startPos.y + (endY - startPos.y) * t);
+      const curX = Math.round(xStart + (xEnd - xStart) * t);
       await new Promise((r) => setTimeout(r, dt));
-      await postJson("/touch", { type: "contact", x: curX, y: curY });
+      await postJson("/touch", { type: "contact", x: curX, y: yMid });
+    }
+    await postJson("/touch", { type: "release", x: xEnd, y: yMid });
+  } catch (_) {}
+}
+
+async function pumpVerticalWheel() {
+  if (isWheelSending) return;
+  if (Math.abs(pendingWheelY) < 18) return;
+
+  isWheelSending = true;
+  try {
+    const curDeltaY = pendingWheelY;
+    pendingWheelY = 0;
+
+    let startX = 32768;
+    let startY = 32768;
+    if (lastCoords && lastCoords.x > 5000 && lastCoords.y > 5000) {
+      startX = Math.max(10000, Math.min(55535, lastCoords.x));
+      startY = Math.max(16000, Math.min(49000, lastCoords.y));
+    }
+
+    const distance = Math.max(6000, Math.min(22000, Math.round(Math.abs(curDeltaY) * 75)));
+    const dy = curDeltaY > 0 ? -distance : distance;
+    const endX = startX;
+    const endY = Math.max(2500, Math.min(63000, startY + dy));
+
+    const steps = 5;
+    const dt = 10;
+
+    await postJson("/touch", { type: "contact", x: startX, y: startY });
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const curY = Math.round(startY + (endY - startY) * t);
+      await new Promise((r) => setTimeout(r, dt));
+      await postJson("/touch", { type: "contact", x: endX, y: curY });
     }
     await postJson("/touch", { type: "release", x: endX, y: endY });
+  } catch (_) {
   } finally {
-    wheelBusy = false;
+    isWheelSending = false;
+    if (Math.abs(pendingWheelY) >= 18) {
+      pumpVerticalWheel();
+    }
   }
 }
 
@@ -389,23 +408,33 @@ canvas.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
-    wheelAccumX += e.deltaX;
-    wheelAccumY += e.deltaY;
 
-    const threshold = 35;
-    if (Math.abs(wheelAccumY) >= threshold || Math.abs(wheelAccumX) >= threshold) {
-      const dX = wheelAccumX;
-      const dY = wheelAccumY;
-      wheelAccumX = 0;
-      wheelAccumY = 0;
-      performWheelSwipe(dX, dY, e.clientX, e.clientY);
+    const absX = Math.abs(e.deltaX);
+    const absY = Math.abs(e.deltaY);
+
+    // 1. Fast Horizontal Swipe (Leading-Edge, no debounce delay)
+    if (absX > absY * 1.3) {
+      accWheelX += e.deltaX;
+      window.clearTimeout(hSwipeTimer);
+      hSwipeTimer = window.setTimeout(() => {
+        accWheelX = 0;
+      }, 200);
+
+      const now = performance.now();
+      if (Math.abs(accWheelX) >= 28 && now - lastHorizontalSwipeTime > 260) {
+        const dir = accWheelX > 0 ? "left" : "right";
+        accWheelX = 0;
+        lastHorizontalSwipeTime = now;
+        performFastHorizontalSwipe(dir);
+      }
+      return;
     }
 
-    window.clearTimeout(wheelTimer);
-    wheelTimer = window.setTimeout(() => {
-      wheelAccumX = 0;
-      wheelAccumY = 0;
-    }, 200);
+    // 2. Coalesced Non-Blocking Vertical Scroll
+    pendingWheelY += e.deltaY;
+    if (!isWheelSending && Math.abs(pendingWheelY) >= 18) {
+      pumpVerticalWheel();
+    }
   },
   { passive: false }
 );

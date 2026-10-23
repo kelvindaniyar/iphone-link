@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 # WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
@@ -166,7 +167,13 @@ def main():
     api.set_window(window)
 
     # Jalankan webview dengan Edge Chromium (WebView2) di Windows
-    webview.start(debug=False)
+    storage_path = str(Path.home() / ".pane_webview_storage")
+    os.makedirs(storage_path, exist_ok=True)
+    webview.start(
+        debug=False,
+        private_mode=False,
+        storage_path=storage_path,
+    )
 
 
 if __name__ == "__main__":

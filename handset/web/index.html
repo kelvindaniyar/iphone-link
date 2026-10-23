@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_zerodelay_crop">
+  <link rel="stylesheet" href="/app.css?v=20261023_tahap16_audiosink_savecrop">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -50,6 +50,17 @@
           </svg>
           <svg class="theme-icon-moon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-audio-top" title="Toggle Audio Sink (iPhone ➔ PC)" aria-label="Audio Sink">
+          <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg class="audio-icon-off" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
           </svg>
         </button>
         <button type="button" class="icon-btn" id="btn-settings" title="Toggle Settings Side-Drawer" aria-label="Settings">
@@ -211,8 +222,33 @@
                 <input type="range" id="crop-right-slider" min="0" max="120" step="1" value="0">
               </div>
 
-              <button type="button" class="ctl ctl-sm" id="btn-reset-crop" style="margin-top: 4px; width: 100%;">Reset Crop (0 px)</button>
+              <div class="crop-btn-row">
+                <button type="button" class="ctl ctl-sm" id="btn-reset-crop">Reset (0 px)</button>
+                <button type="button" class="ctl ctl-sm ctl-accent btn-save-crop" id="btn-save-crop">💾 Save Crop</button>
+              </div>
             </div>
+          </section>
+
+          <!-- Audio Sink (iPhone -> PC Speaker) -->
+          <section class="card panel-audio" id="panel-audio">
+            <div class="card-header-row">
+              <span class="drawer-section-label">Audio Sink (iPhone ➔ PC)</span>
+              <span class="audio-badge" id="audio-status-badge">○ Off</span>
+            </div>
+            <div class="audio-toggle-wrap">
+              <button type="button" class="ctl ctl-primary audio-main-btn" id="btn-audio-drawer">
+                <span id="audio-toggle-icon">🔊</span>
+                <span id="audio-toggle-text">Enable Audio Sink</span>
+              </button>
+            </div>
+            <div class="audio-vol-wrap">
+              <div class="crop-label-row">
+                <span>PC Output Volume</span>
+                <span class="unit" id="audio-vol-val">100%</span>
+              </div>
+              <input type="range" id="audio-vol-slider" min="0" max="100" step="1" value="100">
+            </div>
+            <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="width: 100%; margin-top: 6px;">⚙️ Pair Bluetooth in Windows</button>
           </section>
 
           <section class="card panel-start">
@@ -297,7 +333,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_zerodelay_crop"></script>
-  <script src="/app.js?v=20261023_zerodelay_crop"></script>
+  <script src="/keys.js?v=20261023_tahap16_audiosink_savecrop"></script>
+  <script src="/app.js?v=20261023_tahap16_audiosink_savecrop"></script>
 </body>
 </html>

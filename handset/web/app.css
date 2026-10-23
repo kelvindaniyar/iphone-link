@@ -244,6 +244,12 @@ a:hover { text-decoration: underline; }
   background: rgba(255, 255, 255, 0.12);
 }
 
+#btn-audio-top.is-active {
+  color: #4ade80 !important;
+  background: rgba(74, 222, 128, 0.16);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
 /* Native Window Controls */
 .window-controls {
   display: flex;
@@ -832,6 +838,121 @@ iframe[hidden],
 
 .crop-item input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.15);
+}
+
+.crop-btn-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.crop-btn-row .ctl {
+  flex: 1;
+  text-align: center;
+}
+
+.btn-save-crop {
+  background: #0078d4 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-save-crop:hover {
+  background: #1886d9 !important;
+}
+
+.btn-save-crop.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
+}
+
+/* Audio Sink Panel in Drawer */
+.panel-audio {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.audio-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border-acrylic);
+  transition: all 0.2s ease;
+}
+
+.audio-badge.active {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.45);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.25);
+}
+
+.audio-main-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+}
+
+.audio-main-btn.is-active {
+  background: rgba(239, 68, 68, 0.25) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(248, 113, 113, 0.5) !important;
+}
+
+.audio-main-btn.is-active:hover {
+  background: rgba(239, 68, 68, 0.4) !important;
+  color: #ffffff !important;
+}
+
+.audio-vol-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.audio-vol-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 3px 0 1px;
+  cursor: pointer;
+}
+
+.audio-vol-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 [data-theme="light"] .crop-item input[type="range"]::-webkit-slider-thumb {

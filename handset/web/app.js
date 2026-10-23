@@ -23,7 +23,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_zerodelay_crop";
+const MIRROR_PAGE = "/mirror.html?v=20261023_tahap16_audiosink_savecrop";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -42,6 +42,171 @@ try {
   };
 } catch (_) {
   currentCrop = { ...DEFAULT_CROP };
+}
+
+// Persistent Settings via /api/settings
+async function fetchUserSettings() {
+  try {
+    const res = await getJson("/api/settings");
+    if (res) {
+      if (res.crop) {
+        currentCrop = {
+          top: Math.max(0, Math.min(120, parseInt(res.crop.top, 10) || 0)),
+          bottom: Math.max(0, Math.min(120, parseInt(res.crop.bottom, 10) || 0)),
+          left: Math.max(0, Math.min(120, parseInt(res.crop.left, 10) || 0)),
+          right: Math.max(0, Math.min(120, parseInt(res.crop.right, 10) || 0)),
+        };
+        localStorage.setItem("pane-crop-edges", JSON.stringify(currentCrop));
+        applyCrop(currentCrop, true);
+      }
+      if (res.fitMode) {
+        applyFitMode(res.fitMode);
+      }
+      if (res.theme) {
+        applyTheme(res.theme);
+      }
+      if (res.audioVolume !== undefined) {
+        const volSlider = document.querySelector("#audio-vol-slider");
+        const volVal = document.querySelector("#audio-vol-val");
+        if (volSlider) volSlider.value = String(res.audioVolume);
+        if (volVal) volVal.textContent = `${res.audioVolume}%`;
+      }
+    }
+  } catch (err) {
+    console.warn("fetchUserSettings error:", err);
+  }
+}
+
+async function saveUserSettings() {
+  const btnSave = document.querySelector("#btn-save-crop");
+  try {
+    if (btnSave) {
+      btnSave.disabled = true;
+      btnSave.textContent = "Saving…";
+    }
+    localStorage.setItem("pane-crop-edges", JSON.stringify(currentCrop));
+    localStorage.setItem("pane-fit-mode", currentFitMode);
+    localStorage.setItem("pane-theme", currentTheme);
+
+    await postJson("/api/settings", {
+      crop: currentCrop,
+      fitMode: currentFitMode,
+      theme: currentTheme,
+    });
+
+    applyCrop(currentCrop, true);
+
+    if (btnSave) {
+      btnSave.textContent = "✓ Crop Saved!";
+      btnSave.classList.add("is-saved");
+      setTimeout(() => {
+        btnSave.textContent = "💾 Save Crop";
+        btnSave.classList.remove("is-saved");
+        btnSave.disabled = false;
+      }, 1500);
+    }
+  } catch (err) {
+    console.warn("saveUserSettings error:", err);
+    if (btnSave) {
+      btnSave.textContent = "Error saving";
+      btnSave.disabled = false;
+    }
+  }
+}
+
+// Audio Sink UI & Management
+let currentAudioState = { enabled: false, active: false, device: "iPhone", state: "Off", volume: 100 };
+
+function renderAudio(audio) {
+  if (!audio) return;
+  currentAudioState = { ...currentAudioState, ...audio };
+
+  const isEnabled = Boolean(currentAudioState.enabled || currentAudioState.active);
+  const btnTop = document.querySelector("#btn-audio-top");
+  const iconOn = btnTop?.querySelector(".audio-icon-on");
+  const iconOff = btnTop?.querySelector(".audio-icon-off");
+  if (btnTop) {
+    btnTop.classList.toggle("is-active", isEnabled);
+    if (iconOn && iconOff) {
+      iconOn.hidden = !isEnabled;
+      iconOff.hidden = isEnabled;
+    }
+  }
+
+  const badge = document.querySelector("#audio-status-badge");
+  if (badge) {
+    badge.classList.toggle("active", isEnabled);
+    if (isEnabled) {
+      badge.textContent = `● Active (${currentAudioState.device || "PC"})`;
+    } else {
+      badge.textContent = "○ Off / Muted";
+    }
+  }
+
+  const btnDrawer = document.querySelector("#btn-audio-drawer");
+  const textDrawer = document.querySelector("#audio-toggle-text");
+  const iconDrawer = document.querySelector("#audio-toggle-icon");
+  if (btnDrawer) {
+    btnDrawer.classList.toggle("is-active", isEnabled);
+    if (textDrawer) {
+      textDrawer.textContent = isEnabled ? "Disable Audio Sink (Active)" : "Enable Audio Sink";
+    }
+    if (iconDrawer) {
+      iconDrawer.textContent = isEnabled ? "🔇" : "🔊";
+    }
+  }
+
+  const volSlider = document.querySelector("#audio-vol-slider");
+  const volVal = document.querySelector("#audio-vol-val");
+  if (volSlider && currentAudioState.volume !== undefined) {
+    volSlider.value = String(currentAudioState.volume);
+  }
+  if (volVal && currentAudioState.volume !== undefined) {
+    volVal.textContent = `${currentAudioState.volume}%`;
+  }
+}
+
+async function toggleAudio(forcedState) {
+  try {
+    const shouldEnable = forcedState !== undefined ? forcedState : !currentAudioState.enabled;
+    const res = await postJson("/api/audio/toggle", { enabled: shouldEnable });
+    renderAudio(res);
+  } catch (err) {
+    console.warn("toggleAudio error:", err);
+  }
+}
+
+async function setAudioVolume(vol) {
+  try {
+    const res = await postJson("/api/audio/volume", { volume: parseInt(vol, 10) || 100 });
+    if (res && res.volume !== undefined) {
+      currentAudioState.volume = res.volume;
+      const volVal = document.querySelector("#audio-vol-val");
+      if (volVal) volVal.textContent = `${res.volume}%`;
+    }
+  } catch (err) {
+    console.warn("setAudioVolume error:", err);
+  }
+}
+
+function initAudioControls() {
+  document.querySelector("#btn-audio-top")?.addEventListener("click", () => toggleAudio());
+  document.querySelector("#btn-audio-drawer")?.addEventListener("click", () => toggleAudio());
+
+  const volSlider = document.querySelector("#audio-vol-slider");
+  const volVal = document.querySelector("#audio-vol-val");
+  volSlider?.addEventListener("input", (e) => {
+    if (volVal) volVal.textContent = `${e.target.value}%`;
+  });
+  volSlider?.addEventListener("change", (e) => {
+    setAudioVolume(e.target.value);
+  });
+
+  document.querySelector("#btn-audio-pair")?.addEventListener("click", async () => {
+    try {
+      await postJson("/api/audio/pair", {});
+    } catch (_) {}
+  });
 }
 
 function syncThemeToIframe() {
@@ -148,9 +313,15 @@ function initCropControls() {
     }
   });
 
+  const btnSave = document.querySelector("#btn-save-crop");
+  btnSave?.addEventListener("click", saveUserSettings);
+
   const btnReset = document.querySelector("#btn-reset-crop");
-  btnReset?.addEventListener("click", () => {
+  btnReset?.addEventListener("click", async () => {
     applyCrop(DEFAULT_CROP, true);
+    try {
+      await postJson("/api/settings", { crop: DEFAULT_CROP });
+    } catch (_) {}
   });
 }
 
@@ -166,6 +337,8 @@ applyTheme(currentTheme);
 applyFitMode(currentFitMode);
 applyCrop(currentCrop, true);
 initCropControls();
+initAudioControls();
+fetchUserSettings();
 
 btnTheme?.addEventListener("click", () => {
   applyTheme(currentTheme === "dark" ? "light" : "dark");
@@ -350,6 +523,7 @@ async function load() {
     renderWifi();
     renderScreen(state.screen);
     renderPills(state);
+    if (state.audio) renderAudio(state.audio);
   } catch (error) {
     setPill(pillConnection, "Offline", "bad");
     statusNote.textContent = error.message;

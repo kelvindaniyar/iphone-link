@@ -13,8 +13,10 @@ from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import restart_screen, screen_status, start_screen, stop_screen
 from handset.wifi import pair_for_wifi, wifi_paired_udids
+from handset.audio import audio_manager
 
 ROOT = Path(__file__).resolve().parent / "web"
+SETTINGS_FILE = ROOT.parent.parent / "user_settings.json"
 HOST = "127.0.0.1"
 PORT = 8765
 MIRROR_PREFIX = "/mirror"
@@ -24,6 +26,49 @@ _HOP_BY_HOP = frozenset(
     {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"}
 )
 _CLIENT_GONE = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
+
+DEFAULT_SETTINGS = {
+    "crop": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+    "fitMode": "fill",
+    "theme": "dark",
+    "audioSinkEnabled": False,
+    "audioVolume": 100,
+}
+
+
+def load_user_settings() -> dict:
+    if SETTINGS_FILE.is_file():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                merged = {**DEFAULT_SETTINGS, **data}
+                if isinstance(data.get("crop"), dict):
+                    merged["crop"] = {**DEFAULT_SETTINGS["crop"], **data["crop"]}
+                return merged
+        except Exception as e:
+            print(f"load_user_settings error: {e}", flush=True)
+    return dict(DEFAULT_SETTINGS)
+
+
+def save_user_settings(new_settings: dict) -> dict:
+    current = load_user_settings()
+    if not isinstance(new_settings, dict):
+        return current
+    for k, v in new_settings.items():
+        if k == "crop" and isinstance(v, dict):
+            current["crop"] = {
+                "top": max(0, min(120, int(v.get("top", 0) or 0))),
+                "bottom": max(0, min(120, int(v.get("bottom", 0) or 0))),
+                "left": max(0, min(120, int(v.get("left", 0) or 0))),
+                "right": max(0, min(120, int(v.get("right", 0) or 0))),
+            }
+        elif k in current:
+            current[k] = v
+    try:
+        SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"save_user_settings error: {e}", flush=True)
+    return current
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,7 +87,14 @@ class Handler(BaseHTTPRequestHandler):
             payload = snapshot()
             payload["screen"] = screen_status()
             payload["wifi"] = {"paired": wifi_paired_udids()}
+            payload["audio"] = audio_manager.status()
             self._json(payload)
+            return
+        if path == "/api/settings":
+            self._json(load_user_settings())
+            return
+        if path in ("/api/audio", "/api/audio/status"):
+            self._json(audio_manager.status())
             return
         if path == "/api/screen":
             self._json(screen_status())
@@ -92,6 +144,27 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+
+        if path == "/api/settings":
+            saved = save_user_settings(payload)
+            self._json({"ok": True, "settings": saved})
+            return
+        if path == "/api/audio/toggle":
+            enabled = payload.get("enabled") if "enabled" in payload else None
+            st = audio_manager.toggle(enabled)
+            save_user_settings({"audioSinkEnabled": st.get("enabled", False)})
+            self._json(st)
+            return
+        if path == "/api/audio/volume":
+            vol = payload.get("volume", 100)
+            st = audio_manager.set_volume(vol)
+            save_user_settings({"audioVolume": st.get("volume", 100)})
+            self._json(st)
+            return
+        if path == "/api/audio/pair":
+            self._json(audio_manager.open_bluetooth_settings())
+            return
+
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
         if path == "/api/screen/restart":
             self._json(restart_screen(udid))
@@ -288,10 +361,20 @@ class SingleServer(ThreadingHTTPServer):
 
 
 def main() -> None:
+    settings = load_user_settings()
+    if settings.get("audioSinkEnabled"):
+        try:
+            audio_manager.enable()
+        except Exception:
+            pass
     server = SingleServer((HOST, PORT), Handler)
     print(f"Handset listening on http://{HOST}:{PORT}", flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        audio_manager.shutdown()
 
 
 if __name__ == "__main__":
     main()
+
