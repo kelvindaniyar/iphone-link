@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 14 (Tema Sync Induk-Iframe, Edge-to-Edge Trim, & Dynamic Device Aspect)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 17 (Top Bar Cleanup, Audio Icon Single Display, & Trackpad Gesture Speed Controls)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `d6cbc8c` (`feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing`)  
+> **Commit Terbaru:** `8dac2d3` (`feat(ui): clean top bar, fix audio icon toggle, and add trackpad gesture speed controls`)  
 
 ---
 
@@ -293,7 +293,8 @@ Pembaruan terkini mencakup:
 ## 16. Struktur Riwayat Git Commit
 
 ```
-* 05ff850 (HEAD -> feature/macos-sequoia-ui) feat(audio-sink): add instant 2-finger gestures, persistent crop save, and Win11 Bluetooth audio sink
+* 8dac2d3 (HEAD -> feature/macos-sequoia-ui) feat(ui): clean top bar, fix audio icon toggle, and add trackpad gesture speed controls
+* 05ff850 feat(audio-sink): add instant 2-finger gestures, persistent crop save, and Win11 Bluetooth audio sink
 * a3a0eeb docs: tambahkan LAPORAN_TAHAP_15 dan perbarui LAPORAN_PROGRESS master
 * 4bfb7ba fix(mirror): restore zero-delay 5-param drawImage, implement 4-sided crop with number inputs, fix window drag and bar truncation
 * d6cbc8c feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing
@@ -326,19 +327,18 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 17. Daftar File yang Dimodifikasi (Tahap 16)
+## 17. Daftar File yang Dimodifikasi (Tahap 17)
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/audio.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/audio.py) | Modul audio routing Bluetooth A2DP Sink (`AudioPlaybackConnection`) dan kontrol volume master native `pycaw`. |
-| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Penyimpanan permanen `user_settings.json`, endpoint `GET/POST /api/settings`, dan endpoint audio sink. |
-| 3 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Penambahan `private_mode=False` dan `storage_path` permanen pada `webview.start(...)`. |
-| 4 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Caching `getBoundingClientRect()`, leading-edge horizontal swipe instan, dan coalesced non-blocking vertical scroll. |
-| 5 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol toggle audio di Top Bar, tombol "💾 Save Crop" di panel crop, dan card Audio Sink di Settings Drawer. |
-| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Styling indikator audio aktif di Top Bar, layout tombol save crop, dan panel kontrol Audio Sink di Drawer. |
-| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika `saveUserSettings`, auto-fetch crop saat startup/reload, dan event handler Audio Sink (toggle, volume, pair). |
-| 8 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | File konfigurasi default untuk crop, tema, fitMode, dan audio sink. |
-| 9 | [`LAPORAN_TAHAP_16_INSTANT_GESTURES_SAVE_CROP_DAN_AUDIO_SINK.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_16_INSTANT_GESTURES_SAVE_CROP_DAN_AUDIO_SINK.md) | Laporan lengkap teknis Tahap 16. |
+| 1 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Hapus `#refresh` & `#btn-theme` dari Top Bar, pindahkan `#refresh` ke drawer `#device-card`, tambahkan kartu `#panel-trackpad-speed`, update cache buster ke `v=20261023_trackpad_speed_ui`. |
+| 2 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Aturan CSS display none untuk SVG hidden `#btn-audio-top`, styling kartu WinUI 3 Trackpad Gesture Speed (`.segmented-speed`, `.speed-slider-wrap`, `.btn-save-speed`). |
+| 3 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika `applyTrackpadSpeed`, `saveTrackpadSpeed`, `initTrackpadSpeedControls`, perbaikan display SVG di `renderAudio`, dan penghapusan kode tombol tema Top Bar. |
+| 4 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Update cache buster ke `v=20261023_trackpad_speed_ui`. |
+| 5 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Integrasi `trackpadSpeedMultiplier` pada `pumpVerticalWheel` dan handler pesan `set-trackpad-speed`. |
+| 6 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Field `trackpadSpeed: 100` di `DEFAULT_SETTINGS` dan validasi di `save_user_settings`. |
+| 7 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | Menambahkan konfigurasi default `"trackpadSpeed": 100`. |
+| 8 | [`LAPORAN_TAHAP_17_TOP_BAR_CLEANUP_DAN_TRACKPAD_SPEED.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_17_TOP_BAR_CLEANUP_DAN_TRACKPAD_SPEED.md) | Laporan teknis lengkap Tahap 17. |
 
 
 ---
