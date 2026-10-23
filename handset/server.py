@@ -609,33 +609,6 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length and method in {"POST", "PUT"} else None
 
-        if upstream_path == "/key" and method == "POST" and body:
-            try:
-                kp = json.loads(body.decode("utf-8") or "{}")
-                usages = kp.get("usages")
-                if isinstance(usages, list):
-                    if 0x2A in usages:
-                        record_typed_char("Backspace")
-                    elif 0x28 in usages:
-                        record_typed_char("\n")
-                    elif 0x2C in usages:
-                        record_typed_char(" ")
-                    else:
-                        is_shift = (0xE1 in usages or 0xE5 in usages)
-                        for u in usages:
-                            if 0x04 <= u <= 0x1D:
-                                ch = chr(ord('A' if is_shift else 'a') + u - 0x04)
-                                record_typed_char(ch)
-                                break
-                            elif 0x1E <= u <= 0x26:
-                                record_typed_char(str(u - 0x1D))
-                                break
-                            elif u == 0x27:
-                                record_typed_char("0")
-                                break
-            except Exception:
-                pass
-
         headers: dict[str, str] = {}
         for name in ("Content-Type", "Accept"):
             value = self.headers.get(name)

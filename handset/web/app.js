@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap23_full_width_red_channel_ocr";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap24_per_keystroke_accumulation_and_dual_ocr";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";

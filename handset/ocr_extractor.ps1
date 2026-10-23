@@ -15,8 +15,8 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-public class OcrPreprocessor {
-    public static Bitmap PrepareStrip(Bitmap src, out bool foundHighlight, out int cropY, out int cropH) {
+public class DualOcrPreprocessor {
+    public static void PrepareCandidates(Bitmap src, out Bitmap cand1Natural, out Bitmap cand2RedFiltered, out bool foundHighlight, out int cropY, out int cropH) {
         int W = src.Width;
         int H = src.Height;
         
@@ -72,23 +72,36 @@ public class OcrPreprocessor {
             cropH = (int)(H * 0.66);
         }
 
-        Bitmap stripBmp = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
-        BitmapData stripData = stripBmp.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-        byte[] stripPixels = new byte[Math.Abs(stripData.Stride) * cropH];
+        // Candidate 1: Natural crop without aggressive pixel removal
+        Bitmap stripNatural = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
+        BitmapData natData = stripNatural.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        byte[] natPixels = new byte[Math.Abs(natData.Stride) * cropH];
+
+        // Candidate 2: Red-channel filtered crop
+        Bitmap stripRed = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
+        BitmapData redData = stripRed.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        byte[] redPixels = new byte[Math.Abs(redData.Stride) * cropH];
 
         for (int cy = 0; cy < cropH; cy++) {
             int srcRow = (cropY + cy) * stride;
-            int dstRow = cy * stripData.Stride;
+            int natRow = cy * natData.Stride;
+            int redRow = cy * redData.Stride;
             for (int cx = 0; cx < cropW; cx++) {
                 int sIdx = srcRow + ((cropX + cx) * 4);
-                int dIdx = dstRow + (cx * 4);
+                int nIdx = natRow + (cx * 4);
+                int rIdx = redRow + (cx * 4);
 
                 byte b = raw[sIdx];
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Red-Channel extraction & neutralization:
-                // Yellow lollipop / yellow highlight / red spellcheck dots:
+                // Natural: direct copy
+                natPixels[nIdx] = b;
+                natPixels[nIdx + 1] = g;
+                natPixels[nIdx + 2] = r;
+                natPixels[nIdx + 3] = 255;
+
+                // Red-filtered
                 bool isColorNoise = (r > 175) && (((r - b) > 35) || ((r - g) > 30));
                 byte v;
                 if (r >= 210 || isColorNoise) {
@@ -99,17 +112,20 @@ public class OcrPreprocessor {
                     if (scaled > 255) scaled = 255;
                     v = (byte)scaled;
                 }
-
-                stripPixels[dIdx] = v;
-                stripPixels[dIdx + 1] = v;
-                stripPixels[dIdx + 2] = v;
-                stripPixels[dIdx + 3] = 255;
+                redPixels[rIdx] = v;
+                redPixels[rIdx + 1] = v;
+                redPixels[rIdx + 2] = v;
+                redPixels[rIdx + 3] = 255;
             }
         }
-        Marshal.Copy(stripPixels, 0, stripData.Scan0, stripPixels.Length);
-        stripBmp.UnlockBits(stripData);
 
-        // 2.5x upscale with Bicubic and 60px white margin
+        Marshal.Copy(natPixels, 0, natData.Scan0, natPixels.Length);
+        stripNatural.UnlockBits(natData);
+
+        Marshal.Copy(redPixels, 0, redData.Scan0, redPixels.Length);
+        stripRed.UnlockBits(redData);
+
+        // Upscale 2.5x with 60px margin
         float scale = 2.5f;
         int margin = 60;
         int upW = (int)(cropW * scale);
@@ -117,17 +133,25 @@ public class OcrPreprocessor {
         int finalW = upW + (margin * 2);
         int finalH = upH + (margin * 2);
 
-        Bitmap finalBmp = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
-        using (Graphics g = Graphics.FromImage(finalBmp)) {
+        cand1Natural = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
+        using (Graphics g = Graphics.FromImage(cand1Natural)) {
             g.Clear(Color.White);
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.SmoothingMode = SmoothingMode.HighQuality;
-            g.DrawImage(stripBmp, new Rectangle(margin, margin, upW, upH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
+            g.DrawImage(stripNatural, new Rectangle(margin, margin, upW, upH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
         }
-        stripBmp.Dispose();
+        stripNatural.Dispose();
 
-        return finalBmp;
+        cand2RedFiltered = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
+        using (Graphics g = Graphics.FromImage(cand2RedFiltered)) {
+            g.Clear(Color.White);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.SmoothingMode = SmoothingMode.HighQuality;
+            g.DrawImage(stripRed, new Rectangle(margin, margin, upW, upH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
+        }
+        stripRed.Dispose();
     }
 }
 '
@@ -144,6 +168,61 @@ public class OcrPreprocessor {
         return $netTask.Result
     }
 
+    function Run-Ocr([System.Drawing.Bitmap]$bmp) {
+        $tempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'ocr_run_' + [System.Guid]::NewGuid().ToString() + '.png')
+        $bmp.Save($tempFile, [System.Drawing.Imaging.ImageFormat]::Png)
+
+        $storageFile = Await-Op ([Windows.Storage.StorageFile]::GetFileFromPathAsync($tempFile)) ([Windows.Storage.StorageFile])
+        $stream = Await-Op ($storageFile.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+        $decoder = Await-Op ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+        $softwareBitmap = Await-Op ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+
+        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+        if ($null -eq $engine) {
+            $stream.Dispose()
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+            return @()
+        }
+
+        $ocrResult = Await-Op ($engine.RecognizeAsync($softwareBitmap)) ([Windows.Media.Ocr.OcrResult])
+
+        $stream.Dispose()
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+
+        $dateRegex = '^\d{1,2}\s+[A-Za-z]+\s+\d{4}\s+(at|pukul)\s+\d{1,2}[.:]\d{2}'
+        $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
+        $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
+
+        $lines = @()
+        foreach ($l in $ocrResult.Lines) {
+            $t = $l.Text.Trim()
+            if (!$t) { continue }
+            if ($t -match $dateRegex -or $t -match $timeRegex) { continue }
+            if ($t -match $calloutRegex) { continue }
+            if ($t -match 'This device was viewed remotely') { continue }
+            if ($t -match '^[<✓>]+$' -or $t -eq 'Notes' -or $t -eq 'Catatan' -or $t -eq 'Done' -or $t -eq 'Selesai') { continue }
+
+            # Filter iOS callout menu balloon lines (e.g. "Cut Co", "Paste Delete", "Cut Copy Paste")
+            if ($t -match '\b(Cut|Copy|Paste|Delete|Select|Look Up|Translate|Share|Replacements)\b') {
+                $testClean = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share|No Replacements Found)\b', ''
+                $testClean = $testClean -replace '\b(Co|py|te|Cu|Pa|De)\b', ''
+                $testClean = $testClean.Trim()
+                if ($testClean.Length -le 2) {
+                    continue
+                }
+            }
+
+            # Filter 1-2 character leftover fragments
+            if ($t.Length -le 2 -and ($t -match '^(Co|py|te|Cu|Pa|De|[<>/\\|_\-\.])$')) { continue }
+
+            # Remove stray embedded callout words if any
+            $t = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All)\b', ''
+            $t = $t.Trim()
+            if ($t) { $lines += $t }
+        }
+        return $lines
+    }
+
     if (!(Test-Path $ImagePath)) {
         exit 0
     }
@@ -151,76 +230,44 @@ public class OcrPreprocessor {
     $fullPath = (Resolve-Path $ImagePath).Path
     $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
 
+    $candNat = $null
+    $candRed = $null
     $foundHighlight = $false
     $cropY = 0
     $cropH = 0
-    $finalBmp = [OcrPreprocessor]::PrepareStrip($srcBmp, [ref]$foundHighlight, [ref]$cropY, [ref]$cropH)
-
+    [DualOcrPreprocessor]::PrepareCandidates($srcBmp, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropY, [ref]$cropH)
     $srcBmp.Dispose()
 
-    # Save cleaned debug image to project root
+    # Run OCR on Candidate 1 (Natural) and Candidate 2 (Red-Filtered)
+    $lines1 = Run-Ocr $candNat
+    $lines2 = Run-Ocr $candRed
+
+    $len1 = ($lines1 -join ' ').Trim().Length
+    $len2 = ($lines2 -join ' ').Trim().Length
+
+    # Select the candidate with highest textual yield / quality
+    $bestBmp = $candNat
+    $bestLines = $lines1
+
+    if ($len2 -ge $len1 -and $len2 -gt 0) {
+        $bestBmp = $candRed
+        $bestLines = $lines2
+    } elseif ($len1 -gt 0) {
+        $bestBmp = $candNat
+        $bestLines = $lines1
+    }
+
+    # Save best cleaned debug image to project root
     $projectRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..'))
     $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
-    $finalBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
 
-    $tempProcessed = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'ocr_proc_' + [System.Guid]::NewGuid().ToString() + '.png')
-    $finalBmp.Save($tempProcessed, [System.Drawing.Imaging.ImageFormat]::Png)
-    $finalBmp.Dispose()
-
-    # WinRT OCR Execution
-    $storageFile = Await-Op ([Windows.Storage.StorageFile]::GetFileFromPathAsync($tempProcessed)) ([Windows.Storage.StorageFile])
-    $stream = Await-Op ($storageFile.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-    $decoder = Await-Op ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-    $softwareBitmap = Await-Op ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-
-    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-    if ($null -eq $engine) {
-        $stream.Dispose()
-        Remove-Item $tempProcessed -Force -ErrorAction SilentlyContinue
-        exit 0
-    }
-
-    $ocrResult = Await-Op ($engine.RecognizeAsync($softwareBitmap)) ([Windows.Media.Ocr.OcrResult])
-
-    $stream.Dispose()
-    Remove-Item $tempProcessed -Force -ErrorAction SilentlyContinue
-
-    # Filtering & Cleaning
-    $dateRegex = '^\d{1,2}\s+[A-Za-z]+\s+\d{4}\s+(at|pukul)\s+\d{1,2}[.:]\d{2}'
-    $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
-    $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
-
-    $lines = @()
-    foreach ($l in $ocrResult.Lines) {
-        $t = $l.Text.Trim()
-        if (!$t) { continue }
-        if ($t -match $dateRegex -or $t -match $timeRegex) { continue }
-        if ($t -match $calloutRegex) { continue }
-        if ($t -match 'This device was viewed remotely') { continue }
-        if ($t -match '^[<✓>]+$' -or $t -eq 'Notes' -or $t -eq 'Catatan' -or $t -eq 'Done' -or $t -eq 'Selesai') { continue }
-
-        # Filter iOS callout menu balloon lines (e.g. "Cut Co", "Paste Delete", "Cut Copy Paste")
-        if ($t -match '\b(Cut|Copy|Paste|Delete|Select|Look Up|Translate|Share|Replacements)\b') {
-            $testClean = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share|No Replacements Found)\b', ''
-            $testClean = $testClean -replace '\b(Co|py|te|Cu|Pa|De)\b', ''
-            $testClean = $testClean.Trim()
-            if ($testClean.Length -le 2) {
-                continue
-            }
-        }
-
-        # Filter 1-2 character leftover fragments
-        if ($t.Length -le 2 -and ($t -match '^(Co|py|te|Cu|Pa|De|[<>/\\|_\-\.])$')) { continue }
-
-        # Remove stray embedded callout words if any
-        $t = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All)\b', ''
-        $t = $t.Trim()
-        if ($t) { $lines += $t }
-    }
+    $candNat.Dispose()
+    $candRed.Dispose()
 
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    if ($lines.Count -gt 0) {
-        $resultText = $lines -join "`r`n"
+    if ($bestLines.Count -gt 0) {
+        $resultText = $bestLines -join "`r`n"
         [Console]::WriteLine($resultText)
     }
 } catch {

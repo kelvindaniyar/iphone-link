@@ -393,107 +393,130 @@ def record_typed_char(char: str) -> None:
     """Record a typed character, Backspace, or Enter into the shadow buffer."""
     global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
     import time
-    with _TYPED_BUFFER_LOCK:
-        if char == "Backspace":
-            _CURRENT_TYPED_LINE = _CURRENT_TYPED_LINE[:-1]
-            _LAST_TYPED_ACTIVE_LINE = _CURRENT_TYPED_LINE.strip()
-            _LAST_TYPED_TIMESTAMP = time.time()
-        elif char in ("\n", "\r", "Enter"):
-            trimmed = _CURRENT_TYPED_LINE.strip()
-            if trimmed:
-                if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
-                    _TYPED_LINES_BUFFER.append(trimmed)
-                if len(_TYPED_LINES_BUFFER) > 60:
-                    _TYPED_LINES_BUFFER.pop(0)
-            _CURRENT_TYPED_LINE = ""
-        elif len(char) == 1:
-            _CURRENT_TYPED_LINE += char
-            _LAST_TYPED_ACTIVE_LINE = _CURRENT_TYPED_LINE.strip()
-            _LAST_TYPED_TIMESTAMP = time.time()
-    save_typed_history()
-
-
-def record_typed_text(text: str) -> None:
-    """Record a block of typed/pasted text into the shadow buffer."""
-    global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
-    import time
-    if not text:
+    if not char:
         return
     with _TYPED_BUFFER_LOCK:
-        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        for line in lines:
-            trimmed = line.strip()
-            if trimmed:
+        if char == "Backspace":
+            if _CURRENT_TYPED_LINE:
+                _CURRENT_TYPED_LINE = _CURRENT_TYPED_LINE[:-1]
+                trimmed = _CURRENT_TYPED_LINE.strip()
+                if len(trimmed) >= 3:
+                    _LAST_TYPED_ACTIVE_LINE = trimmed
+                _LAST_TYPED_TIMESTAMP = time.time()
+        elif char in ("\n", "\r", "Enter"):
+            trimmed = _CURRENT_TYPED_LINE.strip()
+            if len(trimmed) >= 3:
                 if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
                     _TYPED_LINES_BUFFER.append(trimmed)
                 if len(_TYPED_LINES_BUFFER) > 60:
                     _TYPED_LINES_BUFFER.pop(0)
                 _LAST_TYPED_ACTIVE_LINE = trimmed
                 _LAST_TYPED_TIMESTAMP = time.time()
-        _CURRENT_TYPED_LINE = ""
+            # Reset current line accumulator for next sentence, but KEEP _LAST_TYPED_ACTIVE_LINE intact!
+            _CURRENT_TYPED_LINE = ""
+        elif char in ("Space", " "):
+            _CURRENT_TYPED_LINE += " "
+            trimmed = _CURRENT_TYPED_LINE.strip()
+            if len(trimmed) >= 3:
+                _LAST_TYPED_ACTIVE_LINE = trimmed
+            _LAST_TYPED_TIMESTAMP = time.time()
+        elif len(char) == 1:
+            _CURRENT_TYPED_LINE += char
+            trimmed = _CURRENT_TYPED_LINE.strip()
+            if len(trimmed) >= 3:
+                _LAST_TYPED_ACTIVE_LINE = trimmed
+            _LAST_TYPED_TIMESTAMP = time.time()
+    save_typed_history()
+
+
+def record_typed_text(text: str) -> None:
+    """Record text block or append typed text chunk into shadow buffer."""
+    global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
+    import time
+    if not text:
+        return
+    with _TYPED_BUFFER_LOCK:
+        if "\n" in text or "\r" in text:
+            lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            for line in lines:
+                trimmed = line.strip()
+                if len(trimmed) >= 3:
+                    if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
+                        _TYPED_LINES_BUFFER.append(trimmed)
+                    if len(_TYPED_LINES_BUFFER) > 60:
+                        _TYPED_LINES_BUFFER.pop(0)
+                    _LAST_TYPED_ACTIVE_LINE = trimmed
+                    _LAST_TYPED_TIMESTAMP = time.time()
+            _CURRENT_TYPED_LINE = ""
+        else:
+            # Append chunk (single char or word snippet) to _CURRENT_TYPED_LINE
+            _CURRENT_TYPED_LINE += text
+            trimmed = _CURRENT_TYPED_LINE.strip()
+            if len(trimmed) >= 3:
+                _LAST_TYPED_ACTIVE_LINE = trimmed
+            _LAST_TYPED_TIMESTAMP = time.time()
     save_typed_history()
 
 
 def get_typed_candidates() -> list[str]:
-    """Return all candidate lines from the typed shadow buffer, prioritizing latest active line."""
+    """Return all candidate lines from the typed shadow buffer, filtering out single characters."""
     with _TYPED_BUFFER_LOCK:
         cands = []
-        if _LAST_TYPED_ACTIVE_LINE:
+        if len(_LAST_TYPED_ACTIVE_LINE) >= 3:
             cands.append(_LAST_TYPED_ACTIVE_LINE)
-        if _CURRENT_TYPED_LINE.strip() and _CURRENT_TYPED_LINE.strip() != _LAST_TYPED_ACTIVE_LINE:
-            cands.append(_CURRENT_TYPED_LINE.strip())
+        curr_trimmed = _CURRENT_TYPED_LINE.strip()
+        if len(curr_trimmed) >= 3 and curr_trimmed not in cands:
+            cands.append(curr_trimmed)
         for l in reversed(_TYPED_LINES_BUFFER):
-            if l not in cands:
+            if len(l) >= 3 and l not in cands:
                 cands.append(l)
         return cands
 
 
 def auto_correct_ocr_text(ocr_text: str) -> str:
-    """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer with active line priority."""
+    """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer with strict length safety."""
     import difflib, time
+
+    candidates = get_typed_candidates()
 
     with _TYPED_BUFFER_LOCK:
         active_line = _LAST_TYPED_ACTIVE_LINE.strip()
         active_timestamp = _LAST_TYPED_TIMESTAMP
-        candidates = list(_TYPED_LINES_BUFFER)
-        if active_line and active_line not in candidates:
-            candidates.append(active_line)
 
     raw_ocr = (ocr_text or "").strip()
     active_age = time.time() - active_timestamp
+    has_valid_active = len(active_line) >= 3 and active_age < 120.0
 
-    # --- Priority 1: User typed recently in active session (within 120s) and OCR is empty or 1-4 chars (e.g. "e", "u", lollipop handle) ---
-    if active_line and active_age < 120.0:
-        if not raw_ocr or len(raw_ocr) <= 4:
+    # --- Priority 1: User typed recently in active session (<120s) and OCR is empty or noisy short (<= 2 chars) ---
+    if has_valid_active:
+        if not raw_ocr or len(raw_ocr) <= 2:
             return active_line
 
         raw_lower = raw_ocr.lower()
         act_lower = active_line.lower()
 
-        # Check if raw_ocr is substring of active_line (e.g. user selected part of active line or OCR read suffix)
-        if (raw_lower in act_lower and len(raw_lower) >= 3) or (act_lower in raw_lower):
-            # Verify if there is a distinctly better match in history
-            best_other_score = 0.0
-            for cand in candidates:
-                if cand.strip().lower() != act_lower:
-                    r = difflib.SequenceMatcher(None, raw_lower, cand.strip().lower()).ratio()
-                    if r > best_other_score:
-                        best_other_score = r
-            if best_other_score < 0.75:
-                return active_line
+        # If exact match or active_line is contained in OCR (e.g. multi-line OCR containing the active sentence)
+        if act_lower == raw_lower or (len(act_lower) >= 6 and act_lower in raw_lower):
+            return active_line
+
+        # SequenceMatcher match against full raw_ocr
+        ratio = difflib.SequenceMatcher(None, raw_lower, act_lower).ratio()
+        if ratio >= 0.55:
+            return active_line
 
     if not raw_ocr:
-        return active_line if (active_line and active_age < 120.0) else ""
+        return active_line if has_valid_active else ""
 
-    ocr_lines = [l.strip() for l in raw_ocr.splitlines() if l.strip()]
+    ocr_lines = [l.strip() for l in raw_ocr.splitlines() if len(l.strip()) >= 3]
     if not ocr_lines:
-        return active_line if (active_line and active_age < 120.0) else raw_ocr
+        ocr_lines = [l.strip() for l in raw_ocr.splitlines() if l.strip()]
 
-    # If no candidates in history buffer, return clean OCR lines
+    # If no valid candidates in history buffer, return clean OCR text directly
     if not candidates:
-        return "\r\n".join(ocr_lines)
+        result = "\r\n".join(ocr_lines)
+        return result
 
-    # --- Priority 2: Match full OCR against historical candidates in typed_history / buffer ---
+    # --- Priority 2: Match OCR against historical candidates in typed_history / buffer ---
     full_ocr = " ".join(ocr_lines).strip()
     full_ocr_lower = full_ocr.lower()
     ocr_words = set(full_ocr_lower.split())
@@ -501,15 +524,17 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     best_cand = None
     best_score = 0.0
 
-    for cand in reversed(candidates):
+    for cand in candidates:
         c_strip = cand.strip()
-        if not c_strip:
+        if len(c_strip) < 3:
             continue
         c_lower = c_strip.lower()
 
-        # Exact match or containment
+        # Exact match
         if c_lower == full_ocr_lower:
             return c_strip
+
+        # Containment (for multi-word sentences)
         if len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
             score = 0.95
         else:
@@ -521,8 +546,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                 w_ratio = len(overlap) / float(max(len(c_words), len(ocr_words)))
             score = max(sm_ratio, w_ratio)
 
-        # Give active line a small recency boost if active_age < 120
-        if active_line and c_strip.lower() == active_line.lower() and active_age < 120.0:
+        if has_valid_active and c_strip.lower() == active_line.lower():
             score += 0.08
 
         if score > best_score:
@@ -532,21 +556,15 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     if best_score >= 0.55 and best_cand:
         return best_cand
 
-    # If active line was typed recently and has reasonable similarity (>= 0.45)
-    if active_line and active_age < 120.0:
-        act_lower = active_line.lower()
-        if difflib.SequenceMatcher(None, full_ocr_lower, act_lower).ratio() >= 0.45:
-            return active_line
-
     # --- Priority 3: Line-by-line correction ---
     corrected_lines = []
     for line in ocr_lines:
         l_lower = line.lower()
         line_best = line
         line_ratio = 0.0
-        for cand in reversed(candidates):
+        for cand in candidates:
             c_strip = cand.strip()
-            if not c_strip:
+            if len(c_strip) < 3:
                 continue
             c_lower = c_strip.lower()
             if len(line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
@@ -562,7 +580,14 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         else:
             corrected_lines.append(line)
 
-    return "\r\n".join(corrected_lines)
+    result = "\r\n".join(corrected_lines)
+    # STRICT SAFETY GUARD: Never return 1 or 2 chars if longer text exists
+    if len(result) <= 2:
+        if has_valid_active:
+            return active_line
+        if raw_ocr and len(raw_ocr) > len(result):
+            return raw_ocr
+    return result
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:

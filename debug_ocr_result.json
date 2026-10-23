@@ -1,12 +1,9 @@
 {
-  "raw_ocr_text": "barcelona from iphone 17 pro",
-  "corrected_text": "barcelona from iphone",
-  "typed_active_line": "lamine yamal from iphone",
+  "raw_ocr_text": "uoung rnessl I rolli Ipnone\nlamine yamal from iphone 17\ncristiano ronaldo from windows 11\ntuku jokowi",
+  "corrected_text": "lamine yamal from iphone 17",
+  "typed_active_line": "lamine yamal from iphone 17",
   "typed_buffer_tail": [
-    "lamine yamal from iphone",
-    "barcelona from iphone",
-    "lamine yamal from iphone",
-    "barcelona from iphone",
-    "lamine yamal from iphone"
+    "lamine yamal from iphone 17",
+    "sibling rivalry from iphone"
   ]
 }

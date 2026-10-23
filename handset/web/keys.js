@@ -208,7 +208,10 @@
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
-              triggerShortcut("copy", frameDataUrl);
+              const res = await triggerShortcut("copy", frameDataUrl, true);
+              if (res?.text && navigator.clipboard?.writeText) {
+                try { await navigator.clipboard.writeText(res.text); } catch (_) {}
+              }
               return;
             }
             if (e.code === "KeyV") {
@@ -233,7 +236,10 @@
               const frameDataUrl = captureMirrorCanvasDataUrl();
               pressed.clear();
               flush();
-              triggerShortcut("cut", frameDataUrl);
+              const res = await triggerShortcut("cut", frameDataUrl, true);
+              if (res?.text && navigator.clipboard?.writeText) {
+                try { await navigator.clipboard.writeText(res.text); } catch (_) {}
+              }
               return;
             }
             if (e.code === "KeyZ") {

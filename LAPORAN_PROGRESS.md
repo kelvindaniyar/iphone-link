@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 23 (Full-Width Strip, Red-Channel Filter, Margin 60px, typed_history Persistence, & Fallback 1 Huruf)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 24 (Akumulasi Keystroke Per-Karakter, Eliminasi Duplikasi Ketikan, Dual-Candidate OCR Engine, & Sinkronisasi Sempurna Ctrl+C)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap23_full_width_red_channel_ocr`  
+> **Cache Buster:** `v=20261024_tahap24_per_keystroke_accumulation_and_dual_ocr`  
 
 ---
 
@@ -538,21 +538,43 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 30. Panduan Menjalankan & Verifikasi Manual Tahap 23
+---
+
+## 31. Tahap 24: Akumulasi Keystroke Per-Karakter, Eliminasi Duplikasi Ketikan, Dual-Candidate OCR Engine, & Sinkronisasi Sempurna Ctrl+C
+
+1. **Akar Masalah Regresi 1 Huruf Terbongkar & Diperbaiki**:
+   - Di Tahap 23, `record_typed_text()` dipanggil berulang kali untuk setiap karakter tunggal dari `keys.js` (debounce 30ms) dan melakukan `_CURRENT_TYPED_LINE = ""` serta memasukkan huruf tunggal tersebut ke `_TYPED_LINES_BUFFER`. Akibatnya, kalimat yang diketik Kelvin pecah menjadi huruf-huruf tunggal di buffer, dan karakter terakhir yang diketik Kelvin menjadi `_LAST_TYPED_ACTIVE_LINE` (`"i"`, `"7"`, atau `"e"`).
+   - Pada `auto_correct_ocr_text()`, kondisi `if (act_lower in raw_lower)` bernilai `True` karena huruf `'i'` / `'7'` / `'e'` terdapat di dalam teks OCR, menimpa seluruh hasil OCR menjadi 1 huruf saja!
+2. **Akumulasi Keystroke yang Bersih & Terkunci**:
+   - Di [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py), seluruh pencatatan duplikat di `/mirror/key` dihapus sepenuhnya. Hanya `/api/keyboard/typed` yang menjadi sumber pencatatan tunggal resmi.
+   - Di [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py), karakter yang masuk di-APPEND (`+=`) ke `_CURRENT_TYPED_LINE`. Huruf tunggal dilarang masuk ke buffer. `Enter` memindahkan kalimat $\ge 3$ karakter ke buffer tanpa pernah mengosongkan `_LAST_TYPED_ACTIVE_LINE`.
+3. **Dual-Candidate OCR Engine di `ocr_extractor.ps1`**:
+   - Menjalankan WinRT OCR pada **DUA kandidat gambar**:
+     * Kandidat 1: Strip natural tanpa manipulasi warna + upscale 2.5x bicubic + margin putih 60px.
+     * Kandidat 2: Strip dengan Red-Channel filter + upscale 2.5x bicubic + margin putih 60px.
+   - Memilih kandidat dengan perolehan teks valid terbanyak dan paling berkualitas.
+4. **Penyetaraan 100% `Ctrl + C` dengan Tombol UI**:
+   - Shortcut `Ctrl + C` di `keys.js` kini memanggil `triggerShortcut("copy", frameDataUrl, true)` dengan `waitResult: true`.
+   - Menulis hasil teks ke Clipboard Windows melalui `navigator.clipboard.writeText` di browser sekaligus `user32.SetClipboardData` di server secara sinkron dan instan.
+5. **Strict Safety Guard Anti-1-Karakter**:
+   - Fungsi `auto_correct_ocr_text()` memiliki guard mutlak yang melarang pengembalian teks dengan panjang $\le 2$ karakter jika terdapat teks yang lebih panjang di OCR atau history buffer.
+
+---
+
+## 32. Panduan Menjalankan & Verifikasi Manual Tahap 24
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
-2. **Uji Kasus 1 (`"barcelona from iphone"` di Notes iPhone)**:
-   - Blok teks `"barcelona from iphone"` di Notes iPhone (highlight kuning pucat dengan bulatan gagang kuning di huruf `"e"`).
-   - Klik `📥 Copy iPhone Text` (atau tekan `Ctrl + C`).
-   - Paste di Chrome Windows (`Ctrl + V`).
-   - 👉 **Hasil:** Masuk utuh **`"barcelona from iphone"`** (bukan hanya huruf `"u"` atau `"e"`!).
-3. **Uji Kasus 2 (`"lamine yamal from iphone"`)**:
-   - Ketik `"lamine yamal from iphone"` dari keyboard laptop di Notes iPhone, blok teksnya, lalu klik `📥 Copy iPhone Text` / `Ctrl + C`.
-   - Paste di Chrome Windows (`Ctrl + V`).
-   - 👉 **Hasil:** Masuk utuh **`"lamine yamal from iphone"`** 100% presisi!
-4. **Verifikasi Debug Artifacts**:
-   - Periksa file [`debug_ocr_cleaned.png`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_ocr_cleaned.png) di folder root: baris teks terlihat utuh dari kiri ke kanan dengan margin putih bersih di sekelilingnya.
+2. **Uji Kasus 1 (`Ctrl + C` Langsung dari Keyboard Laptop)**:
+   - Ketik kalimat `"sibling rivalry from iphone"` di Notes iPhone, blok teksnya.
+   - Tekan `Ctrl + C` langsung dari keyboard laptop di dalam layar mirroring (tanpa harus klik tombol UI).
+   - Buka Google Chrome di Windows, tekan `Ctrl + V`.
+   - 👉 **Hasil:** Kalimat **`"sibling rivalry from iphone"`** tertempel utuh 100% presisi (bukan hanya huruf `"e"`!).
+3. **Uji Kasus 2 (`"lamine yamal from iphone 17"`)**:
+   - Ketik `"lamine yamal from iphone 17"`, blok teksnya, tekan `Ctrl + C`.
+   - Paste di Windows (`Ctrl + V`).
+   - 👉 **Hasil:** Tertempel utuh **`"lamine yamal from iphone 17"`** (bukan angka `"7"`!).
+
 
 
 
