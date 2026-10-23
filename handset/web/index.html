@@ -153,6 +153,21 @@
             </div>
           </section>
 
+          <section class="card panel-display-fit">
+            <span class="drawer-section-label">Display Fit & Aspect</span>
+            <div class="segmented segmented-fit" role="radiogroup" aria-label="Display Fit">
+              <button type="button" class="seg is-active" data-fit-choice="fill" role="radio" aria-checked="true">Edge-to-Edge (Full)</button>
+              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false">Original Ratio</button>
+            </div>
+            <div class="slider-row">
+              <div style="display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-secondary);">
+                <span>Crop Right/Bottom Edge (Overscan)</span>
+                <span id="edge-trim-val">10 px</span>
+              </div>
+              <input type="range" id="edge-trim-slider" min="0" max="24" step="1" value="10" />
+            </div>
+          </section>
+
           <section class="card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
@@ -235,7 +250,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_theme_stop_fix"></script>
-  <script src="/app.js?v=20261023_theme_stop_fix"></script>
+  <script src="/keys.js?v=20261023_fit_aspect_fix"></script>
+  <script src="/app.js?v=20261023_fit_aspect_fix"></script>
 </body>
 </html>

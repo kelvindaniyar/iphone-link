@@ -9,6 +9,18 @@ const ZOOM_STEP = 1.2;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
 
+let fitMode = localStorage.getItem("pane-fit-mode") || "fill";
+let edgeTrim = parseInt(localStorage.getItem("pane-edge-trim") || "10", 10);
+
+// Sync initial theme from parent if accessible
+try {
+  const pTheme = window.parent?.currentTheme || window.parent?.document?.documentElement?.getAttribute("data-theme");
+  if (pTheme) {
+    document.documentElement.setAttribute("data-theme", pTheme);
+    document.body?.setAttribute("data-theme", pTheme);
+  }
+} catch (_) {}
+
 let pendingFrame = null;
 let rafScheduled = false;
 let lastFrame = null;
@@ -49,6 +61,17 @@ function fitCanvas() {
   const w = rect.width || window.innerWidth;
   const h = rect.height || window.innerHeight;
   if (!w || !h) return;
+
+  if (fitMode === "fill" && zoom === 1) {
+    document.body.classList.add("fit-fill");
+    document.body.classList.remove("fit-contain");
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    return;
+  }
+
+  document.body.classList.remove("fit-fill");
+  document.body.classList.add("fit-contain");
   const base = Math.min(w / naturalW, h / naturalH);
   const scale = base * zoom;
   canvas.style.width = `${Math.round(naturalW * scale)}px`;
@@ -358,9 +381,30 @@ window.HandsetKeys.attach({
 });
 
 window.addEventListener("message", (e) => {
-  if (e.origin !== window.location.origin) return;
   const d = e.data;
-  if (!d || d.source !== "handset") return;
+  if (!d) return;
+
+  if (d.type === "set-theme") {
+    document.documentElement.setAttribute("data-theme", d.theme);
+    document.body?.setAttribute("data-theme", d.theme);
+    return;
+  }
+  if (d.type === "set-fit-mode") {
+    fitMode = d.mode === "contain" ? "contain" : "fill";
+    try { localStorage.setItem("pane-fit-mode", fitMode); } catch (_) {}
+    fitCanvas();
+    if (lastFrame) drawFrame(lastFrame);
+    return;
+  }
+  if (d.type === "set-edge-trim") {
+    edgeTrim = Math.max(0, Math.min(32, parseInt(d.trim, 10) || 0));
+    try { localStorage.setItem("pane-edge-trim", String(edgeTrim)); } catch (_) {}
+    if (lastFrame) drawFrame(lastFrame);
+    return;
+  }
+
+  if (e.origin !== window.location.origin) return;
+  if (d.source !== "handset") return;
   if (d.cmd === "back") {
     triggerBackGesture();
   } else if (d.cmd === "rotate") {
@@ -582,19 +626,44 @@ function drawFrame(f) {
     const targetW = sideways ? rawH : rawW;
     const targetH = sideways ? rawW : rawH;
 
-    if (targetW !== canvas.width || targetH !== canvas.height) {
+    const dimsChanged = targetW !== canvas.width || targetH !== canvas.height;
+    if (dimsChanged) {
       canvas.width = targetW;
       canvas.height = targetH;
       fitCanvas();
     }
+
+    if (dimsChanged || frameCount === 1) {
+      try {
+        window.parent.postMessage({
+          type: "video-dimensions",
+          width: targetW,
+          height: targetH,
+          rawW,
+          rawH,
+        }, "*");
+      } catch (_) {}
+    }
+
     const dstW = canvas.width;
     const dstH = canvas.height;
     const fpW = sideways ? dstH : dstW;
     const fpH = sideways ? dstW : dstH;
+
+    // Hitung pemotongan overscan padding kanan & bawah (edgeTrim)
+    const trimX = (edgeTrim > 0 && rawW > 300) ? Math.min(edgeTrim, 32) : 0;
+    const trimY = (edgeTrim > 0 && rawH > 300) ? Math.min(edgeTrim, 32) : 0;
+    const srcW = rawW - trimX;
+    const srcH = rawH - trimY;
+
     ctx.save();
     ctx.translate(dstW / 2, dstH / 2);
     if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
-    ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
+    if (trimX > 0 || trimY > 0) {
+      ctx.drawImage(sourceFrame, 0, 0, srcW, srcH, -fpW / 2, -fpH / 2, fpW, fpH);
+    } else {
+      ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
+    }
     ctx.restore();
 
     if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {

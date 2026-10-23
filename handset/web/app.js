@@ -23,10 +23,26 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_theme_stop_fix";
+const MIRROR_PAGE = "/mirror.html?v=20261023_fit_aspect_fix";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
+let currentFitMode = localStorage.getItem("pane-fit-mode") || "fill";
+let currentEdgeTrim = parseInt(localStorage.getItem("pane-edge-trim") || "10", 10);
+const edgeTrimSlider = document.querySelector("#edge-trim-slider");
+const edgeTrimVal = document.querySelector("#edge-trim-val");
+
+function syncThemeToIframe() {
+  try {
+    if (screenView && screenView.contentDocument) {
+      screenView.contentDocument.documentElement.setAttribute("data-theme", currentTheme);
+      screenView.contentDocument.body?.setAttribute("data-theme", currentTheme);
+    }
+  } catch (_) {}
+  try {
+    screenView?.contentWindow?.postMessage({ type: "set-theme", theme: currentTheme }, "*");
+  } catch (_) {}
+}
 
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
@@ -46,12 +62,47 @@ function applyTheme(theme) {
     btn.setAttribute("aria-checked", String(active));
   });
 
+  syncThemeToIframe();
+
   if (window.pywebview?.api?.set_theme) {
     window.pywebview.api.set_theme(currentTheme);
   }
 }
 
+function applyFitMode(mode) {
+  currentFitMode = mode === "contain" ? "contain" : "fill";
+  localStorage.setItem("pane-fit-mode", currentFitMode);
+  document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
+    const active = btn.dataset.fitChoice === currentFitMode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+  try {
+    screenView?.contentWindow?.postMessage({ type: "set-fit-mode", mode: currentFitMode }, "*");
+  } catch (_) {}
+}
+
+function applyEdgeTrim(val) {
+  currentEdgeTrim = Math.max(0, Math.min(32, parseInt(val, 10) || 0));
+  localStorage.setItem("pane-edge-trim", String(currentEdgeTrim));
+  if (edgeTrimSlider) edgeTrimSlider.value = String(currentEdgeTrim);
+  if (edgeTrimVal) edgeTrimVal.textContent = `${currentEdgeTrim} px`;
+  try {
+    screenView?.contentWindow?.postMessage({ type: "set-edge-trim", trim: currentEdgeTrim }, "*");
+  } catch (_) {}
+}
+
+function syncSettingsToIframe() {
+  syncThemeToIframe();
+  applyFitMode(currentFitMode);
+  applyEdgeTrim(currentEdgeTrim);
+}
+
+screenView?.addEventListener("load", syncSettingsToIframe);
+
 applyTheme(currentTheme);
+applyFitMode(currentFitMode);
+applyEdgeTrim(currentEdgeTrim);
 
 btnTheme?.addEventListener("click", () => {
   applyTheme(currentTheme === "dark" ? "light" : "dark");
@@ -61,6 +112,16 @@ document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
   btn.addEventListener("click", () => {
     applyTheme(btn.dataset.themeChoice);
   });
+});
+
+document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    applyFitMode(btn.dataset.fitChoice);
+  });
+});
+
+edgeTrimSlider?.addEventListener("input", (e) => {
+  applyEdgeTrim(e.target.value);
 });
 
 let selectedUdid = null;
@@ -444,11 +505,13 @@ function renderScreen(screen) {
       screenView.src = MIRROR_PAGE;
     }
 
-    // Picu fitCanvas ulang di dalam iframe setelah unhide
+    // Picu fitCanvas ulang dan sinkronkan tema/fit mode di dalam iframe setelah unhide
     setTimeout(() => {
+      syncSettingsToIframe();
       screenView.contentWindow?.postMessage({ type: "resize" }, "*");
     }, 50);
     setTimeout(() => {
+      syncSettingsToIframe();
       screenView.contentWindow?.postMessage({ type: "resize" }, "*");
     }, 200);
 
@@ -747,5 +810,44 @@ function wireRemoteControls() {
   document.querySelector("#rotate-cw")?.addEventListener("click", () => mirrorMessage("rotate", { deg: 90 }));
   document.querySelector("#rotate-ccw")?.addEventListener("click", () => mirrorMessage("rotate", { deg: -90 }));
 }
+
+let lastDeviceAspect = null;
+function handleDeviceDimensions(width, height) {
+  if (!width || !height) return;
+  const aspect = width / height;
+  if (aspect < 0.35 || aspect > 2.5) return;
+
+  const stageH = Math.max(500, window.innerHeight - 80);
+  let idealDisplayWidth = Math.round(stageH * aspect);
+  idealDisplayWidth = Math.max(280, Math.min(750, idealDisplayWidth));
+
+  document.documentElement.style.setProperty("--display-width", `${idealDisplayWidth}px`);
+  document.querySelector("#app-root")?.style.setProperty("--display-width", `${idealDisplayWidth}px`);
+
+  const isDrawerOpen = !controlPane?.hidden;
+  if (window.pywebview?.api?.sync_device_aspect) {
+    if (!lastDeviceAspect || Math.abs(lastDeviceAspect - aspect) > 0.005) {
+      lastDeviceAspect = aspect;
+      window.pywebview.api.sync_device_aspect(idealDisplayWidth, isDrawerOpen);
+    }
+  } else {
+    lastDeviceAspect = aspect;
+  }
+}
+
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "video-dimensions") {
+    handleDeviceDimensions(e.data.width, e.data.height);
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (lastDeviceAspect) {
+    const stageH = Math.max(500, window.innerHeight - 80);
+    const idealDisplayWidth = Math.max(280, Math.min(750, Math.round(stageH * lastDeviceAspect)));
+    document.documentElement.style.setProperty("--display-width", `${idealDisplayWidth}px`);
+    document.querySelector("#app-root")?.style.setProperty("--display-width", `${idealDisplayWidth}px`);
+  }
+});
 
 load();

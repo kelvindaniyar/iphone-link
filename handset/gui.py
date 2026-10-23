@@ -19,6 +19,8 @@ class WindowApi:
 
     def __init__(self):
         self._window = None
+        self._current_display_width = 348
+        self._drawer_open = False
 
     def set_window(self, window):
         self._window = window
@@ -35,12 +37,34 @@ class WindowApi:
         if self._window:
             self._window.toggle_fullscreen()
 
+    def sync_device_aspect(self, display_width: int, drawer_open: bool = False):
+        """Sesuaikan lebar jendela dengan lebar rasio aktif iPhone + drawer jika terbuka."""
+        if not self._window:
+            return
+        try:
+            dw = max(280, min(800, int(display_width)))
+            self._current_display_width = dw
+            self._drawer_open = bool(drawer_open)
+            target_w = dw + (360 if self._drawer_open else 0)
+
+            # Kompensasi DPI scaling jika ada selisih antara native window.width dan webview innerWidth
+            try:
+                inner_w = self._window.evaluate_js("window.innerWidth")
+                if inner_w and self._window.width:
+                    ratio = self._window.width / inner_w
+                    target_w = int(round(target_w * ratio))
+            except Exception:
+                pass
+
+            h = max(self._window.height or 840, 840)
+            self._window.resize(target_w, h)
+        except Exception as e:
+            print("sync_device_aspect error:", e)
+
     def set_drawer(self, is_open: bool):
         if self._window:
-            # Side drawer: expand window to 708px (348px video + 360px drawer) or collapse to 348px
-            target_width = 708 if is_open else 348
-            h = max(self._window.height or 840, 840)
-            self._window.resize(target_width, h)
+            self._drawer_open = bool(is_open)
+            self.sync_device_aspect(self._current_display_width, is_open)
 
     def set_theme(self, theme: str):
         """Update native Windows 11 DWM dark/light mode attribute."""
@@ -123,7 +147,7 @@ def main():
         height=840,
         frameless=True,
         easy_drag=True,
-        min_size=(348, 600),
+        min_size=(280, 600),
         background_color="#0f172a",
     )
     api.set_window(window)

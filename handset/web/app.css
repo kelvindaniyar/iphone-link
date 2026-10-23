@@ -303,24 +303,26 @@ button {
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
-  width: 100%;
+  width: var(--display-width, 348px);
   height: 100%;
   min-height: 0;
   overflow: hidden;
   position: relative;
-  background: var(--bg);
+  background: var(--bg) !important;
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
   justify-content: flex-start;
   align-items: stretch;
+  border: none !important;
+  box-shadow: none !important;
 }
 
-/* Saat Side Drawer terbuka di jendela 708px, kunci lebar kolom display pada 348px */
+/* Saat Side Drawer terbuka di jendela, kunci lebar kolom display pada lebar rasio aktif iPhone */
 .main-body:has(.side-drawer:not([hidden])) .display-col,
 .main-body:has(.side-drawer.open) .display-col {
-  width: 348px !important;
-  min-width: 348px !important;
-  max-width: 348px !important;
-  flex: 0 0 348px !important;
+  width: var(--display-width, 348px) !important;
+  min-width: var(--display-width, 348px) !important;
+  max-width: var(--display-width, 348px) !important;
+  flex: 0 0 var(--display-width, 348px) !important;
 }
 
 /* 3. Murni Display Edge-to-Edge: Satuan Viewport Mutlak calc(100vh - 80px) */
@@ -345,9 +347,11 @@ button {
   position: relative !important;
   display: block !important;
   overflow: hidden !important;
-  background: transparent !important;
+  background: var(--bg) !important;
   margin: 0 !important;
   padding: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 iframe,
@@ -363,7 +367,7 @@ iframe,
   max-height: calc(100vh - 80px) !important;
   border: none !important;
   display: block !important;
-  background: transparent !important;
+  background: var(--bg) !important;
 }
 
 iframe[hidden],
@@ -534,6 +538,7 @@ iframe[hidden],
 }
 
 [data-theme="light"] .quick-nav {
+  border-top: 1px solid rgba(15, 23, 42, 0.08) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 -4px 20px rgba(0, 0, 0, 0.06);
 }
 
@@ -590,6 +595,11 @@ iframe[hidden],
   z-index: 30;
   flex-shrink: 0;
   transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+}
+
+[data-theme="light"] .side-drawer {
+  border-left: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.06);
 }
 
 .side-drawer[hidden] {
@@ -718,6 +728,53 @@ iframe[hidden],
   margin-bottom: 2px;
 }
 
+/* Display Fit & Aspect Panel in Drawer */
+.panel-display-fit {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.panel-display-fit .slider-row {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-display-fit input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 6px 0 2px;
+  cursor: pointer;
+}
+
+.panel-display-fit input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.panel-display-fit input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+}
+
+[data-theme="light"] .panel-display-fit input[type="range"]::-webkit-slider-thumb {
+  border-color: #f8fafc;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
 .drawer-section-label {
   display: block;
   font-size: 11px;
@@ -728,7 +785,8 @@ iframe[hidden],
   margin-bottom: 6px;
 }
 
-.segmented-theme {
+.segmented-theme,
+.segmented-fit {
   margin-bottom: 0 !important;
 }
 
