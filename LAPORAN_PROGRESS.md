@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Siap Uji Manual Tahap 8 (Restorasi drawFrame 74f98ef & Transisi screen-empty)  
+> **Status:** Siap Uji Manual Tahap 9 (Anti-Crop Hardware Decode Flag WebView2 & Telemetri Terverifikasi)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `8438eda` (`fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition`)  
+> **Commit Terbaru:** `83df9f7` (`fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions`)  
 
 ---
 
@@ -17,9 +17,11 @@
 6. [Tahap 5: Rombak Total Tema — WinUI 3 Fluent Liquid Glass (Edge-to-Edge)](#6-tahap-5-rombak-total-tema--winui-3-fluent-liquid-glass-edge-to-edge)
 7. [Tahap 6: Native Frameless Pywebview, Side-Drawer Settings, Trackpad Scroll & Swipe Nav](#7-tahap-6-native-frameless-pywebview-side-drawer-settings-trackpad-scroll--swipe-nav)
 8. [Tahap 7: Perbaikan Visual Rantai Flexbox 100%, Bypass Cache WebView2 & Mode Full Size](#8-tahap-7-perbaikan-visual-rantai-flexbox-100-bypass-cache-webview2--mode-full-size)
-9. [Struktur Riwayat Git Commit](#9-struktur-riwayat-git-commit)
-10. [Daftar File yang Dimodifikasi](#10-daftar-file-yang-dimodifikasi)
-11. [Panduan Menjalankan & Verifikasi Manual](#11-panduan-menjalankan--verifikasi-manual)
+9. [Tahap 8: Restorasi `drawFrame` Commit `74f98ef` & Transisi Placeholder `#screen-empty`](#9-tahap-8-restorasi-drawframe-commit-74f98ef--transisi-placeholder-screen-empty)
+10. [Tahap 9: Anti-Crop Hardware Decode Bug WebView2, Parsing SPS HEVC (1216x2656) & Telemetri `/debug-metrics`](#10-tahap-9-anti-crop-hardware-decode-bug-webview2-parsing-sps-hevc-1216x2656--telemetri-debug-metrics)
+11. [Struktur Riwayat Git Commit](#11-struktur-riwayat-git-commit)
+12. [Daftar File yang Dimodifikasi](#12-daftar-file-yang-dimodifikasi)
+13. [Panduan Menjalankan & Verifikasi Manual](#13-panduan-menjalankan--verifikasi-manual)
 
 ---
 
@@ -146,10 +148,44 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 9. Struktur Riwayat Git Commit
+## 9. Tahap 8: Restorasi `drawFrame` Commit `74f98ef` & Transisi Placeholder `#screen-empty`
+
+> **Status:** Selesai (Commit `8438eda`) — Laporan lengkap di [`LAPORAN_PERBAIKAN_FLEXBOX_DAN_FULLSIZE.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_PERBAIKAN_FLEXBOX_DAN_FULLSIZE.md).
+
+- **Restorasi `drawFrame` 5 Parameter**: Mengembalikan `ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH)` untuk menghindari eksepsi TypeError 9-parameter pada WebCodecs `VideoFrame`.
+- **Transisi Placeholder**: Menghilangkan placeholder `#screen-empty` secara mutlak (`display: none !important`) saat status streaming `running`, dan mencegah reload loop iframe.
+
+---
+
+## 10. Tahap 9: Anti-Crop Hardware Decode Bug WebView2, Parsing SPS HEVC (1216x2656) & Telemetri `/debug-metrics`
+
+> **Status:** Selesai (Commit `83df9f7`) — Laporan lengkap di [`LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI.md).
+
+1. **Investigasi Visual Video Kelvin**:
+   - Pemotongan video di bawah baris ikon pertama (*FaceTime, Calendar, Mail, Clock*) tetap terjadi baik saat di-zoom 50% maupun di-fullscreen (2x lebar).
+   - Ini membuktikan masalah BUKAN berada di container CSS luar, melainkan **Direct3D 11 Hardware Video Decoder** di Edge WebView2 membatasi tekstur potret >2000px menjadi rasio 16:9 (~600px).
+2. **Flag Anti-Crop Hardware Decode**:
+   - Menambahkan argumen browser `--disable-accelerated-video-decode --disable-gpu-memory-buffer-video-frames --enable-features=PlatformHEVCDecoderSupport` di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) dan [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
+   - Memaksa WebView2 menggunakan software decoder CPU yang mendukung penuh tekstur potret tinggi tanpa pembatasan rasio D3D11.
+3. **Parsing Live Stream SPS HEVC iPhone Fisik**:
+   - Terbukti langsung dari NAL Unit HEVC SPS (NAL 33) iPhone Kelvin (`00008150-000231AC2669401C`):
+     * Resolusi Asli: **1216 x 2656 piksel** (rasio 1 : 2.184 / ~9:19.65).
+4. **Implementasi & Hasil Telemetri `/debug-metrics`**:
+   - Endpoint `POST /debug-metrics` di [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) mencatat data live ke [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json).
+   - Pembacaan aktual live:
+     * `iframe#screen-view.height` = **723.33px** ($\ge 700\text{px}$)
+     * `phoneScreen.height` = **723.33px** ($\ge 700\text{px}$)
+     * `workspace.height` = **723.33px** ($\ge 700\text{px}$)
+     * `canvas.style.height` terhitung presisi mengisi penuh **723px**.
+
+---
+
+## 11. Struktur Riwayat Git Commit
 
 ```
-* 8438eda (HEAD -> feature/macos-sequoia-ui) fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition
+* 83df9f7 (HEAD -> feature/macos-sequoia-ui) fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions
+* 1b28514 docs: dokumentasikan perbaikan tahap 8 transisi screen-empty dan restorasi drawFrame 74f98ef
+* 8438eda fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition
 * 3b16dca docs: perbarui laporan tahap 7 dengan solusi satuan mutlak calc(100vh - 80px) dan zombie kill
 * b9d7b14 fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL
 * 70ad004 docs: perbarui laporan tahap 7 dengan solusi matikan cache webview2 dan kunci iframe absolut
@@ -168,17 +204,17 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 10. Daftar File yang Dimodifikasi
+## 12. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Rantai flexbox 100%, pelepasan absolute collapse, styling mode `.is-fullsize`, dan tinggi nav bar 48px. |
-| 2 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Struktur kontainer display dengan class `.stage`, `#phone-shell`, `#phone-screen`, dan iframe `.mirror-frame`. |
-| 3 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Canvas height 100%, object-fit contain, aspect-ratio 9/19.5, dan flex container body. |
-| 4 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Resilience `fitCanvas()`, `ResizeObserver`, dan postMessage handler resize. |
-| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Pengiriman sinyal resize bertahap saat toggle Full Size. |
-| 6 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Peluncur native pywebview frameless, proteksi tinggi minimum 840px pada drawer. |
-| 7 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Peluncur satu-klik yang memicu `handset/gui.py` via virtual environment. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Flag anti-crop WebView2 `--disable-accelerated-video-decode`, peluncur pywebview frameless. |
+| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint telemetri `POST /debug-metrics` dan pencatatan riwayat `debug_metrics.json`. |
+| 3 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Telemetri `sendMirrorMetrics` pada frame 1 & 15, `drawFrame` stabil, dan presisi trackpad. |
+| 4 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Telemetri DOM `sendAppMetrics`, kontrol drawer, dan transisi placeholder `#screen-empty`. |
+| 5 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Canvas styling bersih tanpa border/shadow yang memotong display. |
+| 6 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Environment variable anti-crop WebView2 dan zombie kill `python.exe`. |
+| 7 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual. |
 
 ---
 
