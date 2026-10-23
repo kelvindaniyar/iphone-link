@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Siap Uji Manual Tahap 10 (Pemulihan Hardware HEVC Decoder & Telemetri Lengkap)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 13 (Fix Startup Crash Hex Triplet, Error Trapping run.bat, & Stabilisasi GUI)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `40f07ee` (`fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry`)  
+> **Commit Terbaru:** `db61aa3` (`fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling`)  
 
 ---
 
@@ -20,9 +20,12 @@
 9. [Tahap 8: Restorasi `drawFrame` Commit `74f98ef` & Transisi Placeholder `#screen-empty`](#9-tahap-8-restorasi-drawframe-commit-74f98ef--transisi-placeholder-screen-empty)
 10. [Tahap 9: Investigasi Crop D3D11 & Pemasangan Sistem Telemetri `/debug-metrics`](#10-tahap-9-investigasi-crop-d3d11--pemasangan-sistem-telemetri-debug-metrics)
 11. [Tahap 10: Pemulihan GPU Hardware Decode HEVC, Patch mDNS Wi-Fi & Integrasi Data Frame](#11-tahap-10-pemulihan-gpu-hardware-decode-hevc-patch-mdns-wi-fi--integrasi-data-frame)
-12. [Struktur Riwayat Git Commit](#12-struktur-riwayat-git-commit)
-13. [Daftar File yang Dimodifikasi](#13-daftar-file-yang-dimodifikasi)
-14. [Panduan Menjalankan & Verifikasi Manual](#14-panduan-menjalankan--verifikasi-manual)
+12. [Tahap 11: Solusi Tuntas Injeksi Dimensi DecoderConfig, Un-Crop VideoFrame Zero-Copy, dan Pemulihan Nav Bar Fullsize](#12-tahap-11-solusi-tuntas-injeksi-dimensi-decoderconfig-un-crop-videoframe-zero-copy-dan-pemulihan-nav-bar-fullsize)
+13. [Tahap 12: Eliminasi Black Bar 16px, Fitur Disconnect Mirroring, White Mode, dan True Liquid Glass DWM](#13-tahap-12-eliminasi-black-bar-16px-fitur-disconnect-mirroring-white-mode-dan-true-liquid-glass-dwm)
+14. [Tahap 13: Perbaikan Startup Crash ValueError Hex Triplet, Error Trapping run.bat, dan Stabilisasi Tema](#14-tahap-13-perbaikan-startup-crash-valueerror-hex-triplet-error-trapping-runbat-dan-stabilisasi-tema)
+15. [Struktur Riwayat Git Commit](#15-struktur-riwayat-git-commit)
+16. [Daftar File yang Dimodifikasi](#16-daftar-file-yang-dimodifikasi)
+17. [Panduan Menjalankan & Verifikasi Manual](#17-panduan-menjalankan--verifikasi-manual)
 
 ---
 
@@ -247,10 +250,31 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 14. Struktur Riwayat Git Commit
+## 14. Tahap 13: Perbaikan Startup Crash ValueError Hex Triplet, Error Trapping run.bat, dan Stabilisasi Tema
+
+> **Status:** Terimplementasi pada commit `db61aa3`. Terverifikasi 100% berjalan normal via terminal execution tanpa crash/exception.
+
+1. **Fix `ValueError: #00000000 is not a valid hex triplet color`**:
+   - Library `pywebview` memvalidasi warna latar belakang dengan regex triplet 6-digit `^#[0-9a-fA-F]{6}$`. Format ARGB 8-digit `#00000000` ditolak keras dan melempar `ValueError` seketika saat window dibuat.
+   - Diperbaiki di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) dengan hex 6-digit valid `background_color="#0f172a"`.
+   - Menghapus parameter `transparent=True` dan `vibrancy=True` yang berkonflik dengan kontrol WinForms / DirectX surface WebView2 di Windows.
+   - Mengamankan pemanggilan native `ctypes.windll.dwmapi` dengan pengecekan handle window (`HWND`) di dalam blok `try...except Exception: pass`.
+2. **Error Trapping di [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat)**:
+   - Ditambahkan pengaman `%ERRORLEVEL% NEQ 0` dengan perintah `pause` sebelum `taskkill`.
+   - Mencegah konsol cmd langsung tertutup sendiri jika terjadi kesalahan Python, sehingga traceback error dapat terbaca jelas oleh penguji.
+3. **Stabilisasi Liquid Glass & Palette Tema**:
+   - Di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css), `.display-col` diatur menggunakan `background: var(--bg)` yang bertransisi halus saat berganti Dark Mode (`#0b0e17`) atau White Mode (`#f8fafc`).
+   - Kontainer video internal (`.workspace`, `#phone-shell`, `iframe`, serta `mirror.css`) tetap `background: transparent !important`, menghasilkan kanvas selebar 348px yang rapat 0px black bar.
+   - Efek blur Liquid Glass (`backdrop-filter: blur(32px)`) berjalan stabil di seluruh panel kontrol.
+
+---
+
+## 15. Struktur Riwayat Git Commit
 
 ```
-* a872b1d (HEAD -> feature/macos-sequoia-ui) feat(ui): remove 16px black bars, add disconnect button, white mode theme, and true liquid glass transparency
+* db61aa3 (HEAD -> feature/macos-sequoia-ui) fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling
+* 07ba5d9 docs: tambahkan LAPORAN_TAHAP_12 dan perbarui LAPORAN_PROGRESS master
+* a872b1d feat(ui): remove 16px black bars, add disconnect button, white mode theme, and true liquid glass transparency
 * ac90c34 docs: dokumentasikan perbaikan tahap 11 uncrop VideoFrame zero-copy dan nav bar fullsize
 * b5ac011 fix(mirror): inject coded dimensions to decoderConfig, add VideoFrame un-crop wrapper, and pin fullsize quick-nav
 * 40f07ee fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry
@@ -276,16 +300,16 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 15. Daftar File yang Dimodifikasi
+## 16. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Dimensi 348x840, drawer 708px, `transparent=True`, DWM Acrylic blur + rounded corners ctypes. |
-| 2 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Penambahan environment variable `WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0`. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Dimensi 348x840, `background_color="#0f172a"` (fix ValueError hex), drawer 708px, safe DWM ctypes handler. |
+| 2 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Penambahan error trapping `%ERRORLEVEL% NEQ 0` dengan `pause` dan pembersihan zombie process. |
 | 3 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Handler `stop_screen()`, pembatalan task asyncio bersih, pelepasan display session iOS. |
 | 4 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint GET/POST `/api/screen/stop` dan `/mirror/stop`. |
 | 5 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | `html, body` menjadi `background: transparent !important`. |
-| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Background transparan, kunci 348px display-col, palet White Mode, tombol disconnect merah, blur 32px. |
+| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Background transparan, kunci 348px display-col, palet Dark & White Mode stabil, tombol stop merah, blur 32px. |
 | 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika toggle tema, sinkronisasi DWM, handling stop mirror, update state tombol. |
 | 8 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol Stop Top Bar, toggle tema Top Bar, selector tema Drawer. |
 | 9 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster `v=20261023_theme_stop_fix`. |
@@ -294,7 +318,7 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 15. Panduan Menjalankan & Verifikasi Manual
+## 17. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
