@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Siap Uji Manual Tahap 7  
+> **Status:** Siap Uji Manual Tahap 8 (Restorasi drawFrame 74f98ef & Transisi screen-empty)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `b9d7b14` (`fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL`)  
+> **Commit Terbaru:** `8438eda` (`fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition`)  
 
 ---
 
@@ -149,11 +149,17 @@ Pembaruan terkini mencakup:
 ## 9. Struktur Riwayat Git Commit
 
 ```
-* 3c2ff85 (HEAD -> feature/macos-sequoia-ui) fix(ui): perbaiki rantai flexbox tinggi video 100 persen dan responsive scaling mode fullsize
+* 8438eda (HEAD -> feature/macos-sequoia-ui) fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition
+* 3b16dca docs: perbarui laporan tahap 7 dengan solusi satuan mutlak calc(100vh - 80px) dan zombie kill
+* b9d7b14 fix(display): kunci tinggi mutlak calc(100vh - 80px), bunuh zombie proses di run.bat, dan dynamic timestamp URL
+* 70ad004 docs: perbarui laporan tahap 7 dengan solusi matikan cache webview2 dan kunci iframe absolut
+* f2368c8 fix(webview2): matikan cache webview2, kunci iframe absolut 100 persen, dan bersihkan teks header
+* 9350705 docs: tambahkan laporan Tahap 7 perbaikan rantai flexbox dan update laporan progress master
+* 3c2ff85 fix(ui): perbaiki rantai flexbox tinggi video 100 persen dan responsive scaling mode fullsize
 * f5cabac docs: add LAPORAN_TAHAP_PYWEBVIEW_DAN_GESTUR report
 * 7c4871f feat(app): add pywebview frameless launcher, side-drawer settings, precision trackpad scroll, and swipe nav
 * fe1cea6 docs: add LAPORAN_WINUI3_LIQUID_GLASS report
-* 74f98ef feat(ui): redesign theme to WinUI 3 Fluent Liquid Glass with edge-to-edge display
+* 74f98ef (Tahap 5) feat(ui): redesign theme to WinUI 3 Fluent Liquid Glass with edge-to-edge display
 * c50f64f feat(ui): revise layout to compact snug container with top bar and docked nav
 * 9864528 feat(ui): redesign for macOS Sequoia floating aesthetic, popover controls, /mirror/live alias, and add run.bat launcher
 * 85b49e9 (main) feat(web): add GlideX-style Quick Navigation bar and edge back swipe gesture
