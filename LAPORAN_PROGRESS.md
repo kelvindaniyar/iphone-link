@@ -219,10 +219,40 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 13. Struktur Riwayat Git Commit
+---
+
+## 13. Tahap 12: Eliminasi Black Bar 16px, Fitur Disconnect Mirroring, White Mode, dan True Liquid Glass DWM
+
+> **Status:** Terimplementasi pada commit `a872b1d`. Siap diuji & dinikmati.
+
+1. **Eliminasi Total Black Bar 16px**:
+   - Window default di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) diubah menjadi `width=348, height=840`.
+   - Side drawer expand disesuaikan menjadi `target_width = 708` ($348 + 360$).
+   - Di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css), `.display-col` dikunci mutlak pada `348px` saat drawer terbuka (`flex: 0 0 348px`).
+   - Semua background hitam di `.app`, `.display-col`, `.workspace`, `#phone-shell`, `iframe`, serta `mirror.css` diganti menjadi `background: transparent !important;`.
+2. **Fitur Toggle Disconnect / Stop Mirroring**:
+   - Backend [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) mengimplementasikan `stop_screen()`, membatalkan task `ScreenStreamServer`, dan melepaskan sesi display iOS secara bersih (`stop_all_streams`).
+   - Endpoint: `POST /api/screen/stop` dan `POST /mirror/stop`.
+   - Top Bar: tombol `⏹ Stop` (`#stop-screen`) glass merah muncul dinamis saat status `Mirroring`.
+   - Side Drawer: tombol utama berubah menjadi `"⏹ Disconnect Mirroring"` beraksen merah kristal saat mirroring aktif.
+3. **White Mode (Light Mode) & Theme Switcher**:
+   - Tombol toggle `☀️ / 🌙` (`#btn-theme`) di Top Bar dan radio button `[ 🌙 Dark | ☀️ Light ]` di bagian atas drawer.
+   - Sinkronisasi dengan `localStorage` (`pane-theme`) dan Windows 11 DWM dark mode attribute (`DWMWA_USE_IMMERSIVE_DARK_MODE`).
+   - Palet White Mode Liquid Glass mewah: surface putih susu translusen `rgba(255, 255, 255, 0.55)`, border kristal `0.85`, dan teks kontras tinggi `#0f172a`.
+4. **True WinUI 3 Liquid Glass Transparency**:
+   - `WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0` di `gui.py` dan `run.bat`.
+   - `transparent=True`, `vibrancy=True` di `webview.create_window`.
+   - Efek DWM Windows 11 Acrylic blur + rounded corners via `ctypes.windll.dwmapi`.
+   - Backdrop filter kaca cair `blur(32px) saturate(190%)` di `.app-bar`, `.quick-nav`, `.side-drawer`, dan `#screen-empty`.
+
+---
+
+## 14. Struktur Riwayat Git Commit
 
 ```
-* b5ac011 (HEAD -> feature/macos-sequoia-ui) fix(mirror): inject coded dimensions to decoderConfig, add VideoFrame un-crop wrapper, and pin fullsize quick-nav
+* a872b1d (HEAD -> feature/macos-sequoia-ui) feat(ui): remove 16px black bars, add disconnect button, white mode theme, and true liquid glass transparency
+* ac90c34 docs: dokumentasikan perbaikan tahap 11 uncrop VideoFrame zero-copy dan nav bar fullsize
+* b5ac011 fix(mirror): inject coded dimensions to decoderConfig, add VideoFrame un-crop wrapper, and pin fullsize quick-nav
 * 40f07ee fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry
 * b12df1c docs: tambahkan LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI dan perbarui LAPORAN_PROGRESS
 * 83df9f7 fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions
@@ -246,20 +276,21 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 14. Daftar File yang Dimodifikasi
+## 15. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Parser SPS HEVC, injeksi dimensi `decoderConfig`, wrapper un-crop `VideoFrame`, rasio rawW/rawH. |
-| 2 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Penguncian bottom bar `.quick-nav` (`flex: 0 0 44px; margin-top: auto;`) dan area video fullsize. |
-| 3 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Cache buster versi `20261023_uncrop_fix`. |
-| 4 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster versi `20261023_uncrop_fix`. |
-| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Cache buster versi `20261023_uncrop_fix`. |
-| 6 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Pemulihan akselerasi GPU HEVC (`--enable-features=PlatformHEVCDecoderSupport`). |
-| 7 | [`handset/wifi.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/wifi.py) | Patch argumen mDNS `send_query_all` dan `bind_ipv4` dengan `*args, **kwargs`. |
-| 8 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Pemisahan kategori telemetri `latest_mirror_frame` dan `latest_mirror_{event}` di `/debug-metrics`. |
-| 9 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Konfigurasi WebView2 hardware HEVC tanpa flag disable hardware decode. |
-| 10 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual `app.js` + `mirror.js`. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Dimensi 348x840, drawer 708px, `transparent=True`, DWM Acrylic blur + rounded corners ctypes. |
+| 2 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Penambahan environment variable `WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0`. |
+| 3 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Handler `stop_screen()`, pembatalan task asyncio bersih, pelepasan display session iOS. |
+| 4 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint GET/POST `/api/screen/stop` dan `/mirror/stop`. |
+| 5 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | `html, body` menjadi `background: transparent !important`. |
+| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Background transparan, kunci 348px display-col, palet White Mode, tombol disconnect merah, blur 32px. |
+| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika toggle tema, sinkronisasi DWM, handling stop mirror, update state tombol. |
+| 8 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol Stop Top Bar, toggle tema Top Bar, selector tema Drawer. |
+| 9 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster `v=20261023_theme_stop_fix`. |
+| 10 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | *Tidak diubah sama sekali (100% utuh menjaga stabilitas HEVC & gesture)*. |
+| 11 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri riwayat pengujian. |
 
 ---
 
