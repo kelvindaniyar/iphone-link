@@ -199,10 +199,31 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 12. Struktur Riwayat Git Commit
+## 12. Tahap 11: Solusi Tuntas Injeksi Dimensi DecoderConfig, Un-Crop VideoFrame Zero-Copy, dan Pemulihan Nav Bar Fullsize
+
+> **Status:** Terimplementasi pada commit `b5ac011`. Siap uji & diverifikasi.
+
+1. **Injeksi Dimensi DecoderConfig**:
+   - Menambahkan parser bitstream SPS HEVC `parseHevcSpsDimensions(description)` di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js).
+   - Menginjeksi dimensi stream asli (1216 x 2656) ke `decoder.configure(...)` untuk mencegah hardware Media Foundation decoder di WebView2 meng-clamp surface Direct3D 11 ke default 720p.
+2. **Un-Crop Zero-Copy `VideoFrame` & Pertahanan Rasio**:
+   - Jika hardware decoder melaporkan `visibleRect.height < codedHeight`, dibungkus dengan `new VideoFrame(f, { visibleRect: { x: 0, y: 0, width: f.codedWidth, height: f.codedHeight }, displayWidth: f.codedWidth, displayHeight: f.codedHeight })`.
+   - Menggunakan `rawW` dan `rawH` berdasarkan `codedHeight > displayHeight` untuk orientasi landscape maupun sizing kanvas.
+   - Zero GPU memory leak dengan `clonedFrame.close()` di blok `finally`.
+3. **Penguncian Bottom CommandBar di Mode Full Size / Maximize**:
+   - Memperbaiki rantai flexbox `.app.is-fullsize`: `.app` memiliki `height: 100vh; overflow: hidden; display: flex; flex-direction: column;`.
+   - Area video `.workspace` dan `.stage` menggunakan `flex: 1 1 auto; height: calc(100vh - 80px) !important;`.
+   - Bottom CommandBar `.quick-nav` dikunci dengan `height: 44px !important; flex: 0 0 44px !important; margin-top: auto !important;` sehingga selalu berada di bagian bawah layar tanpa terdorong keluar layar di bawah taskbar.
+4. **Cache Buster**:
+   - Diperbarui ke `v=20261023_uncrop_fix` pada seluruh file web.
+
+---
+
+## 13. Struktur Riwayat Git Commit
 
 ```
-* 40f07ee (HEAD -> feature/macos-sequoia-ui) fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry
+* b5ac011 (HEAD -> feature/macos-sequoia-ui) fix(mirror): inject coded dimensions to decoderConfig, add VideoFrame un-crop wrapper, and pin fullsize quick-nav
+* 40f07ee fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry
 * b12df1c docs: tambahkan LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI dan perbarui LAPORAN_PROGRESS
 * 83df9f7 fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions
 * 1b28514 docs: dokumentasikan perbaikan tahap 8 transisi screen-empty dan restorasi drawFrame 74f98ef
@@ -225,23 +246,24 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 13. Daftar File yang Dimodifikasi
+## 14. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Pemulihan akselerasi GPU HEVC (`--enable-features=PlatformHEVCDecoderSupport`). |
-| 2 | [`handset/wifi.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/wifi.py) | Patch argumen mDNS `send_query_all` dan `bind_ipv4` dengan `*args, **kwargs`. |
-| 3 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Pemisahan kategori telemetri `latest_mirror_frame` dan `latest_mirror_{event}` di `/debug-metrics`. |
-| 4 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Logging decoder error, codec check, first frame, dan frekuensi telemetri metrik. |
-| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Cache buster versi `20261023_telemetry` dan telemetri DOM container. |
-| 6 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster versi `20261023_telemetry`. |
-| 7 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Cache buster versi `20261023_telemetry`. |
-| 8 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Konfigurasi WebView2 hardware HEVC tanpa flag disable hardware decode. |
-| 9 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual `app.js` + `mirror.js`. |
+| 1 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Parser SPS HEVC, injeksi dimensi `decoderConfig`, wrapper un-crop `VideoFrame`, rasio rawW/rawH. |
+| 2 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Penguncian bottom bar `.quick-nav` (`flex: 0 0 44px; margin-top: auto;`) dan area video fullsize. |
+| 3 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Cache buster versi `20261023_uncrop_fix`. |
+| 4 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster versi `20261023_uncrop_fix`. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Cache buster versi `20261023_uncrop_fix`. |
+| 6 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Pemulihan akselerasi GPU HEVC (`--enable-features=PlatformHEVCDecoderSupport`). |
+| 7 | [`handset/wifi.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/wifi.py) | Patch argumen mDNS `send_query_all` dan `bind_ipv4` dengan `*args, **kwargs`. |
+| 8 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Pemisahan kategori telemetri `latest_mirror_frame` dan `latest_mirror_{event}` di `/debug-metrics`. |
+| 9 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Konfigurasi WebView2 hardware HEVC tanpa flag disable hardware decode. |
+| 10 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual `app.js` + `mirror.js`. |
 
 ---
 
-## 11. Panduan Menjalankan & Verifikasi Manual
+## 15. Panduan Menjalankan & Verifikasi Manual
 
 1. **Jalankan Aplikasi**:
    Cukup klik dua kali [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat).
@@ -249,10 +271,12 @@ Pembaruan terkini mencakup:
    - Jendela frameless terbuka dengan ukuran presisi `380 x 840`.
    - Mulai mirroring dengan klik layar tengah atau tombol ⚙️ → "Start mirroring".
    - Layar iPhone tampil utuh dari ujung atas (Dynamic Island) sampai ujung bawah (dock) tanpa terpotong / gepeng ~180px.
-3. **Cek Mode Full Size**:
-   - Klik tombol **Full Size (⛶)** di Top Bar kanan atas.
+3. **Cek Mode Full Size / Maximize**:
+   - Klik tombol **Full Size (⛶)** di Top Bar kanan atas atau maksimalkan jendela.
    - Layar iPhone membesar proporsional di tengah layar monitor tanpa distorsi.
+   - **Bottom CommandBar (`Swipe Left · Home · Recent · Swipe Right`) selalu terlihat jelas di dasar layar (44px) tanpa terdorong keluar layar di bawah taskbar Windows.**
 4. **Cek Trackpad & Navigasi**:
-   - Lakukan scroll 2 jari ke atas/bawah pada trackpad untuk scrolling feed.
+   - Lakukan scroll 2 jari ke atas/bawah pada trackpad untuk scrolling feed Instagram.
    - Klik tombol `◀ Swipe Left` dan `Swipe Right ▶` untuk geser foto / story.
    - Klik tombol `⚙️` untuk membuka Side Drawer di kanan tanpa menutupi video iPhone.
+
