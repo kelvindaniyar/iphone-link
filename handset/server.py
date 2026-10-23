@@ -474,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
                             recent_hist = [h for h in hist_urls if h and h != frame_url]
                             if recent_hist:
                                 # Batch call in a single PowerShell process: history frames use Full-Viewport, last frame uses Highlight-Crop
-                                frames_to_batch = recent_hist[:2] + [frame_url]
+                                frames_to_batch = recent_hist[:3] + [frame_url]
                                 batch_texts = extract_text_batch(frames_to_batch, save_debug=False)
                                 valid_texts = [t for t in batch_texts if t and t.strip()]
                                 if len(valid_texts) >= 2:
@@ -482,6 +482,10 @@ class Handler(BaseHTTPRequestHandler):
                                     if stitched and len(stitched) >= char_count:
                                         final_text = stitched
                                         print(f"Batch-stitched {len(valid_texts)} OCR frames into {len(final_text)} chars ({len(final_text.splitlines())} lines)", flush=True)
+                        elif line_count >= 4:
+                            stitched = stitch_multiline_ocr_frames([final_text])
+                            if stitched and len(stitched) >= len(final_text):
+                                final_text = stitched
 
                         if final_text:
                             if set_windows_clipboard_text(final_text):

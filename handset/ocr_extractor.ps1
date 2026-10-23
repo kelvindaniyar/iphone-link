@@ -8,7 +8,7 @@ $ErrorActionPreference = "SilentlyContinue"
 try {
     Add-Type -AssemblyName 'System.Runtime.WindowsRuntime'
     Add-Type -AssemblyName 'System.Drawing'
-    Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition '
+    Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @'
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -22,6 +22,7 @@ public class DualOcrPreprocessor {
         out Bitmap cand1Natural,
         out Bitmap cand2RedFiltered,
         out bool foundHighlight,
+        out int cropX,
         out int cropY,
         out int cropH
     ) {
@@ -131,20 +132,26 @@ public class DualOcrPreprocessor {
             }
         }
 
-        // 2. Scan highlights starting at Y >= 0.115 * H (past top toolbar)
-        int scanTopY = (int)(H * 0.115);
-        int scanBottomY = (int)(H * 0.88);
+        // 2. Scan highlights (Ignore top toolbar buttons and bottom floating pill toolbar)
+        int scanTopY = (int)(H * 0.145);
+        int scanBottomY = (int)(H * 0.785);
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
 
-        int minY = 9999999;
-        int maxY = 0;
+        bool[] rowHasHighlight = new bool[H];
         foundHighlight = false;
 
         if (!isFullViewport) {
             for (int y = scanTopY; y <= scanBottomY; y += 2) {
+                // Rule 1A: For Y < 0.170 * H, exclude left zone (X < 0.22 * W) and right zone (X > 0.76 * W)
+                // where '<' back button and yellow '✓' Done button live!
+                int rowLeftX = (y < (int)(H * 0.170)) ? (int)(W * 0.22) : leftX;
+                int rowRightX = (y < (int)(H * 0.170)) ? (int)(W * 0.76) : rightX;
+
                 int rowOffset = y * stride;
-                for (int x = leftX; x <= rightX; x += 3) {
+                int rowHighlightCount = 0;
+
+                for (int x = rowLeftX; x <= rowRightX; x += 3) {
                     int idx = rowOffset + (x * 4);
                     byte b = raw[idx];
                     byte g = raw[idx + 1];
@@ -158,16 +165,62 @@ public class DualOcrPreprocessor {
                     bool isBlue = (b > 140) && ((b - r) >= 22);
 
                     if (isPaleYellow || isLollipop || isBlue) {
-                        foundHighlight = true;
-                        if (y < minY) minY = y;
-                        if (y > maxY) maxY = y;
+                        rowHighlightCount++;
                     }
+                }
+
+                if (rowHighlightCount >= 3) {
+                    rowHasHighlight[y] = true;
+                    if (y + 1 < H) rowHasHighlight[y + 1] = true;
                 }
             }
         }
 
+        // Rule 1B: Contiguous vertical clustering: tolerance gap <= 0.028 * H
+        int maxLineGap = (int)(H * 0.028);
+        int bestClusterStart = -1;
+        int bestClusterEnd = -1;
+        int bestClusterHeight = 0;
+
+        int curStart = -1;
+        int lastRow = -1;
+
+        for (int y = scanTopY; y <= scanBottomY; y++) {
+            if (rowHasHighlight[y]) {
+                if (curStart == -1) {
+                    curStart = y;
+                } else if (lastRow != -1 && (y - lastRow) > maxLineGap) {
+                    int h = lastRow - curStart;
+                    if (h >= (int)(H * 0.010) && h > bestClusterHeight) {
+                        bestClusterHeight = h;
+                        bestClusterStart = curStart;
+                        bestClusterEnd = lastRow;
+                    }
+                    curStart = y;
+                }
+                lastRow = y;
+            }
+        }
+
+        if (curStart != -1 && lastRow != -1) {
+            int h = lastRow - curStart;
+            if (h >= (int)(H * 0.010) && h > bestClusterHeight) {
+                bestClusterHeight = h;
+                bestClusterStart = curStart;
+                bestClusterEnd = lastRow;
+            }
+        }
+
+        int minY = 9999999;
+        int maxY = 0;
+        if (bestClusterStart != -1 && bestClusterEnd != -1) {
+            foundHighlight = true;
+            minY = bestClusterStart;
+            maxY = bestClusterEnd;
+        }
+
         // FULL-WIDTH HORIZONTAL STRIP: 0.03*W to 0.97*W
-        int cropX = Math.Max(0, (int)(W * 0.03));
+        cropX = Math.Max(0, (int)(W * 0.03));
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
         if (!isFullViewport && foundHighlight) {
@@ -262,8 +315,62 @@ public class DualOcrPreprocessor {
         }
         stripRed.Dispose();
     }
+
+    public static bool VerifyLineHighlight(
+        Bitmap origBmp,
+        int cropX, int cropY,
+        float scale, int margin,
+        double lineX, double lineY, double lineW, double lineH
+    ) {
+        int W = origBmp.Width;
+        int H = origBmp.Height;
+
+        int ox = cropX + (int)((lineX - margin) / scale);
+        int oy = cropY + (int)((lineY - margin) / scale);
+        int ow = (int)(lineW / scale);
+        int oh = (int)(lineH / scale);
+
+        oy = Math.Max(0, oy - 4);
+        oh = Math.Min(H - oy, oh + 8);
+
+        if (ox < 0) { ow += ox; ox = 0; }
+        if (ox + ow > W) ow = W - ox;
+        if (ow <= 10 || oh <= 4) return true;
+
+        BitmapData data = origBmp.LockBits(new Rectangle(ox, oy, ow, oh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        int stride = data.Stride;
+        byte[] pixels = new byte[Math.Abs(stride) * oh];
+        Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
+        origBmp.UnlockBits(data);
+
+        int highlightCount = 0;
+        int totalSampled = 0;
+
+        for (int y = 0; y < oh; y += 2) {
+            int row = y * stride;
+            for (int x = 0; x < ow; x += 3) {
+                int idx = row + (x * 4);
+                byte b = pixels[idx];
+                byte g = pixels[idx + 1];
+                byte r = pixels[idx + 2];
+                totalSampled++;
+
+                bool isYellow = (r > 200) && (g > 175) && ((r - b) >= 10);
+                bool isHandle = (r > 190) && ((r - b) >= 35);
+                bool isBlue = (b > 130) && ((b - r) >= 15);
+
+                if (isYellow || isHandle || isBlue) {
+                    highlightCount++;
+                }
+            }
+        }
+
+        if (totalSampled == 0) return true;
+        float ratio = (float)highlightCount / (float)totalSampled;
+        return ratio >= 0.05f;
+    }
 }
-'
+'@
 
     [void][Windows.Media.Ocr.OcrEngine, Windows.Foundation.Metadata, ContentType = WindowsRuntime]
     [void][Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation.Metadata, ContentType = WindowsRuntime]
@@ -277,7 +384,7 @@ public class DualOcrPreprocessor {
         return $netTask.Result
     }
 
-    function Run-Ocr([System.Drawing.Bitmap]$bmp) {
+    function Run-Ocr([System.Drawing.Bitmap]$bmp, [System.Drawing.Bitmap]$origBmp = $null, [int]$cropX = 0, [int]$cropY = 0, [bool]$checkHighlight = $false) {
         $tempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'ocr_run_' + [System.Guid]::NewGuid().ToString() + '.png')
         $bmp.Save($tempFile, [System.Drawing.Imaging.ImageFormat]::Png)
 
@@ -329,15 +436,29 @@ public class DualOcrPreprocessor {
             $t = $t.Trim()
             if (!$t) { continue }
 
+            $minX = 9999999
             $minY = 9999999
+            $maxX = 0
             $maxY = 0
             foreach ($w in $l.Words) {
                 $r = $w.BoundingRect
+                if ($r.X -lt $minX) { $minX = $r.X }
+                $rx = $r.X + $r.Width
+                if ($rx -gt $maxX) { $maxX = $rx }
                 if ($r.Y -lt $minY) { $minY = $r.Y }
                 $b = $r.Y + $r.Height
                 if ($b -gt $maxY) { $maxY = $b }
             }
+            $lineW = [Math]::Max(10.0, ($maxX - $minX))
             $lineH = [Math]::Max(10.0, ($maxY - $minY))
+
+            # Rule 1C: If image has a highlight selection, verify that this line actually has highlight behind it!
+            if ($checkHighlight -and $origBmp -ne $null) {
+                $hasHl = [DualOcrPreprocessor]::VerifyLineHighlight($origBmp, $cropX, $cropY, 2.5, 60, $minX, $minY, $lineW, $lineH)
+                if (-not $hasHl) {
+                    continue
+                }
+            }
 
             $parsedLines += [PSCustomObject]@{
                 Text = $t
@@ -420,18 +541,20 @@ public class DualOcrPreprocessor {
         $candNat = $null
         $candRed = $null
         $foundHighlight = $false
+        $cropX = 0
         $cropY = 0
         $cropH = 0
 
-        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropY, [ref]$cropH)
-        $srcBmp.Dispose()
+        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH)
+
+        $doVerify = ($foundHighlight -and -not $isFullViewport)
 
         # Fast candidate execution: Red-filtered first (best for Notes Light Mode & spellcheck removal)
-        $bestLines = @(Run-Ocr $candRed)
+        $bestLines = @(Run-Ocr $candRed $srcBmp $cropX $cropY $doVerify)
         $bestBmp = $candRed
         if ($bestLines.Count -eq 0 -and $candNat -ne $null) {
             # Fallback to Natural candidate if Red-filtered gave nothing (e.g. Dark Mode)
-            $linesNat = @(Run-Ocr $candNat)
+            $linesNat = @(Run-Ocr $candNat $srcBmp $cropX $cropY $doVerify)
             if ($linesNat.Count -gt 0) {
                 $bestLines = $linesNat
                 $bestBmp = $candNat
@@ -444,6 +567,7 @@ public class DualOcrPreprocessor {
             $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
         }
 
+        $srcBmp.Dispose()
         $candNat.Dispose()
         $candRed.Dispose()
 

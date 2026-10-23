@@ -632,6 +632,35 @@ Pembaruan terkini mencakup:
    - Skenario 2 (`"naruto uzumaki"`): Lolos (bersih tanpa duplikasi buffer).
    - Skenario 3 (Caption KMP Batumandi): Lolos (1.35s, frame atas terlindungi 10 detik pointermove, 100% teks utuh dari `"Rekaman video amatir..."` s.d. `"#cilegon"` tanpa sampah `"1.1n1 j un 11"`).
 
+---
+
+### Tahap 27: Continuous Viewport History, Bidirectional Interior Anchor Stitcher, dan Per-Line Highlight Verifier (24 Oktober 2026)
+- **Status**: Selesai & Terverifikasi 100% via `verify_tahap27.py` dan `verify_tahap26.py`.
+- **Latar Belakang**: Pengujian video Tahap 26 oleh Kelvin menunjukkan 2 sisa bug:
+  1. Bug 1: Tombol bulatan kuning `✓` Done di pojok kanan atas toolbar Notes terdeteksi pemindai highlight sehingga `minY` ditarik ke atas dan baris 1 & 2 berlatar putih ikut ter-copy saat hanya memilih baris 3 atau 4.
+  2. Bug 2: Klik kedua di bawah untuk merapikan gagang seleksi menghapus snapshot atas, dan baris paling bawah frame atas rusak terkena floating pill toolbar Notes (`"aO/O3124an"`), menggagalkan penyambungan.
+- **Pekerjaan yang Dilakukan**:
+  1. **Perbaikan Deteksi Highlight & Verifikasi Highlight Per-Baris di `ocr_extractor.ps1`**:
+     - Menambahkan exclusion zone toolbar atas ($Y < 0.170 \times H$, $X < 0.22 \times W$ dan $X > 0.76 \times W$) dan membatasi `scanBottomY = 0.785 * H`.
+     - Contiguous vertical clustering ($\le 0.028 \times H$) untuk mengabaikan artefak tepi.
+     - Implementasi C# `VerifyLineHighlight` yang memetakan bounding box setiap `OcrLine` ke bitmap asli dan membuang baris yang rasio highlight-nya $< 0.05$ (murni putih).
+     - Menggunakan PowerShell verbatim here-string `@' ... '@` untuk mencegah syntax error string termination.
+  2. **Continuous Visual-Change Viewport History di `mirror.js`**:
+     - Buffer `window._ViewportHistory = []` (15 snapshot, masa berlaku 60s) yang **tidak pernah di-reset pada pointerdown**.
+     - 16-point grid luminance signature dengan threshold delta $\ge 6.0$.
+     - Sampling background periodik 900ms + throttled pointermove/wheel (600ms).
+     - `getRecentSelectionFrames()` mengekspor hingga 4 frame visual berbeda secara kronologis.
+  3. **Bidirectional Interior Anchor Alignment & Session Chunk Memory di `screen.py`**:
+     - `merge_two_overlapping_blocks()` mencari pasangan baris identik/mirip ($\ge 18$ char, ratio $\ge 0.78$) dan menyambung di titik tengah irisan (`matches[len // 2]`).
+     - Baris rusak di tepi bawah frame atas (`"aO/O3124an"`) dan baris terpotong di tepi atas frame bawah terbuang otomatis, menghasilkan teks bersih `"serta 43 awak kapal dilaporkan berhasil"`.
+     - Session memory `_RECENT_LONG_OCR_CHUNKS` (5 entri, 90s) untuk menyambung salinan catatan panjang bahkan jika user melakukan copy bertahap.
+  4. **Pembaruan Cache**: Bump version tag ke `v=20261024_tahap27_viewport_history_and_line_verifier` pada `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi**:
+  - Test 1 (`"dewa19 feat virzha"` + tombol kuning `✓`): 100% lolos (0.46s). Hanya baris 3 yang ter-copy; baris 1 & 2 0% terbawa.
+  - Test 2A (Viewport History Anti-Reset): 5x pointerdown berturut-turut di layar bawah terbukti tidak menghapus frame atas.
+  - Test 2B (KMP Batumandi Stitching): 100% utuh dari `"Rekaman video amatir..."` hingga `"#cilegon"`, tanpa artefak `"aO/O3124an"` baik dalam urutan Top->Bottom maupun Bottom->Top.
+
+
 
 
 

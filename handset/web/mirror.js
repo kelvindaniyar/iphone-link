@@ -802,137 +802,154 @@ window.captureFullResFrameDataUrl = function () {
   return null;
 };
 
-// --- Pinned Frame History for Long Note Stitching (Tahap 26) ---
-window._PinnedTopFrames = []; // Max 4 unique frames, kept for 45s from scroll/wheel
-let _firstDragFrame = null;   // Locked at start of drag selection
-let _earlyMidFrame = null;    // Locked at ~700ms into drag selection
-let _lateMidFrame = null;     // Updated periodically (every 700ms) during ongoing drag
-let _dragStartTs = 0;
-let _lastDragSnapshotTs = 0;
-let _isDraggingSelection = false;
-let _lastWheelSnapshotTs = 0;
+// --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 27) ---
+window._ViewportHistory = []; // Capacity 15 snapshots, expires 60s
+let _lastEventSampleTs = 0;
 
-function recordScrollSnapshot() {
+function computeViewportSignature() {
   try {
-    const now = Date.now();
-    if (now - _lastWheelSnapshotTs < 600) return;
-    if (typeof window.captureFullResFrameDataUrl !== "function") return;
-    const dataUrl = window.captureFullResFrameDataUrl();
-    if (!dataUrl) return;
-    _lastWheelSnapshotTs = now;
-    if (!window._PinnedTopFrames) window._PinnedTopFrames = [];
-    const last = window._PinnedTopFrames[window._PinnedTopFrames.length - 1];
-    if (!last || last.dataUrl !== dataUrl) {
-      window._PinnedTopFrames.push({ ts: now, dataUrl });
-      if (window._PinnedTopFrames.length > 4) {
-        window._PinnedTopFrames.shift();
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return null;
+    const W = canvas.width;
+    const H = canvas.height;
+    const sig = [];
+    const yFractions = [0.25, 0.40, 0.55, 0.70];
+    const xFractions = [0.25, 0.40, 0.55, 0.70];
+
+    for (let r = 0; r < 4; r++) {
+      const py = Math.floor(H * yFractions[r]);
+      for (let c = 0; c < 4; c++) {
+        const px = Math.floor(W * xFractions[c]);
+        const pix = ctx.getImageData(px, py, 1, 1).data;
+        const lum = 0.299 * pix[0] + 0.587 * pix[1] + 0.114 * pix[2];
+        sig.push(lum);
       }
     }
+    return sig;
   } catch (err) {
-    console.warn("recordScrollSnapshot error:", err);
+    return null;
   }
 }
-window.recordScrollSnapshot = recordScrollSnapshot;
 
-function startDragSelectionSnapshot() {
+function getSignatureDelta(sig1, sig2) {
+  if (!sig1 || !sig2 || sig1.length !== sig2.length || sig1.length === 0) return 999;
+  let totalDiff = 0;
+  for (let i = 0; i < sig1.length; i++) {
+    totalDiff += Math.abs(sig1[i] - sig2[i]);
+  }
+  return totalDiff / sig1.length;
+}
+
+function sampleViewportIfChanged(force = false, minInterval = 0) {
   try {
     const now = Date.now();
-    _isDraggingSelection = true;
-    _dragStartTs = now;
-    _lastDragSnapshotTs = now;
+    if (minInterval > 0 && (now - _lastEventSampleTs) < minInterval) return;
+    _lastEventSampleTs = now;
+
+    if (frameCount === 0) return;
     if (typeof window.captureFullResFrameDataUrl !== "function") return;
-    const dataUrl = window.captureFullResFrameDataUrl();
-    if (!dataUrl) return;
 
-    // Always pin the initial frame when drag/click starts
-    _firstDragFrame = { ts: now, dataUrl };
-    _earlyMidFrame = null;
-    _lateMidFrame = null;
-
-    if (!window._PinnedTopFrames) window._PinnedTopFrames = [];
-    const last = window._PinnedTopFrames[window._PinnedTopFrames.length - 1];
-    if (!last || last.dataUrl !== dataUrl) {
-      window._PinnedTopFrames.push({ ts: now, dataUrl });
-      if (window._PinnedTopFrames.length > 4) {
-        window._PinnedTopFrames.shift();
-      }
+    // Prune history older than 60s
+    if (window._ViewportHistory.length > 0) {
+      window._ViewportHistory = window._ViewportHistory.filter(item => (now - item.ts) <= 60000);
     }
-  } catch (err) {
-    console.warn("startDragSelectionSnapshot error:", err);
-  }
-}
-window.startDragSelectionSnapshot = startDragSelectionSnapshot;
 
-function updateDragSelectionSnapshot() {
-  try {
-    if (!_isDraggingSelection) return;
-    const now = Date.now();
-    // Throttle to 700ms
-    if (now - _lastDragSnapshotTs < 700) return;
-    if (typeof window.captureFullResFrameDataUrl !== "function") return;
-    const dataUrl = window.captureFullResFrameDataUrl();
-    if (!dataUrl) return;
+    const sig = computeViewportSignature();
+    if (!sig) return;
 
-    _lastDragSnapshotTs = now;
-    // Lock early mid frame (~700ms after drag start)
-    if (!_earlyMidFrame) {
-      _earlyMidFrame = { ts: now, dataUrl };
+    let shouldCapture = false;
+    if (window._ViewportHistory.length === 0) {
+      shouldCapture = true;
     } else {
-      // Late mid frame (updated as drag continues, never overwriting firstDragFrame or earlyMidFrame!)
-      _lateMidFrame = { ts: now, dataUrl };
+      const lastItem = window._ViewportHistory[window._ViewportHistory.length - 1];
+      const delta = getSignatureDelta(sig, lastItem.sig);
+      if (delta >= 6.0 || (force && delta >= 2.0)) {
+        shouldCapture = true;
+      }
+    }
+
+    if (shouldCapture) {
+      const dataUrl = window.captureFullResFrameDataUrl();
+      if (dataUrl) {
+        window._ViewportHistory.push({ ts: now, sig, dataUrl });
+        if (window._ViewportHistory.length > 15) {
+          window._ViewportHistory.shift();
+        }
+      }
     }
   } catch (err) {
-    console.warn("updateDragSelectionSnapshot error:", err);
+    console.warn("sampleViewportIfChanged error:", err);
   }
 }
-window.updateDragSelectionSnapshot = updateDragSelectionSnapshot;
+window.sampleViewportIfChanged = sampleViewportIfChanged;
 
-function endDragSelectionSnapshot() {
-  _isDraggingSelection = false;
-}
-window.endDragSelectionSnapshot = endDragSelectionSnapshot;
+// 1. Continuous background sampling every 900ms during active mirroring
+setInterval(() => {
+  sampleViewportIfChanged(false, 0);
+}, 900);
+
+// Event hooks (anti-reset: never wipes previous history on pointerdown)
+window.recordScrollSnapshot = function () {
+  sampleViewportIfChanged(false, 600);
+};
+
+window.startDragSelectionSnapshot = function () {
+  sampleViewportIfChanged(false, 0);
+};
+
+window.updateDragSelectionSnapshot = function () {
+  sampleViewportIfChanged(false, 600);
+};
+
+window.endDragSelectionSnapshot = function () {};
 
 window.recordSelectionSnapshot = function (force = false) {
-  if (force) {
-    startDragSelectionSnapshot();
-  } else {
-    updateDragSelectionSnapshot();
-  }
+  sampleViewportIfChanged(force, force ? 0 : 600);
 };
 
 window.getRecentSelectionFrames = function () {
   try {
     const now = Date.now();
-    // Valid within 45 seconds
-    const maxAge = 45000;
-    const resultUrls = [];
-    const seen = new Set();
+    // Guarantee latest viewport is checked
+    sampleViewportIfChanged(true, 0);
 
-    function addFrame(f) {
-      if (f && f.dataUrl && (now - f.ts) <= maxAge && !seen.has(f.dataUrl)) {
-        seen.add(f.dataUrl);
-        resultUrls.push(f.dataUrl);
+    const validHistory = (window._ViewportHistory || []).filter(item => (now - item.ts) <= 60000);
+    if (validHistory.length === 0) {
+      if (typeof window.captureFullResFrameDataUrl === "function") {
+        const cur = window.captureFullResFrameDataUrl();
+        if (cur) return [cur];
+      }
+      return [];
+    }
+
+    if (validHistory.length <= 4) {
+      return validHistory.map(item => item.dataUrl);
+    }
+
+    // Select up to 4 frames with distinct signatures, ordered chronologically (top -> mid -> bottom)
+    const n = validHistory.length;
+    const candidateIndices = Array.from(new Set([0, Math.floor(n * 0.33), Math.floor(n * 0.67), n - 1])).sort((a, b) => a - b);
+    const chosen = [];
+    for (const idx of candidateIndices) {
+      const item = validHistory[idx];
+      if (!item || !item.dataUrl) continue;
+      if (chosen.length === 0 || getSignatureDelta(item.sig, chosen[chosen.length - 1].sig) >= 3.0) {
+        chosen.push(item);
       }
     }
 
-    // 1. Add Pinned Top Frames (from scroll / earlier top view)
-    if (window._PinnedTopFrames) {
-      window._PinnedTopFrames = window._PinnedTopFrames.filter((f) => (now - f.ts) <= maxAge);
-      for (const f of window._PinnedTopFrames) {
-        addFrame(f);
+    // If fewer than 2 frames due to high similarity threshold, backfill chronological frames
+    if (chosen.length < Math.min(4, validHistory.length)) {
+      for (let i = 0; i < validHistory.length; i++) {
+        const item = validHistory[i];
+        if (!chosen.includes(item)) {
+          chosen.push(item);
+          if (chosen.length >= 4) break;
+        }
       }
+      chosen.sort((a, b) => a.ts - b.ts);
     }
 
-    // 2. Add First Drag Frame (Top of drag selection)
-    addFrame(_firstDragFrame);
-
-    // 3. Add Early Mid Frame (Middle of drag selection)
-    addFrame(_earlyMidFrame);
-
-    // 4. Add Late Mid Frame (Pre-bottom of drag selection)
-    addFrame(_lateMidFrame);
-
-    return resultUrls;
+    return chosen.map(item => item.dataUrl);
   } catch (err) {
     console.warn("getRecentSelectionFrames error:", err);
     return [];

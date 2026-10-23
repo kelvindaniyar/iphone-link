@@ -9,8 +9,11 @@ decodes it.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
+import re
 import threading
+import time
 from pathlib import Path
 
 from handset.device import developer_mode_enabled
@@ -631,10 +634,105 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     return result
 
 
+_RECENT_LONG_OCR_CHUNKS: list[dict] = []  # items: {"ts": float, "lines": list[str]}
+_CHUNKS_LOCK = threading.Lock()
+
+
+def _normalize_line_for_match(text: str) -> str:
+    """Normalize line for fuzzy overlap matching: lowercase, strip, condense whitespace."""
+    if not text:
+        return ""
+    cleaned = re.sub(r'[\r\n\t]+', ' ', text.lower()).strip()
+    return re.sub(r'\s{2,}', ' ', cleaned)
+
+
+def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[str] | None:
+    """
+    Bidirectional Interior Anchor Alignment:
+    Finds consistent overlapping lines (>= 18 chars, ratio >= 0.78), detects whether
+    linesA is top (offset > 0) or linesB is top (offset < 0), and splits at the
+    interior middle anchor (matches[len // 2]).
+    Corrupted top lines (clipped scroll edge) and corrupted bottom lines
+    (e.g. Notes floating toolbar 'aO/O3124an') are cleanly excluded.
+    """
+    if not linesA or not linesB:
+        return None
+
+    cleanA = [l.strip() for l in linesA if l and l.strip()]
+    cleanB = [l.strip() for l in linesB if l and l.strip()]
+    if not cleanA or not cleanB:
+        return None
+
+    if cleanA == cleanB:
+        return cleanA
+
+    # Find matching line pairs with len >= 18 and ratio >= 0.78
+    matches: list[tuple[int, int, float, int]] = []
+    normA = [_normalize_line_for_match(l) for l in cleanA]
+    normB = [_normalize_line_for_match(l) for l in cleanB]
+
+    for i, na in enumerate(normA):
+        if len(na) < 18:
+            continue
+        for j, nb in enumerate(normB):
+            if len(nb) < 18:
+                continue
+
+            len_diff = abs(len(na) - len(nb))
+            if len_diff > max(len(na), len(nb)) * 0.40:
+                continue
+
+            sm_ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+            if sm_ratio >= 0.78 or (len(na) >= 20 and (na in nb or nb in na)):
+                ratio_val = max(sm_ratio, 0.88 if (na in nb or nb in na) else sm_ratio)
+                matches.append((i, j, ratio_val, i - j))
+
+    if not matches:
+        return None
+
+    # Group by offset i - j to find dominant alignment
+    offset_counts: dict[int, int] = {}
+    for m in matches:
+        off = m[3]
+        offset_counts[off] = offset_counts.get(off, 0) + 1
+
+    dom_offset, _ = max(offset_counts.items(), key=lambda kv: kv[1])
+    consistent_matches = [m for m in matches if abs(m[3] - dom_offset) <= 1]
+    if not consistent_matches:
+        consistent_matches = matches
+
+    consistent_matches.sort(key=lambda m: m[0])
+
+    # Check if one block is a complete subset of the other
+    first_i, first_j = consistent_matches[0][0], consistent_matches[0][1]
+    last_i, last_j = consistent_matches[-1][0], consistent_matches[-1][1]
+    remA = len(cleanA) - 1 - last_i
+    remB = len(cleanB) - 1 - last_j
+
+    if first_j >= first_i and remB >= remA:
+        return cleanB
+    if first_i >= first_j and remA >= remB:
+        return cleanA
+
+    # Interior middle anchor
+    mid_idx = len(consistent_matches) // 2
+    split_i, split_j, _, _ = consistent_matches[mid_idx]
+
+    if dom_offset > 0:
+        # linesA is TOP, linesB is BOTTOM
+        merged = cleanA[:split_i] + cleanB[split_j:]
+        return merged
+    elif dom_offset < 0:
+        # linesB is TOP, linesA is BOTTOM (e.g. user scrolled upwards)
+        merged = cleanB[:split_j] + cleanA[split_i:]
+        return merged
+    else:
+        # dom_offset == 0: aligned at start; take longer version
+        return cleanA if len(cleanA) >= len(cleanB) else cleanB
+
+
 def stitch_two_ocr_texts(text1: str, text2: str) -> str:
     """Stitch two overlapping OCR text frames together by finding the overlap between text1 bottom and text2 top."""
-    import difflib
-
     t1_clean = (text1 or "").strip()
     t2_clean = (text2 or "").strip()
     if not t1_clean:
@@ -644,19 +742,22 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
     if t1_clean == t2_clean:
         return t2_clean
 
-    lines1 = [l.strip() for l in t1_clean.splitlines()]
-    lines2 = [l.strip() for l in t2_clean.splitlines()]
+    lines1 = [l.strip() for l in t1_clean.splitlines() if l.strip()]
+    lines2 = [l.strip() for l in t2_clean.splitlines() if l.strip()]
+
+    # Try interior anchor alignment first
+    interior_merged = merge_two_overlapping_blocks(lines1, lines2)
+    if interior_merged:
+        return "\r\n".join(interior_merged)
 
     # Find best overlap between bottom of lines1 and top of lines2
     best_match = None
     best_score = 0.0
 
-    # Search from bottom of lines1 upwards
     for i in range(len(lines1) - 1, -1, -1):
         l1 = lines1[i]
         if not l1 or len(l1) < 4:
             continue
-        # Compare against top 20 lines of lines2
         for j in range(0, min(len(lines2), 20)):
             l2 = lines2[j]
             if not l2 or len(l2) < 4:
@@ -666,11 +767,9 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
             l2_low = l2.lower()
 
             sm = difflib.SequenceMatcher(None, l1_low, l2_low).ratio()
-            # Substring match
             if len(l1_low) >= 8 and (l1_low in l2_low or l2_low in l1_low):
                 sm = max(sm, 0.85)
 
-            # Word set overlap
             w1 = set(l1_low.split())
             w2 = set(l2_low.split())
             if len(w1) >= 3 and len(w2) >= 3:
@@ -679,7 +778,6 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
                     sm = max(sm, w_overlap)
 
             if sm >= 0.72:
-                # Subsequent line confirmation bonus
                 bonus = 0.0
                 if i + 1 < len(lines1) and j + 1 < len(lines2):
                     nxt1 = lines1[i + 1].strip().lower()
@@ -698,11 +796,9 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
             break
 
     if not best_match:
-        # If no overlap found, return the latest frame text (text2)
         return t2_clean
 
     i, j, l1, l2 = best_match
-    # For overlapping line, pick the longer / more complete version (e.g. recovering AssistiveTouch cut off)
     longer_line = l1 if len(l1) >= len(l2) else l2
     stitched_lines = lines1[:i] + [longer_line] + lines2[j + 1:]
     return "\r\n".join(stitched_lines)
@@ -713,13 +809,37 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
     valid_texts = [t.strip() for t in texts if t and t.strip()]
     if not valid_texts:
         return ""
-    if len(valid_texts) == 1:
-        return valid_texts[0]
 
-    stitched = valid_texts[0]
+    current_lines = [l.strip() for l in valid_texts[0].splitlines() if l.strip()]
+
     for nxt in valid_texts[1:]:
-        stitched = stitch_two_ocr_texts(stitched, nxt)
-    return stitched
+        nxt_lines = [l.strip() for l in nxt.splitlines() if l.strip()]
+        if not nxt_lines:
+            continue
+        merged = merge_two_overlapping_blocks(current_lines, nxt_lines)
+        if merged:
+            current_lines = merged
+        else:
+            t_merged = stitch_two_ocr_texts("\r\n".join(current_lines), "\r\n".join(nxt_lines))
+            current_lines = [l.strip() for l in t_merged.splitlines() if l.strip()]
+
+    # If long note (>= 4 lines), check and merge with session chunk memory (_RECENT_LONG_OCR_CHUNKS)
+    if len(current_lines) >= 4:
+        now = time.time()
+        with _CHUNKS_LOCK:
+            global _RECENT_LONG_OCR_CHUNKS
+            _RECENT_LONG_OCR_CHUNKS = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c["ts"]) <= 90.0]
+
+            for past in reversed(_RECENT_LONG_OCR_CHUNKS):
+                hist_merged = merge_two_overlapping_blocks(current_lines, past["lines"])
+                if hist_merged and len(hist_merged) >= len(current_lines):
+                    current_lines = hist_merged
+
+            _RECENT_LONG_OCR_CHUNKS.append({"ts": now, "lines": list(current_lines)})
+            if len(_RECENT_LONG_OCR_CHUNKS) > 5:
+                _RECENT_LONG_OCR_CHUNKS = _RECENT_LONG_OCR_CHUNKS[-5:]
+
+    return "\r\n".join(current_lines)
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:
