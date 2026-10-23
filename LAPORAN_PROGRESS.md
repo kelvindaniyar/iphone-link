@@ -293,7 +293,9 @@ Pembaruan terkini mencakup:
 ## 16. Struktur Riwayat Git Commit
 
 ```
-* 4bfb7ba (HEAD -> feature/macos-sequoia-ui) fix(mirror): restore zero-delay 5-param drawImage, implement 4-sided crop with number inputs, fix window drag and bar truncation
+* 05ff850 (HEAD -> feature/macos-sequoia-ui) feat(audio-sink): add instant 2-finger gestures, persistent crop save, and Win11 Bluetooth audio sink
+* a3a0eeb docs: tambahkan LAPORAN_TAHAP_15 dan perbarui LAPORAN_PROGRESS master
+* 4bfb7ba fix(mirror): restore zero-delay 5-param drawImage, implement 4-sided crop with number inputs, fix window drag and bar truncation
 * d6cbc8c feat(ui): eliminate white/black bars via theme sync, add edge-to-edge full bleed with edge trim, and dynamic multi-device aspect sizing
 * 301d0bf docs: tambahkan LAPORAN_TAHAP_13 dan perbarui LAPORAN_PROGRESS master
 * db61aa3 fix(gui): fix background_color hex triplet ValueError, add run.bat error handling, and stabilize theme styling
@@ -324,18 +326,19 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 17. Daftar File yang Dimodifikasi (Tahap 15)
+## 17. Daftar File yang Dimodifikasi (Tahap 16)
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | `easy_drag=False`, `width=380, height=840`, `min_size=(380, 700)`, drawer width 740, Win32 native `start_window_drag`. |
-| 2 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Restorasi 5-parameter `ctx.drawImage` murni (zero GPU readback delay), zero-cost CSS clipping 4-sisi, listener `set-crop`. |
-| 3 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Pembungkus `<div id="crop-wrapper">`, cache buster `v=20261023_zerodelay_crop`. |
-| 4 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Aturan CSS `#crop-wrapper`, hapus `!important` pada fit-fill agar style crop JS presisi. |
-| 5 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | 4 kontrol crop (Top, Bottom, Left, Right) slider + number input, tombol reset crop, cache buster diperbarui. |
-| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Sembunyikan `#pill-device`, kompres tombol Top Bar muat 380px, Grid 4-kolom `.quick-nav`, styling input crop. |
-| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Native window drag hanya di area kosong `.app-bar`, stopPropagation pada input/drawer, matikan auto sync_device_aspect, sync 4-sided crop. |
-| 8 | [`LAPORAN_TAHAP_15_FIX_ZERO_DELAY_4SIDE_CROP_DAN_BAR_TRUNCATION.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_15_FIX_ZERO_DELAY_4SIDE_CROP_DAN_BAR_TRUNCATION.md) | Laporan lengkap teknis Tahap 15. |
+| 1 | [`handset/audio.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/audio.py) | Modul audio routing Bluetooth A2DP Sink (`AudioPlaybackConnection`) dan kontrol volume master native `pycaw`. |
+| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Penyimpanan permanen `user_settings.json`, endpoint `GET/POST /api/settings`, dan endpoint audio sink. |
+| 3 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Penambahan `private_mode=False` dan `storage_path` permanen pada `webview.start(...)`. |
+| 4 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Caching `getBoundingClientRect()`, leading-edge horizontal swipe instan, dan coalesced non-blocking vertical scroll. |
+| 5 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Tombol toggle audio di Top Bar, tombol "💾 Save Crop" di panel crop, dan card Audio Sink di Settings Drawer. |
+| 6 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Styling indikator audio aktif di Top Bar, layout tombol save crop, dan panel kontrol Audio Sink di Drawer. |
+| 7 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika `saveUserSettings`, auto-fetch crop saat startup/reload, dan event handler Audio Sink (toggle, volume, pair). |
+| 8 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | File konfigurasi default untuk crop, tema, fitMode, dan audio sink. |
+| 9 | [`LAPORAN_TAHAP_16_INSTANT_GESTURES_SAVE_CROP_DAN_AUDIO_SINK.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_16_INSTANT_GESTURES_SAVE_CROP_DAN_AUDIO_SINK.md) | Laporan lengkap teknis Tahap 16. |
 
 
 ---
