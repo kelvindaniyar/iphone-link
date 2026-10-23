@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 17 (Top Bar Cleanup, Audio Icon Single Display, & Trackpad Gesture Speed Controls)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 18 (Cross-Platform Shortcuts, PC Clipboard Paste, & iOS On-Screen Keyboard Toggle)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `8dac2d3` (`feat(ui): clean top bar, fix audio icon toggle, and add trackpad gesture speed controls`)  
+> **Commit Terbaru:** `74860c9` (`feat(keyboard): add cross-platform shortcuts, pc clipboard paste, and ios on-screen keyboard toggle`)  
 
 ---
 
@@ -293,7 +293,9 @@ Pembaruan terkini mencakup:
 ## 16. Struktur Riwayat Git Commit
 
 ```
-* 8dac2d3 (HEAD -> feature/macos-sequoia-ui) feat(ui): clean top bar, fix audio icon toggle, and add trackpad gesture speed controls
+* 74860c9 (HEAD -> feature/macos-sequoia-ui) feat(keyboard): add cross-platform shortcuts, pc clipboard paste, and ios on-screen keyboard toggle
+* 690d299 docs: tambahkan LAPORAN_TAHAP_17 dan perbarui LAPORAN_PROGRESS master
+* 8dac2d3 feat(ui): clean top bar, fix audio icon toggle, and add trackpad gesture speed controls
 * 05ff850 feat(audio-sink): add instant 2-finger gestures, persistent crop save, and Win11 Bluetooth audio sink
 * a3a0eeb docs: tambahkan LAPORAN_TAHAP_15 dan perbarui LAPORAN_PROGRESS master
 * 4bfb7ba fix(mirror): restore zero-delay 5-param drawImage, implement 4-sided crop with number inputs, fix window drag and bar truncation
@@ -327,18 +329,20 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 17. Daftar File yang Dimodifikasi (Tahap 17)
+## 17. Daftar File yang Dimodifikasi (Tahap 18)
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Hapus `#refresh` & `#btn-theme` dari Top Bar, pindahkan `#refresh` ke drawer `#device-card`, tambahkan kartu `#panel-trackpad-speed`, update cache buster ke `v=20261023_trackpad_speed_ui`. |
-| 2 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Aturan CSS display none untuk SVG hidden `#btn-audio-top`, styling kartu WinUI 3 Trackpad Gesture Speed (`.segmented-speed`, `.speed-slider-wrap`, `.btn-save-speed`). |
-| 3 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika `applyTrackpadSpeed`, `saveTrackpadSpeed`, `initTrackpadSpeedControls`, perbaikan display SVG di `renderAudio`, dan penghapusan kode tombol tema Top Bar. |
-| 4 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Update cache buster ke `v=20261023_trackpad_speed_ui`. |
-| 5 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Integrasi `trackpadSpeedMultiplier` pada `pumpVerticalWheel` dan handler pesan `set-trackpad-speed`. |
-| 6 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Field `trackpadSpeed: 100` di `DEFAULT_SETTINGS` dan validasi di `save_user_settings`. |
-| 7 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | Menambahkan konfigurasi default `"trackpadSpeed": 100`. |
-| 8 | [`LAPORAN_TAHAP_17_TOP_BAR_CLEANUP_DAN_TRACKPAD_SPEED.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_17_TOP_BAR_CLEANUP_DAN_TRACKPAD_SPEED.md) | Laporan teknis lengkap Tahap 17. |
+| 1 | [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py) | Patch `_NAMED_BUTTONS` dengan `keyboard-toggle` (12, 0x029D) dan `eject` (12, 0x00B8). |
+| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Pembaca clipboard Windows native `ctypes`, endpoint `/api/keyboard/paste`, `/api/keyboard/toggle-onscreen`, dan persistence settings. |
+| 3 | [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) | Intersepsi `Ctrl+A/C/V/Z`, shortcut `Ctrl+K`, integrasi paste PC clipboard, dan debounce keep keyboard. |
+| 4 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Kartu UI `KEYBOARD & SHORTCUTS` dengan 3 segmented toggle dan 2 tombol aksi, bump cache buster. |
+| 5 | [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css) | Styling WinUI 3 untuk panel keyboard, toggle header, action buttons, dan badge pills. |
+| 6 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Logika `applyKeyboardSettings`, `saveKeyboardSettings`, `initKeyboardSettingsControls`, dan sinkronisasi startup. |
+| 7 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Update cache buster ke `v=20261023_tahap18_shortcuts_keyboard`. |
+| 8 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Handler pesan `set-keyboard-settings` untuk sinkronisasi state ke `window.HandsetKeyboardSettings`. |
+| 9 | [`user_settings.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/user_settings.json) | Menambahkan konfigurasi default keyboard. |
+| 10 | [`LAPORAN_TAHAP_18_CROSS_PLATFORM_SHORTCUTS_DAN_KEYBOARD.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_18_CROSS_PLATFORM_SHORTCUTS_DAN_KEYBOARD.md) | Laporan teknis lengkap Tahap 18. |
 
 
 ---
