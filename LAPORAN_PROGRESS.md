@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Siap Uji Manual Tahap 9 (Anti-Crop Hardware Decode Flag WebView2 & Telemetri Terverifikasi)  
+> **Status:** Siap Uji Manual Tahap 10 (Pemulihan Hardware HEVC Decoder & Telemetri Lengkap)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Commit Terbaru:** `83df9f7` (`fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions`)  
+> **Commit Terbaru:** `40f07ee` (`fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry`)  
 
 ---
 
@@ -18,10 +18,11 @@
 7. [Tahap 6: Native Frameless Pywebview, Side-Drawer Settings, Trackpad Scroll & Swipe Nav](#7-tahap-6-native-frameless-pywebview-side-drawer-settings-trackpad-scroll--swipe-nav)
 8. [Tahap 7: Perbaikan Visual Rantai Flexbox 100%, Bypass Cache WebView2 & Mode Full Size](#8-tahap-7-perbaikan-visual-rantai-flexbox-100-bypass-cache-webview2--mode-full-size)
 9. [Tahap 8: Restorasi `drawFrame` Commit `74f98ef` & Transisi Placeholder `#screen-empty`](#9-tahap-8-restorasi-drawframe-commit-74f98ef--transisi-placeholder-screen-empty)
-10. [Tahap 9: Anti-Crop Hardware Decode Bug WebView2, Parsing SPS HEVC (1216x2656) & Telemetri `/debug-metrics`](#10-tahap-9-anti-crop-hardware-decode-bug-webview2-parsing-sps-hevc-1216x2656--telemetri-debug-metrics)
-11. [Struktur Riwayat Git Commit](#11-struktur-riwayat-git-commit)
-12. [Daftar File yang Dimodifikasi](#12-daftar-file-yang-dimodifikasi)
-13. [Panduan Menjalankan & Verifikasi Manual](#13-panduan-menjalankan--verifikasi-manual)
+10. [Tahap 9: Investigasi Crop D3D11 & Pemasangan Sistem Telemetri `/debug-metrics`](#10-tahap-9-investigasi-crop-d3d11--pemasangan-sistem-telemetri-debug-metrics)
+11. [Tahap 10: Pemulihan GPU Hardware Decode HEVC, Patch mDNS Wi-Fi & Integrasi Data Frame](#11-tahap-10-pemulihan-gpu-hardware-decode-hevc-patch-mdns-wi-fi--integrasi-data-frame)
+12. [Struktur Riwayat Git Commit](#12-struktur-riwayat-git-commit)
+13. [Daftar File yang Dimodifikasi](#13-daftar-file-yang-dimodifikasi)
+14. [Panduan Menjalankan & Verifikasi Manual](#14-panduan-menjalankan--verifikasi-manual)
 
 ---
 
@@ -180,10 +181,30 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 11. Struktur Riwayat Git Commit
+## 11. Tahap 10: Pemulihan GPU Hardware Decode HEVC, Patch mDNS Wi-Fi & Integrasi Data Frame
+
+> **Status:** Selesai (Commit `40f07ee`) — Laporan lengkap di [`LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI.md).
+
+1. **Pemulihan Akselerasi GPU Decoder HEVC**:
+   - Di Windows 11, Chromium/Edge WebView2 tidak memiliki software decoder CPU untuk HEVC karena hak paten/royalti.
+   - Menghapus flag `--disable-accelerated-video-decode` di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) dan [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat), mengembalikan akselerasi Media Foundation sehingga video HEVC dapat didecode lancar tanpa pesan error oranye.
+2. **Patch Argumen Posisi mDNS Wi-Fi**:
+   - Memperbaiki `send_query_all(*args, **kwargs)` di [`handset/wifi.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/wifi.py) agar menerima parameter `skip_interfaces` dari library `pymobiledevice3`.
+3. **Data Telemetri Lengkap `app.js` + `mirror.js`**:
+   - Terbukti dari [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json):
+     * `win_inner.h` = **723px** (di dalam iframe)
+     * `iframe#screen-view.height` = **723.33px** ($\ge 700\text{px}$)
+     * `canvas.width` = **1216**, `canvas.height` = **2656**
+     * `canvas.style.height` = **723px** (terhitung presisi mengisi penuh layar).
+
+---
+
+## 12. Struktur Riwayat Git Commit
 
 ```
-* 83df9f7 (HEAD -> feature/macos-sequoia-ui) fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions
+* 40f07ee (HEAD -> feature/macos-sequoia-ui) fix(hevc): restore GPU hardware decode, patch bonjour args, and capture full mirror.js telemetry
+* b12df1c docs: tambahkan LAPORAN_ANTI_CROP_HARDWARE_DECODE_DAN_TELEMETRI dan perbarui LAPORAN_PROGRESS
+* 83df9f7 fix(decode): add webview2 anti-crop flags, debug-metrics telemetry endpoint, and verify container dimensions
 * 1b28514 docs: dokumentasikan perbaikan tahap 8 transisi screen-empty dan restorasi drawFrame 74f98ef
 * 8438eda fix(mirror): revert drawFrame and fitCanvas to 74f98ef, fix screen-empty placeholder transition
 * 3b16dca docs: perbarui laporan tahap 7 dengan solusi satuan mutlak calc(100vh - 80px) dan zombie kill
@@ -204,17 +225,19 @@ Pembaruan terkini mencakup:
 
 ---
 
-## 12. Daftar File yang Dimodifikasi
+## 13. Daftar File yang Dimodifikasi
 
 | No | File Path | Keterangan |
 |:---|:---|:---|
-| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Flag anti-crop WebView2 `--disable-accelerated-video-decode`, peluncur pywebview frameless. |
-| 2 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Endpoint telemetri `POST /debug-metrics` dan pencatatan riwayat `debug_metrics.json`. |
-| 3 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Telemetri `sendMirrorMetrics` pada frame 1 & 15, `drawFrame` stabil, dan presisi trackpad. |
-| 4 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Telemetri DOM `sendAppMetrics`, kontrol drawer, dan transisi placeholder `#screen-empty`. |
-| 5 | [`handset/web/mirror.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.css) | Canvas styling bersih tanpa border/shadow yang memotong display. |
-| 6 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Environment variable anti-crop WebView2 dan zombie kill `python.exe`. |
-| 7 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual. |
+| 1 | [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) | Pemulihan akselerasi GPU HEVC (`--enable-features=PlatformHEVCDecoderSupport`). |
+| 2 | [`handset/wifi.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/wifi.py) | Patch argumen mDNS `send_query_all` dan `bind_ipv4` dengan `*args, **kwargs`. |
+| 3 | [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) | Pemisahan kategori telemetri `latest_mirror_frame` dan `latest_mirror_{event}` di `/debug-metrics`. |
+| 4 | [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js) | Logging decoder error, codec check, first frame, dan frekuensi telemetri metrik. |
+| 5 | [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) | Cache buster versi `20261023_telemetry` dan telemetri DOM container. |
+| 6 | [`handset/web/mirror.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.html) | Cache buster versi `20261023_telemetry`. |
+| 7 | [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) | Cache buster versi `20261023_telemetry`. |
+| 8 | [`run.bat`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/run.bat) | Konfigurasi WebView2 hardware HEVC tanpa flag disable hardware decode. |
+| 9 | [`debug_metrics.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/debug_metrics.json) | File log telemetri pembacaan ukuran elemen aktual `app.js` + `mirror.js`. |
 
 ---
 
