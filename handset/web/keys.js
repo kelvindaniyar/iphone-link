@@ -100,12 +100,28 @@
     return null;
   }
 
-  async function triggerShortcut(action, frameDataUrl = null, waitResult = false) {
+  function getMirrorFrameHistory() {
+    try {
+      if (typeof window.getRecentSelectionFrames === "function") {
+        return window.getRecentSelectionFrames();
+      }
+      const iframe = document.getElementById("mirror-frame") || document.querySelector("iframe");
+      const iframeWin = iframe?.contentWindow;
+      if (typeof iframeWin?.getRecentSelectionFrames === "function") {
+        return iframeWin.getRecentSelectionFrames();
+      }
+    } catch (e) {
+      console.warn("getMirrorFrameHistory notice:", e);
+    }
+    return [];
+  }
+
+  async function triggerShortcut(action, frameDataUrl = null, waitResult = false, frameHistory = []) {
     try {
       const resp = await fetch("/api/keyboard/shortcut", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, frameDataUrl, waitResult }),
+        body: JSON.stringify({ action, frameDataUrl, frameHistory, waitResult }),
       });
       return await resp.json();
     } catch (err) {
@@ -206,9 +222,10 @@
               ignoreKeyUpUntil = Date.now() + 400;
               await flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
+              const frameHistory = getMirrorFrameHistory();
               pressed.clear();
               flush();
-              const res = await triggerShortcut("copy", frameDataUrl, true);
+              const res = await triggerShortcut("copy", frameDataUrl, true, frameHistory);
               if (res?.text && navigator.clipboard?.writeText) {
                 try { await navigator.clipboard.writeText(res.text); } catch (_) {}
               }
@@ -234,9 +251,10 @@
               ignoreKeyUpUntil = Date.now() + 400;
               await flushTypedQueue();
               const frameDataUrl = captureMirrorCanvasDataUrl();
+              const frameHistory = getMirrorFrameHistory();
               pressed.clear();
               flush();
-              const res = await triggerShortcut("cut", frameDataUrl, true);
+              const res = await triggerShortcut("cut", frameDataUrl, true, frameHistory);
               if (res?.text && navigator.clipboard?.writeText) {
                 try { await navigator.clipboard.writeText(res.text); } catch (_) {}
               }
@@ -306,6 +324,7 @@
   window.HandsetKeys = {
     attach,
     captureMirrorCanvasDataUrl,
+    getMirrorFrameHistory,
     triggerShortcut,
     flushTypedQueue,
     pasteFromPc: (force = false) => triggerPasteFromPc(force),

@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap24_per_keystroke_accumulation_and_dual_ocr";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap25_multi_frame_stitcher_and_assistivetouch_masking";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -557,13 +557,17 @@ function initKeyboardSettingsControls() {
         await window.HandsetKeys.flushTypedQueue();
       }
       const frameDataUrl = window.HandsetKeys?.captureMirrorCanvasDataUrl ? window.HandsetKeys.captureMirrorCanvasDataUrl() : null;
+      const frameHistory = window.HandsetKeys?.getMirrorFrameHistory ? window.HandsetKeys.getMirrorFrameHistory() : [];
       let res;
       if (window.HandsetKeys?.triggerShortcut) {
-        res = await window.HandsetKeys.triggerShortcut("copy", frameDataUrl, true);
+        res = await window.HandsetKeys.triggerShortcut("copy", frameDataUrl, true, frameHistory);
       } else {
-        res = await postJson("/api/keyboard/shortcut", { action: "copy", frameDataUrl, waitResult: true });
+        res = await postJson("/api/keyboard/shortcut", { action: "copy", frameDataUrl, frameHistory, waitResult: true });
       }
       if (res?.text) {
+        if (navigator.clipboard?.writeText) {
+          try { await navigator.clipboard.writeText(res.text); } catch (_) {}
+        }
         btnCopyIphone.textContent = "✓ Copied to PC!";
       } else {
         btnCopyIphone.textContent = "✓ Copied (iOS)";

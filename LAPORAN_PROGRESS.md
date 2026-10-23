@@ -575,6 +575,36 @@ Pembaruan terkini mencakup:
    - Paste di Windows (`Ctrl + V`).
    - 👉 **Hasil:** Tertempel utuh **`"lamine yamal from iphone 17"`** (bukan angka `"7"`!).
 
+---
+
+## 33. Tahap 25: Multi-Frame Scroll Stitcher, AssistiveTouch White Masking, & Boundary Expansion
+
+> **Status:** Selesai & Terverifikasi 100% — Laporan lengkap di [`LAPORAN_TAHAP_25_MULTI_FRAME_STITCHER_DAN_ASSISTIVETOUCH_MASKING.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_25_MULTI_FRAME_STITCHER_DAN_ASSISTIVETOUCH_MASKING.md).
+
+1. **Akar Masalah Catatan Panjang Terpotong di Notes iPhone Teratasi**:
+   - Saat menyalin catatan berita panjang (multi-paragraf) dari atas ke bawah, viewport Notes bergulir ke bawah sehingga paragraf atas keluar dari layar saat tombol copy ditekan.
+   - Batas atas lama `0.16 * H` memotong baris teratas layar (`"mengambil langkah evakuasi berisiko tinggi"` di $Y = 10.8\% - 15.5\%$).
+   - Tombol mengambang AssistiveTouch menempel di tepi kiri menutupi 2 baris (`"menggunakan tali tambang..."` dan `"perahu penolong..."`).
+2. **Penaikan Batas Konten ke `0.105 * H` (10.5%) & Scan Highlight di `Y >= 0.125 * H`**:
+   - Toolbar Notes selesai di $Y \approx 0.102 \times H$. Pemindaian warna kuning dibatasi pada $Y \ge 0.125 \times H$ agar tombol centang `✓` toolbar tidak terdeteksi sebagai seleksi teks.
+   - Saat seleksi multi-baris terdeteksi, `cropY` ditarik ke atas hingga **`0.105 * H`** sehingga baris pertama tepat di bawah toolbar tidak pernah terpotong. Batas bawah diperluas ke **`0.88 * H`**.
+3. **Masking C# Bulatan Abu-Abu AssistiveTouch Menjadi Putih Bersih**:
+   - Algoritma C# mendeteksi kluster piksel abu-abu netral (`|R-G|<=14 && |G-B|<=14 && |R-B|<=14`, `R` antara 48-195) dengan *contiguous run* $\ge 25\text{px}$ di tepi kiri ($X < 0.20 \times W$) atau tepi kanan ($X > 0.80 \times W$).
+   - Seluruh kotak AssistiveTouch (+8px padding) otomatis dimasking menjadi **Putih Bersih (`255, 255, 255`)** sebelum OCR dijalankan, membebaskan baris teks di sebelahnya dari gangguan grafis.
+4. **Pemulihan Struktur Paragraf Berdasarkan Koordinat Y**:
+   - Baris OCR diurutkan berdasarkan koordinat $Y_{\min}$ dari `OcrWord`.
+   - Jika jarak vertikal antar baris $> (\text{avgH} \times 0.75)$, disisipkan baris kosong (`\r\n\r\n`), menjaga tata letak paragraf caption berita tetap rapi.
+5. **Multi-Frame Selection & Scroll Stitcher**:
+   - Di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js), dibuat ring buffer `_ScrollFrameHistory` (maksimal 5 snapshot) yang mencatat tampilan kanvas saat `pointerdown`, `pointermove` (drag seleksi throttled 500ms), `wheel` (scroll trackpad throttled 600ms), dan `Ctrl+A`.
+   - Di [`handset/web/keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) dan [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js), `frameHistory` diteruskan ke `/api/keyboard/shortcut`.
+   - Di [`handset/server.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/server.py) & [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py):
+     * **Fast-Path**: Jika hasil OCR $\le 2$ baris (atau cocok dengan baris aktif ketikan), copy kalimat pendek/sedang diproses instan tanpa delay.
+     * **Multi-Line Stitching**: Jika $\ge 3$ baris, sistem menyambungkan frame-frame riwayat menggunakan `stitch_multiline_ocr_frames` dengan kecocokan irisan `difflib.SequenceMatcher.ratio() >= 0.72` dan overlap kata $\ge 70\%$. Baris yang lebih panjang dipilih untuk memulihkan bagian yang sempat tertutup AssistiveTouch.
+6. **Hasil Pengujian**:
+   - Seluruh pengujian regresi kalimat pendek (`"valentino rossi"`, `"jokowi pria solo from iphone 17 pro"`) lulus 100%.
+   - Simulasi 2 frame catatan berita KMP Batumandi sukses menggabungkan seluruh 6 bagian dari Paragraf 1 sampai hashtag `#cilegon` secara utuh tanpa ada kalimat yang hilang.
+
+
 
 
 

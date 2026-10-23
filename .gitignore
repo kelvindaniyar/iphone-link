@@ -12,3 +12,4 @@ venv/
 *.pairrecord
 pair_records/
 *.egg-info/
+scratch/

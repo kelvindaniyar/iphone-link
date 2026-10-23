@@ -590,6 +590,97 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     return result
 
 
+def stitch_two_ocr_texts(text1: str, text2: str) -> str:
+    """Stitch two overlapping OCR text frames together by finding the overlap between text1 bottom and text2 top."""
+    import difflib
+
+    t1_clean = (text1 or "").strip()
+    t2_clean = (text2 or "").strip()
+    if not t1_clean:
+        return t2_clean
+    if not t2_clean:
+        return t1_clean
+    if t1_clean == t2_clean:
+        return t2_clean
+
+    lines1 = [l.strip() for l in t1_clean.splitlines()]
+    lines2 = [l.strip() for l in t2_clean.splitlines()]
+
+    # Find best overlap between bottom of lines1 and top of lines2
+    best_match = None
+    best_score = 0.0
+
+    # Search from bottom of lines1 upwards
+    for i in range(len(lines1) - 1, -1, -1):
+        l1 = lines1[i]
+        if not l1 or len(l1) < 4:
+            continue
+        # Compare against top 20 lines of lines2
+        for j in range(0, min(len(lines2), 20)):
+            l2 = lines2[j]
+            if not l2 or len(l2) < 4:
+                continue
+
+            l1_low = l1.lower()
+            l2_low = l2.lower()
+
+            sm = difflib.SequenceMatcher(None, l1_low, l2_low).ratio()
+            # Substring match
+            if len(l1_low) >= 8 and (l1_low in l2_low or l2_low in l1_low):
+                sm = max(sm, 0.85)
+
+            # Word set overlap
+            w1 = set(l1_low.split())
+            w2 = set(l2_low.split())
+            if len(w1) >= 3 and len(w2) >= 3:
+                w_overlap = len(w1 & w2) / float(max(len(w1), len(w2)))
+                if w_overlap >= 0.70:
+                    sm = max(sm, w_overlap)
+
+            if sm >= 0.72:
+                # Subsequent line confirmation bonus
+                bonus = 0.0
+                if i + 1 < len(lines1) and j + 1 < len(lines2):
+                    nxt1 = lines1[i + 1].strip().lower()
+                    nxt2 = lines2[j + 1].strip().lower()
+                    if nxt1 and nxt2 and len(nxt1) >= 4 and len(nxt2) >= 4:
+                        nxt_ratio = difflib.SequenceMatcher(None, nxt1, nxt2).ratio()
+                        if nxt_ratio >= 0.65 or (nxt1 in nxt2 or nxt2 in nxt1):
+                            bonus = 0.25
+
+                total_score = sm + bonus
+                if total_score > best_score:
+                    best_score = total_score
+                    best_match = (i, j, l1, l2)
+
+        if best_match and best_score >= 0.90:
+            break
+
+    if not best_match:
+        # If no overlap found, return the latest frame text (text2)
+        return t2_clean
+
+    i, j, l1, l2 = best_match
+    # For overlapping line, pick the longer / more complete version (e.g. recovering AssistiveTouch cut off)
+    longer_line = l1 if len(l1) >= len(l2) else l2
+    stitched_lines = lines1[:i] + [longer_line] + lines2[j + 1:]
+    return "\r\n".join(stitched_lines)
+
+
+def stitch_multiline_ocr_frames(texts: list[str]) -> str:
+    """Stitch multiple chronologically ordered OCR frames into a seamless single multi-paragraph text."""
+    valid_texts = [t.strip() for t in texts if t and t.strip()]
+    if not valid_texts:
+        return ""
+    if len(valid_texts) == 1:
+        return valid_texts[0]
+
+    stitched = valid_texts[0]
+    for nxt in valid_texts[1:]:
+        stitched = stitch_two_ocr_texts(stitched, nxt)
+    return stitched
+
+
 def get_debug_typed_state() -> tuple[str, list[str]]:
     """Return active line and buffer tail for debug JSON output."""
     with _TYPED_BUFFER_LOCK:

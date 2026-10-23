@@ -279,6 +279,9 @@ document.addEventListener("pointerdown", (e) => {
     return;
   }
   if (e.button !== 0) return;
+  if (typeof recordSelectionSnapshot === "function") {
+    recordSelectionSnapshot(true);
+  }
   canvas.focus({ preventScroll: true });
   try {
     document.body.setPointerCapture(e.pointerId);
@@ -302,6 +305,9 @@ window.addEventListener("auxclick", (e) => {
 function onMove(e) {
   if (e.pointerId !== activePointer) return;
   e.preventDefault();
+  if (typeof recordSelectionSnapshot === "function") {
+    recordSelectionSnapshot(false);
+  }
   lastCoords = touchCoords(e);
   if (edgeSwipe) {
     if (edgeSwipe.start.y - lastCoords.y > HOME_SWIPE_MIN) edgeSwipe.armed = true;
@@ -416,6 +422,9 @@ canvas.addEventListener(
   "wheel",
   (e) => {
     e.preventDefault();
+    if (typeof recordSelectionSnapshot === "function") {
+      recordSelectionSnapshot(false);
+    }
 
     const absX = Math.abs(e.deltaX);
     const absY = Math.abs(e.deltaY);
@@ -454,6 +463,12 @@ window.addEventListener(
       e.preventDefault();
       e.stopPropagation();
       triggerBackGesture();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.code === "KeyA")) {
+      if (typeof recordSelectionSnapshot === "function") {
+        recordSelectionSnapshot(true);
+      }
     }
   },
   true,
@@ -784,6 +799,44 @@ window.captureFullResFrameDataUrl = function () {
     console.warn("captureFullResFrameDataUrl error:", err);
   }
   return null;
+};
+
+// --- Multi-Frame Selection & Scroll Ring Buffer ---
+window._ScrollFrameHistory = [];
+let _lastSnapshotTs = 0;
+
+function recordSelectionSnapshot(force = false) {
+  try {
+    const now = Date.now();
+    if (!force && (now - _lastSnapshotTs) < 450) {
+      return;
+    }
+    if (typeof window.captureFullResFrameDataUrl !== "function") return;
+    const dataUrl = window.captureFullResFrameDataUrl();
+    if (!dataUrl) return;
+    _lastSnapshotTs = now;
+    if (!window._ScrollFrameHistory) window._ScrollFrameHistory = [];
+    window._ScrollFrameHistory.push({ ts: now, dataUrl });
+    if (window._ScrollFrameHistory.length > 5) {
+      window._ScrollFrameHistory.shift();
+    }
+  } catch (err) {
+    console.warn("recordSelectionSnapshot error:", err);
+  }
+}
+window.recordSelectionSnapshot = recordSelectionSnapshot;
+
+window.getRecentSelectionFrames = function () {
+  try {
+    const now = Date.now();
+    if (!window._ScrollFrameHistory) window._ScrollFrameHistory = [];
+    // Last 25 seconds
+    const valid = window._ScrollFrameHistory.filter(f => (now - f.ts) <= 25000);
+    return valid.map(f => f.dataUrl);
+  } catch (err) {
+    console.warn("getRecentSelectionFrames error:", err);
+    return [];
+  }
 };
 
 function drawPending() {

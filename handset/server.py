@@ -22,6 +22,7 @@ from handset.screen import (
     send_button_direct,
     send_keys_direct,
     start_screen,
+    stitch_multiline_ocr_frames,
     stop_screen,
     toggle_onscreen_keyboard,
     trigger_ios_shortcut,
@@ -155,7 +156,7 @@ def set_windows_clipboard_text(text: str) -> bool:
         return False
 
 
-def extract_text_from_frame(frame_data_url: str) -> str | None:
+def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str | None:
     """Extract highlighted/selected text from iPhone screen frame using Windows 11 WinRT OCR."""
     if not frame_data_url or "," not in frame_data_url:
         return None
@@ -168,13 +169,14 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
 
         project_root = Path(__file__).resolve().parent.parent
 
-        # 1. Save debug_ocr_raw.png to project root
-        raw_debug_path = project_root / "debug_ocr_raw.png"
-        try:
-            with open(raw_debug_path, "wb") as f_raw:
-                f_raw.write(raw_bytes)
-        except Exception:
-            pass
+        if save_debug:
+            # 1. Save debug_ocr_raw.png to project root
+            raw_debug_path = project_root / "debug_ocr_raw.png"
+            try:
+                with open(raw_debug_path, "wb") as f_raw:
+                    f_raw.write(raw_bytes)
+            except Exception:
+                pass
 
         suffix = ".png" if "image/png" in header else ".jpg"
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
@@ -200,19 +202,20 @@ def extract_text_from_frame(frame_data_url: str) -> str | None:
                 # Fallback to active typed line if recently typed
                 corrected_text = auto_correct_ocr_text("")
 
-            # 2. Save debug_ocr_result.json to project root
-            try:
-                active_line, buffer_tail = get_debug_typed_state()
-                result_info = {
-                    "raw_ocr_text": raw_text,
-                    "corrected_text": corrected_text,
-                    "typed_active_line": active_line,
-                    "typed_buffer_tail": buffer_tail,
-                }
-                with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
-                    json.dump(result_info, f_res, ensure_ascii=False, indent=2)
-            except Exception as err:
-                print(f"debug_ocr_result.json save error: {err}", flush=True)
+            if save_debug:
+                # 2. Save debug_ocr_result.json to project root
+                try:
+                    active_line, buffer_tail = get_debug_typed_state()
+                    result_info = {
+                        "raw_ocr_text": raw_text,
+                        "corrected_text": corrected_text,
+                        "typed_active_line": active_line,
+                        "typed_buffer_tail": buffer_tail,
+                    }
+                    with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                        json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+                except Exception as err:
+                    print(f"debug_ocr_result.json save error: {err}", flush=True)
 
             return corrected_text if corrected_text else None
         finally:
@@ -406,6 +409,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/keyboard/shortcut":
             action = str(payload.get("action", ""))
             frame_data_url = payload.get("frameDataUrl")
+            frame_history = payload.get("frameHistory") or []
             wait_result = bool(payload.get("waitResult", False))
 
             # Trigger native iOS hotkey
@@ -418,26 +422,52 @@ class Handler(BaseHTTPRequestHandler):
 
                 extracted_text = None
 
-                def _do_extract(frame_url: str):
+                def _do_extract(frame_url: str, hist_urls: list[str]):
                     global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
                     try:
-                        text = extract_text_from_frame(frame_url)
-                        if text:
-                            if set_windows_clipboard_text(text):
+                        latest_text = extract_text_from_frame(frame_url, save_debug=True)
+                        final_text = latest_text
+
+                        # Check fast-path vs multi-line note stitching
+                        active_line, _ = get_debug_typed_state()
+                        active_line = (active_line or "").strip()
+                        non_empty_lines = [l for l in (latest_text or "").splitlines() if l.strip()]
+
+                        is_short_or_active = (len(non_empty_lines) <= 2) or (
+                            active_line and len(active_line) >= 3 and active_line.lower() in (latest_text or "").lower()
+                        )
+
+                        if not is_short_or_active and len(non_empty_lines) >= 3 and hist_urls:
+                            history_texts = []
+                            recent_hist = [h for h in hist_urls if h and h != frame_url][-3:]
+                            for h_url in recent_hist:
+                                h_text = extract_text_from_frame(h_url, save_debug=False)
+                                if h_text and h_text.strip():
+                                    history_texts.append(h_text)
+
+                            if history_texts:
+                                all_texts = history_texts + [latest_text]
+                                stitched = stitch_multiline_ocr_frames(all_texts)
+                                if stitched and len(stitched) >= len(latest_text or ""):
+                                    final_text = stitched
+                                    print(f"Stitched {len(all_texts)} OCR frames into {len(final_text)} chars ({len(final_text.splitlines())} lines)", flush=True)
+
+                        if final_text:
+                            if set_windows_clipboard_text(final_text):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
-                                print(f"Copied iPhone selection to Windows PC clipboard ({len(text)} chars)", flush=True)
-                        return text
+                                print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars)", flush=True)
+                        return final_text
                     except Exception as err:
                         print(f"Async extract error: {err}", flush=True)
                         return None
 
                 if frame_data_url:
                     if wait_result:
-                        extracted_text = _do_extract(frame_data_url)
+                        extracted_text = _do_extract(frame_data_url, frame_history)
                     else:
                         import threading
-                        threading.Thread(target=_do_extract, args=(frame_data_url,), daemon=True).start()
+                        threading.Thread(target=_do_extract, args=(frame_data_url, frame_history), daemon=True).start()
 
                 self._json({
                     "ok": ok,

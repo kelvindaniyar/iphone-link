@@ -19,11 +19,6 @@ public class DualOcrPreprocessor {
     public static void PrepareCandidates(Bitmap src, out Bitmap cand1Natural, out Bitmap cand2RedFiltered, out bool foundHighlight, out int cropY, out int cropH) {
         int W = src.Width;
         int H = src.Height;
-        
-        int topY = (int)(H * 0.16);
-        int bottomY = (int)(H * 0.82);
-        int leftX = (int)(W * 0.04);
-        int rightX = (int)(W * 0.96);
 
         BitmapData srcData = src.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         int stride = srcData.Stride;
@@ -31,11 +26,114 @@ public class DualOcrPreprocessor {
         Marshal.Copy(srcData.Scan0, raw, 0, raw.Length);
         src.UnlockBits(srcData);
 
+        // 1. Detect and Mask AssistiveTouch floating button in Left Zone (X < 0.20 * W) or Right Zone (X > 0.80 * W)
+        // Neutral gray: |R - G| <= 14 && |G - B| <= 14 && |R - B| <= 14 && R >= 48 && R <= 195
+        for (int side = 0; side < 2; side++) {
+            int zoneXStart = (side == 0) ? 0 : (int)(W * 0.80);
+            int zoneXEnd = (side == 0) ? (int)(W * 0.20) : W;
+
+            int clusterMinY = -1;
+            int clusterMaxY = -1;
+            int clusterMinX = 999999;
+            int clusterMaxX = 0;
+            int clusterRowCount = 0;
+
+            for (int y = (int)(H * 0.10); y <= (int)(H * 0.85); y++) {
+                int rowOffset = y * stride;
+                int curRun = 0;
+                int maxRun = 0;
+                int runStartX = 0;
+                int bestStartX = 0;
+
+                for (int x = zoneXStart; x < zoneXEnd; x++) {
+                    int idx = rowOffset + (x * 4);
+                    byte b = raw[idx];
+                    byte g = raw[idx + 1];
+                    byte r = raw[idx + 2];
+
+                    bool isNeutralGray = (Math.Abs(r - g) <= 14) && (Math.Abs(g - b) <= 14) && (Math.Abs(r - b) <= 14) && (r >= 48 && r <= 195);
+                    if (isNeutralGray) {
+                        if (curRun == 0) runStartX = x;
+                        curRun++;
+                        if (curRun > maxRun) {
+                            maxRun = curRun;
+                            bestStartX = runStartX;
+                        }
+                    } else {
+                        curRun = 0;
+                    }
+                }
+
+                if (maxRun >= 25) {
+                    if (clusterMinY == -1 || y <= (clusterMaxY + 2)) {
+                        if (clusterMinY == -1) clusterMinY = y;
+                        clusterMaxY = y;
+                        clusterRowCount++;
+                        if (bestStartX < clusterMinX) clusterMinX = bestStartX;
+                        if ((bestStartX + maxRun) > clusterMaxX) clusterMaxX = bestStartX + maxRun;
+                    } else {
+                        int cW = clusterMaxX - clusterMinX;
+                        int cH = clusterMaxY - clusterMinY;
+                        if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
+                            int pad = 8;
+                            int mX0 = Math.Max(0, clusterMinX - pad);
+                            int mX1 = Math.Min(W - 1, clusterMaxX + pad);
+                            int mY0 = Math.Max(0, clusterMinY - pad);
+                            int mY1 = Math.Min(H - 1, clusterMaxY + pad);
+                            for (int my = mY0; my <= mY1; my++) {
+                                int mOffset = my * stride;
+                                for (int mx = mX0; mx <= mX1; mx++) {
+                                    int mIdx = mOffset + (mx * 4);
+                                    raw[mIdx] = 255;
+                                    raw[mIdx + 1] = 255;
+                                    raw[mIdx + 2] = 255;
+                                    raw[mIdx + 3] = 255;
+                                }
+                            }
+                        }
+                        clusterMinY = y;
+                        clusterMaxY = y;
+                        clusterRowCount = 1;
+                        clusterMinX = bestStartX;
+                        clusterMaxX = bestStartX + maxRun;
+                    }
+                }
+            }
+
+            if (clusterMinY != -1) {
+                int cW = clusterMaxX - clusterMinX;
+                int cH = clusterMaxY - clusterMinY;
+                if (cW >= 30 && cH >= 35 && clusterRowCount >= 25) {
+                    int pad = 8;
+                    int mX0 = Math.Max(0, clusterMinX - pad);
+                    int mX1 = Math.Min(W - 1, clusterMaxX + pad);
+                    int mY0 = Math.Max(0, clusterMinY - pad);
+                    int mY1 = Math.Min(H - 1, clusterMaxY + pad);
+                    for (int my = mY0; my <= mY1; my++) {
+                        int mOffset = my * stride;
+                        for (int mx = mX0; mx <= mX1; mx++) {
+                            int mIdx = mOffset + (mx * 4);
+                            raw[mIdx] = 255;
+                            raw[mIdx + 1] = 255;
+                            raw[mIdx + 2] = 255;
+                            raw[mIdx + 3] = 255;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Scan highlights starting at Y >= 0.125 * H to avoid top toolbar yellow icons
+        int scanTopY = (int)(H * 0.125);
+        int scanBottomY = (int)(H * 0.88);
+        int leftX = (int)(W * 0.04);
+        int rightX = (int)(W * 0.96);
+
         int minY = 9999999;
         int maxY = 0;
         foundHighlight = false;
 
-        for (int y = topY; y <= bottomY; y += 2) {
+        for (int y = scanTopY; y <= scanBottomY; y += 2) {
             int rowOffset = y * stride;
             for (int x = leftX; x <= rightX; x += 3) {
                 int idx = rowOffset + (x * 4);
@@ -63,13 +161,16 @@ public class DualOcrPreprocessor {
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
         if (foundHighlight) {
-            cropY = Math.Max((int)(H * 0.15), minY - (int)(H * 0.035));
-            int rawH = (maxY - cropY) + (int)(H * 0.035);
-            cropH = Math.Min((int)(H * 0.84) - cropY, rawH);
-            if (cropH < 20) cropH = 20;
+            if (minY < (int)(H * 0.35) || ((maxY - minY) > (int)(H * 0.10))) {
+                cropY = (int)(H * 0.105);
+            } else {
+                cropY = Math.Max((int)(H * 0.105), minY - (int)(H * 0.035));
+            }
+            int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.04));
+            cropH = Math.Max(20, bottomLimit - cropY);
         } else {
-            cropY = (int)(H * 0.16);
-            cropH = (int)(H * 0.66);
+            cropY = (int)(H * 0.105);
+            cropH = (int)(H * 0.775);
         }
 
         // Candidate 1: Natural crop without aggressive pixel removal
@@ -193,7 +294,7 @@ public class DualOcrPreprocessor {
         $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
         $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
 
-        $lines = @()
+        $parsedLines = @()
         foreach ($l in $ocrResult.Lines) {
             $t = $l.Text.Trim()
             if (!$t) { continue }
@@ -218,7 +319,50 @@ public class DualOcrPreprocessor {
             # Remove stray embedded callout words if any
             $t = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All)\b', ''
             $t = $t.Trim()
-            if ($t) { $lines += $t }
+            if (!$t) { continue }
+
+            $minY = 9999999
+            $maxY = 0
+            foreach ($w in $l.Words) {
+                $r = $w.BoundingRect
+                if ($r.Y -lt $minY) { $minY = $r.Y }
+                $b = $r.Y + $r.Height
+                if ($b -gt $maxY) { $maxY = $b }
+            }
+            $lineH = [Math]::Max(10.0, ($maxY - $minY))
+
+            $parsedLines += [PSCustomObject]@{
+                Text = $t
+                MinY = $minY
+                MaxY = $maxY
+                Height = $lineH
+            }
+        }
+
+        if ($parsedLines.Count -eq 0) {
+            return @()
+        }
+
+        # Sort lines by MinY
+        $sortedLines = $parsedLines | Sort-Object MinY
+
+        $sumH = 0
+        foreach ($item in $sortedLines) {
+            $sumH += $item.Height
+        }
+        $avgH = $sumH / $sortedLines.Count
+
+        $lines = @()
+        for ($i = 0; $i -lt $sortedLines.Count; $i++) {
+            $curr = $sortedLines[$i]
+            if ($i -gt 0) {
+                $prev = $sortedLines[$i - 1]
+                $gap = $curr.MinY - $prev.MaxY
+                if ($gap -gt ($avgH * 0.75)) {
+                    $lines += ""
+                }
+            }
+            $lines += $curr.Text
         }
         return $lines
     }
