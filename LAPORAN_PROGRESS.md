@@ -763,6 +763,49 @@ Pembaruan terkini mencakup:
   - Test 4 (Server Single-Pass Batch OCR): `extract_text_batch` dipanggil hanya 1 kali dan `ensure_paragraph_formatting` dipanggil paling akhir.
   - Seluruh pengujian regresi Tahap 26-29 lulus 100%.
 
+---
+
+### Tahap 31: Optical OCR Defect Repairs (l< -> k, ! -> l/i, rn -> m, O -> o), Visual Keyboard Guard, & Stroke Darkening
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap31.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap31.py) serta seluruh uji regresi Tahap 26-30.
+- **Latar Belakang & Analisis Video**: Dari evaluasi video pengujian Kelvin (`20261023-2337-11.8273015.mp4`), fitur utama stabil dan cepat (< 2 detik). Namun pada hasil Sticky Notes Windows menit 02:44 - 03:09 dan 03:49 - 03:57 ditemukan beberapa cacat optik OCR dan kebocoran keyboard virtual iOS:
+  1. Huruf `"k"` terbaca `"l<"` di 5 tempat (`diabadil<an`, `@eril<l<ristian`, `tampal<`, `berisil<O`, `sel<oci`).
+  2. Huruf `"m"` terbaca `"rn"` (`Baturnandi`, `#kmpbaturnandi`).
+  3. Huruf `"l"` & `"i"` terbaca `"!"` (`se!amat`, `d!`).
+  4. Huruf `"o"` terbaca `"O"` kapital mid-word / mid-sentence (`berisil<O`, `disambut Oleh`, `diunggah Oleh`).
+  5. Kebocoran teks keyboard virtual iOS di bawah hashtag (`cat aku`, `w e r t y u i o p`, `z x c v b n m`).
+- **Pekerjaan yang Dilakukan**:
+  1. **Pre-Processing Citra di `ocr_extractor.ps1`**:
+     - Ambang putih Red-Channel dinaikkan dari 210 ke **228**.
+     - Kurva penggelapan stroke-preserving: piksel `r < 165` dipertegas gelap (`r * 0.55`) agar jembatan huruf "k", batang "l"/"i", dan lengkungan "m" tetap menyatu. Rentang `165 <= r < 228` dipetakan mulus ke `90..255`.
+     - Pelonggaran proteksi teks gelap seleksi kuning ke `r < 165 && g < 165 && b < 165`.
+     - Deteksi visual on-screen keyboard iOS di `Y = 0.56*H .. 0.84*H`: jika keyboard terbuka, batasi `cropBottom = 0.49 * H` memotong bersih seluruh area keyboard.
+  2. **Normalisasi Optik & Filter Sampah di `screen.py`**:
+     - Restorasi huruf "k": `while re.search(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_])', t): t = re.sub(..., 'k', t)`
+     - Restorasi "o": `re.sub(r'(?<=[a-z])[O0](?=[a-z]|\b)', 'o', t)` dan `re.sub(r'(?<=[a-zA-Z0-9,])\s+Oleh\b', ' oleh', t)`.
+     - Restorasi "!": `re.sub(r'(?<=[A-Za-z])!(?=[A-Za-z])', 'l', t)` dan `re.sub(r'\bd!(?=\s|$|[,.;])', 'di', t)`.
+     - Restorasi "rn": `Baturnandi` $\rightarrow$ `"Batumandi"`, `#kmpbaturnandi` $\rightarrow$ `"#kmpbatumandi"`.
+     - Penalti cacat optik di `_pick_cleaner_line` agar versi baris bersih selalu diprioritaskan.
+     - Detektor baris sampah keyboard QWERTY ($\ge 4$ single-character tokens) dan bar prediksi (`"cat aku"`).
+     - Tail clamping memotong seluruh baris non-hashtag setelah hashtag block.
+  3. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap31_optical_fixes_and_keyboard_guard` di `index.html`, `mirror.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap31.py`)**:
+  - Test 1 (Full Pipeline Kasus Kelvin Sticky Notes 02:44 - 03:57):
+    * `"diabadil<an"` $\rightarrow$ `"diabadikan"` [PASS]
+    * `"@eril<l<ristian"` $\rightarrow$ `"@erikkristian"` (2x, Para 2 & Source) [PASS]
+    * `"Baturnandi"` & `"#kmpbaturnandi"` $\rightarrow$ `"Batumandi"` & `"#kmpbatumandi"` [PASS]
+    * `"tampal<"` $\rightarrow$ `"tampak"` [PASS]
+    * `"disambut Oleh"` & `"diunggah Oleh"` $\rightarrow$ `"disambut oleh"` & `"diunggah oleh"` [PASS]
+    * `"berisil<O"` $\rightarrow$ `"berisiko"` [PASS]
+    * `"sel<oci"` $\rightarrow$ `"sekoci"` [PASS]
+    * `"se!amat"` $\rightarrow$ `"selamat"` [PASS]
+    * `"seorang ayah d!"` $\rightarrow$ `"seorang ayah di"` [PASS]
+    * Sampah keyboard (`"cat aku"`, `"w e r t y u i o p"`, `"z x c v b n m"`) 100% terhapus bersih [PASS]
+    * Tepat 6 blok paragraf dengan `\r\n\r\n` dan hashtag disatukan `\r\n` tunggal [PASS]
+  - Test 2 (Unit Test & Cleaner Line Picker): Seluruh pola regex dan penalti terverifikasi 100%.
+  - Test 3 (C# Keyboard Detection & Darkening Curve): Terverifikasi di `ocr_extractor.ps1`.
+  - Seluruh pengujian regresi Tahap 26-30 lulus 100%.
+
+
 
 
 

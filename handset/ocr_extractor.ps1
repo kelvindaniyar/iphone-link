@@ -247,6 +247,32 @@ public class DualOcrPreprocessor {
             maxY = bestClusterEnd;
         }
 
+        // Detect iOS On-Screen Virtual Keyboard in lower screen (Y = 0.55 * H to 0.88 * H)
+        bool hasKeyboard = false;
+        int kbCheckYStart = (int)(H * 0.56);
+        int kbCheckYEnd = (int)(H * 0.84);
+        int kbCheckXStart = (int)(W * 0.10);
+        int kbCheckXEnd = (int)(W * 0.90);
+        int kbGrayCount = 0;
+        int totalSampled = 0;
+
+        for (int y = kbCheckYStart; y <= kbCheckYEnd; y += 4) {
+            int rOff = y * stride;
+            for (int x = kbCheckXStart; x <= kbCheckXEnd; x += 4) {
+                int idx = rOff + (x * 4);
+                byte b = raw[idx];
+                byte g = raw[idx + 1];
+                byte r = raw[idx + 2];
+                totalSampled++;
+                if (r >= 180 && r <= 228 && Math.Abs(r - g) <= 10 && Math.Abs(g - b) <= 10 && Math.Abs(r - b) <= 10) {
+                    kbGrayCount++;
+                }
+            }
+        }
+        if (totalSampled > 0 && ((float)kbGrayCount / totalSampled) >= 0.12f) {
+            hasKeyboard = true;
+        }
+
         // FULL-WIDTH HORIZONTAL STRIP: 0.03*W to 0.97*W
         cropX = Math.Max(0, (int)(W * 0.03));
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
@@ -255,12 +281,16 @@ public class DualOcrPreprocessor {
             // Strictly follow actual highlight vertical bounds!
             cropY = Math.Max((int)(H * 0.115), minY - (int)(H * 0.015));
             int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.030));
+            if (hasKeyboard && bottomLimit > (int)(H * 0.49)) {
+                bottomLimit = (int)(H * 0.49);
+            }
             cropH = Math.Max(20, bottomLimit - cropY);
         } else {
             // Full-Viewport Content Crop (for history frames or unhighlighted notes)
             // Exclude top banner / date (< 0.145 * H) and bottom floating toolbar (> 0.768 * H)
+            // If virtual keyboard is open in lower screen, restrict cropBottom to 0.49 * H
             cropY = (int)(H * 0.145);
-            int cropBottom = (int)(H * 0.768);
+            int cropBottom = hasKeyboard ? (int)(H * 0.49) : (int)(H * 0.768);
             cropH = Math.Max(20, cropBottom - cropY);
         }
 
@@ -287,11 +317,11 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Selection handle filter (Tahap 30):
+                // Selection handle filter (Tahap 31):
                 // Yellow-orange selection handle lollipop: R > 180 && G > 120 && (R - B) > 40
-                // Dark text edge guard: R < 115 && G < 115 && B < 115
+                // Dark text edge guard loosened: R < 165 && G < 165 && B < 165
                 bool isHandle = (r > 180) && (g > 120) && ((r - b) > 40);
-                bool isDarkText = (r < 115) && (g < 115) && (b < 115);
+                bool isDarkText = (r < 165) && (g < 165) && (b < 165);
 
                 // Natural: direct copy, but neutralize handle to white without erasing dark text
                 if (isHandle && !isDarkText) {
@@ -306,16 +336,18 @@ public class DualOcrPreprocessor {
                     natPixels[nIdx + 3] = 255;
                 }
 
-                // Red-filtered:
+                // Red-filtered (Tahap 31 stroke-preserving darkening curve):
                 bool isColorNoise = (r > 175) && (((r - b) > 35) || ((r - g) > 30));
                 byte v;
-                if ((isHandle && !isDarkText) || r >= 210 || isColorNoise) {
+                if ((isHandle && !isDarkText) || r >= 228 || isColorNoise) {
                     v = 255;
+                } else if (r < 165) {
+                    v = (byte)(r * 0.55);
                 } else {
-                    int scaled = (int)((r - 25) * 255.0 / (210 - 25));
-                    if (scaled < 0) scaled = 0;
-                    if (scaled > 255) scaled = 255;
-                    v = (byte)scaled;
+                    int mapped = 90 + (int)((r - 165) * (255 - 90) / (228 - 165));
+                    if (mapped < 0) mapped = 0;
+                    if (mapped > 255) mapped = 255;
+                    v = (byte)mapped;
                 }
                 redPixels[rIdx] = v;
                 redPixels[rIdx + 1] = v;

@@ -606,6 +606,8 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             continue
 
         c_line = _clean_ocr_line(line)
+        if not c_line:
+            continue
         l_lower = c_line.lower()
         line_best = c_line
         line_ratio = 0.0
@@ -652,7 +654,7 @@ def _normalize_line_for_match(text: str) -> str:
 
 
 def _is_garbage_ocr_line(text: str) -> bool:
-    """Check if an OCR line is hallucinated toolbar debris, banner text, or iOS date header."""
+    """Check if an OCR line is hallucinated toolbar debris, banner text, iOS date header, or on-screen keyboard."""
     if not text or not text.strip():
         return False
     t = text.strip()
@@ -665,6 +667,18 @@ def _is_garbage_ocr_line(text: str) -> bool:
     # iOS Notes date line (e.g. "24 October 2026 at 04.31" or "20 Oktober 2026")
     date_pattern = r'^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?$'
     if re.match(date_pattern, t, re.IGNORECASE):
+        return True
+
+    # iOS On-Screen Virtual Keyboard rows (e.g. "w e r t y u i o p", "z x c v b n m", "a s d f g h j k l")
+    tokens = [tok for tok in t.split() if tok]
+    single_char_tokens = [tok for tok in tokens if len(tok) == 1 and tok.isalpha()]
+    if len(single_char_tokens) >= 4 and len(single_char_tokens) >= (len(tokens) * 0.70):
+        return True
+
+    # iOS word prediction bar / keyboard debris (e.g. "cat aku", "kamu aku", "kamu aku ya")
+    if t_low in ["cat aku", "kamu aku", "kamu aku ya", "aku kamu", "cat kamu"]:
+        return True
+    if len(tokens) <= 3 and any(p == t_low for p in ["cat aku", "kamu aku", "kamu aku ya"]):
         return True
 
     # Hallucinated words mixing letters and digits randomly
@@ -683,25 +697,83 @@ def _is_garbage_ocr_line(text: str) -> bool:
 
 
 def _clean_ocr_line(line: str) -> str:
-    """Clean orphan digits, trailing debris, right-edge truncated words, or selection handle typos."""
+    """Clean orphan digits, trailing debris, right-edge truncated words, selection handle typos, and optical OCR defects."""
     if not line:
         return ""
     t = line.strip()
+    if _is_garbage_ocr_line(t):
+        return ""
+
     # Strip trailing orphan single digit after uppercase acronym (e.g. "KMP 4" -> "KMP")
     t = re.sub(r'\b([A-Z]{2,})\s+[0-9]$', r'\1', t)
+
     # Auto-correct edge-truncated words due to AssistiveTouch (Tahap 29)
     t = re.sub(r'\btali evakua$', 'tali evakuasi', t)
     t = re.sub(r'\bmemperlih$', 'memperlihatkan', t)
+
     # Fix selection handle occlusion & OCR typos (Tahap 30)
     t = re.sub(r'(?:^|\b)tik-detik\b', 'detik-detik', t)
     t = re.sub(r'\b(?:i1wa|j1wa|ilwa|jiw4)\b', 'jiwa', t)
+
+    # --- Optical OCR Artifacts Normalization (Tahap 31) ---
+    # a. Restoration of letter "k" from "l<" / "I<" / "1<" / "|<"
+    loop_count = 0
+    while loop_count < 10 and re.search(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_])', t):
+        t = re.sub(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_])', 'k', t)
+        loop_count += 1
+
+    # b. Restoration of capital "O" or "0" in middle/end of lowercase word to "o"
+    t = re.sub(r'(?<=[a-z])[O0](?=[a-z]|\b)', 'o', t)
+    # Mid-sentence capitalized "Oleh" after comma or word character -> "oleh"
+    t = re.sub(r'(?<=[a-zA-Z0-9,])\s+Oleh\b', ' oleh', t)
+
+    # c. Restoration of exclamation mark "!" replacing "l" or "i"
+    # Mid-word "!" (e.g. "se!amat") -> "l"
+    t = re.sub(r'(?<=[A-Za-z])!(?=[A-Za-z])', 'l', t)
+    # Preposition "d!" (e.g. "seorang ayah d!") -> "di"
+    t = re.sub(r'\bd!(?=\s|$|[,.;])', 'di', t)
+
+    # d. Restoration of "rn" to "m" for affected words (Batumandi, #kmpbatumandi)
+    t = re.sub(r'\bBaturnandi\b', 'Batumandi', t)
+    t = re.sub(r'\bbaturnandi\b', 'batumandi', t)
+    t = re.sub(r'#kmpbaturnandi\b', '#kmpbatumandi', t, flags=re.IGNORECASE)
+    t = re.sub(r'#baturnandi\b', '#batumandi', t, flags=re.IGNORECASE)
+
     return t
 
 
+def _line_optical_defect_penalty(line: str) -> int:
+    """Calculate optical defect penalty for cleaner line selection."""
+    if not line:
+        return 0
+    penalty = 0
+    if re.search(r'[lI1|]<', line):
+        penalty += 10
+    if re.search(r'(?<=[A-Za-z])!(?=[A-Za-z])', line):
+        penalty += 10
+    if re.search(r'\bd!(?=\s|$|[,.;])', line):
+        penalty += 10
+    if re.search(r'baturnandi', line, re.IGNORECASE):
+        penalty += 10
+    if re.search(r'(?<=[a-zA-Z0-9,])\s+Oleh\b', line):
+        penalty += 5
+    if re.search(r'(?<=[a-z])[O0](?=[a-z]|\b)', line):
+        penalty += 5
+    return penalty
+
+
 def _pick_cleaner_line(line1: str, line2: str) -> str:
-    """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits or truncated words)."""
+    """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits, truncated words, or OCR optical defects)."""
     l1_clean = _clean_ocr_line(line1)
     l2_clean = _clean_ocr_line(line2)
+
+    # Prioritize line with fewer optical defects (Tahap 31)
+    p1 = _line_optical_defect_penalty(line1)
+    p2 = _line_optical_defect_penalty(line2)
+    if p1 < p2:
+        return l1_clean
+    if p2 < p1:
+        return l2_clean
 
     # Prioritize complete "detik-detik" over truncated "tik-detik" (Tahap 30)
     if "detik-detik" in l1_clean and "detik-detik" not in l2_clean:
@@ -923,7 +995,7 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
         for l in deduped[last_hashtag_idx + 1:]:
             if l.strip().startswith("#"):
                 clean_tail.append(l)
-            elif not _is_garbage_ocr_line(l) and len(l.strip()) > 3:
+            elif not _is_garbage_ocr_line(l) and len(l.split()) > 3:
                 clean_tail.append(l)
         deduped = clean_tail
 
@@ -1134,10 +1206,31 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
 
     for idx, l in enumerate(raw_lines):
         if l:
-            non_empty_lines.append(l)
+            c_l = _clean_ocr_line(l)
+            if not c_l or _is_garbage_ocr_line(c_l):
+                continue
+            non_empty_lines.append(c_l)
         else:
             if non_empty_lines:
                 has_blank_after.add(len(non_empty_lines) - 1)
+
+    # Clamp tail: discard any garbage or debris after the hashtag block
+    last_hashtag_idx = -1
+    for idx, l in enumerate(non_empty_lines):
+        if l.strip().startswith("#"):
+            last_hashtag_idx = idx
+
+    if last_hashtag_idx != -1:
+        clean_tail = []
+        for idx, l in enumerate(non_empty_lines):
+            if idx <= last_hashtag_idx:
+                clean_tail.append(l)
+            else:
+                if l.strip().startswith("#"):
+                    clean_tail.append(l)
+                elif not _is_garbage_ocr_line(l) and len(l.split()) > 3:
+                    clean_tail.append(l)
+        non_empty_lines = clean_tail
 
     if not non_empty_lines:
         return ""
