@@ -24,12 +24,16 @@ function setStatus(text, tone) {
 }
 
 function fitCanvas() {
-  const winW = document.documentElement.clientWidth || window.innerWidth;
-  const winH = document.documentElement.clientHeight || window.innerHeight;
-  if (!winW || !winH) return;
-  const naturalW = canvas.width || 1170;
-  const naturalH = canvas.height || 2532;
-  const base = Math.min(winW / naturalW, winH / naturalH);
+  if (!canvas.width || !canvas.height) return;
+  const parent = canvas.parentElement || document.body;
+  if (!parent) return;
+  const rect = parent.getBoundingClientRect();
+  const naturalW = canvas.width;
+  const naturalH = canvas.height;
+  const w = rect.width || window.innerWidth;
+  const h = rect.height || window.innerHeight;
+  if (!w || !h) return;
+  const base = Math.min(w / naturalW, h / naturalH);
   const scale = base * zoom;
   canvas.style.width = `${Math.round(naturalW * scale)}px`;
   canvas.style.height = `${Math.round(naturalH * scale)}px`;
@@ -385,15 +389,15 @@ async function fetchCodecWithRetry() {
 
 function drawFrame(f) {
   const sideways = Math.abs(visualRotation % 180) === 90;
-  const fw = f.displayWidth || f.codedWidth || f.width || 1170;
-  const fh = f.displayHeight || f.codedHeight || f.height || 2532;
+  const fw = f.displayWidth;
+  const fh = f.displayHeight;
   const targetW = sideways ? fh : fw;
   const targetH = sideways ? fw : fh;
   if (targetW !== canvas.width || targetH !== canvas.height) {
     canvas.width = targetW;
     canvas.height = targetH;
+    fitCanvas();
   }
-  fitCanvas();
   const dstW = canvas.width;
   const dstH = canvas.height;
   const fpW = sideways ? dstH : dstW;
@@ -401,7 +405,7 @@ function drawFrame(f) {
   ctx.save();
   ctx.translate(dstW / 2, dstH / 2);
   if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
-  ctx.drawImage(f, 0, 0, fw, fh, -fpW / 2, -fpH / 2, fpW, fpH);
+  ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH);
   ctx.restore();
 }
 
@@ -417,8 +421,15 @@ function drawPending() {
   lastFrameLandscape = landscape;
   try {
     drawFrame(f);
-    if (frameCount === 1) setStatus("Live", "ok");
-  } catch (_) {}
+    if (frameCount === 1) {
+      setStatus("Live", "ok");
+      fitCanvas();
+      setTimeout(fitCanvas, 50);
+      setTimeout(fitCanvas, 200);
+    }
+  } catch (err) {
+    console.error("drawFrame error:", err);
+  }
   if (lastFrame && lastFrame !== f) {
     try {
       lastFrame.close();

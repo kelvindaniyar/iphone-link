@@ -19,7 +19,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?t=" + Date.now();
+const MIRROR_PAGE = "/mirror.html?v=20261023_fix";
 const MIRROR_API = "/mirror";
 
 let selectedUdid = null;
@@ -71,8 +71,9 @@ async function setUpWifi() {
   }
 }
 
-const placeholder = document.querySelector("#placeholder");
-placeholder?.addEventListener("click", () => {
+const screenEmpty = document.querySelector("#screen-empty") || document.querySelector("#placeholder");
+const placeholder = screenEmpty;
+screenEmpty?.addEventListener("click", () => {
   if (!showScreen.disabled) showPhone();
 });
 
@@ -329,8 +330,30 @@ function renderScreen(screen) {
     screenNote.className = "";
     showScreen.textContent = "Mirroring…";
     showScreen.disabled = true;
-    if (screenView.getAttribute("src") !== MIRROR_PAGE) screenView.src = MIRROR_PAGE;
+
+    // Sembunyikan placeholder secara mutlak
+    if (screenEmpty) {
+      screenEmpty.hidden = true;
+      screenEmpty.style.display = "none";
+    }
+
+    // Tampilkan screen-view (iframe)
     screenView.hidden = false;
+    screenView.style.display = "block";
+
+    // Jangan me-reload iframe berulang-ulang pada setiap polling /status jika sudah memuat mirror.html
+    const curSrc = screenView.getAttribute("src") || "";
+    if (!curSrc.startsWith("/mirror.html")) {
+      screenView.src = MIRROR_PAGE;
+    }
+
+    // Picu fitCanvas ulang di dalam iframe setelah unhide
+    setTimeout(() => {
+      screenView.contentWindow?.postMessage({ type: "resize" }, "*");
+    }, 50);
+    setTimeout(() => {
+      screenView.contentWindow?.postMessage({ type: "resize" }, "*");
+    }, 200);
     return;
   }
 
@@ -340,8 +363,20 @@ function renderScreen(screen) {
   restartScreen.hidden = false;
   restartScreen.disabled = false;
   kbToggle.hidden = true;
+
+  // Tampilkan kembali placeholder
+  if (screenEmpty) {
+    screenEmpty.hidden = false;
+    screenEmpty.style.display = "flex";
+  }
+
+  // Sembunyikan iframe
   screenView.hidden = true;
-  screenView.src = "about:blank";
+  screenView.style.display = "none";
+  if (screenView.getAttribute("src") !== "about:blank") {
+    screenView.src = "about:blank";
+  }
+
   showScreen.textContent = "Start mirroring";
   showScreen.disabled = false;
 
@@ -432,7 +467,7 @@ function reloadMirrorIframe() {
   const stamp = `t=${Date.now()}`;
   screenView.src = "about:blank";
   requestAnimationFrame(() => {
-    screenView.src = `${MIRROR_PAGE}?${stamp}`;
+    screenView.src = `${MIRROR_PAGE}&${stamp}`;
   });
 }
 

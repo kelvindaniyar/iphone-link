@@ -309,7 +309,24 @@ iframe[hidden],
   display: none !important;
 }
 
-.placeholder {
+#screen-empty[hidden],
+.screen-empty[hidden],
+#placeholder[hidden],
+.placeholder[hidden],
+.screen-stage.live #screen-empty,
+.screen-stage.live .screen-empty,
+.screen-stage.live #placeholder,
+.screen-stage.live .placeholder,
+.workspace.is-live #screen-empty,
+.workspace.is-live .screen-empty,
+.workspace.is-live #placeholder,
+.workspace.is-live .placeholder {
+  display: none !important;
+}
+
+.placeholder,
+.screen-empty,
+#screen-empty {
   position: absolute;
   inset: 0;
   display: flex;
@@ -328,7 +345,9 @@ iframe[hidden],
   transition: background 0.2s ease;
 }
 
-.placeholder:hover {
+.placeholder:hover,
+.screen-empty:hover,
+#screen-empty:hover {
   background:
     radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.24), transparent 65%),
     #0e0e14;
