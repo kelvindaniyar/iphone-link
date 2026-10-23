@@ -19,7 +19,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_telemetry";
+const MIRROR_PAGE = "/mirror.html?v=20261023_uncrop_fix";
 const MIRROR_API = "/mirror";
 
 let selectedUdid = null;

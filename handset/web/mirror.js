@@ -453,29 +453,159 @@ function sendMirrorMetrics(f, count) {
   }
 }
 
-function drawFrame(f) {
-  const sideways = Math.abs(visualRotation % 180) === 90;
-  const fw = f.displayWidth;
-  const fh = f.displayHeight;
-  const targetW = sideways ? fh : fw;
-  const targetH = sideways ? fw : fh;
-  if (targetW !== canvas.width || targetH !== canvas.height) {
-    canvas.width = targetW;
-    canvas.height = targetH;
-    fitCanvas();
-  }
-  const dstW = canvas.width;
-  const dstH = canvas.height;
-  const fpW = sideways ? dstH : dstW;
-  const fpH = sideways ? dstW : dstH;
-  ctx.save();
-  ctx.translate(dstW / 2, dstH / 2);
-  if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
-  ctx.drawImage(f, -fpW / 2, -fpH / 2, fpW, fpH);
-  ctx.restore();
+function parseHevcSpsDimensions(description) {
+  try {
+    if (!description || description.length < 23) return null;
+    const bytes = description instanceof Uint8Array ? description : new Uint8Array(description);
+    let spsNal = null;
 
-  if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {
-    sendMirrorMetrics(f, frameCount);
+    if (bytes[0] === 1) {
+      // ISO/IEC 14496-15 hvcC record
+      const numOfArrays = bytes[22];
+      let offset = 23;
+      for (let i = 0; i < numOfArrays && offset + 3 <= bytes.length; i++) {
+        const nalType = bytes[offset] & 0x3f;
+        const numNalus = (bytes[offset + 1] << 8) | bytes[offset + 2];
+        offset += 3;
+        for (let j = 0; j < numNalus && offset + 2 <= bytes.length; j++) {
+          const nalLen = (bytes[offset] << 8) | bytes[offset + 1];
+          offset += 2;
+          if (offset + nalLen <= bytes.length) {
+            const nal = bytes.subarray(offset, offset + nalLen);
+            offset += nalLen;
+            if (nalType === 33) {
+              spsNal = nal;
+              break;
+            }
+          }
+        }
+        if (spsNal) break;
+      }
+    } else {
+      spsNal = bytes;
+    }
+
+    if (!spsNal || spsNal.length < 15) return null;
+
+    // Remove emulation prevention bytes (0x00 0x00 0x03 -> 0x00 0x00)
+    const rb = [];
+    let idx = 2; // skip 2-byte NAL header
+    while (idx < spsNal.length) {
+      if (idx + 2 < spsNal.length && spsNal[idx] === 0 && spsNal[idx + 1] === 0 && spsNal[idx + 2] === 3) {
+        rb.push(spsNal[idx], spsNal[idx + 1]);
+        idx += 3;
+      } else {
+        rb.push(spsNal[idx]);
+        idx += 1;
+      }
+    }
+
+    let pos = 0;
+    const readBit = () => {
+      const bit = (rb[pos >> 3] >> (7 - (pos & 7))) & 1;
+      pos += 1;
+      return bit;
+    };
+    const readBits = (n) => {
+      let v = 0;
+      for (let k = 0; k < n; k++) v = (v << 1) | readBit();
+      return v;
+    };
+    const readUe = () => {
+      let zeros = 0;
+      while (readBit() === 0 && pos < rb.length * 8) zeros += 1;
+      if (zeros === 0) return 0;
+      return ((1 << zeros) | readBits(zeros)) - 1;
+    };
+
+    readBits(4); // sps_video_parameter_set_id
+    const maxSubLayers = readBits(3);
+    readBits(1); // sps_temporal_id_nesting_flag
+
+    // profile_tier_level
+    readBits(2 + 1 + 5 + 32 + 48 + 8);
+    const subP = [];
+    const subL = [];
+    for (let s = 0; s < maxSubLayers; s++) {
+      subP.push(readBit());
+      subL.push(readBit());
+    }
+    if (maxSubLayers > 0) {
+      for (let s = 0; s < 8 - maxSubLayers; s++) readBits(2);
+    }
+    for (let s = 0; s < maxSubLayers; s++) {
+      if (subP[s]) readBits(2 + 1 + 5 + 32 + 48);
+      if (subL[s]) readBits(8);
+    }
+
+    readUe(); // sps_seq_parameter_set_id
+    const chroma = readUe();
+    if (chroma === 3) readBit();
+    const width = readUe();
+    const height = readUe();
+    if (width > 0 && height > 0) {
+      return { width, height };
+    }
+  } catch (err) {
+    console.warn("parseHevcSpsDimensions failed:", err);
+  }
+  return null;
+}
+
+function drawFrame(f) {
+  let sourceFrame = f;
+  let clonedFrame = null;
+
+  // Un-crop VideoFrame jika hardware decoder meng-clamp visibleRect ke 720p
+  if (f.codedWidth && f.codedHeight && f.visibleRect && f.visibleRect.height < f.codedHeight) {
+    try {
+      clonedFrame = new VideoFrame(f, {
+        visibleRect: { x: 0, y: 0, width: f.codedWidth, height: f.codedHeight },
+        displayWidth: f.codedWidth,
+        displayHeight: f.codedHeight,
+      });
+      sourceFrame = clonedFrame;
+    } catch (e) {
+      console.warn("Un-crop VideoFrame failed:", e);
+    }
+  }
+
+  try {
+    const rawW = (sourceFrame.codedWidth && sourceFrame.codedHeight > sourceFrame.displayHeight)
+      ? sourceFrame.codedWidth
+      : (sourceFrame.displayWidth || sourceFrame.codedWidth);
+    const rawH = (sourceFrame.codedHeight && sourceFrame.codedHeight > sourceFrame.displayHeight)
+      ? sourceFrame.codedHeight
+      : (sourceFrame.displayHeight || sourceFrame.codedHeight);
+
+    const sideways = Math.abs(visualRotation % 180) === 90;
+    const targetW = sideways ? rawH : rawW;
+    const targetH = sideways ? rawW : rawH;
+
+    if (targetW !== canvas.width || targetH !== canvas.height) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+      fitCanvas();
+    }
+    const dstW = canvas.width;
+    const dstH = canvas.height;
+    const fpW = sideways ? dstH : dstW;
+    const fpH = sideways ? dstW : dstH;
+    ctx.save();
+    ctx.translate(dstW / 2, dstH / 2);
+    if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
+    ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
+    ctx.restore();
+
+    if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {
+      sendMirrorMetrics(sourceFrame, frameCount);
+    }
+  } finally {
+    if (clonedFrame) {
+      try {
+        clonedFrame.close();
+      } catch (_) {}
+    }
   }
 }
 
@@ -484,7 +614,11 @@ function drawPending() {
   const f = pendingFrame;
   pendingFrame = null;
   if (!f) return;
-  const landscape = f.displayWidth > f.displayHeight;
+
+  const rawW = (f.codedWidth && f.codedHeight > f.displayHeight) ? f.codedWidth : f.displayWidth;
+  const rawH = (f.codedHeight && f.codedHeight > f.displayHeight) ? f.codedHeight : f.displayHeight;
+  const landscape = rawW > rawH;
+
   if (lastFrameLandscape !== null && landscape !== lastFrameLandscape && visualRotation !== 0) {
     visualRotation = 0;
   }
@@ -530,12 +664,26 @@ async function run(generation) {
   const { codec, description } = await fetchCodecWithRetry();
   if (generation !== runGeneration) return;
 
-  const decoderConfig = { codec, description, optimizeForLatency: true };
+  const spsDims = parseHevcSpsDimensions(description);
+  const streamWidth = spsDims?.width || 1216;
+  const streamHeight = spsDims?.height || 2656;
+
+  const decoderConfig = {
+    codec,
+    description,
+    codedWidth: streamWidth,
+    codedHeight: streamHeight,
+    displayAspectWidth: streamWidth,
+    displayAspectHeight: streamHeight,
+    optimizeForLatency: true,
+  };
   const support = await VideoDecoder.isConfigSupported({ codec, description });
   postDebugLog("codec_check", {
     codec,
     supported: support.supported,
     descriptionLength: description ? (description.byteLength || description.length) : 0,
+    parsedDimensions: spsDims,
+    configuredDimensions: { width: streamWidth, height: streamHeight },
   });
   if (!support.supported) {
     setStatus("This browser cannot decode the iPhone video stream.", "warn");

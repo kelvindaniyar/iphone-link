@@ -431,9 +431,11 @@ iframe[hidden],
   border-top: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 -4px 20px 0 rgba(0, 0, 0, 0.25);
   margin: 0;
+  margin-top: auto;
   padding: 0 8px;
   user-select: none;
   z-index: 20;
+  flex: 0 0 44px;
   flex-shrink: 0;
 }
 
@@ -854,37 +856,68 @@ iframe[hidden],
 }
 
 /* 6. Full Size / Responsive Scaling Mode */
+.app.is-fullsize {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
 .app.is-fullsize .main-body {
   width: 100% !important;
   height: calc(100vh - 36px) !important;
-  justify-content: center !important;
-  align-items: center !important;
+  max-height: calc(100vh - 36px) !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: row !important;
+  overflow: hidden !important;
+  position: relative !important;
 }
 
 .app.is-fullsize .display-col {
   width: 100% !important;
   height: 100% !important;
-  align-items: center !important;
-  justify-content: center !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  align-items: stretch !important;
+  overflow: hidden !important;
+  position: relative !important;
 }
 
 .app.is-fullsize .workspace,
 .app.is-fullsize .stage {
   width: 100% !important;
   height: calc(100vh - 80px) !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 80px) !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
   justify-content: center !important;
   align-items: center !important;
+  overflow: hidden !important;
+  position: relative !important;
 }
 
 .app.is-fullsize #phone-shell,
 .app.is-fullsize .screen-stage {
-  height: calc(100vh - 80px) !important;
-  min-height: calc(100vh - 80px) !important;
+  height: 100% !important;
   max-height: calc(100vh - 80px) !important;
+  min-height: 0 !important;
   width: auto !important;
   aspect-ratio: 9 / 19.5 !important;
   margin: 0 auto !important;
-  display: block !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
   flex: 0 0 auto !important;
   position: relative !important;
 }
@@ -895,6 +928,7 @@ iframe[hidden],
   width: 100% !important;
   position: relative !important;
   display: block !important;
+  overflow: hidden !important;
 }
 
 .app.is-fullsize iframe,
@@ -909,3 +943,18 @@ iframe[hidden],
   border: none !important;
   display: block !important;
 }
+
+.app.is-fullsize .quick-nav {
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  flex: 0 0 44px !important;
+  width: 100% !important;
+  margin: 0 !important;
+  margin-top: auto !important;
+  z-index: 20 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
