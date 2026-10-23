@@ -11,7 +11,7 @@ from urllib.parse import unquote, urlparse
 
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
-from handset.screen import restart_screen, screen_status, start_screen
+from handset.screen import restart_screen, screen_status, start_screen, stop_screen
 from handset.wifi import pair_for_wifi, wifi_paired_udids
 
 ROOT = Path(__file__).resolve().parent / "web"
@@ -46,6 +46,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/screen":
             self._json(screen_status())
+            return
+        if path in ("/api/screen/stop", "/mirror/stop"):
+            self._json(stop_screen())
             return
         if path == "/debug-metrics":
             log_path = ROOT.parent.parent / "debug_metrics.json"
@@ -92,6 +95,9 @@ class Handler(BaseHTTPRequestHandler):
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
         if path == "/api/screen/restart":
             self._json(restart_screen(udid))
+            return
+        if path in ("/api/screen/stop", "/mirror/stop"):
+            self._json(stop_screen())
             return
         if path == "/api/wifi/pair":
             if not udid:

@@ -1,6 +1,7 @@
 @echo off
 setlocal
 set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
+set "WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0"
 taskkill /F /IM python.exe >nul 2>&1
 title Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
 

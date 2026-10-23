@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Mirroring</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261023_uncrop_fix">
+  <link rel="stylesheet" href="/app.css?v=20261023_theme_stop_fix">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -25,9 +25,31 @@
           </svg>
           <span>Restart</span>
         </button>
+        <button type="button" class="bar-btn bar-btn-danger" id="stop-screen" title="Stop / Disconnect mirroring" hidden>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="2.5"/>
+          </svg>
+          <span>Stop</span>
+        </button>
         <button type="button" class="icon-btn" id="refresh" title="Refresh connection" aria-label="Refresh">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-theme" title="Toggle Theme (Dark / Light)" aria-label="Toggle Theme">
+          <svg class="theme-icon-sun" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg class="theme-icon-moon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
           </svg>
         </button>
         <button type="button" class="icon-btn" id="btn-settings" title="Toggle Settings Side-Drawer" aria-label="Settings">
@@ -123,6 +145,14 @@
         </div>
 
         <div class="drawer-content">
+          <section class="card panel-theme">
+            <span class="drawer-section-label">Appearance</span>
+            <div class="segmented segmented-theme" role="radiogroup" aria-label="Theme">
+              <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">🌙 Dark</button>
+              <button type="button" class="seg" data-theme-choice="light" role="radio" aria-checked="false">☀️ Light</button>
+            </div>
+          </section>
+
           <section class="card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
@@ -205,7 +235,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261023_uncrop_fix"></script>
-  <script src="/app.js?v=20261023_uncrop_fix"></script>
+  <script src="/keys.js?v=20261023_theme_stop_fix"></script>
+  <script src="/app.js?v=20261023_theme_stop_fix"></script>
 </body>
 </html>

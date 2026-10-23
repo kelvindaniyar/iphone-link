@@ -1,17 +1,17 @@
 :root {
   color-scheme: dark;
-  --bg: #111116;
-  --bg-acrylic: rgba(30, 30, 35, 0.78);
-  --bg-flyout: rgba(25, 25, 30, 0.88);
-  --surface: rgba(255, 255, 255, 0.05);
-  --surface-hover: rgba(255, 255, 255, 0.08);
-  --surface-active: rgba(255, 255, 255, 0.12);
-  --line: rgba(255, 255, 255, 0.09);
-  --border-acrylic: rgba(255, 255, 255, 0.09);
-  --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --bg: transparent;
+  --bg-acrylic: rgba(22, 22, 28, 0.45);
+  --bg-flyout: rgba(20, 20, 26, 0.65);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.10);
+  --surface-active: rgba(255, 255, 255, 0.15);
+  --line: rgba(255, 255, 255, 0.12);
+  --border-acrylic: rgba(255, 255, 255, 0.16);
+  --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.38);
   --text: #ffffff;
-  --text-secondary: #e0e0e0;
-  --muted: #a0a0a8;
+  --text-secondary: #e2e8f0;
+  --muted: #94a3b8;
   --accent: #0078d4;
   --accent-hover: #1886d9;
   --accent-active: #0067c0;
@@ -23,6 +23,30 @@
   --mono: 'Cascadia Code', 'Segoe UI Mono', ui-monospace, monospace;
 }
 
+[data-theme="light"],
+.app[data-theme="light"] {
+  color-scheme: light;
+  --bg: transparent;
+  --bg-acrylic: rgba(255, 255, 255, 0.58);
+  --bg-flyout: rgba(255, 255, 255, 0.75);
+  --surface: rgba(255, 255, 255, 0.55);
+  --surface-hover: rgba(255, 255, 255, 0.75);
+  --surface-active: rgba(255, 255, 255, 0.90);
+  --line: rgba(0, 0, 0, 0.08);
+  --border-acrylic: rgba(255, 255, 255, 0.85);
+  --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.08);
+  --text: #0f172a;
+  --text-secondary: #334155;
+  --muted: #64748b;
+  --accent: #0078d4;
+  --accent-hover: #106ebe;
+  --accent-active: #005a9e;
+  --accent-dim: rgba(0, 120, 212, 0.15);
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
+}
+
 * { box-sizing: border-box; }
 
 html {
@@ -32,6 +56,7 @@ html {
   height: 100vh;
   overflow: hidden;
   user-select: none;
+  background: transparent !important;
 }
 
 body {
@@ -42,7 +67,7 @@ body {
   overflow: hidden;
   font: 14px/1.4 var(--font);
   color: var(--text);
-  background: var(--bg);
+  background: transparent !important;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -57,7 +82,7 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background: #000;
+  background: transparent !important;
 }
 
 /* 1. WinUI 3 Liquid Glass Top Toolbar (~36px Frameless Drag Region) */
@@ -69,14 +94,19 @@ a:hover { text-decoration: underline; }
   height: 36px;
   min-height: 36px;
   max-height: 36px;
-  background: rgba(30, 30, 35, 0.78);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  background: var(--bg-acrylic);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border-bottom: 1px solid var(--border-acrylic);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 8px 32px 0 rgba(0, 0, 0, 0.28);
   z-index: 50;
   flex-shrink: 0;
   -webkit-app-region: drag;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+[data-theme="light"] .app-bar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 4px 20px 0 rgba(0, 0, 0, 0.06);
 }
 
 .pywebview-drag-region {
@@ -95,8 +125,8 @@ a:hover { text-decoration: underline; }
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border-acrylic);
   color: var(--text-secondary);
   line-height: 1.3;
 }
@@ -138,8 +168,8 @@ a:hover { text-decoration: underline; }
 }
 
 .bar-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .bar-btn:hover svg {
@@ -148,7 +178,29 @@ a:hover { text-decoration: underline; }
 
 .bar-btn:active {
   transform: scale(0.97);
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface-active);
+}
+
+.bar-btn.bar-btn-danger {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+[data-theme="light"] .bar-btn.bar-btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.bar-btn.bar-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.38);
+  color: #ffffff;
+  border-color: rgba(248, 113, 113, 0.7);
+}
+
+.bar-btn.bar-btn-danger:hover svg {
+  transform: none;
 }
 
 .bar-btn:disabled {
@@ -255,8 +307,19 @@ button {
   min-height: 0;
   overflow: hidden;
   position: relative;
-  background: #000;
+  background: transparent !important;
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+/* Saat Side Drawer terbuka di jendela 708px, kunci lebar kolom display pada 348px */
+.main-body:has(.side-drawer:not([hidden])) .display-col,
+.main-body:has(.side-drawer.open) .display-col {
+  width: 348px !important;
+  min-width: 348px !important;
+  max-width: 348px !important;
+  flex: 0 0 348px !important;
 }
 
 /* 3. Murni Display Edge-to-Edge: Satuan Viewport Mutlak calc(100vh - 80px) */
@@ -281,7 +344,7 @@ button {
   position: relative !important;
   display: block !important;
   overflow: hidden !important;
-  background: #000 !important;
+  background: transparent !important;
   margin: 0 !important;
   padding: 0 !important;
 }
@@ -299,7 +362,7 @@ iframe,
   max-height: calc(100vh - 80px) !important;
   border: none !important;
   display: block !important;
-  background: #000 !important;
+  background: transparent !important;
 }
 
 iframe[hidden],
@@ -338,19 +401,48 @@ iframe[hidden],
   text-align: center;
   color: var(--muted);
   background:
-    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.16), transparent 60%),
-    #0c0c10;
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.20), transparent 60%),
+    rgba(15, 15, 20, 0.42);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--border-acrylic);
   cursor: pointer;
   z-index: 2;
-  transition: background 0.2s ease;
+  transition: all 0.2s ease;
+}
+
+[data-theme="light"] .placeholder,
+[data-theme="light"] .screen-empty,
+[data-theme="light"] #screen-empty {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.14), transparent 60%),
+    rgba(255, 255, 255, 0.48);
+  color: #475569;
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 32px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .placeholder-title {
+  color: #0f172a;
+}
+[data-theme="light"] .placeholder-icon {
+  color: rgba(0, 120, 212, 0.65);
 }
 
 .placeholder:hover,
 .screen-empty:hover,
 #screen-empty:hover {
   background:
-    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.24), transparent 65%),
-    #0e0e14;
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.28), transparent 65%),
+    rgba(18, 18, 24, 0.55);
+}
+
+[data-theme="light"] .placeholder:hover,
+[data-theme="light"] .screen-empty:hover,
+[data-theme="light"] #screen-empty:hover {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.20), transparent 65%),
+    rgba(255, 255, 255, 0.62);
 }
 
 .placeholder-icon {
@@ -425,11 +517,11 @@ iframe[hidden],
   min-height: 44px;
   max-height: 44px;
   width: 100%;
-  background: rgba(30, 30, 35, 0.78);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 -4px 20px 0 rgba(0, 0, 0, 0.25);
+  background: var(--bg-acrylic);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border-top: 1px solid var(--border-acrylic);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 -4px 20px 0 rgba(0, 0, 0, 0.25);
   margin: 0;
   margin-top: auto;
   padding: 0 8px;
@@ -437,12 +529,17 @@ iframe[hidden],
   z-index: 20;
   flex: 0 0 44px;
   flex-shrink: 0;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+[data-theme="light"] .quick-nav {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 -4px 20px rgba(0, 0, 0, 0.06);
 }
 
 .quick-nav .nav-btn {
-  background: transparent;
-  color: #f3f3f3;
-  border: 1px solid transparent;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-acrylic);
   border-radius: 6px;
   padding: 6px 10px;
   display: inline-flex;
@@ -456,14 +553,13 @@ iframe[hidden],
 }
 
 .quick-nav .nav-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .quick-nav .nav-btn:active {
   transform: scale(0.97);
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface-active);
 }
 
 .quick-nav .nav-btn svg {
@@ -482,17 +578,17 @@ iframe[hidden],
   min-width: 360px;
   max-width: 360px;
   height: 100%;
-  background: rgba(25, 25, 30, 0.92);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-left: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.4);
+  background: var(--bg-flyout);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border-left: 1px solid var(--border-acrylic);
+  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   z-index: 30;
   flex-shrink: 0;
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
 }
 
 .side-drawer[hidden] {
@@ -586,6 +682,22 @@ iframe[hidden],
   width: 100%;
 }
 
+.primary.is-disconnect,
+#show-screen.is-disconnect {
+  background: rgba(239, 68, 68, 0.28) !important;
+  border: 1px solid rgba(248, 113, 113, 0.45) !important;
+  color: #fee2e2 !important;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.25) !important;
+}
+
+.primary.is-disconnect:hover,
+#show-screen.is-disconnect:hover {
+  background: rgba(239, 68, 68, 0.42) !important;
+  border-color: rgba(248, 113, 113, 0.75) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.38) !important;
+}
+
 .ghost-block {
   width: 100%;
   margin-top: 8px;
@@ -598,6 +710,26 @@ iframe[hidden],
 }
 
 .ghost-block:hover { background: var(--surface-hover); }
+
+/* Appearance Theme Panel in Drawer */
+.panel-theme {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.drawer-section-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.segmented-theme {
+  margin-bottom: 0 !important;
+}
 
 /* WinUI 3 Segmented Control (Radio Group) */
 .segmented {
@@ -643,10 +775,70 @@ iframe[hidden],
 .wifi-state.ok { color: var(--ok); }
 
 .card {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-theme="light"] .card,
+[data-theme="light"] .card-details {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .segmented {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .seg.is-active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .seg {
+  color: #475569;
+}
+
+[data-theme="light"] .drawer-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .drawer-title {
+  color: #0f172a;
+}
+
+[data-theme="light"] .icon-btn-close {
+  color: #475569;
+}
+
+[data-theme="light"] .icon-btn-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #0f172a;
+}
+
+[data-theme="light"] .ctl-sm {
+  background: rgba(255, 255, 255, 0.85);
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .control-btn,
+[data-theme="light"] .key-btn {
+  background: rgba(255, 255, 255, 0.85);
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .control-btn:hover,
+[data-theme="light"] .key-btn:hover {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.16);
 }
 
 .panel-start {

@@ -24,10 +24,25 @@ DEVELOPER_MODE_MESSAGE = (
 VIEW_URL = "http://127.0.0.1:8766/"
 _LOCK = threading.Lock()
 _STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": None, "transport": None}
+_CURRENT_TASK: asyncio.Task | None = None
+_CURRENT_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def screen_status() -> dict:
     with _LOCK:
+        return dict(_STATE)
+
+
+def stop_screen() -> dict:
+    """Cleanly stop mirroring, terminate stream server, and reset state."""
+    global _CURRENT_TASK, _CURRENT_LOOP
+    with _LOCK:
+        if _CURRENT_TASK and _CURRENT_LOOP and _CURRENT_LOOP.is_running():
+            try:
+                _CURRENT_LOOP.call_soon_threadsafe(_CURRENT_TASK.cancel)
+            except Exception:
+                pass
+        _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
         return dict(_STATE)
 
 
@@ -146,8 +161,16 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
             )
 
     server._eager_stream_start = _eager_video_only
-    _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
-    await server.serve()
+    global _CURRENT_TASK, _CURRENT_LOOP
+    _CURRENT_LOOP = asyncio.get_running_loop()
+    _CURRENT_TASK = asyncio.current_task()
+    try:
+        _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
+        await server.serve()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _CURRENT_TASK = None
 
 
 def _usb_udids() -> list[str]:

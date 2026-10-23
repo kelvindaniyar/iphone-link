@@ -2,13 +2,15 @@
 
 import os
 import sys
+import threading
 import time
 import urllib.request
 
-# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
+# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif dan background transparan
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
     "--enable-features=PlatformHEVCDecoderSupport"
 )
+os.environ["WEBVIEW2_DEFAULT_BACKGROUND_COLOR"] = "0"
 
 import webview
 
@@ -36,13 +38,65 @@ class WindowApi:
 
     def set_drawer(self, is_open: bool):
         if self._window:
-            # Side drawer: expand window to 740px or collapse back to 380px
-            target_width = 740 if is_open else 380
+            # Side drawer: expand window to 708px (348px video + 360px drawer) or collapse to 348px
+            target_width = 708 if is_open else 348
             h = max(self._window.height or 840, 840)
             self._window.resize(target_width, h)
 
+    def set_theme(self, theme: str):
+        """Update native Windows 11 DWM dark/light mode attribute."""
+        is_dark = theme != "light"
+        try:
+            import ctypes
+            from ctypes import wintypes
+            hwnd = ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+            if hwnd:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    wintypes.HWND(hwnd),
+                    20,  # DWMWA_USE_IMMERSIVE_DARK_MODE
+                    ctypes.byref(ctypes.c_int(1 if is_dark else 0)),
+                    ctypes.sizeof(ctypes.c_int),
+                )
+        except Exception:
+            pass
+
     def is_pywebview(self):
         return True
+
+
+def apply_dwm_effects(title="iPhone Mirroring"):
+    """Terapkan efek DWM Windows 11 (Mica / Acrylic Blur + Rounded Corners) pada HWND."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        time.sleep(0.6)
+        hwnd = ctypes.windll.user32.FindWindowW(None, title)
+        if not hwnd:
+            return
+        dwmapi = ctypes.windll.dwmapi
+        # 1. Sudut membulat Windows 11 (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2)
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            33,
+            ctypes.byref(ctypes.c_int(2)),
+            ctypes.sizeof(ctypes.c_int),
+        )
+        # 2. Windows 11 System Backdrop Acrylic (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_ACRYLIC = 3)
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            38,
+            ctypes.byref(ctypes.c_int(3)),
+            ctypes.sizeof(ctypes.c_int),
+        )
+        # 3. Immersive Dark Mode default (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            20,
+            ctypes.byref(ctypes.c_int(1)),
+            ctypes.sizeof(ctypes.c_int),
+        )
+    except Exception:
+        pass
 
 
 def wait_for_server(url="http://127.0.0.1:8765/api/status", timeout=10):
@@ -64,16 +118,21 @@ def main():
     # Tunggu server aktif jika baru diluncurkan
     wait_for_server()
 
+    # Jadwalkan penerapan efek DWM blur saat HWND window siap
+    threading.Thread(target=apply_dwm_effects, args=("iPhone Mirroring",), daemon=True).start()
+
     window = webview.create_window(
         title="iPhone Mirroring",
         url=f"http://127.0.0.1:8765/?t={int(time.time())}",
         js_api=api,
-        width=380,
+        width=348,
         height=840,
         frameless=True,
         easy_drag=True,
-        min_size=(360, 600),
-        background_color="#000000",
+        min_size=(348, 600),
+        transparent=True,
+        vibrancy=True,
+        background_color="#00000000",
     )
     api.set_window(window)
 

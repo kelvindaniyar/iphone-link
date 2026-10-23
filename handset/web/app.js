@@ -15,12 +15,53 @@ const runGuide = document.querySelector("#run-guide");
 const workspace = document.querySelector("#workspace");
 const remotePanel = document.querySelector("#remote-panel");
 const restartScreen = document.querySelector("#restart-screen");
+const stopScreen = document.querySelector("#stop-screen");
+const btnTheme = document.querySelector("#btn-theme");
+const iconSun = btnTheme?.querySelector(".theme-icon-sun");
+const iconMoon = btnTheme?.querySelector(".theme-icon-moon");
 const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261023_uncrop_fix";
+const MIRROR_PAGE = "/mirror.html?v=20261023_theme_stop_fix";
 const MIRROR_API = "/mirror";
+
+let currentTheme = localStorage.getItem("pane-theme") || "dark";
+
+function applyTheme(theme) {
+  currentTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", currentTheme);
+  const appEl = document.querySelector("#app-root");
+  appEl?.setAttribute("data-theme", currentTheme);
+  localStorage.setItem("pane-theme", currentTheme);
+
+  if (iconSun && iconMoon) {
+    iconSun.hidden = currentTheme === "light";
+    iconMoon.hidden = currentTheme !== "light";
+  }
+
+  document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+    const active = btn.dataset.themeChoice === currentTheme;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+
+  if (window.pywebview?.api?.set_theme) {
+    window.pywebview.api.set_theme(currentTheme);
+  }
+}
+
+applyTheme(currentTheme);
+
+btnTheme?.addEventListener("click", () => {
+  applyTheme(currentTheme === "dark" ? "light" : "dark");
+});
+
+document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    applyTheme(btn.dataset.themeChoice);
+  });
+});
 
 let selectedUdid = null;
 let screenTimer = 0;
@@ -74,11 +115,18 @@ async function setUpWifi() {
 const screenEmpty = document.querySelector("#screen-empty") || document.querySelector("#placeholder");
 const placeholder = screenEmpty;
 screenEmpty?.addEventListener("click", () => {
-  if (!showScreen.disabled) showPhone();
+  if (!showScreen.disabled && !showScreen.classList.contains("is-disconnect")) showPhone();
 });
 
 refresh.addEventListener("click", () => load());
-showScreen.addEventListener("click", () => showPhone());
+showScreen.addEventListener("click", () => {
+  if (showScreen.classList.contains("is-disconnect")) {
+    stopMirror();
+  } else {
+    showPhone();
+  }
+});
+stopScreen?.addEventListener("click", () => stopMirror());
 restartScreen.addEventListener("click", () => restartMirror());
 wireRemoteControls();
 
@@ -372,8 +420,13 @@ function renderScreen(screen) {
     kbToggle.hidden = false;
     screenNote.textContent = "Mirroring — typing on your keyboard goes to the iPhone.";
     screenNote.className = "";
-    showScreen.textContent = "Mirroring…";
-    showScreen.disabled = true;
+    showScreen.textContent = "⏹ Disconnect Mirroring";
+    showScreen.classList.add("is-disconnect");
+    showScreen.disabled = false;
+    if (stopScreen) {
+      stopScreen.hidden = false;
+      stopScreen.disabled = false;
+    }
 
     // Sembunyikan placeholder secara mutlak
     if (screenEmpty) {
@@ -410,6 +463,7 @@ function renderScreen(screen) {
   remotePanel.hidden = true;
   restartScreen.hidden = false;
   restartScreen.disabled = false;
+  if (stopScreen) stopScreen.hidden = true;
   kbToggle.hidden = true;
 
   // Tampilkan kembali placeholder
@@ -426,6 +480,7 @@ function renderScreen(screen) {
   }
 
   showScreen.textContent = "Start mirroring";
+  showScreen.classList.remove("is-disconnect");
   showScreen.disabled = false;
 
   if (screen.phase === "starting") {
@@ -456,8 +511,23 @@ async function showPhone() {
     screenNote.textContent = error.message;
     screenNote.className = "warn";
     showScreen.textContent = "Start mirroring";
+    showScreen.classList.remove("is-disconnect");
     showScreen.disabled = false;
   }
+}
+
+async function stopMirror() {
+  if (stopScreen) stopScreen.disabled = true;
+  showScreen.disabled = true;
+  showScreen.textContent = "Disconnecting…";
+  try {
+    await postJson("/api/screen/stop", {});
+  } catch (err) {
+    console.warn("stopMirror error:", err);
+  }
+  window.clearInterval(screenTimer);
+  renderScreen({ phase: "idle" });
+  load();
 }
 
 function watchScreen() {
