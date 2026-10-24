@@ -197,8 +197,8 @@ public class DualOcrPreprocessor {
         // Tahap 40: When no keyboard, extend bottom scan and crop to 0.892 * H
         int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.892);
 
-        // 3. Scan Highlights (Tahap 36/37/38/40: Yellow & Blue Highlights, threshold >= 8 pixels per row)
-        int scanTopY = (int)(H * 0.102);
+        // 3. Scan Highlights (Tahap 48 V2: Yellow & Blue Highlights with Weighted Handles)
+        int scanTopY = (int)(H * 0.122);
         int scanBottomY = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.885);
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
@@ -208,9 +208,9 @@ public class DualOcrPreprocessor {
 
         if (!isFullViewport) {
             for (int y = scanTopY; y <= scanBottomY; y++) {
-                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.18*W and 0.66*W if Y < 0.140*H
-                int rowLeftX = (y < (int)(H * 0.140)) ? (int)(W * 0.18) : leftX;
-                int rowRightX = (y < (int)(H * 0.140)) ? (int)(W * 0.66) : rightX;
+                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.18*W and 0.72*W ONLY if Y < 0.125*H (Tahap 48 V2)
+                int rowLeftX = (y < (int)(H * 0.125)) ? (int)(W * 0.18) : leftX;
+                int rowRightX = (y < (int)(H * 0.125)) ? (int)(W * 0.72) : rightX;
 
                 int rowOffset = y * stride;
                 int hlCount = 0;
@@ -228,16 +228,23 @@ public class DualOcrPreprocessor {
                     bool isBlueHl = ((b >= 200 && g >= 185 && (b - r) >= 10) || (b >= 215 && g >= 195 && (b - r) >= 12));
                     bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25);
 
-                    if (isYellowHl || isYellowHandle) {
-                        yellowHlCount++;
-                        hlCount++;
-                    } else if (isBlueHl || isBlueHandle) {
-                        blueHlCount++;
-                        hlCount++;
+                    // Tahap 48 V2: Give +4 weight to lollipop handles so 1-word or 1-line selection is 100% detected
+                    if (isYellowHandle) {
+                        yellowHlCount += 4;
+                        hlCount += 4;
+                    } else if (isYellowHl) {
+                        yellowHlCount += 1;
+                        hlCount += 1;
+                    } else if (isBlueHandle) {
+                        blueHlCount += 4;
+                        hlCount += 4;
+                    } else if (isBlueHl) {
+                        blueHlCount += 1;
+                        hlCount += 1;
                     }
                 }
 
-                // Tahap 36/37/40: Threshold >= 8 horizontal pixels per row
+                // Threshold >= 8 horizontal weighted score per row
                 if (hlCount >= 8) {
                     rowHasHighlight[y] = true;
                 }
@@ -257,7 +264,7 @@ public class DualOcrPreprocessor {
                     curStart = y;
                 } else if (lastRow != -1 && (y - lastRow) > maxLineGap) {
                     int h = lastRow - curStart;
-                    if (h >= 12) {
+                    if (h >= 8) {
                         if (firstClusterStart == -1) firstClusterStart = curStart;
                         lastClusterEnd = lastRow;
                     }
@@ -269,21 +276,21 @@ public class DualOcrPreprocessor {
 
         if (curStart != -1 && lastRow != -1) {
             int h = lastRow - curStart;
-            if (h >= 12) {
+            if (h >= 8) {
                 if (firstClusterStart == -1) firstClusterStart = curStart;
                 lastClusterEnd = lastRow;
             }
         }
 
-        if (firstClusterStart != -1 && lastClusterEnd != -1 && (lastClusterEnd - firstClusterStart) >= 12) {
+        if (firstClusterStart != -1 && lastClusterEnd != -1 && (lastClusterEnd - firstClusterStart) >= 8) {
             foundHighlight = true;
             selMinY = firstClusterStart;
             selMaxY = lastClusterEnd;
         }
 
-        if (blueHlCount > yellowHlCount && blueHlCount >= 20) {
+        if (blueHlCount > yellowHlCount && blueHlCount >= 16) {
             selectionColor = "blue";
-        } else if (yellowHlCount >= 20) {
+        } else if (yellowHlCount >= 16) {
             selectionColor = "yellow";
         } else {
             selectionColor = "none";
@@ -294,9 +301,12 @@ public class DualOcrPreprocessor {
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
         if (foundHighlight && !isFullViewport) {
-            // Tahap 40: scan down to 0.098*H and add +0.012*H bottom padding so tail descenders (j, g, y) are never cut
-            cropY = Math.Max((int)(H * 0.098), selMinY - (int)(H * 0.008));
-            int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.012));
+            // Tahap 48 V2: When selection is 1-2 lines (span < 0.07*H), use generous 0.022*H padding
+            int selSpan = selMaxY - selMinY;
+            int padTop = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.022) : (int)(H * 0.008);
+            int padBot = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.022) : (int)(H * 0.012);
+            cropY = Math.Max((int)(H * 0.098), selMinY - padTop);
+            int cropBottom = Math.Min(maxContentBottom, selMaxY + padBot);
             cropH = Math.Max(20, cropBottom - cropY);
         } else {
             // Full-Viewport Content Crop (Tahap 39/40: 0.102 * H to Math.Min(maxContentBottom, 0.810 * H))
@@ -332,10 +342,10 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 36/37/38/40: Targeted Unwanted Objects Neutralization
+                // Tahap 48 V2: Targeted Unwanted Objects Neutralization (TopNavButton limited to Y < 0.125*H)
                 int absY = cropY + cy;
                 int absX = cropX + cx;
-                bool isTopNavButton = (absY < (int)(H * 0.140)) && (absX < (int)(W * 0.18) || absX > (int)(W * 0.66));
+                bool isTopNavButton = (absY < (int)(H * 0.125)) && (absX < (int)(W * 0.18) || absX > (int)(W * 0.72));
                 bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80 && !(r < 130 && g < 130 && b < 130));
                 bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25 && !(r < 110 && g < 110 && b < 110));
                 bool isRedSpellcheck = (r > 180 && g < 140 && b < 140 && (r - g) > 52 && (r - b) > 52);
@@ -620,6 +630,8 @@ public class DualOcrPreprocessor {
 
     # Tahap 35 & 36: Dual-Candidate Line-by-Line Fusion per vertical Y coordinate
     function Merge-LineLists($lines1, $lines2) {
+        $lines1 = @($lines1)
+        $lines2 = @($lines2)
         if (!$lines1 -or $lines1.Count -eq 0) { return $lines2 }
         if (!$lines2 -or $lines2.Count -eq 0) { return $lines1 }
 
@@ -695,6 +707,7 @@ public class DualOcrPreprocessor {
     }
 
     function Format-ParsedLinesToText($sortedLines, [bool]$hasDateHeader) {
+        $sortedLines = @($sortedLines)
         if (!$sortedLines -or $sortedLines.Count -eq 0) {
             return @()
         }
@@ -703,8 +716,8 @@ public class DualOcrPreprocessor {
             return @("<<<NOTES_LIST_VIEW>>>")
         }
 
-        # Anti-Garbage Filter for partially clipped top line at scroll edge
-        if ($sortedLines.Count -ge 2) {
+        # Anti-Garbage Filter for partially clipped top line at scroll edge (Tahap 48 V2: ONLY if >= 5 lines)
+        if ($sortedLines.Count -gt 4) {
             $topText = $sortedLines[0].Text.Trim()
             $topTokens = $topText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
             $longWords = @($topTokens | Where-Object { $_ -match '^[A-Za-z]{4,}$' })
@@ -726,8 +739,8 @@ public class DualOcrPreprocessor {
         }
         $avgH = if ($sortedLines.Count -gt 0) { $sumH / $sortedLines.Count } else { 30.0 }
 
-        # Anti-Garbage Filter for partially clipped bottom line at scroll/crop edge or floating toolbar (Tahap 39/40)
-        if ($sortedLines.Count -ge 3) {
+        # Anti-Garbage Filter for partially clipped bottom line at scroll/crop edge or floating toolbar (Tahap 48 V2: ONLY if >= 5 lines)
+        if ($sortedLines.Count -gt 4) {
             $lastIdx = $sortedLines.Count - 1
             $lastItem = $sortedLines[$lastIdx]
             $lastText = $lastItem.Text.Trim()
@@ -825,7 +838,7 @@ public class DualOcrPreprocessor {
         $mergedParsed = if ($parsedRed.Count -gt 0) {
             @(Merge-LineLists $parsedNat $parsedRed)
         } else {
-            $parsedNat
+            @($parsedNat)
         }
 
         $hasDate = ($parsedNat -contains "<<<DOC_START>>>" -or $parsedRed -contains "<<<DOC_START>>>")

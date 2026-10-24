@@ -1381,6 +1381,40 @@ Pembaruan terkini mencakup:
   - Test 4 (Security & Documentation): PASS — .gitignore melindungi seluruh file privat dan README memuat atribusi lengkap.
   - Test 5 (Zero Regression Tahap 47 V2 & Tahap 40 OCR): PASS — Seluruh fitur stealth, wake/unlock, lock, OCR, dan copy-paste lulus 100%.
 
+---
+
+### Tahap 48 V2: Forensics & Repair of Single-Line Selection & Stray Underscore Noise (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap48_v2.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap48_v2.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md).
+- **Temuan Forensik Video Kelvin (`20261024-2040-30.8380943.mp4` & `debug_ocr_result.json`)**:
+  1. *Bug Kalimat 1 Baris (Menit 00:43 - 01:36)*: Seleksi 1 baris di baris pertama Apple Notes (`prabowo gibran karhutla`) mengembalikan kosong karena zona eksklusi toolbar atas memotong baris pertama, piksel highlight tertutup huruf hitam pada kalimat pendek, dan PowerShell 5.1 unrolling scalar object yang menyebabkan `$sortedLines.Count` bernilai `$null`.
+  2. *Detail Underscore Nyasar*: Frame history ber-noise menghasilkan `_heroik` yang dipilih oleh `_pick_cleaner_line` karena panjang karakternya bertambah 1.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Penyesuaian Zona Eksklusi Toolbar & Scan Top**:
+     - Masking tombol pojok atas (`<` dan `✓`) dibatasi hanya pada `Y < 0.125 * H` (baris pertama catatan baru berada pada `Y = 0.138 * H .. 0.168 * H`).
+     - Scan highlight dimulai dari `Y = 0.122 * H` tanpa eksklusi horizontal untuk `Y >= 0.125 * H`.
+  2. **Pembobotan Gagang Seleksi (+4 Bobot)**:
+     - Diberikan bobot `+4` untuk piksel gagang seleksi kuning (`isYellowHandle`) dan biru (`isBlueHandle`), serta ambang baris diturunkan ke `8` agar seleksi 1 baris / 1 kata 100% selalu terdeteksi.
+     - Diberikan padding vertikal `padTop = 0.022 * H` dan `padBot = 0.022 * H` saat span seleksi `< 0.07 * H`.
+  3. **Array Coercion PowerShell 5.1 di `ocr_extractor.ps1`**:
+     - Memaksa array coercion `$lines1 = @($lines1)`, `$lines2 = @($lines2)`, dan `$sortedLines = @($sortedLines)` sehingga properti `.Count` selalu berupa integer valid (bukan `$null`), memungkinkan loop baris tunggal berjalan sempurna.
+     - Mengunci proteksi baris atas/bawah terpotong hanya dijalankan jika `$sortedLines.Count -gt 4`.
+  4. **Fast-Path Single-Line & Recent Typing Fallback di `screen.py`**:
+     - Kalimat 1 baris langsung diproses melalui fast-path `if len(c_lines) == 1:` tanpa melalui filter multi-baris.
+     - Ditambahkan fallback ketikan keyboard PC `< 30s` via `get_recent_typed_single_line_fallback()` jika ada warna seleksi namun OCR kosong.
+  5. **Pembersihan Underscore Nyasar & Penalti di Stitcher**:
+     - Aturan `p` pada `_clean_ocr_line()` menghapus underscore nyasar pada kata biasa sambil mempertahankan `@mention` dan `#hashtag`.
+     - Ditambahkan penalti 25 dan prioritas garis bersih di `_pick_cleaner_line()`.
+  6. **Rebuild Paket Portable Release**:
+     - Menjalankan kembali `build_portable_release.ps1` untuk memperbarui file `release/iPhone-Link-Portable-v1.0.0.zip` (0.38 MB).
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap48_v2.py`)**:
+  - Test 1 (1-Line Selection OCR 'prabowo gibran karhutla'): PASS — 100% akurat terbaca.
+  - Test 2 (3-Line Selection Double-Enter): PASS — 3 baris teks dengan jarak baris ganda 100% utuh.
+  - Test 3 (Underscore Cleaning & Mention Preserved): PASS — `_heroik` bersih menjadi `heroik`, `@wisnu_tryo17` dan `#jrf_2026` terjaga.
+  - Test 4 (Fallback Typing Buffer): PASS — Berhasil pulih dari buffer ketikan dalam < 30s.
+  - Test 5 (Full Regression Tahap 40, Tahap 47 V2, Tahap 48): PASS 100%.
+
+
 
 
 

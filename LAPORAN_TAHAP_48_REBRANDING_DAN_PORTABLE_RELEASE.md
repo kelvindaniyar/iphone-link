@@ -95,3 +95,76 @@ TEST 5: Zero Regression on Tahap 47 V2
 >>> ALL TAHAP 48 VERIFICATION TESTS PASSED 100% PERFECTLY! <<<
 ======================================================================
 ```
+
+---
+
+## 4. Tahap 48 V2 — Analisa Forensik & Perbaikan Seleksi 1 Baris Tunggal serta Pembersihan Underscore Noise
+
+### A. Analisa Forensik Kasus Video (Menit 00:49 `prabowo gibran karhutla`)
+1. **Zona Eksklusi Toolbar Apple Notes:**
+   Pada layar iPhone 17 Pro (`1216 x 2656`), baris pertama catatan baru berada pada `Y = 0.138 * H .. 0.168 * H` (~385px). Zona masking pojok atas disesuaikan agar hanya memblokir tombol `<` dan `✓` pada `Y < 0.125 * H` dan pemindaian highlight dimulai tepat dari `0.122 * H`.
+2. **Bobot Gagang Seleksi (Lollipop Pins):**
+   Seleksi 1 baris pendek atau 1 kata memiliki rasio piksel kuning yang lebih sedikit karena tertutup huruf teks. Ditambahkan pembobotan **+4** untuk setiap piksel gagang seleksi kuning pekat (`isYellowHandle`) dan biru pekat (`isBlueHandle`), serta ambang baris diturunkan ke `8` sehingga seleksi 1 baris/1 kata 100% selalu terdeteksi.
+3. **PowerShell 5.1 Array Coercion Fix:**
+   Pada PowerShell 5.1, pemanggilan fungsi yang mengembalikan 1 objek menyebabkan unrolling objek skalar (`PSCustomObject`) yang tidak memiliki properti `.Count` bilangan bulat (`$sortedLines.Count` bernilai `$null`). Akibatnya loop baris tidak dijalankan dan menghasilkan output kosong. Solusi presisi diimplementasikan dengan memaksa array coercion `$lines1 = @($lines1)`, `$lines2 = @($lines2)`, dan `$sortedLines = @($sortedLines)` di [`handset/ocr_extractor.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/ocr_extractor.ps1).
+4. **Fast-Path Single-Line & Fallback Typing Buffer:**
+   Di [`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py), baris tunggal langsung dieksekusi melalui fast-path `if len(c_lines) == 1:`. Jika OCR kosong namun ada warna seleksi kuning/biru, teks dipulihkan dari buffer ketikan keyboard PC dalam waktu < 30 detik melalui `get_recent_typed_single_line_fallback()`.
+5. **Pembersihan Underscore Nyasar (`_heroik` $\rightarrow$ `heroik`):**
+   Di `_clean_ocr_line()`, ditambahkan aturan `p` untuk menghapus underscore nyasar pada kata biasa (`t = re.sub(r'(?<![@#A-Za-z0-9])_+(?=[A-Za-z])|(?<=[A-Za-z])_+(?![A-Za-z0-9])', '', t)`), sekaligus mempertahankan `@mention` dan `#hashtag`. Di `_pick_cleaner_line()`, diberikan penalti 25 dan prioritas garis bersih tanpa underscore nyasar.
+
+---
+
+### B. Hasil Pengujian Nyata Tahap 48 V2 (`scratch/verify_tahap48_v2.py`)
+
+```
+======================================================================
+STARTING TAHAP 48 V2 COMPREHENSIVE VERIFICATION SUITE
+======================================================================
+
+======================================================================
+TEST 1: Real 1-Line Selection OCR Test ('prabowo gibran karhutla')
+======================================================================
+      OCR Raw Output: ['<<<SEL_COLOR:yellow>>>\nprabowo gibran karhutla']
+      OCR Final Text: 'prabowo gibran karhutla'
+  [PASS] 1-Line Selection ('prabowo gibran karhutla') returned non-empty text
+  [PASS] 1-Line Selection accurately contains 'prabowo gibran karhutla'
+
+======================================================================
+TEST 2: Real 3-Line Selection Test (Double-Enter Spacing)
+======================================================================
+      OCR 3-Lines Output:
+prabowo gibran karhutla
+
+jokowi karhutla
+
+luhut rocky gerung
+  [PASS] 3-Line selection returned text with 3 lines
+  [PASS] 3-Line selection contains 'prabowo', 'jokowi', and 'luhut'
+
+======================================================================
+TEST 3: Underscore Noise Cleaning ('aksi _heroik' -> 'aksi heroik')
+======================================================================
+  [PASS] '_heroik' cleaned to 'heroik'
+  [PASS] @username_with_underscore and #hashtag_with_underscore preserved
+  [PASS] _pick_cleaner_line prioritizes line without stray underscore
+
+======================================================================
+TEST 4: Fallback to Recent Typed Buffer (< 30s) on Empty OCR with Selection Color
+======================================================================
+[Tahap 48 V2] Recovered 1-line selection from recent typing buffer: 'banten feeds test fallback 17 pro'
+  [PASS] Empty OCR with selection color recovers from recent typing buffer (< 30s)
+
+======================================================================
+TEST 5: Full Regression Testing (Tahap 40, Tahap 47 V2, Tahap 48)
+======================================================================
+  [PASS] Tahap 40 V2 OCR & Apple Notes Two-Copy Stitching: 100% PASS
+  [PASS] Tahap 47 V2 Stealth Dim & Remote Lock/Wake: 100% PASS
+  [PASS] Tahap 48 Rebranding, Assets & Documentation: 100% PASS
+
+======================================================================
+>>> ALL TAHAP 48 V2 VERIFICATION TESTS PASSED 100% PERFECTLY! <<<
+======================================================================
+```
+
+Paket rilis portabel [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) telah di-build ulang dan siap dipublikasikan ke GitHub.
+

@@ -1485,7 +1485,8 @@ def _is_garbage_ocr_line(text: str) -> bool:
 
     mixed_word_count = sum(
         1 for w in words
-        if re.search(r'[a-zA-Z]', w) and re.search(r'[0-9]', w) and not re.match(r'^[a-zA-Z]+[0-9]+$', w)
+        if not (w.startswith('@') or w.startswith('#'))
+        and re.search(r'[a-zA-Z]', w) and re.search(r'[0-9]', w) and not re.match(r'^[a-zA-Z]+[0-9]+$', w)
     )
     if mixed_word_count >= 2:
         return True
@@ -1577,6 +1578,9 @@ def _clean_ocr_line(line: str) -> str:
     # o. Optical restoration of "!olom" -> "kolom" (Tahap 40: e.g. "di !olom komentar" -> "di kolom komentar")
     t = re.sub(r'(?<=\s)!olom\b|^!olom\b', 'kolom', t, flags=re.IGNORECASE)
 
+    # p. Strip stray noise underscores on ordinary words (Tahap 48 V2: e.g. "aksi _heroik" -> "aksi heroik")
+    t = re.sub(r'(?<![@#A-Za-z0-9])_+(?=[A-Za-z])|(?<=[A-Za-z])_+(?![A-Za-z0-9])', '', t)
+
     return t
 
 
@@ -1601,6 +1605,10 @@ def _line_optical_defect_penalty(line: str) -> int:
         penalty += 5
     if re.search(r'(?<=[a-z])[O0](?=[a-z]|\b)', line):
         penalty += 5
+    # Penalize stray noise underscore outside @mention or #hashtag (Tahap 48 V2)
+    clean_no_tags = re.sub(r'[@#][A-Za-z0-9_.]+', '', line)
+    if '_' in clean_no_tags:
+        penalty += 25
     return penalty
 
 
@@ -1608,6 +1616,14 @@ def _pick_cleaner_line(line1: str, line2: str) -> str:
     """Select the cleaner version of an anchor line (e.g. avoiding trailing orphan digits, truncated words, or OCR optical defects)."""
     l1_clean = _clean_ocr_line(line1)
     l2_clean = _clean_ocr_line(line2)
+
+    # Prioritize line without stray noise underscores (Tahap 48 V2)
+    has_u1 = bool(re.search(r'(?<![@#A-Za-z0-9])_+(?=[A-Za-z])|(?<=[A-Za-z])_+(?![A-Za-z0-9])', line1))
+    has_u2 = bool(re.search(r'(?<![@#A-Za-z0-9])_+(?=[A-Za-z])|(?<=[A-Za-z])_+(?![A-Za-z0-9])', line2))
+    if has_u2 and not has_u1:
+        return l1_clean
+    if has_u1 and not has_u2:
+        return l2_clean
 
     # Prioritize line with fewer optical defects (Tahap 31)
     p1 = _line_optical_defect_penalty(line1)
@@ -2469,29 +2485,49 @@ def process_ocr_batch_results(batch_texts: list[str], return_meta: bool = False)
     # ANTI-LEAK RULE 1 (Tahap 37): Current frame is ALWAYS the primary source!
     current_frame_raw = batch_texts[-1].strip()
     if not current_frame_raw or _is_notes_folder_list_frame(current_frame_raw) or current_frame_raw == "<<<NOTES_LIST_VIEW>>>":
+        if current_color in ("yellow", "blue"):
+            fb = get_recent_typed_single_line_fallback(max_age_sec=30.0)
+            if fb:
+                print(f"[Tahap 48 V2] Recovered 1-line selection from recent typing buffer: '{fb}'", flush=True)
+                return (fb, False) if return_meta else fb
         return (None, False) if return_meta else None
 
     # Strip selector bounds and color markers if present
     current_frame_raw = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', current_frame_raw)
     current_frame_raw = re.sub(r'<<<SEL_COLOR:[^>]+>>>', '', current_frame_raw).strip()
     if not current_frame_raw:
+        if current_color in ("yellow", "blue"):
+            fb = get_recent_typed_single_line_fallback(max_age_sec=30.0)
+            if fb:
+                print(f"[Tahap 48 V2] Recovered 1-line selection from recent typing buffer: '{fb}'", flush=True)
+                return (fb, False) if return_meta else fb
         return (None, False) if return_meta else None
 
     raw_frame_lines = [l.strip() for l in current_frame_raw.splitlines()]
     c_lines = _strip_top_unselected_debris([l for l in raw_frame_lines if l and not _is_garbage_ocr_line(l)])
     if not c_lines:
+        if current_color in ("yellow", "blue"):
+            fb = get_recent_typed_single_line_fallback(max_age_sec=30.0)
+            if fb:
+                print(f"[Tahap 48 V2] Recovered 1-line selection from recent typing buffer: '{fb}'", flush=True)
+                return (fb, False) if return_meta else fb
         return (None, False) if return_meta else None
 
-    # Discard partially clipped/damaged bottom line at toolbar edge (Tahap 40 Bug 4)
-    if len(c_lines) >= 3:
+    # Discard partially clipped/damaged bottom line at toolbar edge (Tahap 40 Bug 4 - only if >= 4 lines)
+    if len(c_lines) >= 4:
         last_l = c_lines[-1]
         if not last_l.startswith("#") and re.search(r'\b(ccrta|dilanorkan|hcrhacil|kcrhacil)\b', last_l, re.IGNORECASE):
             c_lines.pop()
             if raw_frame_lines and raw_frame_lines[-1] == last_l:
                 raw_frame_lines.pop()
 
-    # ATURAN EMAS 1 (Tahap 36/37/38/39/40): Short text (<= 6 non-empty lines, total chars < 220)
-    # NEVER stitch with history frames or past chunks!
+    # ATURAN EMAS 1 (Tahap 36/37/38/39/40/48 V2): Short text & Single-line fast-path
+    if len(c_lines) == 1:
+        cleaned_1line = _clean_ocr_line(c_lines[0]).strip()
+        if cleaned_1line:
+            final_text = auto_correct_ocr_text(cleaned_1line)
+            return (final_text, False) if return_meta else final_text
+
     total_chars = sum(len(l) for l in c_lines)
     is_short_snippet = (len(c_lines) <= 6 and all(len(l) < 55 for l in c_lines) and total_chars < 220)
     if is_short_snippet:
@@ -2603,6 +2639,27 @@ def process_ocr_batch_results(batch_texts: list[str], return_meta: bool = False)
     if return_meta:
         return final_text, auto_cleared
     return final_text
+
+
+def get_recent_typed_single_line_fallback(max_age_sec: float = 30.0) -> str | None:
+    """
+    Fallback for 1-line selection (Tahap 48 V2):
+    If user typed a line within < max_age_sec (e.g. 30s) and highlighted it,
+    return that line if OCR returned empty despite selection color.
+    """
+    import time
+    now = time.time()
+    with _TYPED_BUFFER_LOCK:
+        if _LAST_TYPED_TIMESTAMP > 0 and (now - _LAST_TYPED_TIMESTAMP) <= max_age_sec:
+            cand = _CURRENT_TYPED_LINE.strip()
+            if not cand and _TYPED_LINES_BUFFER:
+                for b in reversed(_TYPED_LINES_BUFFER):
+                    if b.strip():
+                        cand = b.strip()
+                        break
+            if cand and len(cand) >= 3 and len(cand) < 80:
+                return cand
+    return None
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:
