@@ -13,7 +13,9 @@ from urllib.parse import unquote, urlparse
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
+    _is_notes_folder_list_frame,
     auto_correct_ocr_text,
+    clear_recent_long_ocr_chunks,
     commit_and_reset_current_typed_line,
     ensure_paragraph_formatting,
     get_debug_typed_state,
@@ -466,7 +468,13 @@ class Handler(BaseHTTPRequestHandler):
 
                         # Single-Pass Batch OCR: executes PowerShell ONLY ONCE (< 2s)!
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
-                        valid_texts = [t for t in batch_texts if t and t.strip()]
+
+                        # Detect if any frame is a Notes folder list frame (Tahap 32 Bug 1)
+                        has_folder_list = any(_is_notes_folder_list_frame(t) for t in batch_texts)
+                        if has_folder_list:
+                            clear_recent_long_ocr_chunks()
+
+                        valid_texts = [t for t in batch_texts if t and t.strip() and not _is_notes_folder_list_frame(t)]
                         if not valid_texts:
                             return None
 

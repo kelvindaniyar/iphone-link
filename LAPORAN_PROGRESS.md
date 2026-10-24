@@ -805,6 +805,34 @@ Pembaruan terkini mencakup:
   - Test 3 (C# Keyboard Detection & Darkening Curve): Terverifikasi di `ocr_extractor.ps1`.
   - Seluruh pengujian regresi Tahap 26-30 lulus 100%.
 
+### Tahap 32: Notes Folder List Rejection, Top-of-Note Lock (DOC_START), dan Tight Paragraph Formatting (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap32.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap32.py) serta seluruh uji regresi Tahap 26-31.
+- **Latar Belakang & Analisis Video**: Dari evaluasi video pengujian Kelvin (`20261024_0704.mp4`), seluruh 10 typo optik OCR sudah 100% sembuh dan kebocoran keyboard virtual sudah 100% hilang. Namun ditemukan 2 masalah pada saat copy-paste caption panjang ke Sticky Notes Windows (menit 02:11 - 05:00):
+  1. **Bug 1 (Teks Sisa "Today" dan Catatan Lama Nyangkut di Baris Teratas Catatan Baru)**: Saat Kelvin menavigasi ke halaman daftar folder Notes (02:11 - 02:26), frame daftar terekam di `_ViewportHistory`. Stitcher mencocokkan baris preview `"Rekaman video amatir..."` pada frame daftar dengan baris pertama Paragraf 1 dan menyambungkan `"Today"` serta `"banten feeds iphone 17 pro"` ke bagian paling atas caption. Kontaminasi ini tersimpan ke `_RECENT_LONG_OCR_CHUNKS` sehingga berulang meskipun clipboard telah di-clear.
+  2. **Bug 2 (Double Enter Palsu di Hampir Setiap Baris di Sticky Notes)**: Di `ocr_extractor.ps1`, ambang `$gap -gt ($avgH * 0.32)` terlalu rendah sehingga menyisipkan baris kosong di antara baris-baris biasa tanpa huruf berekor (jarak ~0.45 * avgH). Di `ensure_paragraph_formatting`, aturan lama mempertahankan semua baris kosong mentah OCR (`has_blank_after`), menghasilkan jarak renggang tidak rapi.
+- **Pekerjaan yang Dilakukan**:
+  1. **Deteksi & Penolakan Frame Daftar Catatan (`_is_notes_folder_list_frame`)**:
+     - Deteksi header daftar folder Notes (`^Today$`, `^Yesterday$`, `^Previous \d+ Days$`, `^iCloud$`, `^Notes$`, `^\d+ Notes$`) dan timestamp preview (`^\d{1,2}[.:]\d{2}\s+(Tidak ada teks|No additional text)`).
+     - Frame daftar folder dibuang sepenuhnya dari proses stitching.
+     - Otomatis memanggil `clear_recent_long_ocr_chunks()` untuk isolasi memori antar-catatan.
+     - Penolakan header daftar folder pada `_is_garbage_ocr_line`.
+  2. **Kunci Batas Atas Dokumen (Top-of-Note Lock / DOC_START)**:
+     - Di `ocr_extractor.ps1`: mendeteksi baris tanggal header iOS Notes (`$dateRegex`), membuang baris tanggal dan seluruh baris di atasnya (`$_.MinY -gt $dateMinY`).
+     - Di `screen.py`: baris pertama di bawah tanggal dikunci sebagai `DOC_START`. Stitcher DILARANG KERAS menyambungkan baris dari frame/chunk lain di atas `DOC_START`.
+  3. **Ambang Spasi Baris Dinaikkan & Perombakan Total `ensure_paragraph_formatting`**:
+     - Di `ocr_extractor.ps1`: ambang batas dinaikkan dari `($avgH * 0.32)` menjadi `($avgH * 0.85)`.
+     - Di `screen.py`: untuk teks panjang ($\ge 6$ baris), baris kosong mentah mid-sentence tidak lagi dipertahankan. Default separator adalah `\r\n` tunggal (rapat normal persis Notes iPhone).
+     - Penyisipan double enter (`\r\n\r\n`) hanya dilakukan jika memenuhi Syarat Wajib Kalimat Selesai (akhiran `.`, `).`, `].`, `".`, `'.`, `?`, `!` atau baris `Source:`) DAN indikator batas paragraf (pembuka seksi, penutup paragraf, atau baris pendek < 82% rata-rata line length + huruf kapital di baris berikutnya).
+     - Dilarang keras menyisipkan `\r\n\r\n` di antara dua baris yang belum selesai dan di antara baris hashtag berurutan.
+  4. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap32_notes_list_rejection_and_tight_paragraphs` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap32.py`)**:
+  - Test 1: Frame 0 daftar Notes ditolak 100%, kontaminasi `"Today"` dan `"banten feeds iphone 17 pro"` 100% lenyap, output mulai tepat pada `DOC_START` (`"Rekaman video amatir..."`), dan isolasi memori via `clear_recent_long_ocr_chunks` terbukti aman [PASS].
+  - Test 2: Input caption dengan fake `\r\n\r\n` di setiap baris berhasil dirapikan: seluruh baris dalam Para 1 (5 baris), Para 2 (11 baris), Para 3 (9 baris), Para 4 (4 baris), dan Hashtags (2 baris) 100% menggunakan `\r\n` tunggal rapat, tepat 5 `\r\n\r\n` pemisah, menghasilkan tepat 6 blok paragraf [PASS].
+  - Test 3: Unit test deteksi daftar folder Notes (12 kasus positif & 5 kasus negatif normal) [PASS].
+  - Test 4: Inspeksi script `ocr_extractor.ps1` untuk threshold `0.85*avgH` dan Top-of-Note Lock `$dateMinY` [PASS].
+  - Seluruh pengujian regresi Tahap 26-31 lulus 100%.
+
+
 
 
 

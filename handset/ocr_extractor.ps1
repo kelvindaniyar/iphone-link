@@ -480,15 +480,29 @@ public class DualOcrPreprocessor {
         $stream.Dispose()
         Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
 
-        $dateRegex = '(?i)^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?'
+        $dateRegex = '(?i)^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Oktober|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?'
         $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
         $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
+        $notesListHeaderRegex = '(?i)^(Today|Yesterday|Previous\s+\d+\s+Days|iCloud|Notes|\d+\s+Notes|Catatan|\d+\s+Catatan)$'
+        $notesListPreviewRegex = '(?i)^\d{1,2}[.:]\d{2}\s+(Tidak ada teks|No additional text|Catatan baru|New note)\b'
 
         $parsedLines = @()
+        $dateMinY = -1.0
         foreach ($l in $ocrResult.Lines) {
             $t = $l.Text.Trim()
             if (!$t) { continue }
-            if ($t -match $dateRegex -or $t -match $timeRegex) { continue }
+            if ($t -match $dateRegex) {
+                $minY_d = 9999999
+                foreach ($w in $l.Words) {
+                    if ($w.BoundingRect.Y -lt $minY_d) { $minY_d = $w.BoundingRect.Y }
+                }
+                if ($dateMinY -lt 0 -or $minY_d -lt $dateMinY) {
+                    $dateMinY = $minY_d
+                }
+                continue
+            }
+            if ($t -match $notesListHeaderRegex -or $t -match $notesListPreviewRegex) { continue }
+            if ($t -match $timeRegex) { continue }
             if ($t -match $calloutRegex) { continue }
             if ($t -match '(?i)(jendela-kecil|Device Hub|This device was viewed remotely|remotely from Mac)') { continue }
             if ($t -match '\b(v3one|oil13i1|111e113n|me1a1ui|miliknva|aO/O3124an)\b') { continue }
@@ -544,6 +558,11 @@ public class DualOcrPreprocessor {
             }
         }
 
+        # Top-of-Note Lock: if a date header was detected on this frame, discard any lines above it!
+        if ($dateMinY -ge 0) {
+            $parsedLines = @($parsedLines | Where-Object { $_.MinY -gt $dateMinY })
+        }
+
         if ($parsedLines.Count -eq 0) {
             return @()
         }
@@ -581,7 +600,7 @@ public class DualOcrPreprocessor {
             if ($i -gt 0) {
                 $prev = $sortedLines[$i - 1]
                 $gap = $curr.MinY - $prev.MaxY
-                if ($gap -gt ($avgH * 0.32)) {
+                if ($gap -gt ($avgH * 0.85)) {
                     $lines += ""
                 }
             }
