@@ -282,9 +282,9 @@ public class DualOcrPreprocessor {
             int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.005));
             cropH = Math.Max(20, cropBottom - cropY);
         } else {
-            // Full-Viewport Content Crop (Tahap 37: 0.125 * H to 0.855 * H when no keyboard)
-            cropY = (int)(H * 0.125);
-            int cropBottom = maxContentBottom;
+            // Full-Viewport Content Crop (Tahap 39: 0.122 * H to Math.Min(maxContentBottom, 0.810 * H))
+            cropY = (int)(H * 0.122);
+            int cropBottom = Math.Min(maxContentBottom, (int)(H * 0.810));
             cropH = Math.Max(20, cropBottom - cropY);
         }
 
@@ -698,6 +698,17 @@ public class DualOcrPreprocessor {
         }
         $avgH = if ($sortedLines.Count -gt 0) { $sumH / $sortedLines.Count } else { 30.0 }
 
+        # Anti-Garbage Filter for partially clipped bottom line at scroll/crop edge or floating toolbar (Tahap 39)
+        if ($sortedLines.Count -ge 3) {
+            $lastIdx = $sortedLines.Count - 1
+            $lastItem = $sortedLines[$lastIdx]
+            $lastText = $lastItem.Text.Trim()
+            $isClippedBottom = ($lastItem.Height -lt ($avgH * 0.55)) -or ($lastText -match '^[^a-zA-Z0-9#@]+$')
+            if ($isClippedBottom) {
+                $sortedLines = @($sortedLines[0..($lastIdx - 1)])
+            }
+        }
+
         $lines = @()
         if ($hasDateHeader) {
             $lines += "<<<DOC_START>>>"
@@ -823,14 +834,15 @@ public class DualOcrPreprocessor {
         $_ -and $_.Trim() -ne "" -and $_ -ne "<<<DOC_START>>>" -and $_ -ne "<<<NOTES_LIST_VIEW>>>" 
     })
 
-    $isShortSnippet = ($cleanLines.Count -ge 1 -and $cleanLines.Count -le 5)
+    $totalChars = ($cleanLines -join '').Length
+    $isShortSnippet = ($cleanLines.Count -ge 1 -and $cleanLines.Count -le 5 -and $totalChars -lt 200)
     $isNotesList = ($resCurrent.Lines -contains "<<<NOTES_LIST_VIEW>>>")
 
-    # Complete 1-Screen Caption Check:
-    # >= 6 non-empty lines, starts with capital/quote opener at selMinY >= 0.140*H, ends with #hashtag
-    $hasHashtagEnd = ($cleanLines.Count -ge 2 -and ($cleanLines[-1].Trim() -match '^#' -or $cleanLines[-2].Trim() -match '^#'))
+    # Complete 1-Screen Caption Check (Tahap 39):
+    # >= 6 non-empty lines, starts with capital/quote opener at selMinY >= 0.135*H, ends with #hashtag
+    $hasHashtagEnd = ($cleanLines.Count -ge 2 -and ($cleanLines[-1].Trim() -match '^#[a-zA-Z0-9_]+' -or $cleanLines[-2].Trim() -match '^#[a-zA-Z0-9_]+'))
     $hasValidStart = ($cleanLines.Count -ge 1 -and $cleanLines[0].Trim() -match '^[A-Z"“]' -and -not $cleanLines[0].Trim().EndsWith(','))
-    $isCompleteSingleScreen = ($cleanLines.Count -ge 6 -and $hasHashtagEnd -and $hasValidStart -and $resCurrent.SelMinY -ge [int]($resCurrent.Height * 0.140))
+    $isCompleteSingleScreen = ($cleanLines.Count -ge 6 -and $hasHashtagEnd -and $hasValidStart -and $resCurrent.SelMinY -ge [int]($resCurrent.Height * 0.135))
 
     if ($pathList.Count -eq 1 -or $isShortSnippet -or $isNotesList -or $isCompleteSingleScreen) {
         # FAST EARLY EXIT: current frame is 100% complete, skip history frames!
@@ -854,9 +866,9 @@ public class DualOcrPreprocessor {
         # History frame: use fast single candidate (Candidate 1 Clean Natural RGB)
         $hRes = Process-SingleFrame $hTrimmed $false $false $true
 
-        # If highlight missing or span < 0.18*H, use Full-Viewport Content Crop
+        # If highlight missing or span < 0.15*H, use Full-Viewport Content Crop (Tahap 39)
         $hSpan = $hRes.SelMaxY - $hRes.SelMinY
-        $hMinSpan = [int]($hRes.Height * 0.18)
+        $hMinSpan = [int]($hRes.Height * 0.15)
         if (-not $hRes.FoundHighlight -or $hSpan -lt $hMinSpan) {
             $hRes = Process-SingleFrame $hTrimmed $false $true $true
         }

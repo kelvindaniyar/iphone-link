@@ -1020,4 +1020,34 @@ Pembaruan terkini mencakup:
   - Test 3: Google Keep Full-Res 100% cocok dengan Ground-Truth termasuk pemulihan `(AI Generated Content)` dalam **0.96 detik** [PASS].
   - Test 4: Suite regresi Tahap 37 lulus 100% tanpa error [PASS].
 
+### Tahap 39: Sentralisasi Pipeline OCR `process_ocr_batch_results`, Stitching Dua Arah Apple Notes, Restorasi Optik "lambung kapal", & Eliminasi Crash Fatal Server (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap39.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap39.py) pada HTTP handler `server.py`, gambar nyata Kelvin jam 19.16, teks pendek, dan Google Keep, serta seluruh suite regresi Tahap 38.
+- **Latar Belakang & Analisis Bukti Nyata (Smoking Gun) Video Kelvin (19:14 - 19:16)**:
+  - Tombol Copy iPhone Text menampilkan `"✓ Copied (iOS)"` dan Clipboard Windows kosong karena crash fatal `NameError` di `handset/server.py` (`_is_garbage_ocr_line` dan `_clean_ocr_line` tidak di-import, serta variabel `valid_texts` tidak didefinisikan).
+  - Skrip pengujian sebelumnya tidak mendeteksi ini karena hanya memanggil fungsi `screen.py` secara langsung tanpa memanggil handler HTTP `server.py`.
+  - Ditemukan typo optik Windows OCR: `"lambung kapal"` terbaca `"Iambung kapal"` (`'I'` kapital).
+  - Pada Apple Notes saat Kelvin scroll ke atas catatan setelah melihat bagian bawah catatan, stitcher searah membuang bagian bawah catatan (Source dan Hashtags) karena aturan early-exit dan penggabungan searah.
+  - Floating pill toolbar format Notes (`≡• | ≡ | ↑ | ↓`) di bagian bawah memotong baris teks bawah secara horizontal.
+- **Pekerjaan Arsitektural yang Dilakukan**:
+  1. **Sentralisasi Pipeline OCR ke `process_ocr_batch_results` & Pencegahan Silent Crash**:
+     - Seluruh pemrosesan pasca-OCR dipusatkan di `handset/screen.py` via `process_ocr_batch_results(batch_texts: list[str]) -> str | None`.
+     - `handset/server.py` meng-import seluruh fungsi helper dan memanggil `process_ocr_batch_results`.
+     - Di `_do_extract`, ditambahkan penulisan `traceback.format_exc()` ke `debug_ocr_error.log` pada setiap eksepsi.
+  2. **Pemulihan Jarak Enter Ganda Teks Pendek (00:47)**:
+     - Jika teks $\le 6$ baris dan $< 220$ karakter, 100% baris kosong `""` dipertahankan dan diformat menjadi `\r\n\r\n`.
+  3. **Restorasi Optik "Iambung" -> "lambung"**:
+     - Ditambahkan regex lookahead pada kata berawalan `'I'` yang seharusnya `'l'` kecil: `re.sub(r'\bI(?=(?:ambung|angkah|angsung|agi|ain|alu|ebih|intas|aut|epas|uka|oket|okasi|aporan|embar|ingkungan|uar)\b)', 'l', t)`.
+  4. **Stitching Catatan Dua Arah (Bidirectional Stitching)**:
+     - Ditambahkan fallback penggabungan terbalik `merge_two_overlapping_blocks(current_lines, prev_lines)` dan `stitch_two_ocr_texts(current, prev)`.
+     - Di `ocr_extractor.ps1`: Early-exit pada catatan panjang hanya diizinkan jika sudah diakhiri `#hashtag`.
+     - Ditambahkan filter pemotongan baris bawah (`Height < 0.55 * avgH` atau simbol non-alfanumerik toolbar) dan batas pemotongan full-viewport `0.810 * H`.
+  5. **Pembaruan Tag Cache Frontend**: Bump ke `v=20261024_tahap39_centralized_ocr_and_bidirectional_stitch` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap39.py`)**:
+  - Test 1: Handler HTTP `server.py` POST `/api/keyboard/shortcut` mengembalikan `HTTP 200`, `ok: true`, `debug_ocr_result.json` ter-update, dan Windows Clipboard terisi dalam **0.89 detik** [PASS].
+  - Test 2: Gambar asli Kelvin `debug_ocr_raw.png` (jam 19.16) tersambung 2 arah (Forward & Reverse) menghasilkan 37 baris utuh (6 blok paragraf), kata `"lambung kapal"` 100% dengan `'l'` kecil (0% `"Iambung"`), dan berakhiran `#cilegon` dalam **0.97 detik** [PASS].
+  - Test 3: Teks pendek video 00:47 mempertahankan jarak Enter ganda `\r\n\r\n` dan `"papua"` [PASS].
+  - Test 4: Google Keep 1-layar 100% identik dengan Ground-Truth dalam **1.00 detik** [PASS].
+  - Seluruh 4 pengujian selesai dalam total **4.17 detik** [PASS 100%].
+
+
 

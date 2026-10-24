@@ -1040,6 +1040,10 @@ def _clean_ocr_line(line: str) -> str:
     # j. Direct optical restoration of "Dapua" -> "papua" (Tahap 38)
     t = re.sub(r'\b[Dd]apua\b', 'papua', t)
 
+    # k. Optical restoration of "Iambung" -> "lambung" & capital "I" mistranscriptions of lowercase "l" at word start (Tahap 39)
+    t = re.sub(r'\bI(?=(?:ambung|angkah|angsung|agi|ain|alu|ebih|intas|aut|epas|uka|oket|okasi|aporan|embar|ingkungan|uar)\b)', 'l', t)
+    t = re.sub(r'\bIambung\b', 'lambung', t)
+
     return t
 
 
@@ -1633,12 +1637,18 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
         if not prev_lines:
             continue
         merged = merge_two_overlapping_blocks(prev_lines, current_lines)
+        if not merged:
+            # Bidirectional fallback (Tahap 39): if user scrolled up to note top after viewing note bottom
+            merged = merge_two_overlapping_blocks(current_lines, prev_lines)
         if merged:
             current_lines = merged
         else:
             if not is_complete_single_screen:
                 t_merged = stitch_two_ocr_texts("\r\n".join(prev_lines), "\r\n".join(current_lines))
                 m_lines = [_clean_ocr_line(l) for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+                if not m_lines or m_lines == current_lines:
+                    t_merged = stitch_two_ocr_texts("\r\n".join(current_lines), "\r\n".join(prev_lines))
+                    m_lines = [_clean_ocr_line(l) for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
                 if m_lines:
                     current_lines = _unsplit_broken_lines(m_lines)
 
@@ -1869,6 +1879,94 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     joined = re.sub(r'(?<!\r)\n', '\r\n', joined)
     joined = joined.replace("\r\r\n", "\r\n")
     return joined
+
+
+def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
+    """
+    Centralized OCR Batch Post-Processing Pipeline (Tahap 39).
+    Called directly by handset/server.py and test suites to guarantee 100% identical execution.
+    - Handles short snippets (<= 6 lines, total chars < 220) preserving double Enter (\\r\\n\\r\\n).
+    - Checks 1-screen complete caption (requiring #hashtag at end) to prevent premature truncation.
+    - Stitches multi-screen frames with bidirectional matching and gap-filling.
+    - Applies _clean_ocr_line, auto_correct_ocr_text, and ensure_paragraph_formatting.
+    """
+    if not batch_texts:
+        return None
+
+    # Detect if any frame is a Notes folder list frame (Tahap 32 & Tahap 33)
+    has_folder_list = any(_is_notes_folder_list_frame(t) or "<<<NOTES_LIST_VIEW>>>" in t for t in batch_texts)
+    if has_folder_list:
+        clear_recent_long_ocr_chunks()
+
+    # ANTI-LEAK RULE 1 (Tahap 37): Current frame is ALWAYS the primary source!
+    current_frame_raw = batch_texts[-1].strip()
+    if not current_frame_raw or _is_notes_folder_list_frame(current_frame_raw) or current_frame_raw == "<<<NOTES_LIST_VIEW>>>":
+        return None
+
+    # Strip selector bounds marker if present
+    current_frame_raw = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', current_frame_raw).strip()
+    if not current_frame_raw:
+        return None
+
+    raw_frame_lines = [l.strip() for l in current_frame_raw.splitlines()]
+    c_lines = _strip_top_unselected_debris([l for l in raw_frame_lines if l and not _is_garbage_ocr_line(l)])
+    if not c_lines:
+        return None
+
+    # ATURAN EMAS 1 (Tahap 36/37/38/39): Short text (<= 6 non-empty lines, total chars < 220)
+    # NEVER stitch with history frames or past chunks!
+    total_chars = sum(len(l) for l in c_lines)
+    is_short_snippet = (len(c_lines) <= 6 and all(len(l) < 55 for l in c_lines) and total_chars < 220)
+    if is_short_snippet:
+        # WAJIB PERTAHANKAN baris kosong "" di antara baris-baris pendek
+        cleaned_snippet_lines = [_clean_ocr_line(l) if l else "" for l in raw_frame_lines]
+        while cleaned_snippet_lines and not cleaned_snippet_lines[0]:
+            cleaned_snippet_lines.pop(0)
+        while cleaned_snippet_lines and not cleaned_snippet_lines[-1]:
+            cleaned_snippet_lines.pop()
+        current_frame_text = "\r\n".join(cleaned_snippet_lines).strip()
+        final_text = auto_correct_ocr_text(current_frame_text)
+        final_text = ensure_paragraph_formatting(final_text)
+        return final_text
+
+    current_frame_text = "\r\n".join(c_lines).strip()
+
+    # ATURAN EMAS 2 & 3: Check single-screen complete caption vs multi-screen
+    has_hashtag_end = any(l.startswith("#") for l in c_lines[-2:]) if len(c_lines) >= 2 else False
+    first_line = c_lines[0] if c_lines else ""
+    is_middle_para = bool(re.match(r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+unggahan|konten\s+tersebut|fenomena\s+ini|seluruh\s+\d+|bagaimana\s+(perasaan|tanggapan|menurut)|source\s*:|sumber\s*:)', first_line, re.IGNORECASE))
+    has_body_start = (
+        not is_middle_para
+        and len(first_line) >= 20
+        and not _is_generic_template_line(first_line)
+        and first_line[0].isupper()
+        and not first_line.endswith(",")
+    )
+    is_complete_single_screen = (has_hashtag_end and has_body_start and len(c_lines) >= 6)
+
+    if len(batch_texts) <= 1 or (is_complete_single_screen and _score_gap_quality(c_lines) >= 0):
+        final_text = auto_correct_ocr_text(current_frame_text)
+    else:
+        # ANTI-LEAK RULE 2 (Tahap 37): Filter history frames!
+        valid_history = []
+        for ht in batch_texts[:-1]:
+            if not ht or not ht.strip() or _is_notes_folder_list_frame(ht) or "<<<NOTES_LIST_VIEW>>>" in ht:
+                continue
+            ht_clean = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', ht).strip()
+            h_lines = _strip_top_unselected_debris([l.strip() for l in ht_clean.splitlines() if l.strip()])
+            if has_overlapping_body_line(h_lines, c_lines):
+                valid_history.append("\r\n".join(h_lines))
+
+        if valid_history:
+            frames_to_stitch = valid_history + [current_frame_text]
+            stitched = stitch_multiline_ocr_frames(frames_to_stitch)
+            final_text = stitched if stitched else current_frame_text
+            final_text = auto_correct_ocr_text(final_text)
+        else:
+            final_text = auto_correct_ocr_text(current_frame_text)
+
+    final_text = ensure_paragraph_formatting(final_text)
+    return final_text
 
 
 def get_debug_typed_state() -> tuple[str, list[str]]:

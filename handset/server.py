@@ -14,12 +14,19 @@ from urllib.parse import unquote, urlparse
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
+    _clean_ocr_line,
+    _is_garbage_ocr_line,
+    _is_generic_template_line,
     _is_notes_folder_list_frame,
+    _score_gap_quality,
+    _strip_top_unselected_debris,
     auto_correct_ocr_text,
     clear_recent_long_ocr_chunks,
     commit_and_reset_current_typed_line,
     ensure_paragraph_formatting,
     get_debug_typed_state,
+    has_overlapping_body_line,
+    process_ocr_batch_results,
     record_typed_char,
     record_typed_text,
     restart_screen,
@@ -32,10 +39,6 @@ from handset.screen import (
     toggle_onscreen_keyboard,
     trigger_ios_shortcut,
     type_text_to_iphone,
-    _strip_top_unselected_debris,
-    _is_generic_template_line,
-    _score_gap_quality,
-    has_overlapping_body_line,
 )
 from handset.wifi import pair_for_wifi, wifi_paired_udids
 from handset.audio import audio_manager
@@ -248,18 +251,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
         return None
     try:
         results = extract_text_batch([frame_data_url], save_debug=save_debug)
-        raw_text = results[0] if results else ""
-        raw_text = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', raw_text).strip()
-        if raw_text == "<<<NOTES_LIST_VIEW>>>" or _is_notes_folder_list_frame(raw_text):
-            clear_recent_long_ocr_chunks()
-            return None
-        if raw_text:
-            lines = _strip_top_unselected_debris([l.strip() for l in raw_text.splitlines()])
-            raw_text = "\r\n".join(lines).strip()
-            corrected_text = auto_correct_ocr_text(raw_text)
-            corrected_text = ensure_paragraph_formatting(corrected_text)
-        else:
-            corrected_text = auto_correct_ocr_text("")
+        final_text = process_ocr_batch_results(results)
 
         if save_debug:
             try:
@@ -267,8 +259,9 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
                 project_root = Path(__file__).resolve().parent.parent
                 active_line, buffer_tail = get_debug_typed_state()
                 result_info = {
-                    "raw_ocr_text": raw_text,
-                    "corrected_text": corrected_text,
+                    "raw_ocr_text": results[-1] if results else "",
+                    "batch_count": len(results),
+                    "corrected_text": final_text or "",
                     "typed_active_line": active_line,
                     "typed_buffer_tail": buffer_tail,
                 }
@@ -277,7 +270,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
             except Exception as err:
                 print(f"debug_ocr_result.json save error: {err}", flush=True)
 
-        return corrected_text if corrected_text else None
+        return final_text if final_text else None
     except Exception as e:
         print(f"extract_text_from_frame error: {e}", flush=True)
         return None
@@ -496,74 +489,8 @@ class Handler(BaseHTTPRequestHandler):
                         # Single-Pass Batch OCR: executes PowerShell with fast single-frame first (< 1.5s)!
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
 
-                        # Detect if any frame is a Notes folder list frame (Tahap 32 & Tahap 33)
-                        has_folder_list = any(_is_notes_folder_list_frame(t) or "<<<NOTES_LIST_VIEW>>>" in t for t in batch_texts)
-                        if has_folder_list:
-                            clear_recent_long_ocr_chunks()
-
-                        if not batch_texts:
-                            return None
-
-                        # ANTI-LEAK RULE 1 (Tahap 37): Current frame is ALWAYS the primary source!
-                        # In ocr_extractor.ps1, batch_texts either has 1 element (current frame via early exit)
-                        # or multiple elements where the last element is the current frame.
-                        current_frame_raw = batch_texts[-1].strip()
-                        if not current_frame_raw or _is_notes_folder_list_frame(current_frame_raw) or current_frame_raw == "<<<NOTES_LIST_VIEW>>>":
-                            # STRICT ANTI-LEAK: If current screen has no OCR text, NEVER fall back to old history/chunks!
-                            return None
-
-                        # Clean current frame from unselected top debris (e.g. #toltangerangmerak #infotangerang\n---)
-                        raw_frame_lines = [l.strip() for l in current_frame_raw.splitlines()]
-                        c_lines = _strip_top_unselected_debris([l for l in raw_frame_lines if l and not _is_garbage_ocr_line(l)])
-                        if not c_lines:
-                            return None
-
-                        # ATURAN EMAS 1 (Tahap 36/37/38): Short text (<= 6 non-empty lines, total chars < 250)
-                        # NEVER stitch with history frames or past chunks!
-                        is_short_snippet = (len(c_lines) <= 6 and all(len(l) < 55 for l in c_lines) and sum(len(l) for l in c_lines) < 250)
-                        if is_short_snippet:
-                            # WAJIB PERTAHANKAN baris kosong "" di antara baris-baris pendek
-                            cleaned_snippet_lines = [_clean_ocr_line(l) if l else "" for l in raw_frame_lines]
-                            current_frame_text = "\r\n".join(cleaned_snippet_lines).strip()
-                            final_text = auto_correct_ocr_text(current_frame_text)
-                            final_text = ensure_paragraph_formatting(final_text)
-                        else:
-                            current_frame_text = "\r\n".join(c_lines).strip()
-                            # ATURAN EMAS 2 & 3: Check single-screen complete caption vs multi-screen
-                            has_hashtag_end = any(l.startswith("#") for l in c_lines[-2:]) if len(c_lines) >= 2 else False
-                            first_line = c_lines[0] if c_lines else ""
-                            is_middle_para = bool(re.match(r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+unggahan|konten\s+tersebut|fenomena\s+ini|seluruh\s+\d+|bagaimana\s+(perasaan|tanggapan|menurut)|source\s*:|sumber\s*:)', first_line, re.IGNORECASE))
-                            has_body_start = (
-                                not is_middle_para
-                                and len(first_line) >= 20
-                                and not _is_generic_template_line(first_line)
-                                and first_line[0].isupper()
-                                and not first_line.endswith(",")
-                            )
-                            is_complete_single_screen = (has_hashtag_end and has_body_start and len(c_lines) >= 6)
-
-                            if len(batch_texts) <= 1 or (is_complete_single_screen and _score_gap_quality(c_lines) >= 0):
-                                final_text = auto_correct_ocr_text(current_frame_text)
-                            else:
-                                # ANTI-LEAK RULE 2 (Tahap 37): Filter history frames!
-                                # Only retain history frames that share at least 1 genuine body sentence with current frame!
-                                valid_history = []
-                                for ht in batch_texts[:-1]:
-                                    if not ht or not ht.strip() or _is_notes_folder_list_frame(ht) or "<<<NOTES_LIST_VIEW>>>" in ht:
-                                        continue
-                                    h_lines = _strip_top_unselected_debris([l.strip() for l in ht.splitlines() if l.strip()])
-                                    if has_overlapping_body_line(h_lines, c_lines):
-                                        valid_history.append("\r\n".join(h_lines))
-
-                                if valid_history:
-                                    frames_to_stitch = valid_history + [current_frame_text]
-                                    stitched = stitch_multiline_ocr_frames(frames_to_stitch)
-                                    final_text = stitched if stitched else current_frame_text
-                                    final_text = auto_correct_ocr_text(final_text)
-                                else:
-                                    final_text = auto_correct_ocr_text(current_frame_text)
-
-                            final_text = ensure_paragraph_formatting(final_text)
+                        # Centralized OCR post-processing pipeline (Tahap 39)
+                        final_text = process_ocr_batch_results(batch_texts)
 
                         # Save debug info
                         try:
@@ -571,9 +498,9 @@ class Handler(BaseHTTPRequestHandler):
                             project_root = Path(__file__).resolve().parent.parent
                             active_line, buffer_tail = get_debug_typed_state()
                             result_info = {
-                                "raw_ocr_text": valid_texts[-1],
-                                "batch_count": len(valid_texts),
-                                "corrected_text": final_text,
+                                "raw_ocr_text": batch_texts[-1] if batch_texts else "",
+                                "batch_count": len(batch_texts),
+                                "corrected_text": final_text or "",
                                 "typed_active_line": active_line,
                                 "typed_buffer_tail": buffer_tail,
                             }
@@ -589,7 +516,15 @@ class Handler(BaseHTTPRequestHandler):
                                 print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
                         return final_text
                     except Exception as err:
-                        print(f"Async extract error: {err}", flush=True)
+                        import traceback
+                        err_trace = traceback.format_exc()
+                        print(f"Async extract error: {err}\n{err_trace}", flush=True)
+                        try:
+                            project_root = Path(__file__).resolve().parent.parent
+                            with open(project_root / "debug_ocr_error.log", "w", encoding="utf-8") as f_err:
+                                f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
+                        except Exception:
+                            pass
                         return None
 
                 if frame_data_url:
