@@ -19,6 +19,7 @@ public class DualOcrPreprocessor {
     public static void PrepareCandidates(
         Bitmap src,
         bool isFullViewport,
+        bool onlyCandidate1,
         out Bitmap cand1Natural,
         out Bitmap cand2RedFiltered,
         out bool foundHighlight,
@@ -189,9 +190,10 @@ public class DualOcrPreprocessor {
             hasKeyboard = true;
         }
 
-        int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.865);
+        // Tahap 37: When no keyboard, extend bottom scan and crop to 0.855 * H
+        int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.855);
 
-        // 3. Scan Highlights (Tahap 36: Yellow & Blue Highlights, threshold >= 8 pixels per row)
+        // 3. Scan Highlights (Tahap 36/37: Yellow & Blue Highlights, threshold >= 8 pixels per row)
         int scanTopY = (int)(H * 0.120);
         int scanBottomY = maxContentBottom;
         int leftX = (int)(W * 0.04);
@@ -218,8 +220,8 @@ public class DualOcrPreprocessor {
                     // Apple Notes Yellow Highlight (including pale cream):
                     bool isYellowHl = (r > 215 && g > 195 && b < 240 && (r - b) >= 14);
                     bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80);
-                    // Google Keep / iOS Blue Selection:
-                    bool isBlueHl = (b > 200 && g > 185 && (b - r) >= 10);
+                    // Google Keep / iOS Blue Selection (Tahap 37):
+                    bool isBlueHl = ((b >= 200 && g >= 185 && (b - r) >= 10) || (b >= 215 && g >= 195 && (b - r) >= 12));
                     bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25);
 
                     if (isYellowHl || isYellowHandle || isBlueHl || isBlueHandle) {
@@ -227,7 +229,7 @@ public class DualOcrPreprocessor {
                     }
                 }
 
-                // Tahap 36: Threshold >= 8 horizontal pixels per row
+                // Tahap 36/37: Threshold >= 8 horizontal pixels per row
                 if (hlCount >= 8) {
                     rowHasHighlight[y] = true;
                 }
@@ -280,9 +282,9 @@ public class DualOcrPreprocessor {
             int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.015));
             cropH = Math.Max(20, cropBottom - cropY);
         } else {
-            // Full-Viewport Content Crop (Tahap 36)
+            // Full-Viewport Content Crop (Tahap 37: 0.125 * H to 0.855 * H when no keyboard)
             cropY = (int)(H * 0.125);
-            int cropBottom = Math.Min((int)(H * 0.768), maxContentBottom);
+            int cropBottom = maxContentBottom;
             cropH = Math.Max(20, cropBottom - cropY);
         }
 
@@ -291,25 +293,29 @@ public class DualOcrPreprocessor {
         BitmapData natData = stripNatural.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
         byte[] natPixels = new byte[Math.Abs(natData.Stride) * cropH];
 
-        // Candidate 2: Red/Luma Contrast Enhanced
-        Bitmap stripRed = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
-        BitmapData redData = stripRed.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-        byte[] redPixels = new byte[Math.Abs(redData.Stride) * cropH];
+        // Candidate 2: Red/Luma Contrast Enhanced (optional for history frames to maximize speed)
+        Bitmap stripRed = null;
+        BitmapData redData = null;
+        byte[] redPixels = null;
+        if (!onlyCandidate1) {
+            stripRed = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
+            redData = stripRed.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            redPixels = new byte[Math.Abs(redData.Stride) * cropH];
+        }
 
         for (int cy = 0; cy < cropH; cy++) {
             int srcRow = (cropY + cy) * stride;
             int natRow = cy * natData.Stride;
-            int redRow = cy * redData.Stride;
+            int redRow = (redData != null) ? cy * redData.Stride : 0;
             for (int cx = 0; cx < cropW; cx++) {
                 int sIdx = srcRow + ((cropX + cx) * 4);
                 int nIdx = natRow + (cx * 4);
-                int rIdx = redRow + (cx * 4);
 
                 byte b = raw[sIdx];
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 36: Targeted Unwanted Objects Neutralization
+                // Tahap 36/37: Targeted Unwanted Objects Neutralization
                 bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80 && !(r < 130 && g < 130 && b < 130));
                 bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25 && !(r < 110 && g < 110 && b < 110));
                 bool isRedSpellcheck = (r > 165 && (r - g) > 42 && (r - b) > 42 && g < 135);
@@ -328,39 +334,42 @@ public class DualOcrPreprocessor {
                 }
 
                 // Kandidat 2 (Red/Luma Contrast Enhanced):
-                if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
-                    redPixels[rIdx] = 255;
-                    redPixels[rIdx + 1] = 255;
-                    redPixels[rIdx + 2] = 255;
-                    redPixels[rIdx + 3] = 255;
-                } else {
-                    int lum;
-                    int threshold;
-                    if (b > (r + 10)) {
-                        // Blue selection (Google Keep)
-                        lum = (r + g) / 2;
-                        threshold = 212;
+                if (!onlyCandidate1 && redPixels != null) {
+                    int rIdx = redRow + (cx * 4);
+                    if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                        redPixels[rIdx] = 255;
+                        redPixels[rIdx + 1] = 255;
+                        redPixels[rIdx + 2] = 255;
+                        redPixels[rIdx + 3] = 255;
                     } else {
-                        // Yellow highlight or white background
-                        lum = r;
-                        threshold = 228;
-                    }
+                        int lum;
+                        int threshold;
+                        if (b > (r + 10)) {
+                            // Blue selection (Google Keep)
+                            lum = (r + g) / 2;
+                            threshold = 212;
+                        } else {
+                            // Yellow highlight or white background
+                            lum = r;
+                            threshold = 228;
+                        }
 
-                    byte v;
-                    if (lum >= threshold) {
-                        v = 255;
-                    } else if (lum < 160) {
-                        v = (byte)(lum * 0.55);
-                    } else {
-                        int mapped = 90 + (int)((lum - 160) * (250 - 90) / (threshold - 160));
-                        if (mapped < 0) mapped = 0;
-                        if (mapped > 255) mapped = 255;
-                        v = (byte)mapped;
+                        byte v;
+                        if (lum >= threshold) {
+                            v = 255;
+                        } else if (lum < 160) {
+                            v = (byte)(lum * 0.55);
+                        } else {
+                            int mapped = 90 + (int)((lum - 160) * (250 - 90) / (threshold - 160));
+                            if (mapped < 0) mapped = 0;
+                            if (mapped > 255) mapped = 255;
+                            v = (byte)mapped;
+                        }
+                        redPixels[rIdx] = v;
+                        redPixels[rIdx + 1] = v;
+                        redPixels[rIdx + 2] = v;
+                        redPixels[rIdx + 3] = 255;
                     }
-                    redPixels[rIdx] = v;
-                    redPixels[rIdx + 1] = v;
-                    redPixels[rIdx + 2] = v;
-                    redPixels[rIdx + 3] = 255;
                 }
             }
         }
@@ -368,16 +377,21 @@ public class DualOcrPreprocessor {
         Marshal.Copy(natPixels, 0, natData.Scan0, natPixels.Length);
         stripNatural.UnlockBits(natData);
 
-        Marshal.Copy(redPixels, 0, redData.Scan0, redPixels.Length);
-        stripRed.UnlockBits(redData);
+        if (!onlyCandidate1 && stripRed != null && redData != null && redPixels != null) {
+            Marshal.Copy(redPixels, 0, redData.Scan0, redPixels.Length);
+            stripRed.UnlockBits(redData);
+        }
 
-        // Upscale 2.5x with 60px margin
-        float scale = 2.5f;
-        int margin = 60;
-        int upW = (int)(cropW * scale);
-        int upH = (int)(cropH * scale);
-        int finalW = upW + (margin * 2);
-        int finalH = upH + (margin * 2);
+        // Dynamic Safe Upscaling (Tahap 37): Max 3500px, NEVER exceed 4096px
+        double scale = (cropH <= 650) ? 2.2 : 1.35;
+        int margin = 48;
+        double maxAllowedDim = 3400.0;
+        if (cropW * scale > maxAllowedDim) scale = maxAllowedDim / cropW;
+        if (cropH * scale > maxAllowedDim) scale = maxAllowedDim / cropH;
+        int targetW = Math.Max(1, (int)Math.Round(cropW * scale));
+        int targetH = Math.Max(1, (int)Math.Round(cropH * scale));
+        int finalW = targetW + (margin * 2);
+        int finalH = targetH + (margin * 2);
 
         cand1Natural = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
         using (Graphics g = Graphics.FromImage(cand1Natural)) {
@@ -385,19 +399,23 @@ public class DualOcrPreprocessor {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.SmoothingMode = SmoothingMode.HighQuality;
-            g.DrawImage(stripNatural, new Rectangle(margin, margin, upW, upH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
+            g.DrawImage(stripNatural, new Rectangle(margin, margin, targetW, targetH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
         }
         stripNatural.Dispose();
 
-        cand2RedFiltered = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
-        using (Graphics g = Graphics.FromImage(cand2RedFiltered)) {
-            g.Clear(Color.White);
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.SmoothingMode = SmoothingMode.HighQuality;
-            g.DrawImage(stripRed, new Rectangle(margin, margin, upW, upH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
+        if (!onlyCandidate1 && stripRed != null) {
+            cand2RedFiltered = new Bitmap(finalW, finalH, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(cand2RedFiltered)) {
+                g.Clear(Color.White);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.SmoothingMode = SmoothingMode.HighQuality;
+                g.DrawImage(stripRed, new Rectangle(margin, margin, targetW, targetH), new Rectangle(0, 0, cropW, cropH), GraphicsUnit.Pixel);
+            }
+            stripRed.Dispose();
+        } else {
+            cand2RedFiltered = null;
         }
-        stripRed.Dispose();
     }
 }
 '@
@@ -717,7 +735,7 @@ public class DualOcrPreprocessor {
         exit 0
     }
 
-    function Process-SingleFrame([string]$imageFilePath, [bool]$isLast, [bool]$isFullViewport) {
+    function Process-SingleFrame([string]$imageFilePath, [bool]$isLast, [bool]$isFullViewport, [bool]$onlyCand1) {
         if (!(Test-Path $imageFilePath)) {
             return @{ Lines = @(); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = 0 }
         }
@@ -733,11 +751,14 @@ public class DualOcrPreprocessor {
         $selMinY = 0
         $selMaxY = 0
 
-        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH, [ref]$selMinY, [ref]$selMaxY)
+        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, $onlyCand1, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH, [ref]$selMinY, [ref]$selMaxY)
 
-        # Tahap 36: Run Dual-Candidate OCR without post-OCR line dropping
+        # Tahap 37: OCR on Candidate 1 (always) and Candidate 2 (if present)
         $parsedNat = @(Get-OcrParsedLines $candNat)
-        $parsedRed = @(Get-OcrParsedLines $candRed)
+        $parsedRed = @()
+        if ($candRed -ne $null) {
+            $parsedRed = @(Get-OcrParsedLines $candRed)
+        }
 
         $isNotesList = $false
         if ($parsedNat.Count -eq 1 -and $parsedNat[0].Text -eq "<<<NOTES_LIST_VIEW>>>") { $isNotesList = $true }
@@ -750,16 +771,23 @@ public class DualOcrPreprocessor {
             return @{ Lines = @("<<<NOTES_LIST_VIEW>>>"); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = $srcH }
         }
 
-        # Merge Candidate 1 (Natural) & Candidate 2 (Channel-Filtered)
-        $mergedParsed = @(Merge-LineLists $parsedNat $parsedRed)
+        # Merge Candidate 1 (Natural) & Candidate 2 (Channel-Filtered if available)
+        $mergedParsed = if ($parsedRed.Count -gt 0) {
+            @(Merge-LineLists $parsedNat $parsedRed)
+        } else {
+            $parsedNat
+        }
 
         $hasDate = ($parsedNat -contains "<<<DOC_START>>>" -or $parsedRed -contains "<<<DOC_START>>>")
         $finalLines = @(Format-ParsedLinesToText $mergedParsed $hasDate)
 
         # If it's the last (current) frame, save debug_ocr_cleaned.png
-        if ($isLast -and $candRed -ne $null) {
-            $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
-            $candRed.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        if ($isLast) {
+            $saveBmp = if ($candRed -ne $null) { $candRed } else { $candNat }
+            if ($saveBmp -ne $null) {
+                $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
+                $saveBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            }
         }
 
         $srcH = $srcBmp.Height
@@ -776,35 +804,68 @@ public class DualOcrPreprocessor {
         }
     }
 
-    # Tahap 36: Clean multi-frame batch processing without bounds tokens or premature exit
-    $allOutputs = @()
+    # Tahap 37: Fast Current-Frame-First Execution & Early-Exit (< 0.7s)
     $lastIdx = $pathList.Count - 1
+    $currentPath = $pathList[$lastIdx].Trim()
 
-    for ($i = 0; $i -lt $pathList.Count; $i++) {
-        $filePath = $pathList[$i].Trim()
-        $isLast = ($i -eq $lastIdx)
-        $isHistory = ($i -lt $lastIdx)
+    # Process CURRENT frame first with dual-candidate high quality
+    $resCurrent = Process-SingleFrame $currentPath $true $false $false
 
-        $frameRes = Process-SingleFrame $filePath $isLast $false
+    # Evaluate non-empty lines of current frame
+    $cleanLines = @($resCurrent.Lines | Where-Object { 
+        $_ -and $_.Trim() -ne "" -and $_ -ne "<<<DOC_START>>>" -and $_ -ne "<<<NOTES_LIST_VIEW>>>" 
+    })
 
-        # For history frame: if highlight is missing or small span (< 0.18 * H), use Full-Viewport Content Crop
-        if ($isHistory) {
-            $hSpan = $frameRes.SelMaxY - $frameRes.SelMinY
-            $hMinSpan = [int]($frameRes.Height * 0.18)
-            if (-not $frameRes.FoundHighlight -or $hSpan -lt $hMinSpan) {
-                $frameRes = Process-SingleFrame $filePath $false $true
-            }
+    $isShortSnippet = ($cleanLines.Count -ge 1 -and $cleanLines.Count -le 5)
+    $isNotesList = ($resCurrent.Lines -contains "<<<NOTES_LIST_VIEW>>>")
+
+    # Complete 1-Screen Caption Check:
+    # >= 6 non-empty lines, starts with capital/quote opener at selMinY >= 0.140*H, ends with #hashtag
+    $hasHashtagEnd = ($cleanLines.Count -ge 2 -and ($cleanLines[-1].Trim() -match '^#' -or $cleanLines[-2].Trim() -match '^#'))
+    $hasValidStart = ($cleanLines.Count -ge 1 -and $cleanLines[0].Trim() -match '^[A-Z"“]' -and -not $cleanLines[0].Trim().EndsWith(','))
+    $isCompleteSingleScreen = ($cleanLines.Count -ge 6 -and $hasHashtagEnd -and $hasValidStart -and $resCurrent.SelMinY -ge [int]($resCurrent.Height * 0.140))
+
+    if ($pathList.Count -eq 1 -or $isShortSnippet -or $isNotesList -or $isCompleteSingleScreen) {
+        # FAST EARLY EXIT: current frame is 100% complete, skip history frames!
+        $outText = $resCurrent.Lines -join "`r`n"
+        [Console]::WriteLine($outText)
+        exit 0
+    }
+
+    # If multi-screen caption needed (e.g. Apple Notes scrolled to bottom or scrolled to top),
+    # process at most 3 representative history frames with fast single candidate
+    $histPaths = @($pathList[0..($lastIdx - 1)])
+    if ($histPaths.Count -gt 3) {
+        $histPaths = @($histPaths[($histPaths.Count - 3)..($histPaths.Count - 1)])
+    }
+
+    $allOutputs = @()
+    foreach ($hPath in $histPaths) {
+        $hTrimmed = $hPath.Trim()
+        if (-not (Test-Path $hTrimmed)) { continue }
+
+        # History frame: use fast single candidate (Candidate 1 Clean Natural RGB)
+        $hRes = Process-SingleFrame $hTrimmed $false $false $true
+
+        # If highlight missing or span < 0.18*H, use Full-Viewport Content Crop
+        $hSpan = $hRes.SelMaxY - $hRes.SelMinY
+        $hMinSpan = [int]($hRes.Height * 0.18)
+        if (-not $hRes.FoundHighlight -or $hSpan -lt $hMinSpan) {
+            $hRes = Process-SingleFrame $hTrimmed $false $true $true
         }
 
-        $fLines = @($frameRes.Lines)
-        if ($fLines.Count -gt 0) {
-            if ($fLines -contains "<<<NOTES_LIST_VIEW>>>") {
+        $hLines = @($hRes.Lines)
+        if ($hLines.Count -gt 0) {
+            if ($hLines -contains "<<<NOTES_LIST_VIEW>>>") {
                 $allOutputs += "<<<NOTES_LIST_VIEW>>>"
             } else {
-                $allOutputs += ($fLines -join "`r`n")
+                $allOutputs += ($hLines -join "`r`n")
             }
         }
     }
+
+    # Add CURRENT frame as the last frame
+    $allOutputs += ($resCurrent.Lines -join "`r`n")
 
     # Output frames cleanly separated by ---FRAME_SPLIT---
     [Console]::WriteLine($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")

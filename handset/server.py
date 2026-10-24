@@ -35,6 +35,7 @@ from handset.screen import (
     _strip_top_unselected_debris,
     _is_generic_template_line,
     _score_gap_quality,
+    has_overlapping_body_line,
 )
 from handset.wifi import pair_for_wifi, wifi_paired_udids
 from handset.audio import audio_manager
@@ -213,7 +214,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
 
         joined_paths = "|".join(tmp_files)
         script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
-        timeout_sec = 6.0 if len(tmp_files) <= 1 else 9.0
+        timeout_sec = 18.0
 
         res = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, "-ImagePaths", joined_paths],
@@ -489,10 +490,10 @@ class Handler(BaseHTTPRequestHandler):
                 def _do_extract(frame_url: str, hist_urls: list[str]):
                     global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
                     try:
-                        recent_hist = [h for h in hist_urls if h and h != frame_url][:4] if hist_urls else []
+                        recent_hist = [h for h in hist_urls if h and h != frame_url][:3] if hist_urls else []
                         frames_to_batch = recent_hist + [frame_url]
 
-                        # Single-Pass Batch OCR: executes PowerShell ONLY ONCE (< 2s)!
+                        # Single-Pass Batch OCR: executes PowerShell with fast single-frame first (< 1.5s)!
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
 
                         # Detect if any frame is a Notes folder list frame (Tahap 32 & Tahap 33)
@@ -500,35 +501,33 @@ class Handler(BaseHTTPRequestHandler):
                         if has_folder_list:
                             clear_recent_long_ocr_chunks()
 
-                        valid_texts = [t for t in batch_texts if t and t.strip() and not _is_notes_folder_list_frame(t) and "<<<NOTES_LIST_VIEW>>>" not in t]
-                        if not valid_texts:
+                        if not batch_texts:
                             return None
 
-                        # Tahap 36: Clean each frame from unselected top debris (e.g. #toltangerangmerak #infotangerang\n---)
-                        cleaned_valid_texts = []
-                        for t in valid_texts:
-                            c_lines = _strip_top_unselected_debris([l.strip() for l in t.splitlines()])
-                            cleaned = "\r\n".join(c_lines).strip()
-                            if cleaned:
-                                cleaned_valid_texts.append(cleaned)
-                        valid_texts = cleaned_valid_texts
-                        if not valid_texts:
+                        # ANTI-LEAK RULE 1 (Tahap 37): Current frame is ALWAYS the primary source!
+                        # In ocr_extractor.ps1, batch_texts either has 1 element (current frame via early exit)
+                        # or multiple elements where the last element is the current frame.
+                        current_frame_raw = batch_texts[-1].strip()
+                        if not current_frame_raw or _is_notes_folder_list_frame(current_frame_raw) or current_frame_raw == "<<<NOTES_LIST_VIEW>>>":
+                            # STRICT ANTI-LEAK: If current screen has no OCR text, NEVER fall back to old history/chunks!
                             return None
 
-                        last_text = valid_texts[-1]
-                        last_lines = [l.strip() for l in last_text.splitlines() if l.strip()]
+                        # Clean current frame from unselected top debris (e.g. #toltangerangmerak #infotangerang\n---)
+                        c_lines = _strip_top_unselected_debris([l.strip() for l in current_frame_raw.splitlines() if l.strip()])
+                        current_frame_text = "\r\n".join(c_lines).strip()
+                        if not current_frame_text:
+                            return None
 
-                        # ATURAN EMAS 1 (Tahap 36): Short text (<= 5 non-empty lines, total chars < 200)
+                        # ATURAN EMAS 1 (Tahap 36/37): Short text (<= 5 non-empty lines, total chars < 200)
                         # NEVER stitch with history frames or past chunks!
-                        is_short_snippet = (len(last_lines) <= 5 and all(len(l) < 55 for l in last_lines) and sum(len(l) for l in last_lines) < 200)
+                        is_short_snippet = (len(c_lines) <= 5 and all(len(l) < 55 for l in c_lines) and sum(len(l) for l in c_lines) < 200)
                         if is_short_snippet:
-                            raw_text = last_text
-                            final_text = auto_correct_ocr_text(raw_text)
+                            final_text = auto_correct_ocr_text(current_frame_text)
                             final_text = ensure_paragraph_formatting(final_text)
                         else:
                             # ATURAN EMAS 2 & 3: Check single-screen complete caption vs multi-screen
-                            has_hashtag_end = any(l.startswith("#") for l in last_lines[-2:]) if last_lines else False
-                            first_line = last_lines[0] if last_lines else ""
+                            has_hashtag_end = any(l.startswith("#") for l in c_lines[-2:]) if len(c_lines) >= 2 else False
+                            first_line = c_lines[0] if c_lines else ""
                             is_middle_para = bool(re.match(r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+unggahan|konten\s+tersebut|fenomena\s+ini|seluruh\s+\d+|bagaimana\s+(perasaan|tanggapan|menurut)|source\s*:|sumber\s*:)', first_line, re.IGNORECASE))
                             has_body_start = (
                                 not is_middle_para
@@ -537,15 +536,28 @@ class Handler(BaseHTTPRequestHandler):
                                 and first_line[0].isupper()
                                 and not first_line.endswith(",")
                             )
-                            is_complete_single_screen = (has_hashtag_end and has_body_start and len(last_lines) >= 6)
+                            is_complete_single_screen = (has_hashtag_end and has_body_start and len(c_lines) >= 6)
 
-                            if len(valid_texts) == 1 or (is_complete_single_screen and _score_gap_quality(last_lines) >= 0):
-                                raw_text = last_text
-                                final_text = auto_correct_ocr_text(raw_text)
+                            if len(batch_texts) <= 1 or (is_complete_single_screen and _score_gap_quality(c_lines) >= 0):
+                                final_text = auto_correct_ocr_text(current_frame_text)
                             else:
-                                stitched = stitch_multiline_ocr_frames(valid_texts)
-                                final_text = stitched if stitched else last_text
-                                final_text = auto_correct_ocr_text(final_text)
+                                # ANTI-LEAK RULE 2 (Tahap 37): Filter history frames!
+                                # Only retain history frames that share at least 1 genuine body sentence with current frame!
+                                valid_history = []
+                                for ht in batch_texts[:-1]:
+                                    if not ht or not ht.strip() or _is_notes_folder_list_frame(ht) or "<<<NOTES_LIST_VIEW>>>" in ht:
+                                        continue
+                                    h_lines = _strip_top_unselected_debris([l.strip() for l in ht.splitlines() if l.strip()])
+                                    if has_overlapping_body_line(h_lines, c_lines):
+                                        valid_history.append("\r\n".join(h_lines))
+
+                                if valid_history:
+                                    frames_to_stitch = valid_history + [current_frame_text]
+                                    stitched = stitch_multiline_ocr_frames(frames_to_stitch)
+                                    final_text = stitched if stitched else current_frame_text
+                                    final_text = auto_correct_ocr_text(final_text)
+                                else:
+                                    final_text = auto_correct_ocr_text(current_frame_text)
 
                             final_text = ensure_paragraph_formatting(final_text)
 

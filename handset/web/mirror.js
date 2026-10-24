@@ -955,17 +955,16 @@ window.getRecentSelectionFrames = function () {
       return [];
     }
 
-    if (validHistory.length <= 5) {
+    if (validHistory.length <= 4) {
       return validHistory.map(item => item.dataUrl);
     }
 
-    // Select up to 5 frames with distinct signatures, ordered chronologically (top -> mid -> bottom)
+    // Select up to 4 frames (max 3 history + 1 current), ordered chronologically (top -> mid -> bottom)
     const n = validHistory.length;
     const candidateIndices = Array.from(new Set([
       0,
-      Math.floor(n * 0.25),
-      Math.floor(n * 0.50),
-      Math.floor(n * 0.75),
+      Math.floor(n * 0.33),
+      Math.floor(n * 0.67),
       n - 1
     ])).sort((a, b) => a - b);
 
@@ -978,13 +977,20 @@ window.getRecentSelectionFrames = function () {
       }
     }
 
-    // If fewer than 5 frames due to high similarity threshold, backfill chronological frames
-    if (chosen.length < Math.min(5, validHistory.length)) {
+    // Ensure current (last) frame is ALWAYS included
+    const lastItem = validHistory[n - 1];
+    if (lastItem && !chosen.includes(lastItem)) {
+      if (chosen.length >= 4) chosen.pop();
+      chosen.push(lastItem);
+    }
+
+    // If fewer than 4 frames due to high similarity threshold, backfill chronological frames
+    if (chosen.length < Math.min(4, validHistory.length)) {
       for (let i = 0; i < validHistory.length; i++) {
         const item = validHistory[i];
         if (!chosen.includes(item)) {
           chosen.push(item);
-          if (chosen.length >= 5) break;
+          if (chosen.length >= 4) break;
         }
       }
       chosen.sort((a, b) => a.ts - b.ts);

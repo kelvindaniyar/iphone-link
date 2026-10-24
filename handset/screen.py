@@ -951,8 +951,9 @@ def _clean_ocr_line(line: str) -> str:
     # c. Restoration of exclamation mark "!" replacing "l" or "i"
     # Mid-word "!" (e.g. "se!amat") -> "l"
     t = re.sub(r'(?<=[A-Za-z])!(?=[A-Za-z])', 'l', t)
-    # Preposition "d!" (e.g. "seorang ayah d!") -> "di"
+    # Preposition "d!" / "d," (e.g. "seorang ayah d!" or "darurat d, tengah") -> "di"
     t = re.sub(r'\bd!(?=\s|$|[,.;])', 'di', t)
+    t = re.sub(r'(?<=\s)d,\s+(?=[a-z])', 'di ', t)
 
     # d. Restoration of "rn" to "m" for affected words (Batumandi, #kmpbatumandi)
     t = re.sub(r'\bBaturnandi\b', 'Batumandi', t)
@@ -965,6 +966,9 @@ def _clean_ocr_line(line: str) -> str:
 
     # f. Strip stray trailing < or | or ! on handles if any
     t = re.sub(r'(@[A-Za-z0-9_.]+)[<|!]+(?=\s|$)', r'\1', t)
+
+    # g. Restoration of en-dash in route names (e.g. "Merak–Jakarta") from mojibake/quotes
+    t = re.sub(r'\bMerak\S+?Jakarta\b', 'Merak–Jakarta', t)
 
     return t
 
@@ -1179,6 +1183,38 @@ def _complete_usernames(text: str) -> str:
             result = re.sub(pattern, full_h, result)
 
     return result
+
+
+def _is_body_sentence_line(line: str) -> bool:
+    """Check if a line is a genuine body content sentence (not header, not footer, not hashtag)."""
+    if not line or len(line.strip()) < 20:
+        return False
+    l = line.strip().lower()
+    if l.startswith("#") or l.startswith("source:") or l.startswith("sumber:"):
+        return False
+    if re.match(r'^bagaimana\s+(perasaan|tanggapan|kalian|menurut)', l):
+        return False
+    if _is_generic_template_line(line) or _is_garbage_ocr_line(line):
+        return False
+    return True
+
+
+def has_overlapping_body_line(lines_a: list[str], lines_b: list[str]) -> bool:
+    """Check if lines_a and lines_b share at least 1 non-generic body sentence (Tahap 37 Anti-Leak Rule)."""
+    if not lines_a or not lines_b:
+        return False
+    body_a = [l.strip() for l in lines_a if _is_body_sentence_line(l)]
+    body_b = [l.strip() for l in lines_b if _is_body_sentence_line(l)]
+    for la in body_a:
+        na = _normalize_line_for_match(la)
+        for lb in body_b:
+            nb = _normalize_line_for_match(lb)
+            if abs(len(na) - len(nb)) > max(15, int(max(len(na), len(nb)) * 0.35)):
+                continue
+            ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+            if ratio >= 0.82 or (len(na) >= 22 and (na in nb or nb in na)):
+                return True
+    return False
 
 
 def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[str] | None:
@@ -1558,6 +1594,9 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             _RECENT_LONG_OCR_CHUNKS[:] = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c["ts"]) <= 90.0]
 
             for past in reversed(_RECENT_LONG_OCR_CHUNKS):
+                # Tahap 37 Anti-Leak: MUST share at least 1 genuine body sentence with current frame!
+                if not has_overlapping_body_line(past["lines"], current_lines):
+                    continue
                 hist_merged = merge_two_overlapping_blocks(past["lines"], current_lines)
                 if not hist_merged:
                     hist_merged = merge_two_overlapping_blocks(current_lines, past["lines"])

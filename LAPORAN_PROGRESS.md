@@ -955,3 +955,38 @@ Pembaruan terkini mencakup:
   - **Test 3**: Verifikasi 3 Ground-Truth Kelvin (Google Keep Pesona Tol Balaraja, Apple Notes KMP Batumandi copy bawah & copy atas, serta teks pendek) 100% identik kata demi kata [PASS].
   - **Test 4**: Inspeksi arsitektur kode `ocr_extractor.ps1` menjamin 0% residu fungsi bermasalah dan kepatuhan penuh terhadap aturan Tahap 36 [PASS].
   - Seluruh pengujian regresi Tahap 32 dan Tahap 33 lulus 100%.
+
+### Tahap 37: Dynamic Safe Upscaling (< 3500px), Anti-Leak Memory Isolation, & Fast Sub-Second OCR Execution (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap37.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap37.py) pada gambar resolusi asli `1216 x 2656`, serta seluruh uji regresi Tahap 32-36.
+- **Latar Belakang & Analisis Video Kelvin (07:17)**:
+  - Teks pendek dan paste PC-iPhone berjalan sangat baik (01:07, 01:42, 02:12, 02:21).
+  - Teks panjang 1 layar penuh (Apple Notes 03:02 & Google Keep 04:55-07:01) gagal total karena upscale 2.5x menghasilkan dimensi > 4600px, menabrak batas keras `Windows.Media.Ocr.OcrEngine.MaxImageDimension` (4096px) serta menabrak timeout subprocess 10s.
+  - Memori chunk `_RECENT_LONG_OCR_CHUNKS` (Apple Notes) bocor dan ter-paste di Google Keep karena OCR Keep gagal dan sistem salah mengambil fallback chunk kadaluarsa.
+  - Ekor hashtag Apple Notes terpotong akibat batas crop `0.768 * H`, dan typo optik `"d,"` muncul di menit 05:35.
+- **Pekerjaan Arsitektural yang Dilakukan**:
+  1. **Dynamic Safe Upscaling (Max 3500px, Hard Clamp 3400px)**:
+     - Jika `cropH <= 650` (teks pendek): `scale = 2.2`. Jika `cropH > 650`: `scale = 1.35`.
+     - Hard clamp `maxAllowedDim = 3400.0` menjamin total dimensi gambar (termasuk margin 48px) tidak pernah melebihi 3500px, 100% aman di bawah 4096px WinRT.
+     - Waktu pemrosesan turun 4x lipat (~0.45s per frame).
+  2. **Perluasan Batas Bawah Content Crop**:
+     - Batas bawah crop dinaikkan dari `0.768 * H` menjadi `0.855 * H` saat keyboard virtual tertutup, menjamin baris `Source: Threads @andribotox` dan hashtag `#cilegon` tidak pernah terpotong.
+  3. **Fast Current-Frame-First & Early Exit (< 1.0 Detik)**:
+     - `ocr_extractor.ps1` memproses frame saat ini (`current.png`) terlebih dahulu.
+     - Jika terdeteksi teks pendek atau caption 1-layar utuh, script langsung mencetak output dan `exit 0`, memangkas waktu pemrosesan hingga < 1.0 detik!
+     - Untuk frame history, hanya menggunakan Kandidat 1 (Natural RGB) untuk eksekusi kilat.
+  4. **Proteksi Anti-Kebocoran Memori Lintas Aplikasi (`has_overlapping_body_line`)**:
+     - Jika layar saat ini tidak menghasilkan teks OCR, sistem mengembalikan `None` dan menolak menggunakan cache lama.
+     - Frame history maupun chunk lama hanya boleh digabungkan jika memiliki minimal 1 baris kalimat isi berita asli (panjang $\ge 20$, bukan hashtag/source) yang beririsan (`SequenceMatcher >= 0.82`).
+     - Timeout subprocess di `server.py` dinaikkan ke 18 detik.
+  5. **Normalisasi Typo Optik & Frontend Throttling**:
+     - Typo `"d, tengah"` dipulihkan menjadi `"di tengah"`, dan dash `"Merak–Jakarta"` dinormalisasi dari mojibake.
+     - `getRecentSelectionFrames` di `mirror.js` membatasi maksimal 3 frame history + 1 frame saat ini.
+     - Tag cache frontend diperbarui ke `v=20261024_tahap37_dynamic_safe_scaling_and_anti_leak`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap37.py`)**:
+  - Test 1A: Google Keep Full-Res (`1216 x 2656`, `cropH = 1800px`) selesai dalam **0.95 detik** (< 2.5s) dan 100% cocok dengan Teks Asli 1 Kelvin [PASS].
+  - Test 1B: Apple Notes Full-Res (`1216 x 2656`, `cropH = 1880px`) selesai dalam **1.00 detik** (< 2.5s), typo `"d, tengah"` sembuh menjadi `"di tengah"`, dan 100% cocok dengan Teks Asli 2 Kelvin [PASS].
+  - Test 2: Chunk KMP Batumandi 0% bocor ke Google Keep, dan frame kosong mengembalikan string kosong [PASS].
+  - Test 3: Kalimat pendek berjarak Enter ganda 100% terjaga [PASS].
+  - Test 4: Seluruh inspeksi kode arsitektur terpenuhi 100% [PASS].
+  - Seluruh uji regresi Tahap 32, 33, dan 36 lulus 100%.
+

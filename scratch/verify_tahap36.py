@@ -289,8 +289,8 @@ def test_4_ocr_extractor_architecture_inspection():
     # 2. Verify SEL_BOUNDS is completely removed
     assert "SEL_BOUNDS" not in content, "<<<SEL_BOUNDS>>> MUST be completely removed from ocr_extractor.ps1!"
 
-    # 3. Verify no exit 0 inside batch processing loop
-    assert "exit 0" not in content or content.count("exit 0") <= 1, "No premature exit 0 inside batch processing loop!"
+    # 3. Verify no premature exit 0 inside batch processing loop (allowing initial check and Tahap 37 early exit)
+    assert "exit 0" not in content or content.count("exit 0") <= 2, "No premature exit 0 inside batch processing loop!"
 
     # 4. Verify highlight horizontal threshold >= 8 pixels
     assert "hlCount >= 8" in content, "Highlight detection threshold must be >= 8 pixels per row!"
