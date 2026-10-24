@@ -611,6 +611,62 @@ def set_persistent_wifi_rsd(udid: str, rsd) -> None:
     _PERSISTENT_WIFI_UDID = udid
 
 
+async def force_reset_userspace_tunnel() -> None:
+    """Explicitly closes any active userspace tunnel and forces module globals reset."""
+    global _PERSISTENT_WIFI_RSD, _PERSISTENT_WIFI_UDID
+    _PERSISTENT_WIFI_RSD = None
+    _PERSISTENT_WIFI_UDID = None
+    try:
+        from pymobiledevice3.remote import userspace_tunnel, tunnel_service
+        active = getattr(userspace_tunnel, "_active_tunnel", None)
+        if active is not None:
+            try:
+                if hasattr(active, "aclose"):
+                    await asyncio.wait_for(active.aclose(), timeout=1.5)
+            except Exception as e:
+                logger.debug("userspace tunnel aclose during reset failed: %s", e)
+        userspace_tunnel._active_tunnel = None
+        userspace_tunnel.USERSPACE_ACTIVE = False
+        tunnel_service.USE_USERSPACE_TUNNEL = False
+
+        # Release any stuck lifecycle lock on current event loop
+        try:
+            loop = asyncio.get_running_loop()
+            locks = getattr(userspace_tunnel, "_lifecycle_locks", {})
+            lock = locks.get(loop)
+            if lock and lock.locked():
+                with contextlib.suppress(Exception):
+                    lock.release()
+        except RuntimeError:
+            pass
+    except Exception as exc:
+        logger.debug("force_reset_userspace_tunnel exception: %s", exc)
+
+
+def sync_force_reset_userspace_tunnel() -> None:
+    """Synchronously force resets userspace tunnel globals to prevent blocking subsequent starts."""
+    global _PERSISTENT_WIFI_RSD, _PERSISTENT_WIFI_UDID
+    _PERSISTENT_WIFI_RSD = None
+    _PERSISTENT_WIFI_UDID = None
+    try:
+        from pymobiledevice3.remote import userspace_tunnel, tunnel_service
+        active = getattr(userspace_tunnel, "_active_tunnel", None)
+        if active is not None:
+            watcher = getattr(active, "_transport_watcher", None)
+            if watcher is not None and hasattr(watcher, "cancel"):
+                with contextlib.suppress(Exception):
+                    watcher.cancel()
+            with contextlib.suppress(Exception):
+                active.rsd = None
+            with contextlib.suppress(Exception):
+                active.tun = None
+        userspace_tunnel._active_tunnel = None
+        userspace_tunnel.USERSPACE_ACTIVE = False
+        tunnel_service.USE_USERSPACE_TUNNEL = False
+    except Exception as exc:
+        logger.debug("sync_force_reset_userspace_tunnel exception: %s", exc)
+
+
 async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout: float = 1.5):
     """Directly resolve and connect to RemotePairing service on target IP without multicast Bonjour."""
     from pymobiledevice3 import bonjour
@@ -733,45 +789,28 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
 
 
 def wifi_tunnel(udid: str):
-    """An RSD tunnel to ``udid`` over Wi-Fi, with persistent daemon reuse."""
+    """An RSD tunnel to ``udid`` over Wi-Fi with clean lifecycle reset."""
     from pymobiledevice3.remote import userspace_tunnel
 
     class WifiRsdTunnel(userspace_tunnel.UserspaceRsdTunnel):
         def __init__(self, serial: Optional[str] = None, autopair: bool = False) -> None:
             super().__init__(serial=serial, autopair=autopair)
-            self._using_persistent = False
-            self._is_pure_network = True
 
         async def aopen(self):
-            persistent = get_persistent_wifi_rsd(self.serial)
-            if persistent is not None:
-                logger.info("Reusing Persistent Wi-Fi RSD Tunnel for %s", self.serial)
-                self.rsd = persistent
-                self._using_persistent = True
-                return persistent
-
-            rsd = await self._aopen_locked()
-            if self._is_pure_network:
-                set_persistent_wifi_rsd(self.serial, rsd)
-            self._using_persistent = True
-            return rsd
+            if getattr(userspace_tunnel, "_active_tunnel", None) is not None:
+                await force_reset_userspace_tunnel()
+                await asyncio.sleep(0.2)
+            return await self._aopen_locked()
 
         async def aclose(self):
-            # Keep persistent tunnel alive across user stop/start toggles!
-            if self._using_persistent:
-                return
-            await super().aclose()
+            try:
+                await super().aclose()
+            finally:
+                await force_reset_userspace_tunnel()
 
         async def _aopen_locked(self):
             original = userspace_tunnel._create_no_root_tunnel_provider
-
-            async def _custom_wifi_provider(serial, autopair, remotepairing_fallback=True):
-                svc, ld = await _wifi_provider(serial, autopair, remotepairing_fallback)
-                if getattr(svc, "_is_usb_fallback", False) or getattr(ld, "_is_usb_fallback", False):
-                    self._is_pure_network = False
-                return svc, ld
-
-            userspace_tunnel._create_no_root_tunnel_provider = _custom_wifi_provider
+            userspace_tunnel._create_no_root_tunnel_provider = _wifi_provider
             try:
                 return await super()._aopen_locked()
             finally:

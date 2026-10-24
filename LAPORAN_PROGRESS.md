@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 44 (Eliminasi Dummy Stream, Pemisahan Mutlak Tunnel Kabel, Real Screen Image Streamer jpeg_stream via Port 62078, & 100% Zero Regression OCR Tahap 40 V2)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 45 (Userspace Tunnel Singleton Lifecycle & Multi-Session Auto-Recovery: Eliminasi Background Bootstrap Konkuren, Pembersihan Tuntas stop_screen(), & 100% Zero Regression OCR Tahap 40 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261025_tahap44_real_wifi_streaming`  
+> **Cache Buster:** `v=20261025_tahap45_userspace_tunnel_recovery`  
 
 ---
 
@@ -1231,6 +1231,31 @@ Pembaruan terkini mencakup:
   - Test 1 (Hardware & Network Layer Inspection): PASS — Port 62078 probed, RemotePairing record present, cable tunnel strictly isolated from persistent Wi-Fi RSD.
   - Test 2 (Real Screen Frame Streaming $\ge 15.000$ Bytes): PASS — `/codec` returned `jpeg_stream`, received 48,512 bytes of real PNG frame data.
   - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
+
+### Tahap 45: Userspace Tunnel Singleton Lifecycle & Multi-Session Auto-Recovery (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap45.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap45.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_45_USERSPACE_TUNNEL_SINGLETON_LIFECYCLE_DAN_AUTO_RECOVERY.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_45_USERSPACE_TUNNEL_SINGLETON_LIFECYCLE_DAN_AUTO_RECOVERY.md).
+- **Latar Belakang Forensik Video Kelvin (`20261025_0100.mp4`) & Kamera HP**:
+  - Kelvin mencabut kabel USB secara fisik setelah menjalankan Tes 1 (Cable) dan Tes 2 (Wi-Fi dengan kabel masih tersambung). Pada Tes 3 (Wi-Fi murni tanpa kabel), muncul banner merah: `Gagal menghubungkan tunnel mirroring Wi-Fi ke iPhone (192.168.100.38): A userspace tunnel is already active in this process; only one userspace tunnel per process is supported`.
+  - **Akar Masalah #1**: Background bootstrap konkuren (`_bootstrap_background_wifi_tunnel`) mencoba membuka tunnel Wi-Fi saat tunnel kabel masih berjalan di proses Python yang sama.
+  - **Akar Masalah #2**: `WifiRsdTunnel.aclose()` mem-bypass penutupan akibat guard `self._using_persistent`, menyebabkan variabel singleton `userspace_tunnel._active_tunnel` tetap terisi dan tidak pernah di-reset ke `None` saat user menekan `Stop`.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Penghapusan Total Background Bootstrap Konkuren**:
+     - `_bootstrap_background_wifi_tunnel` dihapus secara permanen dari `handset/screen.py` guna memastikan hanya 1 userspace tunnel aktif pada satu waktu per proses OS.
+  2. **Implementasi Pembersih Mutlak Singleton**:
+     - Ditambahkan `force_reset_userspace_tunnel()` (async) dan `sync_force_reset_userspace_tunnel()` (sync) di `handset/wifi.py` untuk membersihkan active tunnel, membatalkan watcher task, melepaskan lock, dan me-reset `_active_tunnel = None`.
+  3. **Pembersihan Tuntas pada stop_screen() dan _serve()**:
+     - `stop_screen()`, `_stream()`, dan `_run()` kini selalu memanggil reset singleton userspace tunnel.
+     - Blok retry auto-recovery ditambahkan pada `_serve()` jika mendeteksi collision exception `"already active in this process"`.
+  4. **Bump Cache Buster**:
+     - Memperbarui cache buster ke `v=20261025_tahap45_userspace_tunnel_recovery`.
+     - **Kode OCR, Copy-Paste, Keyboard, dan Audio Sink 100% Utuh Terlindungi**.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap45.py`)**:
+  - Check 0 (Static Code Audit): PASS — Zero dummy bytes, 0 background bootstrap konkuren, fungsi reset terpasang.
+  - Test 1 (Multi-Session Lifecycle 3x Siklus: Cable -> Stop -> Wi-Fi -> Stop -> Wi-Fi Murni): PASS — 0% collision error `"already active in this process"`.
+  - Test 2 (Live Hardware & Network Inspection): PASS — Port 62078 dicek, RemotePairing record tersedia.
+  - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
+
 
 
 

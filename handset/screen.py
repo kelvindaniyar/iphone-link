@@ -60,7 +60,12 @@ def stop_screen() -> dict:
                 pass
         _ACTIVE_SERVER = None
         _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
-        return dict(_STATE)
+    try:
+        from .wifi import sync_force_reset_userspace_tunnel
+        sync_force_reset_userspace_tunnel()
+    except Exception:
+        pass
+    return screen_status()
 
 
 def restart_screen(udid: str | None = None) -> dict:
@@ -135,6 +140,12 @@ def _run(udid: str, transport: str) -> None:
         _set(phase="idle", udid=udid, url=None, error="The screen stream stopped.")
     except Exception as error:
         _set(phase="error", udid=udid, url=None, error=_plain(error))
+    finally:
+        try:
+            from .wifi import sync_force_reset_userspace_tunnel
+            sync_force_reset_userspace_tunnel()
+        except Exception:
+            pass
 
 
 DISPLAY_SERVICE = "com.apple.coredevice.displayservice"
@@ -148,25 +159,13 @@ def _open_tunnel(udid: str, transport: str):
     return PreferredRsdTunnel(serial=udid, autopair=True)
 
 
-async def _bootstrap_background_wifi_tunnel(udid: str) -> None:
-    """Proactively establishes and maintains a true Wi-Fi RSD tunnel over LAN while cable is connected."""
-    try:
-        from .wifi import discover_iphone_ip_on_lan, get_device_wifi_state, set_persistent_wifi_rsd, resolve_remote_pairing_service
-        ip = discover_iphone_ip_on_lan(udid) or get_device_wifi_state(udid).get("last_ip")
-        if not ip:
-            return
-        svc, _ = await resolve_remote_pairing_service(udid, ip, timeout=1.5)
-        if svc is not None:
-            set_persistent_wifi_rsd(udid, svc)
-            import logging
-            logging.getLogger(__name__).info("Background Wi-Fi RSD tunnel proactively registered for %s @ %s", udid, ip)
-    except Exception:
-        pass
-
-
 async def _serve(udid: str, transport: str) -> None:
     from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
+    from .wifi import force_reset_userspace_tunnel
+
+    # Ensure no lingering userspace tunnel is active from a previous session
+    await force_reset_userspace_tunnel()
 
     # HID Consumer Control (0x0C): 0x00B8 (Eject) to toggle iOS virtual keyboard cleanly
     # (Do NOT use 0x029D AL Keyboard Layout as it acts as Globe key and switches to Emoji)
@@ -175,19 +174,27 @@ async def _serve(udid: str, transport: str) -> None:
 
     try:
         for attempt in range(2):
-            async with _open_tunnel(udid, transport) as rsd:
-                if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
-                    if transport == "cable":
-                        asyncio.create_task(_bootstrap_background_wifi_tunnel(udid))
-                    await _stream(rsd, udid, ScreenStreamServer)
-                    return
-                if attempt:
-                    raise RuntimeError(
-                        "The developer image mounted, but the iPhone still offers no display service. "
-                        "Unplug it, plug it back in, and press Show screen again."
-                    )
-                _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
-                await auto_mount(rsd)
+            try:
+                async with _open_tunnel(udid, transport) as rsd:
+                    if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
+                        await _stream(rsd, udid, ScreenStreamServer)
+                        return
+                    if attempt:
+                        raise RuntimeError(
+                            "The developer image mounted, but the iPhone still offers no display service. "
+                            "Unplug it, plug it back in, and press Show screen again."
+                        )
+                    _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
+                    await auto_mount(rsd)
+            except Exception as tunnel_err:
+                err_text = str(tunnel_err)
+                if "already active in this process" in err_text and attempt == 0:
+                    import logging
+                    logging.getLogger(__name__).warning("Userspace tunnel collision detected, forcing reset and retrying: %s", tunnel_err)
+                    await force_reset_userspace_tunnel()
+                    await asyncio.sleep(0.3)
+                    continue
+                raise
     except Exception as exc:
         if transport == "wifi":
             probe = probe_wifi_device(udid)
@@ -258,6 +265,11 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
     finally:
         _CURRENT_TASK = None
         _ACTIVE_SERVER = None
+        try:
+            from .wifi import force_reset_userspace_tunnel
+            await force_reset_userspace_tunnel()
+        except Exception:
+            pass
 
 
 class LockdownWifiStreamServer:
