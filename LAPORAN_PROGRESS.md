@@ -1414,6 +1414,31 @@ Pembaruan terkini mencakup:
   - Test 4 (Fallback Typing Buffer): PASS — Berhasil pulih dari buffer ketikan dalam < 30s.
   - Test 5 (Full Regression Tahap 40, Tahap 47 V2, Tahap 48): PASS 100%.
 
+---
+
+### Tahap 48 V3: Pembaruan Dokumentasi GitHub — Tested Environment, Panduan Developer Mode & Tips 3uTools (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap48.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap48.py) & [`build_portable_release.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/build_portable_release.ps1).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md) & [`README.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/README.md).
+- **Pekerjaan Rekayasa & Dokumentasi yang Dilakukan**:
+  1. **Badge & Card "Tested & Verified Environment" di [`README.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/README.md)**:
+     - Badge header: `Verified OS: Windows 11 26H2 (64-bit)` dan `Verified Device: iPhone 17 Pro (iOS 27.0.1)`.
+     - Callout card: Memvalidasi lingkungan pengujian fisik nyata Kelvin pada perangkat fisik **iPhone 17 Pro (iOS 27.0.1)** dan PC **Windows 11 Version 26H2 (Build 26100+, 64-bit)** dengan performa 60fps zero-delay HEVC hardware stream.
+  2. **Panduan Instalasi & Aktivasi Developer Mode (Bilingual: ID & EN)**:
+     - Panduan langkah demi langkah bagi pengguna awam untuk mengaktifkan **Mode Pengembang (Developer Mode)** di iPhone (*Pengaturan → Privasi & Keamanan → Mode Pengembang → Nyalakan* lalu restart).
+  3. **Kotak Tips Khusus "💡 Cara Memunculkan Menu Developer Mode yang Tersembunyi via 3uTools"**:
+     - Menjelaskan solusi 1-menit untuk mengatasi perilaku default iOS yang menyembunyikan menu *Developer Mode* pada iPhone baru atau iPhone yang belum pernah terhubung ke Xcode:
+       1. Unduh dan pasang aplikasi **3uTools** di PC Windows.
+       2. Hubungkan iPhone via USB dan ketuk *Trust This Computer*.
+       3. Buka tab menu **Toolbox → Realtime Screen**.
+       4. Begitu *Realtime Screen* berjalan, menu **Mode Pengembang (Developer Mode)** seketika muncul secara ajaib di *Pengaturan → Privasi & Keamanan* iPhone.
+       5. Nyalakan (ON), restart iPhone, dan konfirmasi *Turn On*.
+  4. **Sinkronisasi & Rebuild Paket Portable Release**:
+     - Menjalankan kembali [`build_portable_release.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/build_portable_release.ps1) sehingga file [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) (`0.38 MB`) memuat dokumen `README.md` terbaru yang bersih dari file privat.
+- **Hasil Verifikasi Eksekusi Nyata**:
+  - `scratch/verify_tahap48.py`: 100% PASS (5/5 tes lulus).
+  - Git commit: `c579f02` pada branch `feature/macos-sequoia-ui`.
+
+
 
 
 

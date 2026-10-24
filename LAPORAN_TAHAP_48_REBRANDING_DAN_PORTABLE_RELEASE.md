@@ -168,3 +168,20 @@ TEST 5: Full Regression Testing (Tahap 40, Tahap 47 V2, Tahap 48)
 
 Paket rilis portabel [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) telah di-build ulang dan siap dipublikasikan ke GitHub.
 
+---
+
+## 5. Tahap 48 V3 — Pembaruan Dokumentasi GitHub: Tested Environment, Panduan Developer Mode & Tips 3uTools
+
+Pada pembaruan tahap ini, seluruh kode Python, PowerShell, dan JavaScript tetap dipertahankan 100% utuh tanpa perubahan. Pembaruan difokuskan pada penyempurnaan dokumen publik [`README.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/README.md) agar pengguna umum di GitHub dapat dengan mudah menyiapkan perangkat dan menjalankan aplikasi:
+
+1. **Informasi & Badge Lingkungan Terverifikasi (Tested & Verified Environment)**:
+   - Device: **iPhone 17 Pro (iOS 27.0.1)**
+   - OS: **Windows 11 26H2 (64-bit)**
+2. **Panduan Konfigurasi iPhone & Aktivasi Developer Mode (Dwibahasa: Indonesia & English)**:
+   - Penjelasan bahwa sebelum menggunakan iPhone Link, pengguna wajib mengaktifkan *Developer Mode* (*Settings → Privacy & Security → Developer Mode → ON*).
+3. **Tips Khusus Mengatasi Menu Developer Mode yang Tersembunyi via 3uTools**:
+   - Disediakan solusi cepat 1-menit menggunakan fitur *Toolbox → Realtime Screen* di **3uTools** PC untuk memunculkan menu *Developer Mode* yang disembunyikan iOS pada iPhone baru.
+4. **Rebuild Paket Portable**:
+   - Paket portabel [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) telah di-build ulang untuk menyertakan `README.md` terbaru.
+
+
