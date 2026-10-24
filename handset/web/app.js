@@ -525,6 +525,7 @@ function initKeyboardSettingsControls() {
 
   const COPY_IPHONE_LABEL = "📥 Copy iPhone Text (Alt+C)";
   const PASTE_PC_LABEL = "📋 Paste PC Text (Alt+V)";
+  const CLEAR_COPY_CACHE_LABEL = "🧹 Clear Copy Cache (Alt+R)";
 
   window.triggerCopyIphoneTextWithFeedback = async function () {
     const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
@@ -543,6 +544,10 @@ function initKeyboardSettingsControls() {
         res = await window.HandsetKeys.triggerShortcut("copy", frameDataUrl, true, frameHistory);
       } else {
         res = await postJson("/api/keyboard/shortcut", { action: "copy", frameDataUrl, frameHistory, waitResult: true });
+      }
+      if (res?.autoClearedCache === true) {
+        if (typeof window.clearOcrSessionMemory === "function") window.clearOcrSessionMemory();
+        else window._ViewportHistory = [];
       }
       if (res?.text) {
         // Server has already written text directly to Windows PC clipboard via set_windows_clipboard_text().
@@ -597,6 +602,40 @@ function initKeyboardSettingsControls() {
     }
   };
 
+  window.triggerClearCopyCacheWithFeedback = async function () {
+    const btnClearCache = document.querySelector("#btn-clear-copy-cache");
+    if (btnClearCache) {
+      btnClearCache.disabled = true;
+      btnClearCache.textContent = "⏳ Clearing…";
+    }
+    try {
+      if (typeof window.clearOcrSessionMemory === "function") {
+        window.clearOcrSessionMemory();
+      } else {
+        window._ViewportHistory = [];
+      }
+      if (window.HandsetKeys?.clearCopyCache) {
+        await window.HandsetKeys.clearCopyCache();
+      } else {
+        await postJson("/api/keyboard/shortcut", { action: "clear-copy-cache" });
+      }
+      if (btnClearCache) {
+        btnClearCache.textContent = "✓ Cache Cleared!";
+        btnClearCache.classList.add("is-saved");
+      }
+    } catch (_) {
+      if (btnClearCache) btnClearCache.textContent = "Clear Failed";
+    } finally {
+      setTimeout(() => {
+        if (btnClearCache) {
+          btnClearCache.textContent = CLEAR_COPY_CACHE_LABEL;
+          btnClearCache.classList.remove("is-saved");
+          btnClearCache.disabled = false;
+        }
+      }, 1200);
+    }
+  };
+
   const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
   btnPastePcNow?.addEventListener("click", () => {
     window.triggerPastePcTextWithFeedback();
@@ -607,7 +646,12 @@ function initKeyboardSettingsControls() {
     window.triggerCopyIphoneTextWithFeedback();
   });
 
-  // Global keydown on window to catch cross-platform shortcuts (Alt+C and Alt+V) even when focus is on outer page
+  const btnClearCache = document.querySelector("#btn-clear-copy-cache");
+  btnClearCache?.addEventListener("click", () => {
+    window.triggerClearCopyCacheWithFeedback();
+  });
+
+  // Global keydown on window to catch cross-platform shortcuts (Alt+C, Alt+V, Alt+R) even when focus is on outer page
   window.addEventListener("keydown", (e) => {
     const target = e.target;
     if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
@@ -618,6 +662,9 @@ function initKeyboardSettingsControls() {
     } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyV") {
       e.preventDefault();
       window.triggerPastePcTextWithFeedback();
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyR") {
+      e.preventDefault();
+      window.triggerClearCopyCacheWithFeedback();
     }
   });
 

@@ -127,9 +127,33 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, frameDataUrl, frameHistory, waitResult, skipOcr }),
       });
-      return await resp.json();
+      const data = await resp.json();
+      if (data?.autoClearedCache === true) {
+        if (typeof window.clearOcrSessionMemory === "function") window.clearOcrSessionMemory();
+        else window._ViewportHistory = [];
+      }
+      return data;
     } catch (err) {
       console.warn("triggerShortcut error:", err);
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  async function triggerClearCopyCache() {
+    try {
+      if (typeof window.clearOcrSessionMemory === "function") {
+        window.clearOcrSessionMemory();
+      } else {
+        window._ViewportHistory = [];
+      }
+      const resp = await fetch("/api/keyboard/shortcut", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear-copy-cache" }),
+      });
+      return await resp.json();
+    } catch (err) {
+      console.warn("triggerClearCopyCache error:", err);
       return { ok: false, error: String(err) };
     }
   }
@@ -317,6 +341,23 @@
               return;
             }
           }
+
+          if (isAlt && !isCtrlOrMeta) {
+            // Alt + R: Clear copy cache (Tahap 40)
+            if (e.code === "KeyR") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 400;
+              pressed.clear();
+              flush();
+              if (typeof window.triggerClearCopyCacheWithFeedback === "function") {
+                window.triggerClearCopyCacheWithFeedback();
+              } else {
+                triggerClearCopyCache();
+              }
+              return;
+            }
+          }
         }
 
         // Record regular keystroke into typed shadow buffer
@@ -373,6 +414,8 @@
     captureMirrorCanvasDataUrl,
     getMirrorFrameHistory,
     triggerShortcut,
+    triggerClearCopyCache,
+    clearCopyCache: triggerClearCopyCache,
     flushTypedQueue,
     pasteFromPc: (force = false) => triggerPasteFromPc(force),
     toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,

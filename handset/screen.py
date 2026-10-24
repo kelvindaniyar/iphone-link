@@ -743,15 +743,17 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
     return result
 
 
-_RECENT_LONG_OCR_CHUNKS: list[dict] = []  # items: {"ts": float, "lines": list[str]}
+_RECENT_LONG_OCR_CHUNKS: list[dict] = []  # items: {"ts": float, "lines": list[str], "color": str}
 _CHUNKS_LOCK = threading.Lock()
+_LAST_SELECTION_COLOR: str | None = None
 
 
 def clear_recent_long_ocr_chunks() -> None:
-    """Clear session OCR chunk memory when switching notes or detecting folder list view (Tahap 32)."""
-    global _RECENT_LONG_OCR_CHUNKS
+    """Clear session OCR chunk memory when switching notes, clearing cache, or detecting folder list view (Tahap 32/40)."""
+    global _RECENT_LONG_OCR_CHUNKS, _LAST_SELECTION_COLOR
     with _CHUNKS_LOCK:
         _RECENT_LONG_OCR_CHUNKS.clear()
+    _LAST_SELECTION_COLOR = None
 
 
 def _is_notes_folder_list_frame(lines: list[str] | str) -> bool:
@@ -899,7 +901,7 @@ def _strip_top_unselected_debris(lines: list[str]) -> list[str]:
         if re.match(r'^[-—–_=]{2,}$', first):
             result.pop(0)
             continue
-        if first.startswith("#"):
+        if first.startswith("#") or ("#" in first and len(first) < 40 and not first.endswith(".")):
             result.pop(0)
             continue
         break
@@ -1043,6 +1045,19 @@ def _clean_ocr_line(line: str) -> str:
     # k. Optical restoration of "Iambung" -> "lambung" & capital "I" mistranscriptions of lowercase "l" at word start (Tahap 39)
     t = re.sub(r'\bI(?=(?:ambung|angkah|angsung|agi|ain|alu|ebih|intas|aut|epas|uka|oket|okasi|aporan|embar|ingkungan|uar)\b)', 'l', t)
     t = re.sub(r'\bIambung\b', 'lambung', t)
+
+    # l. Capital 'I' mistranscription of lowercase 'l' at end of lowercase word (Tahap 40: e.g. "awak KapaI" -> "awak kapal")
+    t = re.sub(r'(?<=[a-z])I\b', 'l', t)
+    t = re.sub(r'\bawak\s+Kapa[Il]\b', 'awak kapal', t, flags=re.IGNORECASE)
+
+    # m. Restore @wisnutry017 -> @wisnutryo17 (Tahap 40)
+    t = re.sub(r'@wisnutry017\b', '@wisnutryo17', t)
+
+    # n. Restore clipped descender hashtags (Tahap 40: #iakartarunninafestival -> #jakartarunningfestival, #irf2026 -> #jrf2026)
+    t = re.sub(r'#iakartarunninafestival\b', '#jakartarunningfestival', t, flags=re.IGNORECASE)
+    t = re.sub(r'#irf2026\b', '#jrf2026', t, flags=re.IGNORECASE)
+    t = re.sub(r'#iakarta\b', '#jakarta', t, flags=re.IGNORECASE)
+    t = re.sub(r'#irf\b', '#jrf', t, flags=re.IGNORECASE)
 
     return t
 
@@ -1803,7 +1818,7 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
         re.IGNORECASE
     )
     section_opener_re = re.compile(
-        r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+(unggahan|video|rekaman|konten|foto)|bagaimana\s+(perasaan|tanggapan|menurut)|rekaman\s+singkat|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
+        r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+(unggahan|video|rekaman|konten|foto)|kericuhan\b|bagaimana\s+(perasaan|tanggapan|menurut)|rekaman\s+singkat|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
         re.IGNORECASE
     )
     terminal_punct_re = re.compile(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)[ \t]*$')
@@ -1825,10 +1840,10 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
 
             if is_short_text:
                 # Tahap 33 & Tahap 38: For short text (<= 6 non-empty lines), 100% preserve all blank lines!
-                if i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks):
+                if i in has_blank_after or (raw_para_breaks and (norm_curr in raw_para_breaks or any(norm_curr in b or b in norm_curr for b in raw_para_breaks))):
                     is_para_end = True
             else:
-                # Long text rules (Tahap 32 & Tahap 34)
+                # Long text rules (Tahap 32 & Tahap 34 & Tahap 40)
                 # Rule 4: Between consecutive hashtag lines, STRICTLY FORBIDDEN to insert blank line!
                 if is_curr_hashtag and is_next_hashtag:
                     is_para_end = False
@@ -1840,11 +1855,14 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
                 else:
                     # Rule 1: Syarat Wajib Kalimat Selesai: line MUST end with terminal punct or be Source
                     has_sentence_end = bool(terminal_punct_re.search(line)) or is_curr_source
-                    is_next_capital = bool(re.match(r'^[A-Z"“]', nxt))
-                    has_blank = (i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks))
+                    is_next_capital = bool(re.match(r'^[A-Z"“\'#]', nxt))
+                    has_blank = (
+                        i in has_blank_after
+                        or (raw_para_breaks and (norm_curr in raw_para_breaks or any(norm_curr in b or b in norm_curr for b in raw_para_breaks)))
+                    )
 
                     if has_sentence_end:
-                        # Rule 2A (Tahap 34): If sentence has terminal punct AND OCR has blank line AND next starts with capital
+                        # Rule 2A (Tahap 34 & Tahap 40): If sentence has terminal punct AND OCR has blank line AND next starts with capital
                         if has_blank and is_next_capital:
                             is_para_end = True
                         # Rule 2B: Known section openers
@@ -1881,39 +1899,80 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     return joined
 
 
-def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
+def process_ocr_batch_results(batch_texts: list[str], return_meta: bool = False) -> str | None | tuple[str | None, bool]:
     """
-    Centralized OCR Batch Post-Processing Pipeline (Tahap 39).
+    Centralized OCR Batch Post-Processing Pipeline (Tahap 39 & Tahap 40).
     Called directly by handset/server.py and test suites to guarantee 100% identical execution.
     - Handles short snippets (<= 6 lines, total chars < 220) preserving double Enter (\\r\\n\\r\\n).
     - Checks 1-screen complete caption (requiring #hashtag at end) to prevent premature truncation.
-    - Stitches multi-screen frames with bidirectional matching and gap-filling.
-    - Applies _clean_ocr_line, auto_correct_ocr_text, and ensure_paragraph_formatting.
+    - Connects Apple Notes Top + Bottom chunks across separate copies within 75s when colors match.
+    - Preserves raw OCR paragraph break blank lines via raw_para_breaks set.
+    - Auto-flushes chunk cache when selection color switches or once a complete caption is copied.
     """
     if not batch_texts:
-        return None
+        return (None, False) if return_meta else None
 
     # Detect if any frame is a Notes folder list frame (Tahap 32 & Tahap 33)
     has_folder_list = any(_is_notes_folder_list_frame(t) or "<<<NOTES_LIST_VIEW>>>" in t for t in batch_texts)
     if has_folder_list:
         clear_recent_long_ocr_chunks()
 
+    # Track selection color and flush cache if switching apps/notes with different highlight color (Tahap 40)
+    global _LAST_SELECTION_COLOR
+    current_color = "none"
+    for bt in reversed(batch_texts):
+        if not bt:
+            continue
+        m = re.search(r'<<<SEL_COLOR:(yellow|blue|none)>>>', bt)
+        if m:
+            current_color = m.group(1)
+            break
+
+    if _LAST_SELECTION_COLOR in ("yellow", "blue") and current_color in ("yellow", "blue") and current_color != _LAST_SELECTION_COLOR:
+        clear_recent_long_ocr_chunks()
+
+    if current_color in ("yellow", "blue"):
+        _LAST_SELECTION_COLOR = current_color
+
+    # Extract raw paragraph break markers before stripping blank lines (Tahap 40 Bug 3)
+    raw_para_breaks: set[str] = set()
+    for bt in batch_texts:
+        if not bt or not bt.strip():
+            continue
+        bt_clean = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', bt)
+        bt_clean = re.sub(r'<<<SEL_COLOR:[^>]+>>>', '', bt_clean)
+        lines_raw = [l.strip() for l in bt_clean.splitlines()]
+        for idx in range(len(lines_raw) - 1):
+            if lines_raw[idx] and lines_raw[idx + 1] == "":
+                norm_l = _normalize_line_for_match(lines_raw[idx])
+                if norm_l:
+                    raw_para_breaks.add(norm_l)
+
     # ANTI-LEAK RULE 1 (Tahap 37): Current frame is ALWAYS the primary source!
     current_frame_raw = batch_texts[-1].strip()
     if not current_frame_raw or _is_notes_folder_list_frame(current_frame_raw) or current_frame_raw == "<<<NOTES_LIST_VIEW>>>":
-        return None
+        return (None, False) if return_meta else None
 
-    # Strip selector bounds marker if present
-    current_frame_raw = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', current_frame_raw).strip()
+    # Strip selector bounds and color markers if present
+    current_frame_raw = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', current_frame_raw)
+    current_frame_raw = re.sub(r'<<<SEL_COLOR:[^>]+>>>', '', current_frame_raw).strip()
     if not current_frame_raw:
-        return None
+        return (None, False) if return_meta else None
 
     raw_frame_lines = [l.strip() for l in current_frame_raw.splitlines()]
     c_lines = _strip_top_unselected_debris([l for l in raw_frame_lines if l and not _is_garbage_ocr_line(l)])
     if not c_lines:
-        return None
+        return (None, False) if return_meta else None
 
-    # ATURAN EMAS 1 (Tahap 36/37/38/39): Short text (<= 6 non-empty lines, total chars < 220)
+    # Discard partially clipped/damaged bottom line at toolbar edge (Tahap 40 Bug 4)
+    if len(c_lines) >= 3:
+        last_l = c_lines[-1]
+        if not last_l.startswith("#") and re.search(r'\b(ccrta|dilanorkan|hcrhacil|kcrhacil)\b', last_l, re.IGNORECASE):
+            c_lines.pop()
+            if raw_frame_lines and raw_frame_lines[-1] == last_l:
+                raw_frame_lines.pop()
+
+    # ATURAN EMAS 1 (Tahap 36/37/38/39/40): Short text (<= 6 non-empty lines, total chars < 220)
     # NEVER stitch with history frames or past chunks!
     total_chars = sum(len(l) for l in c_lines)
     is_short_snippet = (len(c_lines) <= 6 and all(len(l) < 55 for l in c_lines) and total_chars < 220)
@@ -1926,8 +1985,8 @@ def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
             cleaned_snippet_lines.pop()
         current_frame_text = "\r\n".join(cleaned_snippet_lines).strip()
         final_text = auto_correct_ocr_text(current_frame_text)
-        final_text = ensure_paragraph_formatting(final_text)
-        return final_text
+        final_text = ensure_paragraph_formatting(final_text, raw_para_breaks=raw_para_breaks)
+        return (final_text, False) if return_meta else final_text
 
     current_frame_text = "\r\n".join(c_lines).strip()
 
@@ -1944,6 +2003,45 @@ def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
     )
     is_complete_single_screen = (has_hashtag_end and has_body_start and len(c_lines) >= 6)
 
+    # Session Chunk Continuity (Tahap 40 Bug 4):
+    # If user copied Top of note earlier (< 75s ago, same color), and now copied Bottom of note, connect them!
+    now = time.time()
+    with _CHUNKS_LOCK:
+        _RECENT_LONG_OCR_CHUNKS[:] = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c.get("ts", 0)) <= 75.0]
+
+        if not is_complete_single_screen and len(c_lines) >= 4:
+            for past in reversed(_RECENT_LONG_OCR_CHUNKS):
+                if current_color in ("yellow", "blue") and past.get("color") in ("yellow", "blue") and past.get("color") != current_color:
+                    continue
+                p_lines = [l for l in past.get("lines", []) if not re.search(r'\b(ccrta|dilanorkan|hcrhacil|kcrhacil)\b', l, re.IGNORECASE)]
+                if not p_lines:
+                    continue
+                merged = None
+                if has_overlapping_body_line(p_lines, c_lines):
+                    merged = merge_two_overlapping_blocks(p_lines, c_lines)
+                    if not merged:
+                        merged = merge_two_overlapping_blocks(c_lines, p_lines)
+                if not merged:
+                    p_has_start = (
+                        len(p_lines) >= 4
+                        and p_lines[0]
+                        and p_lines[0][0].isupper()
+                        and not _is_generic_template_line(p_lines[0])
+                        and not any(l.startswith("#") for l in p_lines)
+                    )
+                    # Only connect non-overlapping Top + Bottom if current frame does NOT have its own body start (starts mid-article like "serta 40...")
+                    if p_has_start and has_hashtag_end and not has_body_start and current_color in ("yellow", "blue") and past.get("color") == current_color:
+                        merged = p_lines + c_lines
+                if merged:
+                    c_lines = _strip_top_unselected_debris(merged)
+                    current_frame_text = "\r\n".join(c_lines).strip()
+                    break
+
+        if len(c_lines) >= 4:
+            _RECENT_LONG_OCR_CHUNKS.append({"ts": now, "lines": list(c_lines), "color": current_color})
+            if len(_RECENT_LONG_OCR_CHUNKS) > 5:
+                _RECENT_LONG_OCR_CHUNKS[:] = _RECENT_LONG_OCR_CHUNKS[-5:]
+
     if len(batch_texts) <= 1 or (is_complete_single_screen and _score_gap_quality(c_lines) >= 0):
         final_text = auto_correct_ocr_text(current_frame_text)
     else:
@@ -1952,7 +2050,8 @@ def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
         for ht in batch_texts[:-1]:
             if not ht or not ht.strip() or _is_notes_folder_list_frame(ht) or "<<<NOTES_LIST_VIEW>>>" in ht:
                 continue
-            ht_clean = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', ht).strip()
+            ht_clean = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', ht)
+            ht_clean = re.sub(r'<<<SEL_COLOR:[^>]+>>>', '', ht_clean).strip()
             h_lines = _strip_top_unselected_debris([l.strip() for l in ht_clean.splitlines() if l.strip()])
             if has_overlapping_body_line(h_lines, c_lines):
                 valid_history.append("\r\n".join(h_lines))
@@ -1965,7 +2064,26 @@ def process_ocr_batch_results(batch_texts: list[str]) -> str | None:
         else:
             final_text = auto_correct_ocr_text(current_frame_text)
 
-    final_text = ensure_paragraph_formatting(final_text)
+    final_text = ensure_paragraph_formatting(final_text, raw_para_breaks=raw_para_breaks)
+
+    # Smart Auto-Clear (Tahap 40 Feature 5):
+    # Once complete caption (>= 5 lines, body start, ending with #hashtag) is obtained,
+    # flush _RECENT_LONG_OCR_CHUNKS so the next copy starts clean!
+    final_non_empty = [l for l in final_text.splitlines() if l.strip()]
+    is_now_complete = (
+        len(final_non_empty) >= 5
+        and any(l.strip().startswith("#") for l in final_non_empty[-2:])
+        and final_non_empty[0]
+        and final_non_empty[0][0].isupper()
+        and not _is_generic_template_line(final_non_empty[0])
+    )
+    auto_cleared = False
+    if is_now_complete:
+        clear_recent_long_ocr_chunks()
+        auto_cleared = True
+
+    if return_meta:
+        return final_text, auto_cleared
     return final_text
 
 

@@ -461,6 +461,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/keyboard/shortcut":
             commit_and_reset_current_typed_line()
             action = str(payload.get("action", ""))
+            if action == "clear-copy-cache":
+                clear_recent_long_ocr_chunks()
+                self._json({"ok": True, "action": "clear-copy-cache"})
+                return
+
             frame_data_url = payload.get("frameDataUrl")
             frame_history = payload.get("frameHistory") or []
             wait_result = bool(payload.get("waitResult", False))
@@ -479,6 +484,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 extracted_text = None
+                auto_cleared_cache = False
 
                 def _do_extract(frame_url: str, hist_urls: list[str]):
                     global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
@@ -489,8 +495,8 @@ class Handler(BaseHTTPRequestHandler):
                         # Single-Pass Batch OCR: executes PowerShell with fast single-frame first (< 1.5s)!
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
 
-                        # Centralized OCR post-processing pipeline (Tahap 39)
-                        final_text = process_ocr_batch_results(batch_texts)
+                        # Centralized OCR post-processing pipeline (Tahap 39/40)
+                        final_text, auto_cleared = process_ocr_batch_results(batch_texts, return_meta=True)
 
                         # Save debug info
                         try:
@@ -501,6 +507,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "raw_ocr_text": batch_texts[-1] if batch_texts else "",
                                 "batch_count": len(batch_texts),
                                 "corrected_text": final_text or "",
+                                "auto_cleared_cache": auto_cleared,
                                 "typed_active_line": active_line,
                                 "typed_buffer_tail": buffer_tail,
                             }
@@ -514,7 +521,7 @@ class Handler(BaseHTTPRequestHandler):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
                                 print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
-                        return final_text
+                        return final_text, auto_cleared
                     except Exception as err:
                         import traceback
                         err_trace = traceback.format_exc()
@@ -525,11 +532,15 @@ class Handler(BaseHTTPRequestHandler):
                                 f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
                         except Exception:
                             pass
-                        return None
+                        return None, False
 
                 if frame_data_url:
                     if wait_result:
-                        extracted_text = _do_extract(frame_data_url, frame_history)
+                        res = _do_extract(frame_data_url, frame_history)
+                        if isinstance(res, tuple):
+                            extracted_text, auto_cleared_cache = res
+                        else:
+                            extracted_text = res
                     else:
                         import threading
                         threading.Thread(target=_do_extract, args=(frame_data_url, frame_history), daemon=True).start()
@@ -538,6 +549,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": ok,
                     "action": action,
                     "text": extracted_text,
+                    "autoClearedCache": auto_cleared_cache,
                     "length": len(extracted_text) if extracted_text else 0,
                 })
                 return

@@ -1045,9 +1045,47 @@ Pembaruan terkini mencakup:
 - **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap39.py`)**:
   - Test 1: Handler HTTP `server.py` POST `/api/keyboard/shortcut` mengembalikan `HTTP 200`, `ok: true`, `debug_ocr_result.json` ter-update, dan Windows Clipboard terisi dalam **0.89 detik** [PASS].
   - Test 2: Gambar asli Kelvin `debug_ocr_raw.png` (jam 19.16) tersambung 2 arah (Forward & Reverse) menghasilkan 37 baris utuh (6 blok paragraf), kata `"lambung kapal"` 100% dengan `'l'` kecil (0% `"Iambung"`), dan berakhiran `#cilegon` dalam **0.97 detik** [PASS].
-  - Test 3: Teks pendek video 00:47 mempertahankan jarak Enter ganda `\r\n\r\n` dan `"papua"` [PASS].
+  - Test 3: Teks pendek video 00:47 mempertahankan jarak Enter ganda \r\n\r\n dan "papua" [PASS].
   - Test 4: Google Keep 1-layar 100% identik dengan Ground-Truth dalam **1.00 detik** [PASS].
   - Seluruh 4 pengujian selesai dalam total **4.17 detik** [PASS 100%].
+
+### Tahap 40: Perbaikan Bug "Cut" dalam Kalimat, Preservasi Hashtag & Paragraf Google Keep, Stitching Kontinuitas Apple Notes, & Sistem Smart Auto-Clear Copy Cache (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py) & [`scratch/verify_tahap39.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap39.py).
+- **Latar Belakang & Analisis Bukti Nyata (Forensik Video Kelvin 03:39 & File Diagnostik 2)**:
+  - Pada Google Keep "Jakarta Running Festival", kata `"Cut"` di dalam kalimat `(Cut-Off Time/`, `Cut-Off Point (COP) 1`, dan `cut-off time` terhapus oleh regex balon menu baris 527 di `ocr_extractor.ps1`.
+  - Baris hashtag kedua `#marathonindonesia #runningcommunity` terpotong karena batas bawah pemindaian terlalu sempit (`0.855 * H`), dan ekor huruf `'j'`/`'g'` terpotong menjadi `#iakartarunninafestival #irf2026`.
+  - Baris kosong antara Paragraf 2 dan 3 hilang karena `c_lines` membuang semua string kosong `""` sebelum masuk ke `ensure_paragraph_formatting()`.
+  - Catatan panjang Apple Notes (menit 02:26 [Atas] dan 02:49 [Bawah]) memerlukan penyambungan kontinuitas chunk tanpa terbawa kata rusak tepi (`ccrta`).
+  - Cache memori chunk memerlukan Smart Auto-Clear saat caption lengkap telah selesai di-copy atau warna seleksi berubah, serta tombol UI manual `🧹 Clear Copy Cache (Alt+R)`.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Eliminasi Total Penghapusan Kata Menu di Dalam Kalimat (Bug 1)**:
+     - Dihapus baris 527 di `ocr_extractor.ps1`. Baris menu hanya boleh dibuang jika 100% murni berupa menu iOS (`$pureMenuLineRegex`), serta dikecualikan untuk kalimat yang mengandung `cut-off`/`cutoff`.
+  2. **Perluasan Batas Bawah & Preservasi Hashtag (Bug 2)**:
+     - Di `ocr_extractor.ps1`: `scanBottom = 0.885 * H`, `maxContentBottom = 0.892 * H`, dan padding bawah `selMaxY + 0.012 * H` (~32px).
+     - Pengecualian pemotongan baris yang memuat `#`.
+     - Koreksi optik di `_clean_ocr_line`: `#iakartarunninafestival` $\rightarrow$ `#jakartarunningfestival` dan `#irf2026` $\rightarrow$ `#jrf2026`.
+  3. **Preservasi Baris Kosong Pemisah Paragraf (Bug 3)**:
+     - Di `ocr_extractor.ps1`: Ambang batas deteksi pemisah paragraf diturunkan ke `avgH * 0.58` atau `centerStep > avgH * 1.68`.
+     - Di `process_ocr_batch_results`: Ekstraksi `raw_para_breaks` sebelum baris kosong dibersihkan, dan diinjeksi ke Rule 2A di `ensure_paragraph_formatting()`.
+     - Ditambahkan `kericuhan\b` ke dalam `section_opener_re`.
+  4. **Penyambungan Kontinuitas Apple Notes (Bug 4)**:
+     - Masking tombol pojok atas Notes (`X < 0.18 * W` dan `X > 0.66 * W` pada `Y < 0.140 * H`) dengan warna putih, memungkinkan `scanTop = 0.102 * H`.
+     - Penyambungan chunk Bagian Atas + Bagian Bawah dalam $< 75$ detik pada aplikasi yang sama menjadi 1 dokumen utuh 6 paragraf.
+     - Restorasi optik: `KapaI` $\rightarrow$ `kapal` dan `@wisnutry017` $\rightarrow$ `@wisnutryo17`.
+  5. **Fitur Baru Smart Auto-Clear Memory & Tombol UI (Fitur 5)**:
+     - Auto-flush `_RECENT_LONG_OCR_CHUNKS` dan `window._ViewportHistory` seketika saat caption lengkap ($\ge 5$ baris, pembuka judul sampai `#hashtag`) selesai di-copy.
+     - Auto-flush saat warna seleksi berubah (`yellow` $\leftrightarrow$ `blue`).
+     - Tombol UI: `<button id="btn-clear-copy-cache">🧹 Clear Copy Cache (Alt+R)</button>` di bawah tombol Copy iPhone Text.
+     - Shortcut `Alt + R` di `keys.js` & `app.js` dengan feedback visual `"✓ Cache Cleared!"`.
+     - Handler `clear-copy-cache` di `server.py` dan respons `"autoClearedCache": True`.
+     - Bump cache buster ke `v=20261024_tahap40_cut_repair_and_smart_auto_clear`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap40.py`)**:
+  - Test 1 (File Aktual Kelvin `debug_ocr_raw_2.jpg` Google Keep): 100% memuat `(Cut-Off Time/`, `Cut-Off Point (COP) 1`, `terkena cut-off time`, baris kosong antara P2 dan P3 (tepat 6 paragraf), `@wisnutryo17`, dan kedua baris hashtag bawah utuh [PASS].
+  - Test 2 (Apple Notes Top + Bottom): Tersambung sempurna 6 blok paragraf tanpa kata rusak `ccrta` dan dengan `awak kapal` bersih [PASS].
+  - Test 3 (Smart Auto-Clear & Alt+R): Memori `_RECENT_LONG_OCR_CHUNKS` otomatis kosong (`len == 0`) setelah caption lengkap, dan aksi `clear-copy-cache` sukses [PASS].
+  - Test 4 (Regresi Teks Pendek Menit 01:09): 4 baris pendek berjarak Enter ganda 100% terjaga dan identik [PASS].
+  - Suite regresi Tahap 39 lulus 100% dalam 4.24 detik [PASS].
+
 
 
 

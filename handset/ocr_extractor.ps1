@@ -27,12 +27,16 @@ public class DualOcrPreprocessor {
         out int cropY,
         out int cropH,
         out int selMinY,
-        out int selMaxY
+        out int selMaxY,
+        out string selectionColor
     ) {
         int W = src.Width;
         int H = src.Height;
         selMinY = 0;
         selMaxY = 0;
+        selectionColor = "none";
+        int yellowHlCount = 0;
+        int blueHlCount = 0;
 
         BitmapData srcData = src.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         int stride = srcData.Stride;
@@ -190,12 +194,12 @@ public class DualOcrPreprocessor {
             hasKeyboard = true;
         }
 
-        // Tahap 37: When no keyboard, extend bottom scan and crop to 0.855 * H
-        int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.855);
+        // Tahap 40: When no keyboard, extend bottom scan and crop to 0.892 * H
+        int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.892);
 
-        // 3. Scan Highlights (Tahap 36/37/38: Yellow & Blue Highlights, threshold >= 8 pixels per row)
-        int scanTopY = (int)(H * 0.122);
-        int scanBottomY = maxContentBottom;
+        // 3. Scan Highlights (Tahap 36/37/38/40: Yellow & Blue Highlights, threshold >= 8 pixels per row)
+        int scanTopY = (int)(H * 0.102);
+        int scanBottomY = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.885);
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
 
@@ -204,9 +208,9 @@ public class DualOcrPreprocessor {
 
         if (!isFullViewport) {
             for (int y = scanTopY; y <= scanBottomY; y++) {
-                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.24*W and 0.74*W if Y < 0.122*H
-                int rowLeftX = (y < (int)(H * 0.122)) ? (int)(W * 0.24) : leftX;
-                int rowRightX = (y < (int)(H * 0.122)) ? (int)(W * 0.74) : rightX;
+                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.18*W and 0.66*W if Y < 0.140*H
+                int rowLeftX = (y < (int)(H * 0.140)) ? (int)(W * 0.18) : leftX;
+                int rowRightX = (y < (int)(H * 0.140)) ? (int)(W * 0.66) : rightX;
 
                 int rowOffset = y * stride;
                 int hlCount = 0;
@@ -224,12 +228,16 @@ public class DualOcrPreprocessor {
                     bool isBlueHl = ((b >= 200 && g >= 185 && (b - r) >= 10) || (b >= 215 && g >= 195 && (b - r) >= 12));
                     bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25);
 
-                    if (isYellowHl || isYellowHandle || isBlueHl || isBlueHandle) {
+                    if (isYellowHl || isYellowHandle) {
+                        yellowHlCount++;
+                        hlCount++;
+                    } else if (isBlueHl || isBlueHandle) {
+                        blueHlCount++;
                         hlCount++;
                     }
                 }
 
-                // Tahap 36/37: Threshold >= 8 horizontal pixels per row
+                // Tahap 36/37/40: Threshold >= 8 horizontal pixels per row
                 if (hlCount >= 8) {
                     rowHasHighlight[y] = true;
                 }
@@ -273,17 +281,26 @@ public class DualOcrPreprocessor {
             selMaxY = lastClusterEnd;
         }
 
+        if (blueHlCount > yellowHlCount && blueHlCount >= 20) {
+            selectionColor = "blue";
+        } else if (yellowHlCount >= 20) {
+            selectionColor = "yellow";
+        } else {
+            selectionColor = "none";
+        }
+
         // FULL-WIDTH HORIZONTAL STRIP: 0.03*W to 0.97*W
         cropX = Math.Max(0, (int)(W * 0.03));
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
         if (foundHighlight && !isFullViewport) {
-            cropY = Math.Max((int)(H * 0.118), selMinY - (int)(H * 0.008));
-            int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.005));
+            // Tahap 40: scan down to 0.098*H and add +0.012*H bottom padding so tail descenders (j, g, y) are never cut
+            cropY = Math.Max((int)(H * 0.098), selMinY - (int)(H * 0.008));
+            int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.012));
             cropH = Math.Max(20, cropBottom - cropY);
         } else {
-            // Full-Viewport Content Crop (Tahap 39: 0.122 * H to Math.Min(maxContentBottom, 0.810 * H))
-            cropY = (int)(H * 0.122);
+            // Full-Viewport Content Crop (Tahap 39/40: 0.102 * H to Math.Min(maxContentBottom, 0.810 * H))
+            cropY = (int)(H * 0.102);
             int cropBottom = Math.Min(maxContentBottom, (int)(H * 0.810));
             cropH = Math.Max(20, cropBottom - cropY);
         }
@@ -315,13 +332,16 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 36/37/38: Targeted Unwanted Objects Neutralization
+                // Tahap 36/37/38/40: Targeted Unwanted Objects Neutralization
+                int absY = cropY + cy;
+                int absX = cropX + cx;
+                bool isTopNavButton = (absY < (int)(H * 0.140)) && (absX < (int)(W * 0.18) || absX > (int)(W * 0.66));
                 bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80 && !(r < 130 && g < 130 && b < 130));
                 bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25 && !(r < 110 && g < 110 && b < 110));
                 bool isRedSpellcheck = (r > 180 && g < 140 && b < 140 && (r - g) > 52 && (r - b) > 52);
 
                 // Kandidat 1 (Natural RGB):
-                if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                if (isTopNavButton || isYellowHandle || isBlueHandle || isRedSpellcheck) {
                     natPixels[nIdx] = 255;
                     natPixels[nIdx + 1] = 255;
                     natPixels[nIdx + 2] = 255;
@@ -336,7 +356,7 @@ public class DualOcrPreprocessor {
                 // Kandidat 2 (Red/Luma Contrast Enhanced):
                 if (!onlyCandidate1 && redPixels != null) {
                     int rIdx = redRow + (cx * 4);
-                    if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                    if (isTopNavButton || isYellowHandle || isBlueHandle || isRedSpellcheck) {
                         redPixels[rIdx] = 255;
                         redPixels[rIdx + 1] = 255;
                         redPixels[rIdx + 2] = 255;
@@ -510,21 +530,29 @@ public class DualOcrPreprocessor {
             if ($t -match '\b(v3one|oil13i1|111e113n|me1a1ui|miliknva|aO/O3124an)\b') { continue }
             if ($t -match '^[<✓>]+$' -or $t -eq 'Notes' -or $t -eq 'Catatan' -or $t -eq 'Done' -or $t -eq 'Selesai') { continue }
 
-            # Filter iOS callout menu balloon lines (e.g. "Cut Co", "Paste Delete", "Cut Copy Paste")
-            if ($t -match '\b(Cut|Copy|Paste|Delete|Select|Look Up|Translate|Share|Replacements)\b') {
-                $testClean = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share|No Replacements Found)\b', ''
-                $testClean = $testClean -replace '\b(Co|py|te|Cu|Pa|De)\b', ''
-                $testClean = $testClean.Trim()
-                if ($testClean.Length -le 2) {
-                    continue
+            # Tahap 40 (Bug 1): iOS Callout Menu Balloon Filter.
+            # DILARANG KERAS menghapus kata Cut, Copy, Paste, Delete dari dalam kalimat berita!
+            # Baris HANYA boleh dibuang jika SELURUH baris murni terdiri dari menu iOS atau menu fragments.
+            $pureMenuLineRegex = '^[\s|<>[\]()\\/_\-\.]*(?:Cut|Copy|Paste|Delete|Select(?:\s+All)?|AutoFill|Look\s+Up|Translate|Share(?:\.\.\.)?|Proofread|Rewrite|No\s+Replacements\s+Found)(?:[\s|<>[\]()\\/_\-\.]+(?:Cut|Copy|Paste|Delete|Select(?:\s+All)?|AutoFill|Look\s+Up|Translate|Share(?:\.\.\.)?|Proofread|Rewrite|No\s+Replacements\s+Found))*[\s|<>[\]()\\/_\-\.]*$'
+            $isCutOffNews = ($t -match '(?i)\b(cut-off|cutoff)\b')
+
+            if (-not $isCutOffNews) {
+                if ($t -match $pureMenuLineRegex) { continue }
+
+                # Secondary check for pure menu balloon fragments (e.g. "Cut Co", "Paste Delete")
+                if ($t -match '\b(Cut|Copy|Paste|Delete|Select|Look Up|Translate|Share|Replacements)\b') {
+                    $testClean = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share|No Replacements Found)\b', ''
+                    $testClean = $testClean -replace '\b(Co|py|te|Cu|Pa|De)\b', ''
+                    $testClean = $testClean.Trim()
+                    if ($testClean.Length -le 2) {
+                        continue
+                    }
                 }
             }
 
             # Filter 1-3 character leftover fragments and popup balloon border debris (e.g. "r I", "I I", "r")
             if ($t.Length -le 3 -and ($t -match '^(Co|py|te|Cu|Pa|De|[<>/\\|_\-\.])$' -or $t -match '^[rIl1|/\[\]\(\)\-\s]+$')) { continue }
 
-            # Remove stray embedded callout words if any
-            $t = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All)\b', ''
             $t = $t.Trim()
             if (!$t) { continue }
 
@@ -698,12 +726,14 @@ public class DualOcrPreprocessor {
         }
         $avgH = if ($sortedLines.Count -gt 0) { $sumH / $sortedLines.Count } else { 30.0 }
 
-        # Anti-Garbage Filter for partially clipped bottom line at scroll/crop edge or floating toolbar (Tahap 39)
+        # Anti-Garbage Filter for partially clipped bottom line at scroll/crop edge or floating toolbar (Tahap 39/40)
         if ($sortedLines.Count -ge 3) {
             $lastIdx = $sortedLines.Count - 1
             $lastItem = $sortedLines[$lastIdx]
             $lastText = $lastItem.Text.Trim()
-            $isClippedBottom = ($lastItem.Height -lt ($avgH * 0.55)) -or ($lastText -match '^[^a-zA-Z0-9#@]+$')
+            $isHashtag = ($lastText -match '#')
+            $isDamagedNotesTail = ($lastText -match '(?i)\b(ccrta|dilanorkan|hcrhacil|kcrhacil)\b')
+            $isClippedBottom = (-not $isHashtag) -and (($lastItem.Height -lt ($avgH * 0.55)) -or ($lastText -match '^[^a-zA-Z0-9#@]+$') -or $isDamagedNotesTail)
             if ($isClippedBottom) {
                 $sortedLines = @($sortedLines[0..($lastIdx - 1)])
             }
@@ -727,7 +757,8 @@ public class DualOcrPreprocessor {
                         $lines += ""
                     }
                 } else {
-                    if (($gap -gt ($avgH * 0.85)) -or ($centerStep -gt ($avgH * 2.10))) {
+                    # Tahap 40: 0.58 * avgH or 1.68 * centerStep allows genuine empty paragraph lines
+                    if (($gap -gt ($avgH * 0.58)) -or ($centerStep -gt ($avgH * 1.68))) {
                         $lines += ""
                     }
                 }
@@ -768,8 +799,9 @@ public class DualOcrPreprocessor {
         $cropH = 0
         $selMinY = 0
         $selMaxY = 0
+        $selColor = "none"
 
-        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, $onlyCand1, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH, [ref]$selMinY, [ref]$selMaxY)
+        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, $onlyCand1, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH, [ref]$selMinY, [ref]$selMaxY, [ref]$selColor)
 
         # Tahap 37: OCR on Candidate 1 (always) and Candidate 2 (if present)
         $parsedNat = @(Get-OcrParsedLines $candNat)
@@ -786,7 +818,7 @@ public class DualOcrPreprocessor {
             $srcBmp.Dispose()
             if ($candNat -ne $null) { $candNat.Dispose() }
             if ($candRed -ne $null) { $candRed.Dispose() }
-            return @{ Lines = @("<<<NOTES_LIST_VIEW>>>"); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = $srcH }
+            return @{ Lines = @("<<<NOTES_LIST_VIEW>>>"); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = $srcH; SelectionColor = "none" }
         }
 
         # Merge Candidate 1 (Natural) & Candidate 2 (Channel-Filtered if available)
@@ -819,6 +851,7 @@ public class DualOcrPreprocessor {
             SelMinY = $selMinY
             SelMaxY = $selMaxY
             Height = $srcH
+            SelectionColor = $selColor
         }
     }
 
@@ -838,15 +871,18 @@ public class DualOcrPreprocessor {
     $isShortSnippet = ($cleanLines.Count -ge 1 -and $cleanLines.Count -le 5 -and $totalChars -lt 200)
     $isNotesList = ($resCurrent.Lines -contains "<<<NOTES_LIST_VIEW>>>")
 
-    # Complete 1-Screen Caption Check (Tahap 39):
-    # >= 6 non-empty lines, starts with capital/quote opener at selMinY >= 0.135*H, ends with #hashtag
-    $hasHashtagEnd = ($cleanLines.Count -ge 2 -and ($cleanLines[-1].Trim() -match '^#[a-zA-Z0-9_]+' -or $cleanLines[-2].Trim() -match '^#[a-zA-Z0-9_]+'))
+    # Complete 1-Screen Caption Check (Tahap 39/40):
+    # >= 6 non-empty lines, starts with capital/quote opener at selMinY >= 0.130*H, ends with #hashtag
+    $hasHashtagEnd = ($cleanLines.Count -ge 2 -and ($cleanLines[-1].Trim().StartsWith("#") -or $cleanLines[-2].Trim().StartsWith("#") -or $cleanLines[-1].Trim() -match '^#[a-zA-Z0-9_]+' -or $cleanLines[-2].Trim() -match '^#[a-zA-Z0-9_]+'))
     $hasValidStart = ($cleanLines.Count -ge 1 -and $cleanLines[0].Trim() -match '^[A-Z"“]' -and -not $cleanLines[0].Trim().EndsWith(','))
-    $isCompleteSingleScreen = ($cleanLines.Count -ge 6 -and $hasHashtagEnd -and $hasValidStart -and $resCurrent.SelMinY -ge [int]($resCurrent.Height * 0.135))
+    $isCompleteSingleScreen = ($cleanLines.Count -ge 6 -and $hasHashtagEnd -and $hasValidStart -and $resCurrent.SelMinY -ge [int]($resCurrent.Height * 0.130))
 
     if ($pathList.Count -eq 1 -or $isShortSnippet -or $isNotesList -or $isCompleteSingleScreen) {
         # FAST EARLY EXIT: current frame is 100% complete, skip history frames!
         $outText = $resCurrent.Lines -join "`r`n"
+        if ($resCurrent.SelectionColor) {
+            $outText = "<<<SEL_COLOR:$($resCurrent.SelectionColor)>>>`r`n" + $outText
+        }
         [Console]::WriteLine($outText)
         exit 0
     }
@@ -884,7 +920,11 @@ public class DualOcrPreprocessor {
     }
 
     # Add CURRENT frame as the last frame
-    $allOutputs += ($resCurrent.Lines -join "`r`n")
+    $currOut = ($resCurrent.Lines -join "`r`n")
+    if ($resCurrent.SelectionColor) {
+        $currOut = "<<<SEL_COLOR:$($resCurrent.SelectionColor)>>>`r`n" + $currOut
+    }
+    $allOutputs += $currOut
 
     # Output frames cleanly separated by ---FRAME_SPLIT---
     [Console]::WriteLine($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")
