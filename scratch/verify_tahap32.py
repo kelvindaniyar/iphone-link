@@ -78,8 +78,11 @@ def test_1_notes_folder_list_rejection_and_top_of_note_lock():
         "warga di atas rakit darurat (liferaft)."
     )
 
-    # Frame 2: Bottom of Note view scrolled down
+    # Frame 2: Bottom of Note view scrolled down (with realistic 3-line scroll overlap)
     frame_2_bottom_of_note = (
+        "tali penyelamat sambil mendekap anaknya,\n"
+        "sebelum akhirnya disambut oleh petugas dan\n"
+        "warga di atas rakit darurat (liferaft).\n"
         "Situasi darurat di tengah kepulan asap tebal\n"
         "tersebut memaksa para penumpang\n"
         "mengambil langkah evakuasi berisiko tinggi\n"

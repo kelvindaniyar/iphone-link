@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap33_short_enter_and_list_rejection";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap34_google_keep_and_popup_fix";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
@@ -1266,7 +1266,18 @@ async function mirrorPost(path, payload) {
   } catch (_) {}
 }
 
+function clearOcrSessionMemory() {
+  try {
+    const iframe = document.querySelector("#screen-view");
+    if (iframe && iframe.contentWindow && typeof iframe.contentWindow.clearOcrSessionMemory === "function") {
+      iframe.contentWindow.clearOcrSessionMemory();
+    }
+  } catch (_) {}
+  fetch("/api/ocr/clear-chunks", { method: "POST" }).catch(() => {});
+}
+
 async function swipe(direction) {
+  clearOcrSessionMemory();
   const yMid = 32768;
   const xStart = direction === "left" ? 65535 : 0;
   const xEnd = direction === "left" ? 10000 : 52000;
@@ -1294,6 +1305,7 @@ const GESTURES = {
 // A swipe-up injected over USB is too slow for iOS to treat as the Home
 // gesture, so Home and the app switcher use the Home button instead.
 async function pressHome(times) {
+  clearOcrSessionMemory();
   for (let i = 0; i < times; i++) {
     if (i) await sleep(120);
     await mirrorPost("/button", { name: "home", state: "press" });
@@ -1301,6 +1313,7 @@ async function pressHome(times) {
 }
 
 async function gesture(name) {
+  clearOcrSessionMemory();
   if (name === "home") return pressHome(1);
   if (name === "switcher" || name === "recent") return pressHome(2);
   const g = GESTURES[name];
@@ -1380,6 +1393,7 @@ function wireRemoteControls() {
   document.querySelectorAll("[data-btn]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const name = btn.dataset.btn;
+      if (name === "home") clearOcrSessionMemory();
       if (name) mirrorPost("/button", { name, state: "press" });
     });
   });

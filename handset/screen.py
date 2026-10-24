@@ -806,6 +806,10 @@ def _is_garbage_ocr_line(text: str) -> bool:
     if len(tokens) <= 3 and any(p == t_low for p in ["cat aku", "kamu aku", "kamu aku ya"]):
         return True
 
+    # iOS popup callout border phantom characters (Tahap 34: e.g. "1Q0 1O0O", "100 1000", "1Q0", "1O0O")
+    if re.match(r'^[0-9OQIl\s]{3,15}$', t):
+        return True
+
     # Hallucinated words mixing letters and digits randomly
     words = t.split()
     if any(w.lower() in ["v3one", "oil13i1", "111e113n", "me1a1ui", "miliknva", "ao/o3124an"] for w in words):
@@ -836,15 +840,16 @@ def _clean_ocr_line(line: str) -> str:
     t = re.sub(r'\btali evakua$', 'tali evakuasi', t)
     t = re.sub(r'\bmemperlih$', 'memperlihatkan', t)
 
-    # Fix selection handle occlusion & OCR typos (Tahap 30)
+    # Fix selection handle occlusion & OCR typos (Tahap 30 & Tahap 34)
     t = re.sub(r'(?:^|\b)tik-detik\b', 'detik-detik', t)
     t = re.sub(r'\b(?:i1wa|j1wa|ilwa|jiw4)\b', 'jiwa', t)
+    t = re.sub(r'\bmemaksa(?:opng|\s+pa)\b', 'memaksa para penumpang', t, flags=re.IGNORECASE)
 
-    # --- Optical OCR Artifacts Normalization (Tahap 31) ---
+    # --- Optical OCR Artifacts Normalization (Tahap 31 & Tahap 34) ---
     # a. Restoration of letter "k" from "l<" / "I<" / "1<" / "|<"
     loop_count = 0
-    while loop_count < 10 and re.search(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_])', t):
-        t = re.sub(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_])', 'k', t)
+    while loop_count < 10 and re.search(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_.,!?\s]|$)', t):
+        t = re.sub(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_.,!?\s]|$)', 'k', t)
         loop_count += 1
 
     # b. Restoration of capital "O" or "0" in middle/end of lowercase word to "o"
@@ -980,12 +985,94 @@ def _unsplit_broken_lines(lines: list[str]) -> list[str]:
     return result
 
 
+def _is_generic_template_line(line: str) -> bool:
+    """
+    Check if a line is a generic social media template line (Tahap 34).
+    These template lines are forbidden from serving as the sole anchor connecting two different notes/apps.
+    """
+    if not line:
+        return False
+    t = line.strip()
+    if re.match(r'^(Source|Sumber|Video|Foto)\s*:', t, re.IGNORECASE):
+        return True
+    if re.match(r'^Bagaimana\s+(perasaan|tanggapan|menurut)\b', t, re.IGNORECASE):
+        return True
+    if t.startswith("#"):
+        return True
+    if re.search(r'\bBanteners\??$', t, re.IGNORECASE):
+        return True
+    return False
+
+
+def _score_gap_quality(gap_lines: list[str]) -> int:
+    """
+    Score OCR gap quality between anchors (Tahap 34).
+    Heavy penalty for balloon border phantom digits/letters ("1Q0 1O0O"),
+    broken words ("memaksaopng", "memaksa pa"), and optical defects ("l<").
+    """
+    if not gap_lines:
+        return 0
+    score = 0
+    for line in gap_lines:
+        t = line.strip()
+        # Heavy penalty for phantom balloon border letters/digits (e.g. "1Q0 1O0O", "100 1000")
+        if re.search(r'^[0-9OQIl\s]{3,15}$', t):
+            score -= 100
+        # Heavy penalty for occluded / broken words
+        if re.search(r'\b(?:memaksaopng|memaksa\s+pa|opng)\b', t, re.IGNORECASE):
+            score -= 100
+        # Optical defect penalty
+        if re.search(r'[lI1|]<', t):
+            score -= 50
+        # Mixed letter/digit nonsense
+        words = t.split()
+        if sum(1 for w in words if re.search(r'[a-zA-Z]', w) and re.search(r'[0-9]', w) and not re.match(r'^[a-zA-Z]+[0-9]+$', w)) >= 1:
+            score -= 50
+        # Positive score for authentic words
+        score += len(words) * 10
+    return score
+
+
+def _complete_usernames(text: str) -> str:
+    """
+    Self-Consistent @Username Completion (Tahap 34):
+    If the document has a full mention like '@erikkristian' in Paragraph 2,
+    and another line (e.g. Source line) has a truncated mention with the same prefix
+    (e.g. '@erikkrist', '@eril<l<rist', '@erikkri'), automatically complete it to '@erikkristian'.
+    """
+    if not text or "@" not in text:
+        return text
+
+    # Pre-clean any leftover l< in handles
+    norm_text = re.sub(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_.,!?\s]|$)', 'k', text)
+
+    mentions = re.findall(r'@[A-Za-z0-9_.]+', norm_text)
+    if not mentions:
+        return norm_text
+
+    unique_mentions = sorted(list(set(mentions)), key=lambda m: len(m), reverse=True)
+    full_handles = [m for m in unique_mentions if len(m) >= 7]
+    if not full_handles:
+        return norm_text
+
+    result = norm_text
+    for full_h in full_handles:
+        base = full_h[1:]  # e.g. "erikkristian"
+        for l in range(len(base) - 1, 4, -1):
+            prefix = "@" + base[:l]  # e.g. "@erikkrist"
+            pattern = re.escape(prefix) + r'(?![A-Za-z0-9_.])'
+            result = re.sub(pattern, full_h, result)
+
+    return result
+
+
 def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[str] | None:
     """
-    Gap-Filling Segment Stitcher (Tahap 28):
+    Gap-Filling Segment Stitcher (Tahap 28 & Tahap 34):
     Identifies matching anchor pairs, detects alignment direction, fills in occluded
-    gaps between anchors (e.g. restoring lines covered by iOS Cut/Copy/Paste balloon),
+    gaps between anchors with quality scoring (e.g. restoring lines covered by iOS Cut/Copy/Paste balloon),
     cleans orphan digits, and clamps tail to clean content.
+    Requires at least 1 non-generic body line match to prevent cross-app splicing.
     """
     if not linesA or not linesB:
         return None
@@ -1020,6 +1107,25 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
                 matches.append((i, j, ratio_val, i - j))
 
     if not matches:
+        return None
+
+    # Tahap 34: Validate that matching pairs contain at least ONE specific body line match
+    # DILARANG menyambungkan linesA dan linesB jika anchor yang cocok HANYA baris template umum!
+    has_specific_body_anchor = False
+    for i, j, sm_ratio, _ in matches:
+        la = cleanA[i]
+        lb = cleanB[j]
+        if not _is_generic_template_line(la) and not _is_generic_template_line(lb):
+            if len(normA[i]) >= 22 and len(normB[j]) >= 22 and sm_ratio >= 0.85:
+                w_a = set(re.findall(r'\w+', normA[i]))
+                w_b = set(re.findall(r'\w+', normB[j]))
+                if w_a and w_b:
+                    overlap_ratio = len(w_a & w_b) / float(max(len(w_a), len(w_b)))
+                    if overlap_ratio >= 0.65:
+                        has_specific_body_anchor = True
+                        break
+
+    if not has_specific_body_anchor:
         return None
 
     # Group by offset i - j to find dominant alignment
@@ -1078,13 +1184,20 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
             elif gapB and not gapA:
                 merged_lines.extend(gapB)
             else:
-                if len(gapA) == len(gapB):
-                    for ga, gb in zip(gapA, gapB):
-                        merged_lines.append(_pick_cleaner_line(ga, gb))
-                elif len(gapA) > len(gapB):
+                scoreA = _score_gap_quality(gapA)
+                scoreB = _score_gap_quality(gapB)
+                if scoreA > scoreB:
                     merged_lines.extend(gapA)
-                else:
+                elif scoreB > scoreA:
                     merged_lines.extend(gapB)
+                else:
+                    if len(gapA) == len(gapB):
+                        for ga, gb in zip(gapA, gapB):
+                            merged_lines.append(_pick_cleaner_line(ga, gb))
+                    elif len(gapA) > len(gapB):
+                        merged_lines.extend(gapA)
+                    else:
+                        merged_lines.extend(gapB)
 
     # 3. Tail (after last anchor)
     last_i, last_j = anchors[-1]
@@ -1151,28 +1264,22 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
 
     for i in range(len(lines1) - 1, -1, -1):
         l1 = lines1[i]
-        if not l1 or len(l1) < 4:
+        if not l1 or len(l1) < 22 or _is_generic_template_line(l1):
             continue
         for j in range(0, min(len(lines2), 20)):
             l2 = lines2[j]
-            if not l2 or len(l2) < 4:
+            if not l2 or len(l2) < 22 or _is_generic_template_line(l2):
                 continue
 
             l1_low = l1.lower()
             l2_low = l2.lower()
 
             sm = difflib.SequenceMatcher(None, l1_low, l2_low).ratio()
-            if len(l1_low) >= 8 and (l1_low in l2_low or l2_low in l1_low):
-                sm = max(sm, 0.85)
+            w1 = set(re.findall(r'\w+', l1_low))
+            w2 = set(re.findall(r'\w+', l2_low))
+            w_overlap = (len(w1 & w2) / float(max(len(w1), len(w2)))) if (w1 and w2) else 0.0
 
-            w1 = set(l1_low.split())
-            w2 = set(l2_low.split())
-            if len(w1) >= 3 and len(w2) >= 3:
-                w_overlap = len(w1 & w2) / float(max(len(w1), len(w2)))
-                if w_overlap >= 0.70:
-                    sm = max(sm, w_overlap)
-
-            if sm >= 0.72:
+            if sm >= 0.85 and w_overlap >= 0.65:
                 bonus = 0.0
                 if i + 1 < len(lines1) and j + 1 < len(lines2):
                     nxt1 = lines1[i + 1].strip().lower()
@@ -1190,8 +1297,10 @@ def stitch_two_ocr_texts(text1: str, text2: str) -> str:
         if best_match and best_score >= 0.90:
             break
 
+    # Tahap 34: HAPUS fallback non-overlapping lines1 + lines2!
+    # If no valid overlapping body match is found, DO NOT concatenate different notes/apps! Return current frame t2_clean.
     if not best_match:
-        return "\r\n".join(lines1 + lines2)
+        return t2_clean
 
     i, j, l1, l2 = best_match
     longer_line = _pick_cleaner_line(l1, l2)
@@ -1249,21 +1358,31 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                 if norm_l:
                     para_breaks_after.add(norm_l)
 
-    first_lines = [_clean_ocr_line(l) for l in valid_texts[0].splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
-    current_lines = _unsplit_broken_lines(first_lines)
+    curr_frame = valid_texts[-1]
+    curr_raw = [_clean_ocr_line(l) for l in curr_frame.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+    curr_lines = _unsplit_broken_lines(curr_raw)
 
-    for nxt in valid_texts[1:]:
-        raw_nxt = [_clean_ocr_line(l) for l in nxt.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
-        nxt_lines = _unsplit_broken_lines(raw_nxt)
-        if not nxt_lines:
+    # Check if current frame already contains a complete single-screen text (Tahap 34 Fast-Path)
+    has_closing = any(l.startswith("#") or re.match(r'^(Source|Sumber|Video|Foto)\s*:', l, re.IGNORECASE) for l in curr_lines)
+    has_body_start = any(len(l) >= 20 and not _is_generic_template_line(l) for l in curr_lines[:3]) if len(curr_lines) >= 3 else False
+    is_complete_single_screen = (has_closing and has_body_start and len(curr_lines) >= 4)
+
+    # Stitch backwards anchored on curr_lines so current frame is NEVER dropped!
+    current_lines = list(curr_lines)
+    for prev in reversed(valid_texts[:-1]):
+        raw_prev = [_clean_ocr_line(l) for l in prev.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+        prev_lines = _unsplit_broken_lines(raw_prev)
+        if not prev_lines:
             continue
-        merged = merge_two_overlapping_blocks(current_lines, nxt_lines)
+        merged = merge_two_overlapping_blocks(prev_lines, current_lines)
         if merged:
             current_lines = merged
         else:
-            t_merged = stitch_two_ocr_texts("\r\n".join(current_lines), "\r\n".join(nxt_lines))
-            m_lines = [_clean_ocr_line(l) for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
-            current_lines = _unsplit_broken_lines(m_lines)
+            if not is_complete_single_screen:
+                t_merged = stitch_two_ocr_texts("\r\n".join(prev_lines), "\r\n".join(current_lines))
+                m_lines = [_clean_ocr_line(l) for l in t_merged.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+                if m_lines:
+                    current_lines = _unsplit_broken_lines(m_lines)
 
     current_lines = _unsplit_broken_lines(current_lines)
 
@@ -1286,7 +1405,7 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
             _RECENT_LONG_OCR_CHUNKS = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c["ts"]) <= 90.0]
 
             for past in reversed(_RECENT_LONG_OCR_CHUNKS):
-                hist_merged = merge_two_overlapping_blocks(current_lines, past["lines"])
+                hist_merged = merge_two_overlapping_blocks(past["lines"], current_lines)
                 if hist_merged and len(hist_merged) >= len(current_lines):
                     # Top-of-Note Lock on merged history: DILARANG KERAS menambahkan baris di atas DOC_START!
                     if doc_start_norm:
@@ -1381,11 +1500,11 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     avg_full_line_len = (sum(full_line_lengths) / len(full_line_lengths)) if full_line_lengths else 42.0
 
     para_closing_re = re.compile(
-        r'(?:media\s+sosial|liferaft|rakit\s+darurat|korban\s+jiwa|banteners)\s*[.)?!"]*$',
+        r'(?:media\s+sosial|liferaft|rakit\s+darurat|korban\s+jiwa|dari\s+warganet|banteners)\s*[.)?!"]*$',
         re.IGNORECASE
     )
     section_opener_re = re.compile(
-        r'^(momen menegangkan|situasi darurat|bagaimana perasaan|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
+        r'^(momen\s+menegangkan|situasi\s+darurat|bagaimana\s+(perasaan|tanggapan|menurut)|rekaman\s+singkat|dalam\s+video|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
         re.IGNORECASE
     )
     terminal_punct_re = re.compile(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)[ \t]*$')
@@ -1410,7 +1529,7 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
                 if i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks):
                     is_para_end = True
             else:
-                # Long text rules (Tahap 32)
+                # Long text rules (Tahap 32 & Tahap 34)
                 # Rule 4: Between consecutive hashtag lines, STRICTLY FORBIDDEN to insert blank line!
                 if is_curr_hashtag and is_next_hashtag:
                     is_para_end = False
@@ -1422,16 +1541,23 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
                 else:
                     # Rule 1: Syarat Wajib Kalimat Selesai: line MUST end with terminal punct or be Source
                     has_sentence_end = bool(terminal_punct_re.search(line)) or is_curr_source
+                    is_next_capital = bool(re.match(r'^[A-Z"“]', nxt))
+                    has_blank = (i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks))
 
                     if has_sentence_end:
-                        # Rule 2: Indikator batas paragraf
-                        if section_opener_re.match(nxt):
+                        # Rule 2A (Tahap 34): If sentence has terminal punct AND OCR has blank line AND next starts with capital
+                        if has_blank and is_next_capital:
                             is_para_end = True
+                        # Rule 2B: Known section openers
+                        elif section_opener_re.match(nxt):
+                            is_para_end = True
+                        # Rule 2C: Known paragraph closing phrases
                         elif para_closing_re.search(line):
                             is_para_end = True
+                        # Rule 2D: Short terminal line (< 82% of average line length)
                         elif (
                             len(line) < (0.82 * avg_full_line_len)
-                            and re.match(r'^[A-Z]', nxt)
+                            and is_next_capital
                             and not is_curr_hashtag
                         ):
                             is_para_end = True
@@ -1444,6 +1570,8 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
                 output_lines.append("")
 
     joined = "\r\n".join(output_lines)
+    # Self-Consistent @Username Completion (Tahap 34)
+    joined = _complete_usernames(joined)
     # Normalize Windows CRLF line endings
     joined = re.sub(r'(\r?\n){3,}', '\r\n\r\n', joined)
     joined = re.sub(r'(?<!\r)\n', '\r\n', joined)

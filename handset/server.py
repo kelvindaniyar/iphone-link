@@ -379,6 +379,10 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/screen/stop", "/mirror/stop"):
             self._json(stop_screen())
             return
+        if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
+            clear_recent_long_ocr_chunks()
+            self._json({"ok": True, "action": "clear_chunks"})
+            return
         if path == "/debug-metrics":
             log_path = ROOT.parent.parent / "debug_metrics.json"
             if log_path.is_file():
@@ -558,6 +562,10 @@ class Handler(BaseHTTPRequestHandler):
             elif key_val:
                 record_typed_char(str(key_val))
             self._json({"ok": True})
+            return
+        if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
+            clear_recent_long_ocr_chunks()
+            self._json({"ok": True, "action": "clear_chunks"})
             return
 
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None

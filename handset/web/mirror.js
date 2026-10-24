@@ -231,6 +231,9 @@ const SWITCHER_HOLD_MS = 450;
 let edgeSwipe = null;
 
 async function pressHome(times = 1) {
+  if (typeof window.clearOcrSessionMemory === "function") {
+    window.clearOcrSessionMemory();
+  }
   for (let i = 0; i < times; i++) {
     if (i) await new Promise((r) => setTimeout(r, 120));
     await postJson("/button", { name: "home", state: "press" });
@@ -238,6 +241,9 @@ async function pressHome(times = 1) {
 }
 
 async function triggerBackGesture() {
+  if (typeof window.clearOcrSessionMemory === "function") {
+    window.clearOcrSessionMemory();
+  }
   const yMid = 32768;
   const xStart = 0;
   const xEnd = 42000;
@@ -289,6 +295,12 @@ document.addEventListener("pointerdown", (e) => {
   } catch (_) {}
   activePointer = e.pointerId;
   lastCoords = snapToEdge(touchCoords(e));
+  // Tahap 34: Reset OCR memory when tapping Back button (< in Notes / Keep at X < 0.22 * W && Y < 0.15 * H)
+  if (lastCoords.x < 14500 && lastCoords.y < 10000) {
+    if (typeof window.clearOcrSessionMemory === "function") {
+      window.clearOcrSessionMemory();
+    }
+  }
   if (lastCoords.y === 65535) {
     edgeSwipe = { start: lastCoords, armed: false, lastMoveAt: performance.now(), lastY: lastCoords.y };
     return;
@@ -804,6 +816,11 @@ window.captureFullResFrameDataUrl = function () {
 
 // --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 30) ---
 window._ViewportHistory = []; // Capacity 24 snapshots, expires 180s (3 minutes)
+
+window.clearOcrSessionMemory = function() {
+  window._ViewportHistory = [];
+  fetch("/api/ocr/clear-chunks", { method: "POST" }).catch(() => {});
+};
 let _lastEventSampleTs = 0;
 
 function computeViewportSignature() {

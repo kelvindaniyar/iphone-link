@@ -854,7 +854,41 @@ Pembaruan terkini mencakup:
   - Test 2: Frame 0 daftar Notes ditolak 100% sebagai `<<<NOTES_LIST_VIEW>>>`, judul kontaminasi `"banten feeds test 17 pro"` otomatis dibuang, dan hasil mulai tepat pada `DOC_START` (`"Rekaman video amatir..."`) [PASS].
   - Test 3: Inspeksi kode `ocr_extractor.ps1` untuk crop `0.118*H`, gap adaptif `0.40*avgH`, token `<<<NOTES_LIST_VIEW>>>`, dan `<<<DOC_START>>>` [PASS].
   - Test 4: Format caption berita KMP Batumandi 100% utuh dalam tepat 6 blok paragraf tanpa kontaminasi judul [PASS].
-  - Seluruh pengujian regresi Tahap 26-32 lulus 100%.
+### Tahap 34: Google Keep Blue Selection, Anti Cross-App Splicing, Popup Balloon Occlusion, & Username Completion Fix (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap34.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap34.py) serta seluruh uji regresi Tahap 26-33.
+- **Latar Belakang & Analisis Video**: Dari evaluasi video pengujian Kelvin (`20261024-0040-49.3542382.mp4`), fitur copy-paste kalimat pendek berjarak Enter ganda (`Ctrl+C`, `Ctrl+V`, `Alt+C`, `Alt+V`) sudah 100% stabil, judul lama sudah tidak nyangkut lagi, dan pemisahan shortcut berjalan lancar. Namun pada menit 01:39 - 03:39 ditemukan 5 bug spesifik:
+  1. **Bug A (Apple Notes Menit 02:39 - 02:50)**: Kalimat `"tersebut memaksa para penumpang"` berubah menjadi dua baris rusak: `"tersebut memaksaopng"` dan `"1Q0 1O0O"` karena balon popup Cut/Copy/Paste menutupi baris tersebut pada frame atas. Di `screen.py`, fungsi `merge_two_overlapping_blocks()` memilih celah berdasarkan jumlah baris terbanyak (`len(gapA) > len(gapB)`), sehingga memilih 2 baris rusak dan membuang 1 baris bersih! Serta mention `@erikkristian` di Source terpotong menjadi `@eril<l<rist`.
+  2. **Bug B (Google Keep Menit 02:58 - 03:39)**:
+     - *Kontaminasi Lintas Aplikasi*: Teks KMP Batumandi dari Apple Notes ikut menyatu ke atas teks Google Keep "Tol Bekacau" karena memori session tidak direset saat tombol Home ditekan (02:55) dan kedua berita berakhir dengan baris template `@bantenfeeds` yang sama (`"Bagaimana ... Banteners?"`, `"Source:"`, `"#hashtag"`).
+     - *Gagang Seleksi Biru Dirusak*: Bulatan gagang seleksi Biru Tua ($R=30, G=120, B=255$) diubah oleh Red-Channel filter menjadi bola hitam pekat yang menutupi kata `"#truklintasjawa"` sehingga terbaca `"#trukhacked #ojoltruk"`.
+     - *Cluster Terputus*: Jeda baris kosong putih ($0.055 \times H$) antar-paragraf di Google Keep memotong seleksi sehingga Paragraf 1 (`"Unggahan bertajuk..."`) terbuang.
+     - *Jarak Enter*: Paragraf `"Bagaimana tanggapan..."` tidak mendapat jeda `\r\n\r\n`.
+- **Pekerjaan yang Dilakukan**:
+  1. **Pre-Processor Max-RB & Netralisasi Seleksi Biru/Kuning (`ocr_extractor.ps1`)**:
+     - Deteksi gagang seleksi kuning (`r > 180 && g > 120 && r-b > 40`), gagang biru (`b > 165 && b-r > 45`), latar kuning (`r > 200 && g > 175`), dan latar biru (`b > 205 && g > 190`).
+     - Definisi teks gelap asli (`isDarkText`): `(r < 155 && g < 155 && b < 155) && (Math.Abs(r - b) < 40)`.
+     - Netralisasi piksel gagang/highlight non-teks menjadi putih bersih `(255, 255, 255)` pada kedua kandidat gambar.
+     - Kanal Max-RB (`Math.Max(r, b)`) memetakan warna biru tua menjadi putih, mencegah bola hitam pada `"#truklintasjawa"`.
+     - Multi-cluster vertical grouping: menggabungkan rentang dari `firstClusterStart` ke `lastClusterEnd` menjadi `[selMinY, selMaxY]`, dan melindungi baris teks di dalam rentang tersebut pada `VerifyLineHighlight`.
+  2. **Anti Kontaminasi Lintas Aplikasi & Larangan Jangkar Template (`mirror.js`, `app.js`, `server.py`, `screen.py`)**:
+     - Pembersihan memori otomatis: setiap kali tombol Home, Switcher, Recent, Swipe, atau tombol Back (`X < 0.22*W && Y < 0.15*H`) diklik, `window._ViewportHistory = []` dikosongkan dan server memanggil `clear_recent_long_ocr_chunks()` melalui endpoint `/api/ocr/clear-chunks`.
+     - Fungsi `_is_generic_template_line()` melarang baris `Source:`, `Bagaimana...`, `#...`, atau `Banteners?` menjadi jangkar tunggal di `merge_two_overlapping_blocks`. Wajib ada minimal 1 baris isi berita spesifik (panjang $\ge 22$, kemiripan $\ge 0.85$, overlap kata unik $\ge 65\%$).
+     - Penghapusan total fallback non-overlapping di `stitch_two_ocr_texts()`: jika tidak ada irisan baris isi spesifik, selalu gunakan current frame `t2_clean`.
+     - Fast-Path satu layar utuh di `stitch_multiline_ocr_frames()`: mengunci frame saat ini (`valid_texts[-1]`) agar tidak pernah dibuang atau ditimpa history lama.
+  3. **Gap Quality Scoring & Username Completion (`screen.py`)**:
+     - Implementasi `_score_gap_quality()`: memberi penalti berat ($-100$) untuk artefak border balon (`1Q0 1O0O`, `memaksaopng`) dan ($-50$) untuk `l<`, sehingga gap bersih `"tersebut memaksa para penumpang"` (skor $+40$) mutlak terpilih dibanding gap rusak (skor $-210$).
+     - Implementasi `_complete_usernames()`: jika terdapat mention lengkap (misal `@erikkristian`), mention terpotong dengan awalan sama di baris lain (misal `@eril<l<rist` atau `@erikkrist`) otomatis disempurnakan menjadi `@erikkristian`.
+  4. **Penyempurnaan Format Paragraf (`ensure_paragraph_formatting`)**:
+     - Rule 2A: Kalimat berakhiran tanda baca terminal (`.`, `).`, `".`, `?`, `!`) yang diikuti baris kosong mentah dan huruf kapital/petik (`^[A-Z"“]`) SELALU mendapatkan pemisah `\r\n\r\n`.
+     - Perluasan section opener regex mencakup `Bagaimana tanggapan`, `Rekaman singkat`, `Dalam video`, dll.
+     - Perluasan paragraph closing regex mencakup `dari warganet` dan `Banteners`.
+  5. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap34_google_keep_and_popup_fix` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap34.py`)**:
+  - Test 1: Apple Notes popup occlusion 100% memilih baris bersih `"tersebut memaksa para penumpang"`, membuang `"memaksaopng \n 1Q0 1O0O"`, dan melengkapi username menjadi `"Source: Threads @erikkristian"` [PASS].
+  - Test 2: Google Keep Tol Bekacau 100% bersih tanpa kontaminasi KMP Batumandi, dan tersusun rapi dalam 5 blok paragraf dipisahkan `\r\n\r\n` [PASS].
+  - Test 3: Regresi kalimat pendek dengan enter ganda (`"lionel messi argentina 17 pro \n\n lamine yamal neymar \n\n barcelona"`) tetap 100% stabil [PASS].
+  - Test 4: Inspeksi pre-processor C# untuk Max-RB, gagang biru, dan multi-cluster bounds [PASS].
+  - Seluruh pengujian regresi Tahap 26-33 lulus 100%.
 
 
 

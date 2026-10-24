@@ -24,10 +24,14 @@ public class DualOcrPreprocessor {
         out bool foundHighlight,
         out int cropX,
         out int cropY,
-        out int cropH
+        out int cropH,
+        out int selMinY,
+        out int selMaxY
     ) {
         int W = src.Width;
         int H = src.Height;
+        selMinY = 0;
+        selMaxY = 0;
 
         BitmapData srcData = src.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         int stride = srcData.Stride;
@@ -161,8 +165,8 @@ public class DualOcrPreprocessor {
         }
 
         // 2. Scan highlights (Ignore top toolbar buttons and bottom floating pill toolbar)
-        int scanTopY = (int)(H * 0.145);
-        int scanBottomY = (int)(H * 0.785);
+        int scanTopY = (int)(H * 0.135);
+        int scanBottomY = (int)(H * 0.830);
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
 
@@ -171,10 +175,10 @@ public class DualOcrPreprocessor {
 
         if (!isFullViewport) {
             for (int y = scanTopY; y <= scanBottomY; y += 2) {
-                // Rule 1A: For Y < 0.170 * H, exclude left zone (X < 0.22 * W) and right zone (X > 0.76 * W)
-                // where '<' back button and yellow '✓' Done button live!
-                int rowLeftX = (y < (int)(H * 0.170)) ? (int)(W * 0.22) : leftX;
-                int rowRightX = (y < (int)(H * 0.170)) ? (int)(W * 0.76) : rightX;
+                // Rule 1A: For Y < 0.150 * H, exclude left zone (X < 0.22 * W) for Back button;
+                // For Y < 0.168 * H, exclude right zone (X > 0.75 * W) for Done yellow checkmark button!
+                int rowLeftX = (y < (int)(H * 0.150)) ? (int)(W * 0.22) : leftX;
+                int rowRightX = (y < (int)(H * 0.168)) ? (int)(W * 0.75) : rightX;
 
                 int rowOffset = y * stride;
                 int rowHighlightCount = 0;
@@ -185,14 +189,16 @@ public class DualOcrPreprocessor {
                     byte g = raw[idx + 1];
                     byte r = raw[idx + 2];
 
-                    // Notes pale yellow highlight: R > 220, G > 205, B < 238, R - B >= 12
-                    bool isPaleYellow = (r > 220) && (g > 205) && (b < 238) && ((r - b) >= 12);
-                    // Notes lollipop handle yellow-orange: R > 200, G > 140, R - B >= 40
-                    bool isLollipop = (r > 200) && (g > 140) && ((r - b) >= 40);
-                    // Standard iOS blue selection: B > 140, B - R >= 22
-                    bool isBlue = (b > 140) && ((b - r) >= 22);
+                    // Notes pale yellow highlight: R > 200, G > 175, R - B >= 12
+                    bool isYellowBg = (r > 200) && (g > 175) && ((r - b) >= 12);
+                    // Notes lollipop handle yellow-orange: R > 180, G > 120, R - B >= 40
+                    bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) >= 40);
+                    // Standard iOS / Google Keep blue selection: B > 205, G > 190, B - R >= 8
+                    bool isBlueBg = (b > 205) && (g > 190) && ((b - r) >= 8);
+                    // Google Keep / iOS blue lollipop handle: B > 165, B - R >= 45
+                    bool isBlueLollipop = (b > 165) && ((b - r) >= 45);
 
-                    if (isPaleYellow || isLollipop || isBlue) {
+                    if (isYellowBg || isYellowLollipop || isBlueBg || isBlueLollipop) {
                         rowHighlightCount++;
                     }
                 }
@@ -204,11 +210,10 @@ public class DualOcrPreprocessor {
             }
         }
 
-        // Rule 1B: Contiguous vertical clustering: tolerance gap <= 0.028 * H
-        int maxLineGap = (int)(H * 0.028);
-        int bestClusterStart = -1;
-        int bestClusterEnd = -1;
-        int bestClusterHeight = 0;
+        // Rule 1B (Tahap 34): Multi-cluster vertical grouping across un-highlighted blank paragraph lines
+        int maxLineGap = (int)(H * 0.035);
+        int firstClusterStart = -1;
+        int lastClusterEnd = -1;
 
         int curStart = -1;
         int lastRow = -1;
@@ -219,10 +224,9 @@ public class DualOcrPreprocessor {
                     curStart = y;
                 } else if (lastRow != -1 && (y - lastRow) > maxLineGap) {
                     int h = lastRow - curStart;
-                    if (h >= (int)(H * 0.010) && h > bestClusterHeight) {
-                        bestClusterHeight = h;
-                        bestClusterStart = curStart;
-                        bestClusterEnd = lastRow;
+                    if (h >= (int)(H * 0.010)) {
+                        if (firstClusterStart == -1) firstClusterStart = curStart;
+                        lastClusterEnd = lastRow;
                     }
                     curStart = y;
                 }
@@ -232,19 +236,20 @@ public class DualOcrPreprocessor {
 
         if (curStart != -1 && lastRow != -1) {
             int h = lastRow - curStart;
-            if (h >= (int)(H * 0.010) && h > bestClusterHeight) {
-                bestClusterHeight = h;
-                bestClusterStart = curStart;
-                bestClusterEnd = lastRow;
+            if (h >= (int)(H * 0.010)) {
+                if (firstClusterStart == -1) firstClusterStart = curStart;
+                lastClusterEnd = lastRow;
             }
         }
 
         int minY = 9999999;
         int maxY = 0;
-        if (bestClusterStart != -1 && bestClusterEnd != -1) {
+        if (firstClusterStart != -1 && lastClusterEnd != -1) {
             foundHighlight = true;
-            minY = bestClusterStart;
-            maxY = bestClusterEnd;
+            minY = firstClusterStart;
+            maxY = lastClusterEnd;
+            selMinY = minY;
+            selMaxY = maxY;
         }
 
         // Detect iOS On-Screen Virtual Keyboard in lower screen (Y = 0.55 * H to 0.88 * H)
@@ -316,14 +321,18 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Selection handle filter (Tahap 31):
-                // Yellow-orange selection handle lollipop: R > 180 && G > 120 && (R - B) > 40
-                // Dark text edge guard loosened: R < 165 && G < 165 && B < 165
-                bool isHandle = (r > 180) && (g > 120) && ((r - b) > 40);
-                bool isDarkText = (r < 165) && (g < 165) && (b < 165);
+                // Tahap 34: Dual selection handle & background filter (Yellow Apple Notes & Blue Google Keep / iOS)
+                bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) > 40);
+                bool isBlueLollipop = (b > 165) && ((b - r) > 45);
+                bool isYellowBg = (r > 200) && (g > 175) && ((r - b) >= 12);
+                bool isBlueBg = (b > 205) && (g > 190) && ((b - r) >= 8);
 
-                // Natural: direct copy, but neutralize handle to white without erasing dark text
-                if (isHandle && !isDarkText) {
+                // Authentic dark text has balanced R, G, B, NOT saturated blue or saturated yellow
+                bool isDarkText = (r < 155) && (g < 155) && (b < 155) && (Math.Abs((int)r - (int)b) < 40);
+                bool isHlOrHandle = (isYellowLollipop || isBlueLollipop || isYellowBg || isBlueBg);
+
+                // Natural: direct copy, but neutralize handle / highlight background to white without erasing dark text
+                if (isHlOrHandle && !isDarkText) {
                     natPixels[nIdx] = 255;
                     natPixels[nIdx + 1] = 255;
                     natPixels[nIdx + 2] = 255;
@@ -335,15 +344,15 @@ public class DualOcrPreprocessor {
                     natPixels[nIdx + 3] = 255;
                 }
 
-                // Red-filtered (Tahap 31 stroke-preserving darkening curve):
-                bool isColorNoise = (r > 175) && (((r - b) > 35) || ((r - g) > 30));
+                // Filtered (Tahap 34 Max-RB Channel for Yellow & Blue selection neutralization):
+                int maxRB = Math.Max((int)r, (int)b);
                 byte v;
-                if ((isHandle && !isDarkText) || r >= 228 || isColorNoise) {
+                if ((isHlOrHandle && !isDarkText) || maxRB >= 225) {
                     v = 255;
-                } else if (r < 165) {
-                    v = (byte)(r * 0.55);
+                } else if (maxRB < 165) {
+                    v = (byte)(maxRB * 0.55);
                 } else {
-                    int mapped = 90 + (int)((r - 165) * (255 - 90) / (228 - 165));
+                    int mapped = 90 + (int)((maxRB - 165) * (255 - 90) / (225 - 165));
                     if (mapped < 0) mapped = 0;
                     if (mapped > 255) mapped = 255;
                     v = (byte)mapped;
@@ -394,7 +403,8 @@ public class DualOcrPreprocessor {
         Bitmap origBmp,
         int cropX, int cropY,
         float scale, int margin,
-        double lineX, double lineY, double lineW, double lineH
+        double lineX, double lineY, double lineW, double lineH,
+        int selMinY = 0, int selMaxY = 0
     ) {
         int W = origBmp.Width;
         int H = origBmp.Height;
@@ -403,6 +413,15 @@ public class DualOcrPreprocessor {
         int oy = cropY + (int)((lineY - margin) / scale);
         int ow = (int)(lineW / scale);
         int oh = (int)(lineH / scale);
+
+        // Tahap 34: Jika baris berada di antara rentang vertikal area seleksi [selMinY, selMaxY],
+        // JANGAN membuangnya meskipun rasio highlight pada baris itu rendah!
+        // Ini memastikan baris kosong / jeda paragraf di Google Keep tidak memutus seleksi.
+        if (selMinY > 0 && selMaxY > selMinY) {
+            if (oy >= (selMinY - 10) && (oy + oh) <= (selMaxY + 20)) {
+                return true;
+            }
+        }
 
         oy = Math.Max(0, oy - 4);
         oh = Math.Min(H - oy, oh + 8);
@@ -430,10 +449,11 @@ public class DualOcrPreprocessor {
                 totalSampled++;
 
                 bool isYellow = (r > 200) && (g > 175) && ((r - b) >= 10);
-                bool isHandle = (r > 190) && ((r - b) >= 35);
+                bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) >= 35);
                 bool isBlue = (b > 130) && ((b - r) >= 15);
+                bool isBlueLollipop = (b > 165) && ((b - r) >= 35);
 
-                if (isYellow || isHandle || isBlue) {
+                if (isYellow || isYellowLollipop || isBlue || isBlueLollipop) {
                     highlightCount++;
                 }
             }
@@ -458,7 +478,7 @@ public class DualOcrPreprocessor {
         return $netTask.Result
     }
 
-    function Run-Ocr([System.Drawing.Bitmap]$bmp, [System.Drawing.Bitmap]$origBmp = $null, [int]$cropX = 0, [int]$cropY = 0, [bool]$checkHighlight = $false) {
+    function Run-Ocr([System.Drawing.Bitmap]$bmp, [System.Drawing.Bitmap]$origBmp = $null, [int]$cropX = 0, [int]$cropY = 0, [bool]$checkHighlight = $false, [int]$selMinY = 0, [int]$selMaxY = 0) {
         $tempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'ocr_run_' + [System.Guid]::NewGuid().ToString() + '.png')
         $bmp.Save($tempFile, [System.Drawing.Imaging.ImageFormat]::Png)
 
@@ -572,7 +592,7 @@ public class DualOcrPreprocessor {
 
             # Rule 1C: If image has a highlight selection, verify that this line actually has highlight behind it!
             if ($checkHighlight -and $origBmp -ne $null) {
-                $hasHl = [DualOcrPreprocessor]::VerifyLineHighlight($origBmp, $cropX, $cropY, 2.5, 60, $minX, $minY, $lineW, $lineH)
+                $hasHl = [DualOcrPreprocessor]::VerifyLineHighlight($origBmp, $cropX, $cropY, 2.5, 60, $minX, $minY, $lineW, $lineH, $selMinY, $selMaxY)
                 if (-not $hasHl) {
                     continue
                 }
@@ -673,17 +693,19 @@ public class DualOcrPreprocessor {
         $cropX = 0
         $cropY = 0
         $cropH = 0
+        $selMinY = 0
+        $selMaxY = 0
 
-        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH)
+        [DualOcrPreprocessor]::PrepareCandidates($srcBmp, $isFullViewport, [ref]$candNat, [ref]$candRed, [ref]$foundHighlight, [ref]$cropX, [ref]$cropY, [ref]$cropH, [ref]$selMinY, [ref]$selMaxY)
 
         $doVerify = ($foundHighlight -and -not $isFullViewport)
 
         # Fast candidate execution: Red-filtered first (best for Notes Light Mode & spellcheck removal)
-        $bestLines = @(Run-Ocr $candRed $srcBmp $cropX $cropY $doVerify)
+        $bestLines = @(Run-Ocr $candRed $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
         $bestBmp = $candRed
         if ($bestLines.Count -eq 0 -and $candNat -ne $null) {
             # Fallback to Natural candidate if Red-filtered gave nothing (e.g. Dark Mode)
-            $linesNat = @(Run-Ocr $candNat $srcBmp $cropX $cropY $doVerify)
+            $linesNat = @(Run-Ocr $candNat $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
             if ($linesNat.Count -gt 0) {
                 $bestLines = $linesNat
                 $bestBmp = $candNat
