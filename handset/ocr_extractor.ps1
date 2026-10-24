@@ -193,8 +193,8 @@ public class DualOcrPreprocessor {
         // Tahap 37: When no keyboard, extend bottom scan and crop to 0.855 * H
         int maxContentBottom = hasKeyboard ? (int)(H * 0.495) : (int)(H * 0.855);
 
-        // 3. Scan Highlights (Tahap 36/37: Yellow & Blue Highlights, threshold >= 8 pixels per row)
-        int scanTopY = (int)(H * 0.120);
+        // 3. Scan Highlights (Tahap 36/37/38: Yellow & Blue Highlights, threshold >= 8 pixels per row)
+        int scanTopY = (int)(H * 0.122);
         int scanBottomY = maxContentBottom;
         int leftX = (int)(W * 0.04);
         int rightX = (int)(W * 0.96);
@@ -204,9 +204,9 @@ public class DualOcrPreprocessor {
 
         if (!isFullViewport) {
             for (int y = scanTopY; y <= scanBottomY; y++) {
-                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.24*W and 0.74*W if Y < 0.168*H
-                int rowLeftX = (y < (int)(H * 0.168)) ? (int)(W * 0.24) : leftX;
-                int rowRightX = (y < (int)(H * 0.168)) ? (int)(W * 0.74) : rightX;
+                // Ignore top toolbar zone buttons (< and checkmark): scan X between 0.24*W and 0.74*W if Y < 0.122*H
+                int rowLeftX = (y < (int)(H * 0.122)) ? (int)(W * 0.24) : leftX;
+                int rowRightX = (y < (int)(H * 0.122)) ? (int)(W * 0.74) : rightX;
 
                 int rowOffset = y * stride;
                 int hlCount = 0;
@@ -279,7 +279,7 @@ public class DualOcrPreprocessor {
 
         if (foundHighlight && !isFullViewport) {
             cropY = Math.Max((int)(H * 0.118), selMinY - (int)(H * 0.008));
-            int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.015));
+            int cropBottom = Math.Min(maxContentBottom, selMaxY + (int)(H * 0.005));
             cropH = Math.Max(20, cropBottom - cropY);
         } else {
             // Full-Viewport Content Crop (Tahap 37: 0.125 * H to 0.855 * H when no keyboard)
@@ -315,10 +315,10 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 36/37: Targeted Unwanted Objects Neutralization
+                // Tahap 36/37/38: Targeted Unwanted Objects Neutralization
                 bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80 && !(r < 130 && g < 130 && b < 130));
                 bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25 && !(r < 110 && g < 110 && b < 110));
-                bool isRedSpellcheck = (r > 165 && (r - g) > 42 && (r - b) > 42 && g < 135);
+                bool isRedSpellcheck = (r > 180 && g < 140 && b < 140 && (r - g) > 52 && (r - b) > 52);
 
                 // Kandidat 1 (Natural RGB):
                 if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
@@ -520,8 +520,8 @@ public class DualOcrPreprocessor {
                 }
             }
 
-            # Filter 1-2 character leftover fragments
-            if ($t.Length -le 2 -and ($t -match '^(Co|py|te|Cu|Pa|De|[<>/\\|_\-\.])$')) { continue }
+            # Filter 1-3 character leftover fragments and popup balloon border debris (e.g. "r I", "I I", "r")
+            if ($t.Length -le 3 -and ($t -match '^(Co|py|te|Cu|Pa|De|[<>/\\|_\-\.])$' -or $t -match '^[rIl1|/\[\]\(\)\-\s]+$')) { continue }
 
             # Remove stray embedded callout words if any
             $t = $t -replace '\b(Cut|Copy|Paste|Delete|Select|Select All)\b', ''
@@ -698,9 +698,6 @@ public class DualOcrPreprocessor {
         }
         $avgH = if ($sortedLines.Count -gt 0) { $sumH / $sortedLines.Count } else { 30.0 }
 
-        $isShortText = ($sortedLines.Count -le 6)
-        $gapThreshold = if ($isShortText) { ($avgH * 0.40) } else { ($avgH * 0.85) }
-
         $lines = @()
         if ($hasDateHeader) {
             $lines += "<<<DOC_START>>>"
@@ -710,8 +707,18 @@ public class DualOcrPreprocessor {
             if ($i -gt 0) {
                 $prev = $sortedLines[$i - 1]
                 $gap = $curr.MinY - $prev.MaxY
-                if ($gap -gt $gapThreshold) {
-                    $lines += ""
+                $prevCenterY = ($prev.MinY + $prev.MaxY) / 2.0
+                $currCenterY = ($curr.MinY + $curr.MaxY) / 2.0
+                $centerStep = $currCenterY - $prevCenterY
+
+                if ($sortedLines.Count -le 7) {
+                    if (($gap -gt ($avgH * 0.25)) -or ($centerStep -gt ($avgH * 1.52))) {
+                        $lines += ""
+                    }
+                } else {
+                    if (($gap -gt ($avgH * 0.85)) -or ($centerStep -gt ($avgH * 2.10))) {
+                        $lines += ""
+                    }
                 }
             }
             $lines += $curr.Text

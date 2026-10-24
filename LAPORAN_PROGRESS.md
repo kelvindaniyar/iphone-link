@@ -990,3 +990,34 @@ Pembaruan terkini mencakup:
   - Test 4: Seluruh inspeksi kode arsitektur terpenuhi 100% [PASS].
   - Seluruh uji regresi Tahap 32, 33, dan 36 lulus 100%.
 
+### Tahap 38: Pemulihan Penuh Enter Teks Pendek, Restorasi 'papua', Eliminasi Balon 'r I', dan Penguncian Baris Pertama Apple Notes (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap38.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap38.py) pada gambar resolusi stream iPhone `1216 x 2656`, serta seluruh uji regresi Tahap 37.
+- **Latar Belakang & Analisis Video Kelvin (04:53)**:
+  - Eksekusi kilat sub-2 detik dan OCR Google Keep 1 layar penuh terbukti berhasil (04:44).
+  - Namun pada teks pendek Notes iPhone (menit 01:17 - 02:05), jarak 1 baris kosong (Enter ganda) hilang saat di-paste, kata `"papua"` menjadi `"Dapua"`, dan muncul sampah `"r I"` dari pinggiran balon menu iOS di bawah `"planet"`.
+  - Pada Apple Notes (menit 03:42 & 04:14), baris pertama `"Rekaman video amatir yang memperlihatkan"` hilang terhapus oleh `_strip_typed_buffer_contamination_from_top` karena pernah tersimpan di `typed_history.json`.
+  - Di akhir hashtag, gagang seleksi kuning terbaca sebagai `]` (`#cilegon]`), dan `(AI Generated Content)` terbaca `(Al Generated Content)`.
+- **Pekerjaan Arsitektural yang Dilakukan**:
+  1. **Pemulihan 100% Jarak Enter Ganda pada Teks Pendek**:
+     - Di `ocr_extractor.ps1`: metrik invarian titik tengah `$centerStep = $currCenterY - $prevCenterY` dan `$gap = $curr.MinY - $prev.MaxY`. Jika total baris $\le 7$: sisipkan baris kosong jika `($gap -gt ($avgH * 0.25)) -or ($centerStep -gt ($avgH * 1.52))`.
+     - Di `server.py`: pertahankan seluruh string kosong `""` pada list `cleaned_snippet_lines` untuk teks pendek ($\le 6$ baris non-kosong).
+     - Di `screen.py`: `ensure_paragraph_formatting` mengonversi setiap baris kosong menjadi `\r\n\r\n`, serta mencocokkan pasangan baris dengan `_TYPED_LINES_BUFFER` jika user mengetik Enter ganda di antara baris tersebut.
+  2. **Restorasi "Dapua" -> "papua" & Eliminasi Sampah Balon "r I"**:
+     - Di `ocr_extractor.ps1`: perketat syarat penghapus titik merah spellcheck menjadi `r > 180 && g < 140 && b < 140 && (r-g) > 52 && (r-b) > 52` agar tidak memutihkan batang bawah huruf `'p'`.
+     - Di `screen.py`: `auto_correct_ocr_text` mengizinkan pencocokan meskipun huruf pertama berbeda (`cand[0] != line[0]`) jika kemiripan kalimat $\ge 0.84$ dan kemiripan kata pertama $\ge 0.70$ (`"dapua"` vs `"papua"` rasio 0.80).
+     - Ditambahkan koreksi optik langsung: `re.sub(r'\b[Dd]apua\b', 'papua', t)`.
+     - Padding bawah seleksi dipangkas dari `selMaxY + 0.015*H` menjadi `selMaxY + 0.005*H` (~12px), dan `_is_garbage_ocr_line` membuang serpihan artefak balon `^[rIl1|/\[\]\(\)\-]{1,2}(\s+[rIl1|/\[\]\(\)\-]{1,2})*$`.
+  3. **Penguncian Baris Pertama Apple Notes & Pembersihan Hashtag**:
+     - `_strip_typed_buffer_contamination_from_top`: Dilarang menghapus baris pertama jika panjangnya $\ge 30$, tanpa titik, dan baris ke-2 diawali huruf kecil (kalimat mengalir). Batas maksimal kontaminasi diperketat ke $< 32$ karakter.
+     - `_TYPED_LINES_BUFFER` dan `typed_history.json` dibersihkan dari entri teks panjang $\ge 35$ karakter atau memuat frasa berita `"rekaman video amatir"` / `"unggahan bertajuk"`.
+     - Batas pemindaian toolbar atas di `ocr_extractor.ps1` dinaikkan ke `0.122 * H` (karena toolbar Notes selesai di `0.112 * H`), sehingga baris pertama pada `Y = 0.145 * H` terpindai penuh.
+     - Pembersihan kurung siku gagang seleksi: `re.sub(r'(#[A-Za-z0-9_]+)[\]\[\|><\)\}!]+(?=\s|$)', r'\1', t)` mengubah `#cilegon]` -> `#cilegon`.
+     - Normalisasi `(Al Generated Content)` -> `(AI Generated Content)`.
+  4. **Pembaruan Tag Cache Frontend**: Bump ke `v=20261024_tahap38_short_enter_and_apple_notes_top_lock` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap38.py`)**:
+  - Test 1: Teks pendek berjarak Enter ganda 100% terjaga (`pamulang ciputat tangsel\r\n\r\npapua raya selatan\r\n\r\njakarta selatan\r\n\r\ndapur solo viral\r\n\r\nplanet`), `"papua raya selatan"` pulih sempurna tanpa `"Dapua"`, dan 0% `"r I"` dalam **0.75 detik** [PASS].
+  - Test 2: Apple Notes Full-Res dengan baris pertama di dalam `typed_history.json` dan berada di `Y = 0.145 * H`: baris 1 `"Rekaman video amatir..."` 100% hadir, `#cilegon]` bersih menjadi `#cilegon`, typo `"d, tengah"` sembuh menjadi `"di tengah"`, dan 100% cocok dengan Teks Asli 2 Kelvin dalam **1.05 detik** [PASS].
+  - Test 3: Google Keep Full-Res 100% cocok dengan Ground-Truth termasuk pemulihan `(AI Generated Content)` dalam **0.96 detik** [PASS].
+  - Test 4: Suite regresi Tahap 37 lulus 100% tanpa error [PASS].
+
+

@@ -513,18 +513,22 @@ class Handler(BaseHTTPRequestHandler):
                             return None
 
                         # Clean current frame from unselected top debris (e.g. #toltangerangmerak #infotangerang\n---)
-                        c_lines = _strip_top_unselected_debris([l.strip() for l in current_frame_raw.splitlines() if l.strip()])
-                        current_frame_text = "\r\n".join(c_lines).strip()
-                        if not current_frame_text:
+                        raw_frame_lines = [l.strip() for l in current_frame_raw.splitlines()]
+                        c_lines = _strip_top_unselected_debris([l for l in raw_frame_lines if l and not _is_garbage_ocr_line(l)])
+                        if not c_lines:
                             return None
 
-                        # ATURAN EMAS 1 (Tahap 36/37): Short text (<= 5 non-empty lines, total chars < 200)
+                        # ATURAN EMAS 1 (Tahap 36/37/38): Short text (<= 6 non-empty lines, total chars < 250)
                         # NEVER stitch with history frames or past chunks!
-                        is_short_snippet = (len(c_lines) <= 5 and all(len(l) < 55 for l in c_lines) and sum(len(l) for l in c_lines) < 200)
+                        is_short_snippet = (len(c_lines) <= 6 and all(len(l) < 55 for l in c_lines) and sum(len(l) for l in c_lines) < 250)
                         if is_short_snippet:
+                            # WAJIB PERTAHANKAN baris kosong "" di antara baris-baris pendek
+                            cleaned_snippet_lines = [_clean_ocr_line(l) if l else "" for l in raw_frame_lines]
+                            current_frame_text = "\r\n".join(cleaned_snippet_lines).strip()
                             final_text = auto_correct_ocr_text(current_frame_text)
                             final_text = ensure_paragraph_formatting(final_text)
                         else:
+                            current_frame_text = "\r\n".join(c_lines).strip()
                             # ATURAN EMAS 2 & 3: Check single-screen complete caption vs multi-screen
                             has_hashtag_end = any(l.startswith("#") for l in c_lines[-2:]) if len(c_lines) >= 2 else False
                             first_line = c_lines[0] if c_lines else ""

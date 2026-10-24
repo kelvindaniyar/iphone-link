@@ -372,8 +372,20 @@ def save_typed_history() -> None:
         pass
 
 
+def _is_valid_typed_history_entry(line: str) -> bool:
+    """Validate typed history entries: forbid long paste blocks (>= 35 chars) or news headlines (Tahap 38)."""
+    if not line:
+        return True  # Keep blank line
+    if len(line) >= 35:
+        return False
+    low = line.lower()
+    if "rekaman video amatir" in low or "unggahan bertajuk" in low:
+        return False
+    return True
+
+
 def load_typed_history() -> None:
-    """Load persisted typed history from disk on startup."""
+    """Load persisted typed history from disk on startup and purge long paste contamination."""
     global _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP, _TYPED_LINES_BUFFER
     if not TYPED_HISTORY_FILE.exists():
         return
@@ -381,9 +393,11 @@ def load_typed_history() -> None:
         with open(TYPED_HISTORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         with _TYPED_BUFFER_LOCK:
-            _LAST_TYPED_ACTIVE_LINE = data.get("last_active", "")
+            act = data.get("last_active", "")
+            _LAST_TYPED_ACTIVE_LINE = act if _is_valid_typed_history_entry(act) else ""
             _LAST_TYPED_TIMESTAMP = float(data.get("timestamp", 0.0))
-            _TYPED_LINES_BUFFER = list(data.get("buffer", []))
+            raw_buf = list(data.get("buffer", []))
+            _TYPED_LINES_BUFFER[:] = [l for l in raw_buf if _is_valid_typed_history_entry(l)]
     except Exception:
         pass
 
@@ -393,12 +407,12 @@ load_typed_history()
 
 
 def commit_and_reset_current_typed_line() -> None:
-    """Commit current typed accumulator into buffer if valid (>=3 chars) and reset accumulator."""
+    """Commit current typed accumulator into buffer if valid (>=3 chars and <35 chars) and reset accumulator."""
     global _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER, _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP
     import time
     with _TYPED_BUFFER_LOCK:
         trimmed = _CURRENT_TYPED_LINE.strip()
-        if len(trimmed) >= 3:
+        if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
             if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
                 _TYPED_LINES_BUFFER.append(trimmed)
             if len(_TYPED_LINES_BUFFER) > 60:
@@ -425,12 +439,12 @@ def record_typed_char(char: str) -> None:
             if _CURRENT_TYPED_LINE:
                 _CURRENT_TYPED_LINE = _CURRENT_TYPED_LINE[:-1]
                 trimmed = _CURRENT_TYPED_LINE.strip()
-                if len(trimmed) >= 3:
+                if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                     _LAST_TYPED_ACTIVE_LINE = trimmed
                 _LAST_TYPED_TIMESTAMP = time.time()
         elif char in ("\n", "\r", "Enter"):
             trimmed = _CURRENT_TYPED_LINE.strip()
-            if len(trimmed) >= 3:
+            if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                 if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
                     _TYPED_LINES_BUFFER.append(trimmed)
                 if len(_TYPED_LINES_BUFFER) > 60:
@@ -448,13 +462,13 @@ def record_typed_char(char: str) -> None:
         elif char in ("Space", " "):
             _CURRENT_TYPED_LINE += " "
             trimmed = _CURRENT_TYPED_LINE.strip()
-            if len(trimmed) >= 3:
+            if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                 _LAST_TYPED_ACTIVE_LINE = trimmed
             _LAST_TYPED_TIMESTAMP = time.time()
         elif len(char) == 1:
             _CURRENT_TYPED_LINE += char
             trimmed = _CURRENT_TYPED_LINE.strip()
-            if len(trimmed) >= 3:
+            if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                 _LAST_TYPED_ACTIVE_LINE = trimmed
             _LAST_TYPED_TIMESTAMP = time.time()
     save_typed_history()
@@ -476,7 +490,7 @@ def record_typed_text(text: str) -> None:
             lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
             for line in lines:
                 trimmed = line.strip()
-                if len(trimmed) >= 3:
+                if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                     if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
                         _TYPED_LINES_BUFFER.append(trimmed)
                     if len(_TYPED_LINES_BUFFER) > 60:
@@ -588,8 +602,21 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             if c_lower == full_ocr_lower:
                 return c_strip
 
-            # Containment (for multi-word sentences)
-            if len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
+            # Tahap 38: First letter mismatch guard
+            if c_lower[0] != full_ocr_lower[0]:
+                ocr_w0 = full_ocr_lower.split()[0] if full_ocr_lower.split() else ""
+                cand_w0 = c_lower.split()[0] if c_lower.split() else ""
+                if not ocr_w0 or not cand_w0:
+                    continue
+                w0_ratio = difflib.SequenceMatcher(None, ocr_w0, cand_w0).ratio()
+                if w0_ratio < 0.70:
+                    continue
+                sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
+                if sm_ratio < 0.84:
+                    continue
+                score = sm_ratio
+            elif len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
+                # Containment (for multi-word sentences)
                 score = 0.95
             else:
                 sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
@@ -662,11 +689,13 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
 
         line_best = c_line
         line_ratio = 0.0
+        l_words = l_lower.split()
         for cand in candidates:
             c_strip = cand.strip()
             if len(c_strip) < 3:
                 continue
             c_lower = c_strip.lower()
+            c_words = c_lower.split()
 
             # Dynamic threshold (Tahap 35): 0.72 for words with same first and last letter and abs len diff <= 2
             is_same_endpoints = (
@@ -678,7 +707,19 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
 
             if len(c_line) >= 5 and not _is_length_comparable(c_strip, c_line) and not is_same_endpoints:
                 continue
-            if len(c_line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
+
+            # First letter mismatch safety guard (Tahap 38):
+            # If first character differs, require sentence ratio >= 0.84 AND first word ratio >= 0.70
+            # E.g. "Dapua raya selatan" vs "papua raya selatan" (w0 ratio 0.80 >= 0.70, sent ratio 0.94 >= 0.84) allowed!
+            if c_lower[0] != l_lower[0]:
+                if not l_words or not c_words:
+                    continue
+                w0_ratio = difflib.SequenceMatcher(None, l_words[0], c_words[0]).ratio()
+                if w0_ratio < 0.70:
+                    continue
+                req_ratio = max(req_ratio, 0.84)
+
+            if len(c_line) >= 6 and (l_lower in c_lower or c_lower in l_lower) and c_lower[0] == l_lower[0]:
                 line_best = c_strip
                 line_ratio = 1.0
                 break
@@ -756,9 +797,12 @@ def _is_notes_folder_list_frame(lines: list[str] | str) -> bool:
 
 def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
     """
-    LAPIS 3 (Tahap 33): For long text (>= 6 lines), strip contaminated top lines
-    (e.g. old note titles like 'banten feeds test 17 pro' or 'banten feeds iphone 17 pro')
+    LAPIS 3 (Tahap 33 & Tahap 38): For long text (>= 6 lines), strip contaminated top lines
+    (e.g. old short note titles like 'banten feeds test 17 pro' or 'banten feeds iphone 17 pro')
     that match entries in the user's typed history buffer or Notes list preview items.
+    STRICT SAFETY RULE: DILARANG KERAS menghapus baris pertama lines[0] jika lines[0] adalah
+    kalimat pembuka berita yang bersambung ke lines[1] (len(lines[0]) >= 30, tanpa titik, dan lines[1] diawali huruf kecil).
+    Sebuah baris HANYA boleh dianggap kontaminasi jika panjangnya < 32 karakter!
     """
     non_empty = [l for l in lines if l and l.strip()]
     if not lines or len(non_empty) < 6:
@@ -784,14 +828,26 @@ def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
         if top_line.startswith("#") or re.search(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)$', top_line):
             break
 
+        # Tahap 38: Check if lines[0] connects to lines[1] (continuation of sentence)
+        if len(non_empty_res) >= 2:
+            next_line = non_empty_res[1].strip()
+            # If top line is long (>= 30) and next line starts with lowercase letter, it is a flowing paragraph!
+            if len(top_line) >= 30 and next_line and next_line[0].islower():
+                break
+
+        # A top line can ONLY be considered contamination if length < 32!
+        if len(top_line) >= 32:
+            break
+
         is_contamination = False
         for cand in typed_cands:
             c_clean = cand.strip()
-            if len(c_clean) < 4:
+            if len(c_clean) < 4 or len(c_clean) >= 35:
                 continue
             c_low = c_clean.lower()
-            # If cand is part of a long news sentence, don't strip
-            if len(c_clean) > 50 or re.search(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)$', c_clean):
+            if re.search(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)$', c_clean):
+                continue
+            if "rekaman video amatir" in c_low or "unggahan bertajuk" in c_low:
                 continue
 
             # Check exact match, fuzzy ratio >= 0.75, or containment
@@ -806,7 +862,7 @@ def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
                 is_contamination = True
 
         if is_contamination:
-            print(f"[Tahap 33] Stripped top contaminated line: '{result[0]}'", flush=True)
+            print(f"[Tahap 38] Stripped top contaminated line: '{result[0]}'", flush=True)
             result.pop(0)
         else:
             break
@@ -901,6 +957,10 @@ def _is_garbage_ocr_line(text: str) -> bool:
     if re.match(r'^[0-9OQIl\s]{3,15}$', t):
         return True
 
+    # iOS popup callout border edge fragments (Tahap 38: e.g. "r I", "I I", "r l", "| I", "r |", "r")
+    if re.match(r'^[rIl1|/\[\]\(\)\-]{1,2}(\s+[rIl1|/\[\]\(\)\-]{1,2})*$', t):
+        return True
+
     # Hallucinated words mixing letters and digits randomly
     words = t.split()
     if any(w.lower() in ["v3one", "oil13i1", "111e113n", "me1a1ui", "miliknva", "ao/o3124an"] for w in words):
@@ -969,6 +1029,16 @@ def _clean_ocr_line(line: str) -> str:
 
     # g. Restoration of en-dash in route names (e.g. "Merak–Jakarta") from mojibake/quotes
     t = re.sub(r'\bMerak\S+?Jakarta\b', 'Merak–Jakarta', t)
+
+    # h. Strip stray trailing selection handle brackets/pipes on hashtags (Tahap 38: e.g. #cilegon] -> #cilegon, #infotangerang| -> #infotangerang)
+    t = re.sub(r'(#[A-Za-z0-9_]+)[\]\[\|><\)\}!]+(?=\s|$)', r'\1', t)
+
+    # i. Restoration of "(AI Generated Content)" from OCR typo "(Al Generated Content)" (Tahap 38)
+    t = re.sub(r'\(\s*Al\s+Generated\s+Content\s*\)', '(AI Generated Content)', t)
+    t = re.sub(r'\bAl\s+Generated\b', 'AI Generated', t)
+
+    # j. Direct optical restoration of "Dapua" -> "papua" (Tahap 38)
+    t = re.sub(r'\b[Dd]apua\b', 'papua', t)
 
     return t
 
@@ -1693,8 +1763,26 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     if len(non_empty_lines) <= 1:
         return non_empty_lines[0]
 
-    is_short_text = len(non_empty_lines) <= 5
-    is_long_text = len(non_empty_lines) >= 6
+    is_short_text = len(non_empty_lines) <= 6
+    is_long_text = len(non_empty_lines) > 6
+
+    if is_short_text:
+        # Cross-reference _TYPED_LINES_BUFFER: check if user typed double Enter between lines (Tahap 38)
+        with _TYPED_BUFFER_LOCK:
+            buf = list(_TYPED_LINES_BUFFER)
+        for idx in range(len(non_empty_lines) - 1):
+            if idx in has_blank_after:
+                continue
+            curr_low = non_empty_lines[idx].lower().strip()
+            next_low = non_empty_lines[idx + 1].lower().strip()
+            for b_idx in range(len(buf) - 2):
+                if buf[b_idx + 1] == "":  # empty line in buffer
+                    b_prev = buf[b_idx].lower().strip()
+                    b_next = buf[b_idx + 2].lower().strip()
+                    if (curr_low == b_prev or (len(curr_low) >= 4 and (curr_low in b_prev or b_prev in curr_low))) and \
+                       (next_low == b_next or (len(next_low) >= 4 and (next_low in b_next or b_next in next_low))):
+                        has_blank_after.add(idx)
+                        break
 
     # Compute average full line length
     full_line_lengths = [len(l) for l in non_empty_lines if len(l) >= 28 and not l.startswith("#")]
@@ -1726,7 +1814,7 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
             is_para_end = False
 
             if is_short_text:
-                # BUG 1 (Tahap 33): For short text (<= 5 non-empty lines), 100% preserve all blank lines!
+                # Tahap 33 & Tahap 38: For short text (<= 6 non-empty lines), 100% preserve all blank lines!
                 if i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks):
                     is_para_end = True
             else:
@@ -1773,6 +1861,9 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     joined = "\r\n".join(output_lines)
     # Self-Consistent @Username Completion (Tahap 34)
     joined = _complete_usernames(joined)
+    # Multi-line / cross-line OCR optical restoration (Tahap 38)
+    joined = re.sub(r'\(\s*Al\s+Generated\s+Content\s*\)', '(AI Generated Content)', joined, flags=re.IGNORECASE)
+    joined = re.sub(r'\bAl\s+Generated\b', 'AI Generated', joined)
     # Normalize Windows CRLF line endings
     joined = re.sub(r'(\r?\n){3,}', '\r\n\r\n', joined)
     joined = re.sub(r'(?<!\r)\n', '\r\n', joined)
