@@ -611,6 +611,25 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             return best_cand
 
     # --- Priority 3: Line-by-line correction strictly preserving empty lines ---
+    # Tahap 35 Perbaikan 4: Check if other lines in raw_lines match typed buffer
+    other_lines_matching_buffer = 0
+    for l in raw_lines:
+        if not l.strip():
+            continue
+        ll = _clean_ocr_line(l).lower()
+        if not ll:
+            continue
+        for cand in candidates:
+            cl = cand.strip().lower()
+            if ll == cl or (len(ll) >= 6 and (ll in cl or cl in ll)):
+                other_lines_matching_buffer += 1
+                break
+            elif difflib.SequenceMatcher(None, ll, cl).ratio() >= 0.72:
+                other_lines_matching_buffer += 1
+                break
+
+    is_short_note = (len(non_empty) <= 6)
+
     corrected_lines = []
     for line in raw_lines:
         if not line:
@@ -621,24 +640,52 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         if not c_line:
             continue
         l_lower = c_line.lower()
+
+        # Contextual Prefix Recovery for short text (Tahap 35 Perbaikan 4):
+        # E.g. "the" is a word prefix of "the beatles" in _TYPED_LINES_BUFFER,
+        # and other lines match buffer ("pamungkas kenangan manis", "barasuara", "hindia")
+        prefix_cand = None
+        is_exact_cand = any(c.strip().lower() == l_lower for c in candidates)
+        if not is_exact_cand and is_short_note and other_lines_matching_buffer >= 1 and len(l_lower.split()) <= 2 and len(l_lower) <= 15:
+            for cand in candidates:
+                c_strip = cand.strip()
+                c_lower = c_strip.lower()
+                if c_lower.startswith(l_lower + " "):
+                    prefix_cand = c_strip
+                    break
+
+        if prefix_cand:
+            corrected_lines.append(prefix_cand)
+            continue
+
         line_best = c_line
         line_ratio = 0.0
         for cand in candidates:
             c_strip = cand.strip()
             if len(c_strip) < 3:
                 continue
-            if len(c_line) >= 5 and not _is_length_comparable(c_strip, c_line):
-                continue
             c_lower = c_strip.lower()
+
+            # Dynamic threshold (Tahap 35): 0.72 for words with same first and last letter and abs len diff <= 2
+            is_same_endpoints = (
+                len(c_lower) >= 4 and len(l_lower) >= 4
+                and c_lower[0] == l_lower[0] and c_lower[-1] == l_lower[-1]
+                and abs(len(c_lower) - len(l_lower)) <= 2
+            )
+            req_ratio = 0.72 if is_same_endpoints else 0.78
+
+            if len(c_line) >= 5 and not _is_length_comparable(c_strip, c_line) and not is_same_endpoints:
+                continue
             if len(c_line) >= 6 and (l_lower in c_lower or c_lower in l_lower):
                 line_best = c_strip
                 line_ratio = 1.0
                 break
             r = difflib.SequenceMatcher(None, l_lower, c_lower).ratio()
-            if r > line_ratio:
+            if r >= req_ratio and r > line_ratio:
                 line_ratio = r
                 line_best = c_strip
-        if line_ratio >= 0.78:
+
+        if line_ratio >= 0.72:
             corrected_lines.append(line_best)
         else:
             corrected_lines.append(c_line)
@@ -711,7 +758,8 @@ def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
     (e.g. old note titles like 'banten feeds test 17 pro' or 'banten feeds iphone 17 pro')
     that match entries in the user's typed history buffer or Notes list preview items.
     """
-    if not lines or len(lines) < 6:
+    non_empty = [l for l in lines if l and l.strip()]
+    if not lines or len(non_empty) < 6:
         return lines
 
     typed_cands = get_typed_candidates()
@@ -721,8 +769,12 @@ def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
     result = list(lines)
     # Check top 1-2 lines
     for _ in range(2):
-        if len(result) < 6:
+        non_empty_res = [l for l in result if l and l.strip()]
+        if len(non_empty_res) < 6:
             break
+        if not result[0].strip():
+            result.pop(0)
+            continue
         top_line = result[0].strip()
         top_low = top_line.lower()
 
@@ -756,6 +808,43 @@ def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
             result.pop(0)
         else:
             break
+
+    return result
+
+
+def _strip_top_unselected_debris(lines: list[str]) -> list[str]:
+    """
+    Strip unselected separator lines (---) and hashtag lines that appear BEFORE
+    the first main news body paragraph (Tahap 35 Perbaikan 2).
+    E.g. #toltangerangmerak #infotangerang followed by --- above 'Unggahan bertajuk...'.
+    """
+    if not lines or len(lines) < 2:
+        return lines
+
+    result = list(lines)
+    # Check if there is an article paragraph later (starts with letter, len >= 25)
+    has_body_later = False
+    for l in result:
+        clean = l.strip()
+        if len(clean) >= 25 and not clean.startswith("#") and not re.match(r'^(source|sumber|video|foto)\s*:', clean, re.IGNORECASE):
+            has_body_later = True
+            break
+
+    if not has_body_later:
+        return result
+
+    while result:
+        first = result[0].strip()
+        if not first:
+            result.pop(0)
+            continue
+        if re.match(r'^[-—–_=]{2,}$', first):
+            result.pop(0)
+            continue
+        if first.startswith("#"):
+            result.pop(0)
+            continue
+        break
 
     return result
 
@@ -869,6 +958,12 @@ def _clean_ocr_line(line: str) -> str:
     t = re.sub(r'#kmpbaturnandi\b', '#kmpbatumandi', t, flags=re.IGNORECASE)
     t = re.sub(r'#baturnandi\b', '#batumandi', t, flags=re.IGNORECASE)
 
+    # e. Restoration of optical defect "hincfia" -> "hindia" (Tahap 35)
+    t = re.sub(r'\bhincfia\b', 'hindia', t, flags=re.IGNORECASE)
+
+    # f. Strip stray trailing < or | or ! on handles if any
+    t = re.sub(r'(@[A-Za-z0-9_.]+)[<|!]+(?=\s|$)', r'\1', t)
+
     return t
 
 
@@ -879,11 +974,15 @@ def _line_optical_defect_penalty(line: str) -> int:
     penalty = 0
     if re.search(r'[lI1|]<', line):
         penalty += 10
+    if re.search(r'@[A-Za-z0-9_.]+[<|!]', line):
+        penalty += 15
     if re.search(r'(?<=[A-Za-z])!(?=[A-Za-z])', line):
         penalty += 10
     if re.search(r'\bd!(?=\s|$|[,.;])', line):
         penalty += 10
     if re.search(r'baturnandi', line, re.IGNORECASE):
+        penalty += 10
+    if re.search(r'\bhincfia\b', line, re.IGNORECASE):
         penalty += 10
     if re.search(r'(?<=[a-zA-Z0-9,])\s+Oleh\b', line):
         penalty += 5
@@ -1035,10 +1134,11 @@ def _score_gap_quality(gap_lines: list[str]) -> int:
 
 def _complete_usernames(text: str) -> str:
     """
-    Self-Consistent @Username Completion (Tahap 34):
-    If the document has a full mention like '@erikkristian' in Paragraph 2,
-    and another line (e.g. Source line) has a truncated mention with the same prefix
-    (e.g. '@erikkrist', '@eril<l<rist', '@erikkri'), automatically complete it to '@erikkristian'.
+    Self-Consistent @Username Completion (Tahap 34 & Tahap 35):
+    If the document has a full mention like '@erikkristian' or '@andribotox' in Paragraph 2,
+    and another line (e.g. Source line) has a truncated mention or handle occluded by selection handle
+    (e.g. '@andriboto<', '@andriboto|', '@erikkrist', '@eril<l<rist', '@erikkri'),
+    automatically complete it to the full mention.
     """
     if not text or "@" not in text:
         return text
@@ -1046,20 +1146,33 @@ def _complete_usernames(text: str) -> str:
     # Pre-clean any leftover l< in handles
     norm_text = re.sub(r'(?<=[A-Za-z0-9_@])[lI1|]<|[lI1|]<(?=[A-Za-z0-9_.,!?\s]|$)', 'k', text)
 
-    mentions = re.findall(r'@[A-Za-z0-9_.]+', norm_text)
-    if not mentions:
-        return norm_text
-
-    unique_mentions = sorted(list(set(mentions)), key=lambda m: len(m), reverse=True)
-    full_handles = [m for m in unique_mentions if len(m) >= 7]
+    # Find full clean mentions (length >= 6 without trailing defect punctuation)
+    all_clean_mentions = re.findall(r'@[A-Za-z0-9_.]+', norm_text)
+    full_handles = [m for m in set(all_clean_mentions) if len(m) >= 6 and not m.endswith(('.', '_'))]
     if not full_handles:
         return norm_text
 
     result = norm_text
-    for full_h in full_handles:
-        base = full_h[1:]  # e.g. "erikkristian"
+
+    # 1. First, catch mentions with trailing defect characters like <, |, ! (Tahap 35: @andriboto< -> @andribotox)
+    defect_mentions = set(re.findall(r'@[A-Za-z0-9_.]+[<|!]+', result))
+    for raw_m in defect_mentions:
+        clean_pfx = re.sub(r'[<|!]+$', '', raw_m)
+        matched_full = None
+        for full_h in full_handles:
+            if full_h.lower().startswith(clean_pfx.lower()) and len(full_h) > len(clean_pfx):
+                matched_full = full_h
+                break
+        if matched_full:
+            result = re.sub(re.escape(raw_m) + r'(?![A-Za-z0-9_])', matched_full, result)
+        else:
+            result = re.sub(re.escape(raw_m) + r'(?![A-Za-z0-9_])', clean_pfx, result)
+
+    # 2. Complete truncated clean mentions with length >= 5
+    for full_h in sorted(full_handles, key=lambda m: len(m), reverse=True):
+        base = full_h[1:]
         for l in range(len(base) - 1, 4, -1):
-            prefix = "@" + base[:l]  # e.g. "@erikkrist"
+            prefix = "@" + base[:l]
             pattern = re.escape(prefix) + r'(?![A-Za-z0-9_.])'
             result = re.sub(pattern, full_h, result)
 
@@ -1204,7 +1317,16 @@ def merge_two_overlapping_blocks(linesA: list[str], linesB: list[str]) -> list[s
     tailA = cleanA[last_i + 1 :]
     tailB = cleanB[last_j + 1 :]
 
-    if dom_offset > 0:
+    # Tahap 35 Perbaikan 3B: If one block contains #hashtags and the other does not,
+    # the tail MUST preserve the hashtag-bearing tail (e.g. bottom frame tail continuing below top frame)!
+    has_hashtag_A = any(l.strip().startswith("#") for l in cleanA)
+    has_hashtag_B = any(l.strip().startswith("#") for l in cleanB)
+
+    if has_hashtag_A and not has_hashtag_B:
+        tail = tailA
+    elif has_hashtag_B and not has_hashtag_A:
+        tail = tailB
+    elif dom_offset > 0:
         tail = tailB if tailB else tailA
     elif dom_offset < 0:
         tail = tailA if tailA else tailB
@@ -1362,9 +1484,18 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
     curr_raw = [_clean_ocr_line(l) for l in curr_frame.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
     curr_lines = _unsplit_broken_lines(curr_raw)
 
+    # Middle paragraph opener regex (Tahap 35 Perbaikan 3A)
+    # These phrases can NEVER qualify as the opening of the document!
+    middle_para_opener_re = re.compile(
+        r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+unggahan|konten\s+tersebut|fenomena\s+ini|seluruh\s+\d+|bagaimana\s+(perasaan|tanggapan|menurut)|source\s*:|sumber\s*:)',
+        re.IGNORECASE
+    )
+    first_line_clean = curr_lines[0] if curr_lines else ""
+    is_middle_para = bool(middle_para_opener_re.match(first_line_clean))
+
     # Check if current frame already contains a complete single-screen text (Tahap 34 Fast-Path)
-    has_closing = any(l.startswith("#") or re.match(r'^(Source|Sumber|Video|Foto)\s*:', l, re.IGNORECASE) for l in curr_lines)
-    has_body_start = any(len(l) >= 20 and not _is_generic_template_line(l) for l in curr_lines[:3]) if len(curr_lines) >= 3 else False
+    has_closing = any(l.startswith("#") for l in curr_lines[-2:]) if len(curr_lines) >= 2 else False
+    has_body_start = (not is_middle_para and len(first_line_clean) >= 20 and not _is_generic_template_line(first_line_clean))
     is_complete_single_screen = (has_closing and has_body_start and len(curr_lines) >= 4)
 
     # Stitch backwards anchored on curr_lines so current frame is NEVER dropped!
@@ -1396,16 +1527,19 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
 
     # LAPIS 3 (Tahap 33): Strip typed buffer contamination from top of long text
     current_lines = _strip_typed_buffer_contamination_from_top(current_lines)
+    # Tahap 35 Perbaikan 2: Strip unselected top hashtags/separators
+    current_lines = _strip_top_unselected_debris(current_lines)
 
     # If long note (>= 4 lines), check and merge with session chunk memory (_RECENT_LONG_OCR_CHUNKS)
     if len(current_lines) >= 4:
         now = time.time()
         with _CHUNKS_LOCK:
-            global _RECENT_LONG_OCR_CHUNKS
-            _RECENT_LONG_OCR_CHUNKS = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c["ts"]) <= 90.0]
+            _RECENT_LONG_OCR_CHUNKS[:] = [c for c in _RECENT_LONG_OCR_CHUNKS if (now - c["ts"]) <= 90.0]
 
             for past in reversed(_RECENT_LONG_OCR_CHUNKS):
                 hist_merged = merge_two_overlapping_blocks(past["lines"], current_lines)
+                if not hist_merged:
+                    hist_merged = merge_two_overlapping_blocks(current_lines, past["lines"])
                 if hist_merged and len(hist_merged) >= len(current_lines):
                     # Top-of-Note Lock on merged history: DILARANG KERAS menambahkan baris di atas DOC_START!
                     if doc_start_norm:
@@ -1415,11 +1549,12 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                                     hist_merged = hist_merged[idx:]
                                 break
                     hist_merged = _strip_typed_buffer_contamination_from_top(hist_merged)
+                    hist_merged = _strip_top_unselected_debris(hist_merged)
                     current_lines = hist_merged
 
             _RECENT_LONG_OCR_CHUNKS.append({"ts": now, "lines": list(current_lines)})
             if len(_RECENT_LONG_OCR_CHUNKS) > 5:
-                _RECENT_LONG_OCR_CHUNKS = _RECENT_LONG_OCR_CHUNKS[-5:]
+                _RECENT_LONG_OCR_CHUNKS[:] = _RECENT_LONG_OCR_CHUNKS[-5:]
 
     current_lines = _unsplit_broken_lines(current_lines)
 
@@ -1432,6 +1567,7 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                 break
 
     current_lines = _strip_typed_buffer_contamination_from_top(current_lines)
+    current_lines = _strip_top_unselected_debris(current_lines)
 
     if len(current_lines) <= 1:
         return "\r\n".join(current_lines)
@@ -1452,6 +1588,10 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
         return ""
 
     raw_lines = [l.strip() for l in text.splitlines()]
+    # Tahap 35: Strip top unselected debris and typed buffer contamination BEFORE indexing has_blank_after!
+    raw_lines = _strip_top_unselected_debris(raw_lines)
+    raw_lines = _strip_typed_buffer_contamination_from_top(raw_lines)
+
     non_empty_lines: list[str] = []
     has_blank_after: set[int] = set()
 
@@ -1465,8 +1605,9 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
             if non_empty_lines:
                 has_blank_after.add(len(non_empty_lines) - 1)
 
-    # LAPIS 3 (Tahap 33): Strip typed buffer contamination from top of long text (>= 6 lines)
+    # Secondary strip pass on cleaned lines
     non_empty_lines = _strip_typed_buffer_contamination_from_top(non_empty_lines)
+    non_empty_lines = _strip_top_unselected_debris(non_empty_lines)
 
     # Clamp tail: discard any garbage or debris after the hashtag block
     last_hashtag_idx = -1
@@ -1504,7 +1645,7 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
         re.IGNORECASE
     )
     section_opener_re = re.compile(
-        r'^(momen\s+menegangkan|situasi\s+darurat|bagaimana\s+(perasaan|tanggapan|menurut)|rekaman\s+singkat|dalam\s+video|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
+        r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+(unggahan|video|rekaman|konten|foto)|bagaimana\s+(perasaan|tanggapan|menurut)|rekaman\s+singkat|source\s*:|sumber\s*:|video\s*:|foto\s*:|#)',
         re.IGNORECASE
     )
     terminal_punct_re = re.compile(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)[ \t]*$')

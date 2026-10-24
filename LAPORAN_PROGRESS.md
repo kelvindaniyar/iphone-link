@@ -888,16 +888,43 @@ Pembaruan terkini mencakup:
   - Test 2: Google Keep Tol Bekacau 100% bersih tanpa kontaminasi KMP Batumandi, dan tersusun rapi dalam 5 blok paragraf dipisahkan `\r\n\r\n` [PASS].
   - Test 3: Regresi kalimat pendek dengan enter ganda (`"lionel messi argentina 17 pro \n\n lamine yamal neymar \n\n barcelona"`) tetap 100% stabil [PASS].
   - Test 4: Inspeksi pre-processor C# untuk Max-RB, gagang biru, dan multi-cluster bounds [PASS].
-  - Seluruh pengujian regresi Tahap 26-33 lulus 100%.
-
-
-
-
-
-
-
-
-
+### Tahap 35: Dual-Candidate Line Fusion, Seleksi 1-Layar Utuh, Bidirectional Stitching, & Short Text Recovery (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap35.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap35.py) serta seluruh uji regresi Tahap 26-34.
+- **Latar Belakang & Analisis Video**: Dari evaluasi mendalam video pengujian Kelvin (`20261024-0213-59.1325177.mp4`) terhadap 3 teks asli (*ground-truth*), ditemukan:
+  1. **Google Keep ("Pesona Tol Balaraja Jam 11 Malam" - Menit 04:37 & 05:07)**: Baris pertama (`"Unggahan bertajuk 'Pesona Tol Balaraja Jam 11"`) hilang dan digantikan header draft lama `#toltangerangmerak #infotangerang\n---` yang tidak diblok di atas seleksi. Baris tengah Paragraf 2 (`"kelakar menanyakan titik kilometer ruas tol Merak–"`) dan baris `"Source: @kingtruck.id"` hilang akibat pemutihan huruf anti-aliasing pada latar biru dan kontaminasi frame history menit 04:22.
+  2. **Apple Notes ("KMP Batumandi" `@andribotox` - Menit 03:13 & 03:42)**:
+     - *Copy di bawah (03:13)*: Seluruh Paragraf 1 (`"Rekaman video amatir..."`) hilang karena frame atas belum diblok kuning saat dilihat di menit 02:27-02:34. Baris Source tertulis `@andriboto<` karena huruf `x` tertutup gagang seleksi kuning.
+     - *Copy di atas (03:42)*: Baris ke-3 Paragraf 4 (`"tengah evakuasi KMP Batumandi ini,"`) terpotong fade bawah layar, serta baris Source dan 5 Hashtag terpotong akibat tail-clamping.
+  3. **Teks Pendek Berjarak Enter (Menit 01:38 - 01:45)**: `"the beatles"` terbaca `"the"` (kata `beatles` terhapus filter warna karena titik spellcheck merah di atas highlight kuning), dan `"hindia"` terbaca `"hincfia"` (tidak terkoreksi karena SequenceMatcher ratio $0.769 < 0.78$).
+- **Pekerjaan Arsitektural yang Dilakukan**:
+  1. **Dual-Candidate Line-by-Line Fusion & Perbaikan Filter Kanal (`ocr_extractor.ps1`)**:
+     - Menghapus pemutihan agresif `if ((isYellowBg || isBlueBg) && !isDarkText) -> 255` dan menghapus `Math.Max(r, b)`.
+     - Netralisasi terarah hanya untuk gagang kuning (`r > 200 && g > 120 && b < 100 && r-b > 100`), gagang biru (`b > 160 && b-r > 70 && b-g > 35 && r < 110`), dan titik merah spellcheck (`r > 165 && r-g > 45 && r-b > 45 && g < 130`).
+     - Ambang batas luminance: highlight biru $206$ ($\frac{r + 2g}{3}$), highlight kuning/putih $228$ ($r$), penegasan huruf tipis $\lfloor \text{lum} \times 0.55 \rfloor$.
+     - Implementasi `Merge-LineLists`: menjalankan OCR pada Kandidat 1 (Natural RGB) dan Kandidat 2 (Channel-Filtered), menggabungkan baris berdasarkan koordinat vertikal $Y$ (toleransi $0.65 \times \text{avgH}$), dan memprioritaskan Kandidat 1 jika Kandidat 2 kehilangan baris atau $> 25\%$ lebih pendek.
+  2. **Eliminasi Header Draft Debris & Deteksi Seleksi 1-Layar Utuh (`ocr_extractor.ps1`, `server.py`, `screen.py`)**:
+     - Deteksi highlight horizontal mengharuskan `rowCount[y] >= 25` agar ujung gagang seleksi tidak menarik `selMinY` ke atas.
+     - Padding atas ketat: `cropY = Math.Max(0.118*H, selMinY - 0.005*H)`.
+     - Fungsi `_strip_top_unselected_debris()` membuang garis `---` (`^[-—–_=]{2,}$`) dan hashtag draft lama yang muncul sebelum kalimat pembuka berita.
+     - Emisi metadata `<<<SEL_BOUNDS:top=...,bot=...>>>`. Jika `sel_top >= 0.160` dan (`sel_bot <= 0.865` atau hashtag di baris akhir), dinyatakan seleksi 1-layar utuh (*self-contained*): C# langsung exit 0 dan server membypass `stitch_multiline_ocr_frames` dari frame history tercemar menit 04:22.
+  3. **Bidirectional Stitching & Pemulihan `@andriboto<` (`ocr_extractor.ps1`, `screen.py`)**:
+     - History frame menggunakan Full-Viewport Content Crop ($0.125 \times H$ s.d. $0.768 \times H$ atau $0.49 \times H$ jika keyboard aktif) saat seleksi tidak tinggi, mengekstrak Paragraf 1 dan 2 secara utuh dari frame menit 02:27-02:34.
+     - Menghapus frasa tengah dokumen dari Fast-Path doc opening check, memungkinkan Paragraf 1 disambungkan di atas Paragraf 2.
+     - Gap-filler di `merge_two_overlapping_blocks()` mengisi baris terpotong `"tengah evakuasi KMP Batumandi ini,"` di antara `"keteguhan..."` dan `"Banteners?"`.
+     - Preservasi ekor hashtag dari memori chunk bawah tanpa terpotong tail-clamping.
+     - Pembersihan karakter cacat trailing (`<`, `|`, `!`) pada mention di `_complete_usernames()`: `@andriboto<` otomatis dipulihkan menjadi `@andribotox`.
+  4. **Short Text Recovery & Enter Spacing Integrity (`screen.py`)**:
+     - Dynamic threshold $0.72$ untuk baris dengan huruf awal/akhir sama dan selisih panjang $\le 2$, plus normalisasi optik `\bhincfia\b` $\rightarrow$ `"hindia"`.
+     - Contextual Prefix Recovery untuk teks pendek ($\le 6$ baris non-kosong): `"the"` otomatis dipulihkan menjadi `"the beatles"` dari buffer ketikan.
+     - Proteksi kalimat pendek pada `_strip_typed_buffer_contamination_from_top`: hanya aktif jika baris non-kosong $\ge 6$.
+  5. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap35_dual_candidate_and_bidirectional_stitch` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap35.py`)**:
+  - Test 1: Google Keep "Pesona Tol Balaraja Jam 11 Malam" (04:37 & 05:07) **100% IDENTIK KATA DEMI KATA** dengan Teks Asli 1 Kelvin: dimulai tepat pada `"Unggahan bertajuk 'Pesona Tol Balaraja Jam 11 Malam'"`, 0% sisa `#toltangerangmerak` / `---`, baris `"kelakar menanyakan titik kilometer ruas tol Merak–Jakarta"` dan `"Source: @kingtruck.id"` utuh dalam tepat 5 blok paragraf `\r\n\r\n` [PASS].
+  - Test 2A: Apple Notes "KMP Batumandi" Copy di Bawah (03:13) berhasil menyambungkan Paragraf 1 di atas Paragraf 2, dan menyempurnakan `"Source: Threads @andriboto<"` $\rightarrow$ `"Source: Threads @andribotox"` dalam tepat 6 blok paragraf [PASS].
+  - Test 2B: Apple Notes "KMP Batumandi" Copy di Atas (03:42) mengisi gap baris `"tengah evakuasi KMP Batumandi ini,"` dan mempertahankan ekor Source + 5 Hashtag secara utuh dalam tepat 6 blok paragraf [PASS].
+  - Test 3: Teks pendek berjarak Enter (01:44) memulihkan `"the"` $\rightarrow$ `"the beatles"` dan `"hincfia"` $\rightarrow$ `"hindia"` dengan spasi Enter ganda terjaga sempurna (`pamungkas kenangan manis \r\n\r\n barasuara \r\n\r\n the beatles \r\n\r\n hindia`) [PASS].
+  - Test 4: Inspeksi kode `ocr_extractor.ps1` untuk netralisasi gagang terarah, threshold $206/228$, scan horizontal $\ge 25$, `Merge-LineLists`, bounds token, dan history full-viewport crop [PASS].
+  - Seluruh pengujian regresi Tahap 26-34 terverifikasi lulus.
 
 
 

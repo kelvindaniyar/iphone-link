@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -232,6 +233,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
     try:
         results = extract_text_batch([frame_data_url], save_debug=save_debug)
         raw_text = results[0] if results else ""
+        raw_text = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', raw_text).strip()
         if raw_text == "<<<NOTES_LIST_VIEW>>>" or _is_notes_folder_list_frame(raw_text):
             clear_recent_long_ocr_chunks()
             return None
@@ -485,12 +487,39 @@ class Handler(BaseHTTPRequestHandler):
                         if not valid_texts:
                             return None
 
-                        if len(valid_texts) == 1:
-                            raw_text = valid_texts[0]
+                        # Parse SEL_BOUNDS metadata if emitted (Tahap 35 Perbaikan 2)
+                        sel_top = -1.0
+                        sel_bot = -1.0
+                        for t in batch_texts:
+                            bounds_m = re.search(r'<<<SEL_BOUNDS:top=([0-9.]+),bot=([0-9.]+)>>>', t)
+                            if bounds_m:
+                                try:
+                                    sel_top = float(bounds_m.group(1))
+                                    sel_bot = float(bounds_m.group(2))
+                                except Exception:
+                                    pass
+
+                        # Strip SEL_BOUNDS tokens from all texts
+                        clean_valid_texts = []
+                        for t in valid_texts:
+                            cleaned = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', t).strip()
+                            if cleaned:
+                                clean_valid_texts.append(cleaned)
+                        valid_texts = clean_valid_texts
+                        if not valid_texts:
+                            return None
+
+                        last_text = valid_texts[-1]
+                        last_lines = [l.strip() for l in last_text.splitlines() if l.strip()]
+                        has_hashtag_end = any(l.startswith("#") for l in last_lines[-2:]) if last_lines else False
+                        is_self_contained = (sel_top >= 0.160 and (sel_bot <= 0.865 or has_hashtag_end))
+
+                        if len(valid_texts) == 1 or is_self_contained:
+                            raw_text = last_text
                             final_text = auto_correct_ocr_text(raw_text)
                         else:
                             stitched = stitch_multiline_ocr_frames(valid_texts)
-                            final_text = stitched if stitched else valid_texts[-1]
+                            final_text = stitched if stitched else last_text
                             final_text = auto_correct_ocr_text(final_text)
 
                         # PERBAIKAN 1: Call ensure_paragraph_formatting PALING AKHIR

@@ -164,7 +164,7 @@ public class DualOcrPreprocessor {
             }
         }
 
-        // 2. Scan highlights (Ignore top toolbar buttons and bottom floating pill toolbar)
+        // 2. Scan highlights (Tahap 35: require rowCount[y] >= 25 text highlight pixels)
         int scanTopY = (int)(H * 0.135);
         int scanBottomY = (int)(H * 0.830);
         int leftX = (int)(W * 0.04);
@@ -174,16 +174,14 @@ public class DualOcrPreprocessor {
         foundHighlight = false;
 
         if (!isFullViewport) {
-            for (int y = scanTopY; y <= scanBottomY; y += 2) {
-                // Rule 1A: For Y < 0.150 * H, exclude left zone (X < 0.22 * W) for Back button;
-                // For Y < 0.168 * H, exclude right zone (X > 0.75 * W) for Done yellow checkmark button!
+            for (int y = scanTopY; y <= scanBottomY; y++) {
                 int rowLeftX = (y < (int)(H * 0.150)) ? (int)(W * 0.22) : leftX;
                 int rowRightX = (y < (int)(H * 0.168)) ? (int)(W * 0.75) : rightX;
 
                 int rowOffset = y * stride;
-                int rowHighlightCount = 0;
+                int textHlCount = 0;
 
-                for (int x = rowLeftX; x <= rowRightX; x += 3) {
+                for (int x = rowLeftX; x <= rowRightX; x++) {
                     int idx = rowOffset + (x * 4);
                     byte b = raw[idx];
                     byte g = raw[idx + 1];
@@ -191,21 +189,17 @@ public class DualOcrPreprocessor {
 
                     // Notes pale yellow highlight: R > 200, G > 175, R - B >= 12
                     bool isYellowBg = (r > 200) && (g > 175) && ((r - b) >= 12);
-                    // Notes lollipop handle yellow-orange: R > 180, G > 120, R - B >= 40
-                    bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) >= 40);
                     // Standard iOS / Google Keep blue selection: B > 205, G > 190, B - R >= 8
                     bool isBlueBg = (b > 205) && (g > 190) && ((b - r) >= 8);
-                    // Google Keep / iOS blue lollipop handle: B > 165, B - R >= 45
-                    bool isBlueLollipop = (b > 165) && ((b - r) >= 45);
 
-                    if (isYellowBg || isYellowLollipop || isBlueBg || isBlueLollipop) {
-                        rowHighlightCount++;
+                    if (isYellowBg || isBlueBg) {
+                        textHlCount++;
                     }
                 }
 
-                if (rowHighlightCount >= 3) {
+                // Tahap 35 Perbaikan 2: Require rowCount[y] >= 25 so lollipop handle tips do not drag selMinY up!
+                if (textHlCount >= 25) {
                     rowHasHighlight[y] = true;
-                    if (y + 1 < H) rowHasHighlight[y + 1] = true;
                 }
             }
         }
@@ -283,8 +277,8 @@ public class DualOcrPreprocessor {
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
         if (foundHighlight) {
-            // Strictly follow actual highlight vertical bounds!
-            cropY = Math.Max((int)(H * 0.115), minY - (int)(H * 0.015));
+            // Tahap 35 Perbaikan 2: Tight top padding so text above selection is strictly excluded
+            cropY = Math.Max((int)(H * 0.118), minY - (int)(H * 0.005));
             int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.030));
             if (hasKeyboard && bottomLimit > (int)(H * 0.49)) {
                 bottomLimit = (int)(H * 0.49);
@@ -292,18 +286,17 @@ public class DualOcrPreprocessor {
             cropH = Math.Max(20, bottomLimit - cropY);
         } else {
             // Full-Viewport Content Crop (for unhighlighted notes or top date reading)
-            // Lowered top bound to 0.118 * H so date header at 0.125 * H - 0.140 * H is fully captured (Tahap 33)
             cropY = (int)(H * 0.118);
             int cropBottom = hasKeyboard ? (int)(H * 0.49) : (int)(H * 0.768);
             cropH = Math.Max(20, cropBottom - cropY);
         }
 
-        // Candidate 1: Natural crop without aggressive pixel removal
+        // Candidate 1: Natural crop without altering letter/highlight colors (except handle mask)
         Bitmap stripNatural = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
         BitmapData natData = stripNatural.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
         byte[] natPixels = new byte[Math.Abs(natData.Stride) * cropH];
 
-        // Candidate 2: Red-channel filtered crop
+        // Candidate 2: Channel-filtered crop
         Bitmap stripRed = new Bitmap(cropW, cropH, PixelFormat.Format32bppArgb);
         BitmapData redData = stripRed.LockBits(new Rectangle(0, 0, cropW, cropH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
         byte[] redPixels = new byte[Math.Abs(redData.Stride) * cropH];
@@ -321,18 +314,17 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 34: Dual selection handle & background filter (Yellow Apple Notes & Blue Google Keep / iOS)
-                bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) > 40);
-                bool isBlueLollipop = (b > 165) && ((b - r) > 45);
-                bool isYellowBg = (r > 200) && (g > 175) && ((r - b) >= 12);
-                bool isBlueBg = (b > 205) && (g > 190) && ((b - r) >= 8);
+                // Tahap 35: Targeted Unwanted Objects Neutralization
+                // Bulatan gagang seleksi Kuning-Oranye pekat:
+                bool isYellowHandle = (r > 200 && g > 120 && b < 100 && (r - b) > 100 && !(r < 135 && g < 135 && b < 135));
+                // Bulatan gagang seleksi Biru Tua pekat (Google Keep / iOS):
+                bool isBlueHandle = (b > 160 && (b - r) > 70 && (b - g) > 35 && r < 110);
+                // Titik-titik merah spellcheck iOS:
+                bool isRedSpellcheck = (r > 165 && (r - g) > 45 && (r - b) > 45 && g < 130);
 
-                // Authentic dark text has balanced R, G, B, NOT saturated blue or saturated yellow
-                bool isDarkText = (r < 155) && (g < 155) && (b < 155) && (Math.Abs((int)r - (int)b) < 40);
-                bool isHlOrHandle = (isYellowLollipop || isBlueLollipop || isYellowBg || isBlueBg);
-
-                // Natural: direct copy, but neutralize handle / highlight background to white without erasing dark text
-                if (isHlOrHandle && !isDarkText) {
+                // Kandidat 1 (Natural RGB + AssistiveTouch/Handle Mask):
+                // Tanpa mengubah warna huruf/highlight sedikit pun! Hanya gagang seleksi dinetralkan ke putih.
+                if (isYellowHandle || isBlueHandle) {
                     natPixels[nIdx] = 255;
                     natPixels[nIdx + 1] = 255;
                     natPixels[nIdx + 2] = 255;
@@ -344,23 +336,41 @@ public class DualOcrPreprocessor {
                     natPixels[nIdx + 3] = 255;
                 }
 
-                // Filtered (Tahap 34 Max-RB Channel for Yellow & Blue selection neutralization):
-                int maxRB = Math.Max((int)r, (int)b);
-                byte v;
-                if ((isHlOrHandle && !isDarkText) || maxRB >= 225) {
-                    v = 255;
-                } else if (maxRB < 165) {
-                    v = (byte)(maxRB * 0.55);
+                // Kandidat 2 (Channel-Filtered):
+                if (isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                    redPixels[rIdx] = 255;
+                    redPixels[rIdx + 1] = 255;
+                    redPixels[rIdx + 2] = 255;
+                    redPixels[rIdx + 3] = 255;
                 } else {
-                    int mapped = 90 + (int)((maxRB - 165) * (255 - 90) / (225 - 165));
-                    if (mapped < 0) mapped = 0;
-                    if (mapped > 255) mapped = 255;
-                    v = (byte)mapped;
+                    int lum;
+                    int threshold;
+                    if (b > (r + 8)) {
+                        // Area highlight biru Google Keep / iOS
+                        lum = (int)((r + g * 2) / 3);
+                        threshold = 206;
+                    } else {
+                        // Area highlight kuning Apple Notes atau latar putih
+                        lum = (int)r;
+                        threshold = 228;
+                    }
+
+                    byte v;
+                    if (lum >= threshold) {
+                        v = 255;
+                    } else if (lum < 155) {
+                        v = (byte)(lum * 0.55);
+                    } else {
+                        int mapped = 90 + (int)((lum - 155) * (250 - 90) / (threshold - 155));
+                        if (mapped < 0) mapped = 0;
+                        if (mapped > 255) mapped = 255;
+                        v = (byte)mapped;
+                    }
+                    redPixels[rIdx] = v;
+                    redPixels[rIdx + 1] = v;
+                    redPixels[rIdx + 2] = v;
+                    redPixels[rIdx + 3] = 255;
                 }
-                redPixels[rIdx] = v;
-                redPixels[rIdx + 1] = v;
-                redPixels[rIdx + 2] = v;
-                redPixels[rIdx + 3] = 255;
             }
         }
 
@@ -399,12 +409,11 @@ public class DualOcrPreprocessor {
         stripRed.Dispose();
     }
 
-    public static bool VerifyLineHighlight(
+    public static float GetLineHighlightRatio(
         Bitmap origBmp,
         int cropX, int cropY,
         float scale, int margin,
-        double lineX, double lineY, double lineW, double lineH,
-        int selMinY = 0, int selMaxY = 0
+        double lineX, double lineY, double lineW, double lineH
     ) {
         int W = origBmp.Width;
         int H = origBmp.Height;
@@ -414,21 +423,12 @@ public class DualOcrPreprocessor {
         int ow = (int)(lineW / scale);
         int oh = (int)(lineH / scale);
 
-        // Tahap 34: Jika baris berada di antara rentang vertikal area seleksi [selMinY, selMaxY],
-        // JANGAN membuangnya meskipun rasio highlight pada baris itu rendah!
-        // Ini memastikan baris kosong / jeda paragraf di Google Keep tidak memutus seleksi.
-        if (selMinY > 0 && selMaxY > selMinY) {
-            if (oy >= (selMinY - 10) && (oy + oh) <= (selMaxY + 20)) {
-                return true;
-            }
-        }
-
-        oy = Math.Max(0, oy - 4);
-        oh = Math.Min(H - oy, oh + 8);
+        oy = Math.Max(0, oy - 2);
+        oh = Math.Min(H - oy, oh + 4);
 
         if (ox < 0) { ow += ox; ox = 0; }
         if (ox + ow > W) ow = W - ox;
-        if (ow <= 10 || oh <= 4) return true;
+        if (ow <= 10 || oh <= 4) return 0f;
 
         BitmapData data = origBmp.LockBits(new Rectangle(ox, oy, ow, oh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         int stride = data.Stride;
@@ -441,7 +441,7 @@ public class DualOcrPreprocessor {
 
         for (int y = 0; y < oh; y += 2) {
             int row = y * stride;
-            for (int x = 0; x < ow; x += 3) {
+            for (int x = 0; x < ow; x += 2) {
                 int idx = row + (x * 4);
                 byte b = pixels[idx];
                 byte g = pixels[idx + 1];
@@ -450,7 +450,7 @@ public class DualOcrPreprocessor {
 
                 bool isYellow = (r > 200) && (g > 175) && ((r - b) >= 10);
                 bool isYellowLollipop = (r > 180) && (g > 120) && ((r - b) >= 35);
-                bool isBlue = (b > 130) && ((b - r) >= 15);
+                bool isBlue = (b > 180) && ((b - r) >= 8);
                 bool isBlueLollipop = (b > 165) && ((b - r) >= 35);
 
                 if (isYellow || isYellowLollipop || isBlue || isBlueLollipop) {
@@ -459,9 +459,27 @@ public class DualOcrPreprocessor {
             }
         }
 
-        if (totalSampled == 0) return true;
-        float ratio = (float)highlightCount / (float)totalSampled;
-        return ratio >= 0.05f;
+        if (totalSampled == 0) return 0f;
+        return (float)highlightCount / (float)totalSampled;
+    }
+
+    public static bool VerifyLineHighlight(
+        Bitmap origBmp,
+        int cropX, int cropY,
+        float scale, int margin,
+        double lineX, double lineY, double lineW, double lineH,
+        int selMinY = 0, int selMaxY = 0
+    ) {
+        float ratio = GetLineHighlightRatio(origBmp, cropX, cropY, scale, margin, lineX, lineY, lineW, lineH);
+        if (ratio >= 0.05f) return true;
+        if (selMinY > 0 && selMaxY > selMinY) {
+            int oy = cropY + (int)((lineY - margin) / scale);
+            int oh = (int)(lineH / scale);
+            if (oy >= (selMinY - 10) && (oy + oh) <= (selMaxY + 20)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 '@
@@ -478,7 +496,7 @@ public class DualOcrPreprocessor {
         return $netTask.Result
     }
 
-    function Run-Ocr([System.Drawing.Bitmap]$bmp, [System.Drawing.Bitmap]$origBmp = $null, [int]$cropX = 0, [int]$cropY = 0, [bool]$checkHighlight = $false, [int]$selMinY = 0, [int]$selMaxY = 0) {
+    function Get-OcrParsedLines([System.Drawing.Bitmap]$bmp, [System.Drawing.Bitmap]$origBmp = $null, [int]$cropX = 0, [int]$cropY = 0, [bool]$checkHighlight = $false, [int]$selMinY = 0, [int]$selMaxY = 0) {
         $tempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'ocr_run_' + [System.Guid]::NewGuid().ToString() + '.png')
         $bmp.Save($tempFile, [System.Drawing.Imaging.ImageFormat]::Png)
 
@@ -530,7 +548,7 @@ public class DualOcrPreprocessor {
         }
 
         if ($isNotesListView) {
-            return @("<<<NOTES_LIST_VIEW>>>")
+            return @([PSCustomObject]@{ Text = "<<<NOTES_LIST_VIEW>>>"; MinY = 0; MaxY = 0; Height = 0; HlRatio = 0.0 })
         }
 
         $parsedLines = @()
@@ -590,12 +608,9 @@ public class DualOcrPreprocessor {
             $lineW = [Math]::Max(10.0, ($maxX - $minX))
             $lineH = [Math]::Max(10.0, ($maxY - $minY))
 
-            # Rule 1C: If image has a highlight selection, verify that this line actually has highlight behind it!
+            $hlRatio = 0.0
             if ($checkHighlight -and $origBmp -ne $null) {
-                $hasHl = [DualOcrPreprocessor]::VerifyLineHighlight($origBmp, $cropX, $cropY, 2.5, 60, $minX, $minY, $lineW, $lineH, $selMinY, $selMaxY)
-                if (-not $hasHl) {
-                    continue
-                }
+                $hlRatio = [DualOcrPreprocessor]::GetLineHighlightRatio($origBmp, $cropX, $cropY, 2.5, 60, $minX, $minY, $lineW, $lineH)
             }
 
             $parsedLines += [PSCustomObject]@{
@@ -603,6 +618,7 @@ public class DualOcrPreprocessor {
                 MinY = $minY
                 MaxY = $maxY
                 Height = $lineH
+                HlRatio = $hlRatio
             }
         }
 
@@ -615,10 +631,144 @@ public class DualOcrPreprocessor {
             return @()
         }
 
-        # Sort lines by MinY (explicitly wrap with @() for single line items)
-        $sortedLines = @($parsedLines | Sort-Object MinY)
+        # Sort lines by MinY
+        $sorted = @($parsedLines | Sort-Object MinY)
 
-        # Anti-Garbage Filter for partially clipped top line at scroll edge (e.g. "1.1n1 j un 11" or "u 11 1")
+        # Tahap 35 Perbaikan 2: Discard any lines at the top before the first line with HlRatio >= 0.08
+        if ($checkHighlight -and $sorted.Count -gt 0) {
+            $firstHlIdx = -1
+            for ($k = 0; $k -lt $sorted.Count; $k++) {
+                if ($sorted[$k].HlRatio -ge 0.08) {
+                    $firstHlIdx = $k
+                    break
+                }
+            }
+            if ($firstHlIdx -gt 0) {
+                $sorted = @($sorted[$firstHlIdx..($sorted.Count - 1)])
+            } elseif ($firstHlIdx -eq -1 -and $selMinY -gt 0 -and $selMaxY -gt $selMinY) {
+                # Fallback: check vertical coordinates inside [selMinY, selMaxY]
+                $sorted = @($sorted | Where-Object {
+                    $oy = $cropY + ($_.MinY - 60) / 2.5
+                    $oy -ge ($selMinY - 10) -and $oy -le ($selMaxY + 20)
+                })
+            }
+        }
+
+        # Tahap 35 Perbaikan 2: Discard separator line --- and any hashtag lines appearing before opening news paragraph
+        while ($sorted.Count -gt 0) {
+            $firstText = $sorted[0].Text.Trim()
+            if ($firstText -match '^[-—–_=]{2,}$') {
+                $sorted = @($sorted[1..($sorted.Count - 1)])
+                continue
+            }
+            if ($firstText.StartsWith('#') -and ($sorted.Count -ge 2)) {
+                $hasBodyLater = $false
+                for ($k = 1; $k -lt $sorted.Count; $k++) {
+                    $tLater = $sorted[$k].Text.Trim()
+                    if ($tLater.Length -ge 20 -and -not $tLater.StartsWith('#') -and -not ($tLater -match '^(Source|Sumber):')) {
+                        $hasBodyLater = $true
+                        break
+                    }
+                }
+                if ($hasBodyLater) {
+                    $sorted = @($sorted[1..($sorted.Count - 1)])
+                    continue
+                }
+            }
+            break
+        }
+
+        return $sorted
+    }
+
+    # Tahap 35 Perbaikan 1: Dual-Candidate Line-by-Line Fusion per vertical Y coordinate
+    function Merge-LineLists($lines1, $lines2) {
+        if (!$lines1 -or $lines1.Count -eq 0) { return $lines2 }
+        if (!$lines2 -or $lines2.Count -eq 0) { return $lines1 }
+
+        # Check for NOTES_LIST_VIEW
+        if ($lines1.Count -eq 1 -and $lines1[0].Text -eq "<<<NOTES_LIST_VIEW>>>") { return $lines1 }
+        if ($lines2.Count -eq 1 -and $lines2[0].Text -eq "<<<NOTES_LIST_VIEW>>>") { return $lines2 }
+
+        $allLines = @($lines1) + @($lines2)
+        $sumH = 0
+        foreach ($l in $allLines) { $sumH += $l.Height }
+        $avgH = if ($allLines.Count -gt 0) { $sumH / $allLines.Count } else { 30.0 }
+
+        $used2 = @{}
+        $fused = @()
+
+        foreach ($l1 in $lines1) {
+            $cy1 = ($l1.MinY + $l1.MaxY) / 2.0
+            $bestMatch2 = $null
+            $bestIdx2 = -1
+            $bestDist = 999999.0
+
+            for ($j = 0; $j -lt $lines2.Count; $j++) {
+                if ($used2.ContainsKey($j)) { continue }
+                $l2 = $lines2[$j]
+                $cy2 = ($l2.MinY + $l2.MaxY) / 2.0
+                $dist = [Math]::Abs($cy1 - $cy2)
+                $isOverlap = ($l1.MinY -le $l2.MaxY) -and ($l1.MaxY -ge $l2.MinY)
+
+                if ($isOverlap -or $dist -le (0.65 * $avgH)) {
+                    if ($dist -lt $bestDist) {
+                        $bestDist = $dist
+                        $bestMatch2 = $l2
+                        $bestIdx2 = $j
+                    }
+                }
+            }
+
+            if ($bestMatch2 -ne $null) {
+                $used2[$bestIdx2] = $true
+                $t1 = $l1.Text.Trim()
+                $t2 = $bestMatch2.Text.Trim()
+
+                # Rule 1D: Line Fusion
+                # If t2 is missing or > 25% shorter than t1: take t1 (Natural)!
+                # If t2 has defect (< at end) and t1 doesn't: take t1!
+                # If t1 has defect (< at end) and t2 doesn't: take bestMatch2!
+                # Otherwise prefer bestMatch2 (Filtered) or longer
+                $chosen = $bestMatch2
+                if ($t2.Length -lt (0.75 * $t1.Length)) {
+                    $chosen = $l1
+                } elseif ($t2 -match '<\s*$' -and -not ($t1 -match '<\s*$')) {
+                    $chosen = $l1
+                } elseif ($t1 -match '<\s*$' -and -not ($t2 -match '<\s*$')) {
+                    $chosen = $bestMatch2
+                } elseif ($t1.Length -gt $t2.Length) {
+                    $chosen = $l1
+                }
+
+                $fused += $chosen
+            } else {
+                # In Cand 1 only: keep it!
+                $fused += $l1
+            }
+        }
+
+        # Add remaining unmatched lines from Cand 2
+        for ($j = 0; $j -lt $lines2.Count; $j++) {
+            if (-not $used2.ContainsKey($j)) {
+                $fused += $lines2[$j]
+            }
+        }
+
+        $fusedSorted = @($fused | Sort-Object MinY)
+        return $fusedSorted
+    }
+
+    function Format-ParsedLinesToText($sortedLines, [bool]$hasDateHeader) {
+        if (!$sortedLines -or $sortedLines.Count -eq 0) {
+            return @()
+        }
+
+        if ($sortedLines.Count -eq 1 -and $sortedLines[0].Text -eq "<<<NOTES_LIST_VIEW>>>") {
+            return @("<<<NOTES_LIST_VIEW>>>")
+        }
+
+        # Anti-Garbage Filter for partially clipped top line at scroll edge
         if ($sortedLines.Count -ge 2) {
             $topText = $sortedLines[0].Text.Trim()
             $topTokens = $topText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
@@ -629,7 +779,6 @@ public class DualOcrPreprocessor {
             $nextTokens = $nextText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
             $nextLongWords = @($nextTokens | Where-Object { $_ -match '^[A-Za-z]{4,}$' })
 
-            # If top line has NO 4+ letter words AND (has digits OR next line is a normal sentence with 4+ letter words)
             $isGarbageTop = ($longWords.Count -eq 0) -and ($digitCount -ge 2 -or $nextLongWords.Count -ge 2 -or $topText.Length -lt 15)
             if ($isGarbageTop) {
                 $sortedLines = @($sortedLines[1..($sortedLines.Count - 1)])
@@ -640,9 +789,8 @@ public class DualOcrPreprocessor {
         foreach ($item in $sortedLines) {
             $sumH += $item.Height
         }
-        $avgH = $sumH / $sortedLines.Count
+        $avgH = if ($sortedLines.Count -gt 0) { $sumH / $sortedLines.Count } else { 30.0 }
 
-        # BUG 1 (Tahap 33): Adaptive line gap threshold based on line count
         $isShortText = ($sortedLines.Count -le 6)
         $gapThreshold = if ($isShortText) { ($avgH * 0.40) } else { ($avgH * 0.85) }
 
@@ -682,7 +830,7 @@ public class DualOcrPreprocessor {
 
     function Process-SingleFrame([string]$imageFilePath, [bool]$isLast, [bool]$isFullViewport) {
         if (!(Test-Path $imageFilePath)) {
-            return @()
+            return @{ Lines = @(); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = 0 }
         }
         $fullPath = (Resolve-Path $imageFilePath).Path
         $srcBmp = [System.Drawing.Bitmap]::FromFile($fullPath)
@@ -700,44 +848,50 @@ public class DualOcrPreprocessor {
 
         $doVerify = ($foundHighlight -and -not $isFullViewport)
 
-        # Fast candidate execution: Red-filtered first (best for Notes Light Mode & spellcheck removal)
-        $bestLines = @(Run-Ocr $candRed $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
-        $bestBmp = $candRed
-        if ($bestLines.Count -eq 0 -and $candNat -ne $null) {
-            # Fallback to Natural candidate if Red-filtered gave nothing (e.g. Dark Mode)
-            $linesNat = @(Run-Ocr $candNat $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
-            if ($linesNat.Count -gt 0) {
-                $bestLines = $linesNat
-                $bestBmp = $candNat
-            }
-        }
+        # Tahap 35: Run Dual-Candidate OCR and fuse lines per vertical Y coordinate
+        $parsedNat = @(Get-OcrParsedLines $candNat $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
+        $parsedRed = @(Get-OcrParsedLines $candRed $srcBmp $cropX $cropY $doVerify $selMinY $selMaxY)
 
-        # If frame is identified as Notes Folder List View, exit immediately with token
-        if ($bestLines -contains "<<<NOTES_LIST_VIEW>>>") {
+        $isNotesList = $false
+        if ($parsedNat.Count -eq 1 -and $parsedNat[0].Text -eq "<<<NOTES_LIST_VIEW>>>") { $isNotesList = $true }
+        if ($parsedRed.Count -eq 1 -and $parsedRed[0].Text -eq "<<<NOTES_LIST_VIEW>>>") { $isNotesList = $true }
+        if ($isNotesList) {
             $srcBmp.Dispose()
             if ($candNat -ne $null) { $candNat.Dispose() }
             if ($candRed -ne $null) { $candRed.Dispose() }
-            return @("<<<NOTES_LIST_VIEW>>>")
+            return @{ Lines = @("<<<NOTES_LIST_VIEW>>>"); FoundHighlight = $false; SelMinY = 0; SelMaxY = 0; Height = $srcBmp.Height }
         }
+
+        # Merge Candidate 1 (Natural) & Candidate 2 (Channel-Filtered)
+        $mergedParsed = @(Merge-LineLists $parsedNat $parsedRed)
+
+        $hasDate = ($parsedNat -contains "<<<DOC_START>>>" -or $parsedRed -contains "<<<DOC_START>>>")
+        $finalLines = @(Format-ParsedLinesToText $mergedParsed $hasDate)
 
         # If it's the last (current) frame, save debug_ocr_cleaned.png
-        if ($isLast -and $bestBmp -ne $null) {
+        if ($isLast -and $candRed -ne $null) {
             $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
-            $bestBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            $candRed.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
         }
 
+        $srcH = $srcBmp.Height
         $srcBmp.Dispose()
         if ($candNat -ne $null) { $candNat.Dispose() }
         if ($candRed -ne $null) { $candRed.Dispose() }
 
-        return $bestLines
+        return @{
+            Lines = $finalLines
+            FoundHighlight = $foundHighlight
+            SelMinY = $selMinY
+            SelMaxY = $selMaxY
+            Height = $srcH
+        }
     }
 
     $lastIdx = $pathList.Count - 1
     # Process current frame (at $lastIdx) first:
-    $currentLines = @(Process-SingleFrame $pathList[$lastIdx].Trim() $true $false)
-    $nonEmptyCurrent = @($currentLines | Where-Object { $_.Trim().Length -gt 0 -and $_ -ne "<<<DOC_START>>>" })
-    $charCountCurrent = ($currentLines -join "").Length
+    $currentRes = Process-SingleFrame $pathList[$lastIdx].Trim() $true $false
+    $currentLines = @($currentRes.Lines)
 
     # If current frame is Notes Folder List view, output token immediately and exit
     if ($currentLines -contains "<<<NOTES_LIST_VIEW>>>") {
@@ -745,26 +899,48 @@ public class DualOcrPreprocessor {
         exit 0
     }
 
-    # If only 1 frame, OR if current frame is short (< 4 non-empty lines and < 150 chars):
-    # Output immediately and exit! (Ultra-fast single pass ~0.4s)
-    if ($pathList.Count -eq 1 -or ($nonEmptyCurrent.Count -lt 4 -and $charCountCurrent -lt 150)) {
+    $srcH = $currentRes.Height
+    $selMinY = $currentRes.SelMinY
+    $selMaxY = $currentRes.SelMaxY
+    $selTopRel = if ($srcH -gt 0 -and $currentRes.FoundHighlight) { [Math]::Round($selMinY / [double]$srcH, 4) } else { 0.0 }
+    $selBotRel = if ($srcH -gt 0 -and $currentRes.FoundHighlight) { [Math]::Round($selMaxY / [double]$srcH, 4) } else { 0.0 }
+
+    $boundsToken = "<<<SEL_BOUNDS:top=$selTopRel,bot=$selBotRel>>>"
+
+    $hasHashtagEnd = ($currentLines.Count -gt 0 -and $currentLines[-1].Trim().StartsWith('#'))
+    $isSelfContained = ($currentRes.FoundHighlight -and $selTopRel -ge 0.160 -and ($selBotRel -le 0.865 -or $hasHashtagEnd))
+
+    $nonEmptyCurrent = @($currentLines | Where-Object { $_.Trim().Length -gt 0 -and $_ -ne "<<<DOC_START>>>" })
+    $charCountCurrent = ($currentLines -join "").Length
+
+    # Tahap 35 Perbaikan 2: If self-contained 1-screen selection OR single frame OR short text:
+    # Exit immediately without processing history frames!
+    if ($pathList.Count -eq 1 -or $isSelfContained -or ($nonEmptyCurrent.Count -lt 4 -and $charCountCurrent -lt 150)) {
         if ($currentLines.Count -gt 0) {
+            [Console]::WriteLine($boundsToken)
             [Console]::WriteLine($currentLines -join "`r`n")
         }
         exit 0
     }
 
-    # Otherwise, it's long text (>= 4 lines or >= 150 chars) and multiple frames are provided.
-    # Process history frames 0 .. ($lastIdx - 1) in the exact same process
-    # LAPIS 4: pass isFullViewport = $false to enable Highlight-Crop on history frames
+    # Otherwise, it's long text (>= 4 lines) spanning multiple screens.
+    # Process history frames with Full-Viewport Content Crop if unhighlighted or short highlight
     $allOutputs = @()
     for ($i = 0; $i -lt $lastIdx; $i++) {
-        $histLines = @(Process-SingleFrame $pathList[$i].Trim() $false $false)
-        if ($histLines.Count -gt 0) {
-            if ($histLines -contains "<<<NOTES_LIST_VIEW>>>") {
+        $hRes = Process-SingleFrame $pathList[$i].Trim() $false $false
+        $hSpan = $hRes.SelMaxY - $hRes.SelMinY
+        $hMinSpan = (int)($hRes.Height * 0.22)
+        if (-not $hRes.FoundHighlight -or $hSpan -lt $hMinSpan) {
+            # Use Full-Viewport Content Crop (Tahap 35 Perbaikan 3A)
+            $hRes = Process-SingleFrame $pathList[$i].Trim() $false $true
+        }
+
+        $hLines = @($hRes.Lines)
+        if ($hLines.Count -gt 0) {
+            if ($hLines -contains "<<<NOTES_LIST_VIEW>>>") {
                 $allOutputs += "<<<NOTES_LIST_VIEW>>>"
             } else {
-                $allOutputs += ($histLines -join "`r`n")
+                $allOutputs += ($hLines -join "`r`n")
             }
         }
     }
@@ -774,9 +950,9 @@ public class DualOcrPreprocessor {
         $allOutputs += ($currentLines -join "`r`n")
     }
 
-    # Output frames separated by ---FRAME_SPLIT---
+    # Output bounds metadata followed by frames separated by ---FRAME_SPLIT---
+    [Console]::WriteLine($boundsToken)
     [Console]::WriteLine($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")
 } catch {
     # Fail silently without breaking server
 }
-
