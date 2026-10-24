@@ -12,10 +12,15 @@
 <p align="center">
   <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows"><img src="https://img.shields.io/badge/Forked%20from-teyboxv1%2Fpane--iphone--mirror--windows-blue?style=flat-square&logo=github" alt="Forked from teyboxv1"></a>
   <img src="https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square" alt="License: GPL-3.0">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D4.svg?style=flat-square&logo=windows" alt="Platform: Windows 11">
-  <img src="https://img.shields.io/badge/iOS-17%20%7C%2018%20%7C%2027.0.1%2B-black.svg?style=flat-square&logo=apple" alt="iOS Support">
+  <img src="https://img.shields.io/badge/Verified%20OS-Windows%2011%2026H2%20(64--bit)-0078D4.svg?style=flat-square&logo=windows" alt="Verified OS: Windows 11 26H2">
+  <img src="https://img.shields.io/badge/Verified%20Device-iPhone%2017%20Pro%20(iOS%2027.0.1)-000000.svg?style=flat-square&logo=apple" alt="Verified Device: iPhone 17 Pro iOS 27.0.1">
   <img src="https://img.shields.io/badge/Mirroring-60fps%20Hardware%20HEVC-success.svg?style=flat-square" alt="60fps HEVC">
 </p>
+
+> ### 🛡️ Tested & Verified Environment
+> - 📱 **Target Device**: **iPhone 17 Pro** (Physical Device running **iOS 27.0.1**)
+> - 💻 **PC / Operating System**: **Windows 11 Version 26H2** (Build 26100+, 64-bit)
+> - 🚀 **Performance**: 60fps Zero-Delay Hardware HEVC Stream & Full Touch / OCR Control
 
 ---
 
@@ -65,14 +70,46 @@ iPhone Link provides intuitive global keyboard shortcuts mapped for maximum prod
 
 ## 📦 Quick Start Guide
 
-### Prerequisites
-1. **Operating System**: Windows 10 or Windows 11 (64-bit).
-2. **Apple USB Drivers**: Install **[Apple Devices](https://apps.microsoft.com/detail/9np83lwlpz9k)** or iTunes from the Microsoft Store so Windows recognizes the Apple Mobile Device USB driver.
-3. **iPhone Configuration**:
-   - iOS 17, 18, or 27.0.1+.
-   - Connect iPhone to PC via USB cable.
-   - Tap **Trust This Computer** and enter your passcode.
-   - Enable **Developer Mode**: *Settings → Privacy & Security → Developer Mode → On* (iPhone will restart).
+### 📋 Prerequisites & iPhone Setup (Persyaratan Sistem & Konfigurasi iPhone)
+
+#### 1. PC Requirements
+- **Operating System**: Windows 10 atau Windows 11 26H2 (64-bit).
+- **Apple USB Drivers**: Pasang aplikasi resmi **[Apple Devices](https://apps.microsoft.com/detail/9np83lwlpz9k)** (atau iTunes) dari Microsoft Store agar Windows mengenali driver USB *Apple Mobile Device*.
+
+#### 2. iPhone Configuration (Wajib Mengaktifkan Developer Mode)
+Sebelum menjalankan iPhone Link, pengguna **WAJIB** mengaktifkan **Developer Mode (Mode Pengembang)** pada iPhone:
+- Hubungkan iPhone ke PC menggunakan kabel data USB.
+- Pada layar iPhone, ketuk **Percayai Komputer Ini (Trust This Computer)** dan masukkan PIN layar kunci Anda.
+- Buka **Pengaturan (Settings) → Privasi & Keamanan (Privacy & Security) → Mode Pengembang (Developer Mode)**.
+- Geser toggle ke posisi **Nyalakan (ON)**. iPhone akan meminta konfirmasi untuk memulai ulang (restart).
+- Setelah iPhone menyala kembali, buka kunci layar iPhone dan ketuk **Nyalakan (Turn On)** pada pop-up konfirmasi, lalu masukkan PIN Anda sekali lagi.
+
+---
+
+> ### 💡 Tips Khusus: Cara Memunculkan Menu Developer Mode yang Tersembunyi via 3uTools
+> *(How to Reveal Hidden Developer Mode Menu on iPhone via 3uTools)*
+>
+> **Kendala / Problem**:  
+> Pada iPhone baru atau iPhone yang belum pernah disambungkan ke Mac / Xcode, Apple secara default **menyembunyikan menu "Mode Pengembang (Developer Mode)"** di dalam *Pengaturan → Privasi & Keamanan*.
+>
+> **Solusi Cepat 1-Menit (Bahasa Indonesia)**:
+> 1. Unduh dan pasang aplikasi gratis **[3uTools](https://www.3u.com/)** di PC Windows Anda.
+> 2. Hubungkan iPhone ke PC via kabel USB dan ketuk *Trust This Computer* (Percayai Komputer Ini).
+> 3. Buka 3uTools, lalu masuk ke tab menu **Toolbox → Realtime Screen**.
+> 4. Begitu jendela *Realtime Screen* terbuka, layanan Apple Developer Service secara otomatis diinisialisasi pada iPhone Anda, dan menu **Mode Pengembang (Developer Mode)** akan **seketika muncul secara ajaib** di iPhone pada:  
+>    **Pengaturan → Privasi & Keamanan → Mode Pengembang** (di bagian paling bawah).
+> 5. Buka menu tersebut di iPhone, geser ke posisi **Nyalakan (ON)**, lalu restart iPhone Anda. Setelah restart, tekan *Turn On* dan masukkan PIN layar kunci. Anda sekarang 100% siap menggunakan iPhone Link!
+>
+> ---
+>
+> **English Quick Guide**:
+> *By default, iOS hides the Developer Mode toggle under Settings → Privacy & Security on devices that have never been connected to Xcode or a developer environment.*  
+> 1. Download and install **[3uTools](https://www.3u.com/)** on your Windows PC.  
+> 2. Connect your iPhone via USB cable and tap *Trust This Computer*.  
+> 3. In 3uTools, navigate to **Toolbox → Realtime Screen**.  
+> 4. As soon as *Realtime Screen* launches, it mounts the developer disk image, and the hidden **Developer Mode** toggle will **instantly appear** at the bottom of:  
+>    **Settings → Privacy & Security → Developer Mode**.  
+> 5. Toggle it **ON**, allow your iPhone to reboot, and tap *Turn On* upon restart. iPhone Link is now 100% ready to mirror!
 
 ---
 
