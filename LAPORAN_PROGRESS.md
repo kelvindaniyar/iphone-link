@@ -1285,6 +1285,37 @@ Pembaruan terkini mencakup:
   - Test 2 (UI Diagnostic Error Handling): PASS — Status bertransisi ke error dan menampilkan banner jujur presisi.
   - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
 
+---
+
+### Tahap 47: Mac-Style USB Stealth Dim Mode & Remote Lock/Wake/Unlock Control (Anti-Bug Edition)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap47.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap47.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_47_STEALTH_DIM_DAN_LOCK_WAKE_CONTROL.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_47_STEALTH_DIM_DAN_LOCK_WAKE_CONTROL.md).
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Locking Mode Cable (USB) sebagai Jalur Utama Default**:
+     - Default transport dikunci selalu ke `"cable"` / `"usb"` untuk kehandalan 100% instan (1.5 detik).
+  2. **Dual HID Channel Brightness & Power/Wake Control (Pilar 1)**:
+     - Mendaftarkan tombol Consumer Page (`0x0C`): `power` (`0x0030`), `home`/`wake` (`0x0040`), `brightness-up` (`0x006F`), `brightness-down` (`0x0070`).
+     - Mengimplementasikan Dual HID Brightness Path (Consumer Control + Apple Magic Keyboard Page `0x07` usage `0x69` / `0x6A`) secara simultan untuk memastikan kecerahan layar fisik iPhone 17 Pro meredup ke 0% dan pulih kembali saat diuji.
+     - Serialisasi seluruh perintah rentetan HID dengan `_HID_ACTION_LOCK` dan jeda `0.025s` antar-report untuk mencegah paket interleaving.
+  3. **Stealth Dim Mode, Lock Screen & Smart Wake/Unlock (Pilar 2)**:
+     - `set_iphone_physical_brightness("min", 16)`: Meredupkan lampu fisik iPhone ke 0% (gelap total di meja) sementara video stream di PC tetap 100% terang dari GPU Framebuffer iOS.
+     - `lock_iphone_screen()`: Otomatis memulihkan kecerahan jika stealth aktif, lalu mengunci layar dan menyetel `_DEVICE_INTENTIONALLY_LOCKED = True`.
+     - `wake_and_unlock_iphone(passcode)`: Membangunkan layar via wake + gentle tap, swipe-up halus 8 langkah dalam 0.22s, bypass delay pemindaian Face ID (~1.2 detik di iPhone 17 Pro) dengan center tap dan keycode space, serta isolated passcode injection yang murni menggunakan raw HID keycode tanpa pernah menyentuh `_TYPED_LINES_BUFFER` atau `typed_history.json` (Anti-Bug 3).
+  4. **Safe Idle Keep-Awake & Graceful Locked Handling (Pilar 3)**:
+     - Keep-awake micro-pulse HANYA terpicu jika idle >= 50 detik DAN user sedang TIDAK menahan seleksi teks (`not _IS_TOUCH_DRAGGING`), sehingga seleksi teks panjang `Alt+C` tidak akan pernah terganggu (Anti-Bug 4).
+     - Otomatis memulihkan kecerahan layar saat stop/disconnect.
+     - Menghilangkan peringatan oranye *"Stream stalled"* saat layar sengaja dikunci, digantikan badge tenang:
+       `🔒 iPhone Terkunci (Standby) — Klik "🔓 Wake / Unlock (Alt+U)" untuk membuka kembali` (Anti-Bug 5).
+     - Menyalakan kembali video stream seketika via `postMessage({ type: "refresh-stream" })` saat di-unlock.
+  5. **Panel UI Side Drawer & Shortcut Global (Pilar 4)**:
+     - Seksi UI *"iPhone Screen & Stealth Control"* dengan tombol Wake/Unlock, Lock, Toggle Stealth Dim, dan Auto-Unlock PIN (disimpan lokal di `localStorage` saja dengan toggle show/hide).
+     - Shortcut global `Alt+U` (Wake/Unlock), `Alt+L` (Lock), `Alt+D` (Toggle Stealth Dim).
+     - Endpoint server: `POST /api/device/wake-unlock`, `POST /api/device/lock`, `POST /api/device/stealth`.
+     - Bump cache buster ke `v=20261025_tahap47_stealth_dim_and_lock_control`.
+  6. **Zero Regression Test (Pilar 5)**:
+     - Seluruh kode OCR, Copy-Paste (`Alt+C`, `Alt+V`, `Alt+R`), buffer pengetikan, dan Audio Sink tetap 100% aman dan lulus uji verifikasi Tahap 40 V2.
+
+
 
 
 

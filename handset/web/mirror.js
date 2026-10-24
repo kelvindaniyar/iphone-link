@@ -42,6 +42,14 @@ let abortStream = null;
 
 function setStatus(text, tone) {
   if (!statusEl) return;
+  try {
+    const parentNote = window.parent?.document?.getElementById("screen-note");
+    if (parentNote && parentNote.classList.contains("calm-standby")) {
+      statusEl.textContent = "🔒 iPhone Terkunci (Standby)";
+      statusEl.className = "mirror-status ok";
+      return;
+    }
+  } catch (_) {}
   statusEl.textContent = text;
   statusEl.className = "mirror-status" + (tone ? ` ${tone}` : "");
 }
@@ -1347,3 +1355,9 @@ function beginRun() {
 }
 
 beginRun();
+
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "refresh-stream") {
+    beginRun();
+  }
+});

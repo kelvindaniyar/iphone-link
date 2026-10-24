@@ -26,6 +26,7 @@ from handset.screen import (
     ensure_paragraph_formatting,
     get_debug_typed_state,
     has_overlapping_body_line,
+    lock_iphone_screen,
     process_ocr_batch_results,
     record_typed_char,
     record_typed_text,
@@ -33,12 +34,14 @@ from handset.screen import (
     screen_status,
     send_button_direct,
     send_keys_direct,
+    set_iphone_physical_brightness,
     start_screen,
     stitch_multiline_ocr_frames,
     stop_screen,
     toggle_onscreen_keyboard,
     trigger_ios_shortcut,
     type_text_to_iphone,
+    wake_and_unlock_iphone,
 )
 from handset.wifi import (
     get_wifi_status,
@@ -415,6 +418,10 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/screen/stop", "/mirror/stop"):
             self._json(stop_screen())
             return
+        if path == "/api/device/stealth":
+            from handset.screen import _STEALTH_DIM_ACTIVE
+            self._json({"ok": True, "stealth": _STEALTH_DIM_ACTIVE})
+            return
         if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
             clear_recent_long_ocr_chunks()
             self._json({"ok": True, "action": "clear_chunks"})
@@ -607,6 +614,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "action": "clear_chunks"})
             return
 
+        if path == "/api/device/wake-unlock":
+            passcode = str(payload.get("passcode") or "")
+            self._json(wake_and_unlock_iphone(passcode))
+            return
+        if path == "/api/device/lock":
+            self._json(lock_iphone_screen())
+            return
+        if path == "/api/device/stealth":
+            enabled = bool(payload.get("enabled", True))
+            restore_steps = int(payload.get("restoreSteps") or 10)
+            level = "min" if enabled else "restore"
+            steps = 16 if enabled else restore_steps
+            self._json(set_iphone_physical_brightness(level, steps=steps))
+            return
+
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
         if path == "/api/screen/restart":
             self._json(restart_screen(udid))
@@ -629,8 +651,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Unknown action."}, status=404)
             return
         transport = payload.get("transport")
-        if transport not in {"auto", "usb", "wifi"}:
-            transport = "auto"
+        if transport not in {"usb", "wifi", "cable"}:
+            transport = "cable"
         self._json(start_screen(udid, transport))
 
     def log_message(self, fmt: str, *args) -> None:

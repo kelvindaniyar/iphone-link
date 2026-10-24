@@ -1541,3 +1541,50 @@ iframe[hidden],
   justify-content: center !important;
 }
 
+/* Tahap 47 - Stealth Dim Mode & Lock/Wake UI */
+.panel-screen-stealth {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.btn-stealth-toggle {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  font-weight: 600;
+}
+
+.btn-stealth-toggle.is-active {
+  background: rgba(147, 51, 234, 0.25) !important;
+  color: #d8b4fe !important;
+  border-color: rgba(192, 132, 252, 0.5) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2) !important;
+}
+
+.btn-stealth-toggle.is-active:hover {
+  background: rgba(147, 51, 234, 0.38) !important;
+  color: #f3e8ff !important;
+}
+
+.stage-note.calm-standby {
+  color: #93c5fd !important;
+  background: rgba(59, 130, 246, 0.12) !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.pin-input-wrap input {
+  background: var(--surface-active);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pin-input-wrap input:focus {
+  border-color: var(--accent);
+}
+
+

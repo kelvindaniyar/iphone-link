@@ -310,6 +310,49 @@
               <span class="shortcut-pill">Ctrl+X (Cut)</span>
               <span class="shortcut-pill">Ctrl+Z (Undo)</span>
               <span class="shortcut-pill">Ctrl+K (Keyboard)</span>
+              <span class="shortcut-pill">Alt+U (Unlock)</span>
+              <span class="shortcut-pill">Alt+L (Lock)</span>
+              <span class="shortcut-pill">Alt+D (Stealth)</span>
+            </div>
+          </section>
+
+          <!-- iPhone Screen & Stealth Control (Tahap 47) -->
+          <section class="card panel-screen-stealth" id="panel-screen-stealth">
+            <span class="drawer-section-label">iPhone Screen & Stealth Control</span>
+            
+            <div class="stealth-btn-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <button type="button" class="ctl ctl-accent btn-action-block" id="btn-wake-unlock" title="Wake screen & unlock iPhone (Alt+U)" style="flex: 1; margin-top: 0;">
+                🔓 Wake / Unlock (Alt+U)
+              </button>
+              <button type="button" class="ctl btn-action-block" id="btn-lock-iphone" title="Lock & sleep iPhone screen (Alt+L)" style="flex: 1; margin-top: 0;">
+                🔒 Lock iPhone (Alt+L)
+              </button>
+            </div>
+
+            <div class="setting-toggle-item" style="margin-top: 4px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">🌑 Stealth Dim Mode (Alt+D)</span>
+                <span class="setting-hint" id="stealth-mode-hint">OFF</span>
+              </div>
+              <button type="button" class="ctl ctl-sm btn-stealth-toggle" id="btn-stealth-mode" style="width: 100%; margin-top: 4px;">
+                🌑 Stealth Dim Mode: OFF
+              </button>
+              <p class="stealth-subhint" style="font-size: 11px; opacity: 0.7; margin-top: 4px; line-height: 1.35;">
+                Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).
+              </p>
+            </div>
+
+            <div class="pin-unlock-item" style="margin-top: 10px;">
+              <label for="input-unlock-pin" class="setting-label" style="display: block; font-size: 12px; margin-bottom: 4px;">
+                Auto-Unlock PIN (Opsional):
+              </label>
+              <div class="pin-input-wrap" style="display: flex; gap: 6px;">
+                <input type="password" id="input-unlock-pin" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric" style="flex: 1; font-family: monospace; font-size: 14px; letter-spacing: 2px;">
+                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN" style="width: 36px; padding: 0;">👁️</button>
+              </div>
+              <p style="font-size: 10px; opacity: 0.6; margin-top: 3px;">
+                Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.
+              </p>
             </div>
           </section>
 
@@ -403,7 +446,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261025_tahap46_final_verdict_audit"></script>
-  <script src="/app.js?v=20261025_tahap46_final_verdict_audit"></script>
+  <script src="/keys.js?v=20261025_tahap47_stealth_dim_and_lock_control"></script>
+  <script src="/app.js?v=20261025_tahap47_stealth_dim_and_lock_control"></script>
 </body>
 </html>

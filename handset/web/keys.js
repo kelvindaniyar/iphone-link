@@ -357,6 +357,51 @@
               }
               return;
             }
+
+            // Alt + U: Wake / Unlock iPhone (Tahap 47)
+            if (e.code === "KeyU") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 500;
+              pressed.clear();
+              flush();
+              if (typeof window.top?.triggerWakeUnlockIphone === "function") {
+                window.top.triggerWakeUnlockIphone();
+              } else if (typeof window.triggerWakeUnlockIphone === "function") {
+                window.triggerWakeUnlockIphone();
+              }
+              return;
+            }
+
+            // Alt + L: Lock iPhone (Tahap 47)
+            if (e.code === "KeyL") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 500;
+              pressed.clear();
+              flush();
+              if (typeof window.top?.triggerLockIphone === "function") {
+                window.top.triggerLockIphone();
+              } else if (typeof window.triggerLockIphone === "function") {
+                window.triggerLockIphone();
+              }
+              return;
+            }
+
+            // Alt + D: Toggle Stealth Dim Mode (Tahap 47)
+            if (e.code === "KeyD") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 500;
+              pressed.clear();
+              flush();
+              if (typeof window.top?.triggerToggleStealthDim === "function") {
+                window.top.triggerToggleStealthDim();
+              } else if (typeof window.triggerToggleStealthDim === "function") {
+                window.triggerToggleStealthDim();
+              }
+              return;
+            }
           }
         }
 
@@ -419,5 +464,8 @@
     flushTypedQueue,
     pasteFromPc: (force = false) => triggerPasteFromPc(force),
     toggleOnscreenKeyboard: triggerToggleOnscreenKeyboard,
+    wakeUnlockIphone: () => (window.top?.triggerWakeUnlockIphone || window.triggerWakeUnlockIphone)?.(),
+    lockIphone: () => (window.top?.triggerLockIphone || window.triggerLockIphone)?.(),
+    toggleStealthDim: () => (window.top?.triggerToggleStealthDim || window.triggerToggleStealthDim)?.(),
   };
 })();

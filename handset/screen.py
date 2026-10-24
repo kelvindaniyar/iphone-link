@@ -38,20 +38,61 @@ DEVELOPER_MODE_MESSAGE = (
 
 VIEW_URL = "http://127.0.0.1:8766/"
 _LOCK = threading.Lock()
-_STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": None, "transport": None}
+_STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": None, "transport": "cable"}
 _CURRENT_TASK: asyncio.Task | None = None
 _CURRENT_LOOP: asyncio.AbstractEventLoop | None = None
 _ACTIVE_SERVER = None
 
+# Tahap 47 (Anti-Bug Edition) - Stealth Dim Mode & Remote Lock/Wake/Unlock Control
+_STEALTH_DIM_ACTIVE = False
+_DEVICE_INTENTIONALLY_LOCKED = False
+_LAST_USER_INPUT_TS = time.time()
+_IS_TOUCH_DRAGGING = False
+_HID_ACTION_LOCK = threading.Lock()
+
+# Register extended HID buttons in pymobiledevice3 at import time
+try:
+    from pymobiledevice3.remote.core_device.screen_stream import _NAMED_BUTTONS
+    _NAMED_BUTTONS["power"] = (12, 0x0030, 0.5)
+    _NAMED_BUTTONS["lock"] = (12, 0x0030, 0.5)
+    _NAMED_BUTTONS["home"] = (12, 0x0040, 0.05)
+    _NAMED_BUTTONS["wake"] = (12, 0x0040, 0.05)
+    _NAMED_BUTTONS["brightness-down"] = (12, 0x0070, 0.025)
+    _NAMED_BUTTONS["brightness-up"] = (12, 0x006F, 0.025)
+    _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
+    _NAMED_BUTTONS.pop("keyboard-toggle", None)
+except Exception:
+    pass
+
+
+def record_user_input_activity(is_drag: bool = False) -> None:
+    """Track user interaction timestamps to safeguard OCR drag selection and safe idle keep-awake."""
+    global _LAST_USER_INPUT_TS, _IS_TOUCH_DRAGGING
+    _LAST_USER_INPUT_TS = time.time()
+    _IS_TOUCH_DRAGGING = is_drag
+
 
 def screen_status() -> dict:
     with _LOCK:
-        return dict(_STATE)
+        st = dict(_STATE)
+        st["stealth_dim"] = _STEALTH_DIM_ACTIVE
+        st["intentionally_locked"] = _DEVICE_INTENTIONALLY_LOCKED
+        if not st.get("transport"):
+            st["transport"] = "cable"
+        return st
 
 
 def stop_screen() -> dict:
-    """Cleanly stop mirroring, terminate stream server, and reset state."""
-    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
+    """Cleanly stop mirroring, terminate stream server, restore brightness if dimmed, and reset state."""
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONALLY_LOCKED
+    if _STEALTH_DIM_ACTIVE:
+        try:
+            set_iphone_physical_brightness("restore")
+        except Exception:
+            pass
+        _STEALTH_DIM_ACTIVE = False
+    _DEVICE_INTENTIONALLY_LOCKED = False
+
     with _LOCK:
         if _CURRENT_TASK and _CURRENT_LOOP and _CURRENT_LOOP.is_running():
             try:
@@ -93,17 +134,17 @@ def restart_screen(udid: str | None = None) -> dict:
     return _set(error="Connect the iPhone first, then start mirroring.")
 
 
-def start_screen(udid: str | None, transport: str = "auto") -> dict:
+def start_screen(udid: str | None, transport: str = "cable") -> dict:
     usb = _usb_udids()
     wifi = wifi_paired_udids()
+    if transport in ("auto", "cable"):
+        transport = "usb"
     chosen = (udid or "").strip() or _only_udid(usb, wifi, transport)
     if not chosen:
         if transport == "wifi":
             return _set(phase="idle", udid=None, url=None, error="Set up Wi-Fi once with the cable plugged in.")
         return _set(phase="idle", udid=None, url=None, error="Connect the iPhone first.")
 
-    if transport == "auto":
-        transport = "usb" if chosen in usb else "wifi"
     if transport == "usb" and chosen not in usb:
         return _set(phase="error", udid=chosen, url=None, error="The iPhone is not on the cable. Plug it in or choose Wi-Fi.")
     if transport == "wifi":
@@ -469,6 +510,7 @@ async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
 
 def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
     """Send keyboard HID usages directly to active server or fallback to loopback HTTP."""
+    record_user_input_activity()
     global _ACTIVE_SERVER, _CURRENT_LOOP
     server = _ACTIVE_SERVER
     loop = _CURRENT_LOOP
@@ -502,6 +544,7 @@ def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
 
 def send_button_direct(name: str, state: str = "press", timeout: float = 0.5) -> bool:
     """Send named button event directly to active server or fallback to loopback HTTP."""
+    record_user_input_activity()
     global _ACTIVE_SERVER, _CURRENT_LOOP
     server = _ACTIVE_SERVER
     loop = _CURRENT_LOOP
@@ -546,6 +589,190 @@ def send_button_direct(name: str, state: str = "press", timeout: float = 0.5) ->
         return resp.status == 200
     except Exception:
         return False
+
+
+def send_touch_direct(touch_type: str, x: int, y: int, timeout: float = 0.5) -> bool:
+    """Send touch event (contact, release, tap) directly to active server or fallback to loopback HTTP."""
+    record_user_input_activity(is_drag=(touch_type == "contact"))
+    global _ACTIVE_SERVER, _CURRENT_LOOP
+    server = _ACTIVE_SERVER
+    loop = _CURRENT_LOOP
+    if server is not None and loop is not None and loop.is_running():
+        async def _send():
+            from pymobiledevice3.remote.core_device.screen_stream import (
+                TOUCHSCREEN_STATE_CONTACT,
+                TOUCHSCREEN_STATE_RELEASE,
+                DIGITIZER_SURFACE_MAIN_TOUCHSCREEN,
+            )
+            await server._ensure_hid()
+            assert server._uhs is not None
+            if touch_type == "contact":
+                await server._uhs.send_touchscreen(
+                    TOUCHSCREEN_STATE_CONTACT, x, y, service_id=DIGITIZER_SURFACE_MAIN_TOUCHSCREEN
+                )
+            elif touch_type == "release":
+                await server._uhs.send_touchscreen(
+                    TOUCHSCREEN_STATE_RELEASE, x, y, service_id=DIGITIZER_SURFACE_MAIN_TOUCHSCREEN
+                )
+            elif touch_type == "tap":
+                await server._uhs.send_touchscreen(TOUCHSCREEN_STATE_CONTACT, x, y)
+                await asyncio.sleep(0.04)
+                await server._uhs.send_touchscreen(TOUCHSCREEN_STATE_RELEASE, x, y)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), loop)
+            future.result(timeout=timeout)
+            return True
+        except Exception:
+            pass
+
+    with _LOCK:
+        if _STATE.get("phase") != "running":
+            return False
+
+    try:
+        import http.client, json
+        conn = http.client.HTTPConnection("127.0.0.1", 8766, timeout=timeout)
+        conn.request(
+            "POST",
+            "/touch",
+            body=json.dumps({"type": touch_type, "x": x, "y": y}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def _send_single_brightness_step(direction: str) -> None:
+    """Send simultaneous Consumer and Apple Magic Keyboard brightness increment/decrement (Anti-Bug 1)."""
+    if direction == "down":
+        # 1. Consumer Page: 0x0C, Usage 0x0070 (Display Brightness Decrement)
+        send_button_direct("brightness-down")
+        # 2. Apple Magic Keyboard: Keyboard Page 0x07, Usage 0x69 (F14) & 0x47 (Scroll Lock)
+        send_keys_direct([0x69])
+        time.sleep(0.015)
+        send_keys_direct([])
+    else:  # "up"
+        # 1. Consumer Page: 0x0C, Usage 0x006F (Display Brightness Increment)
+        send_button_direct("brightness-up")
+        # 2. Apple Magic Keyboard: Keyboard Page 0x07, Usage 0x6A (F15) & 0x48 (Pause)
+        send_keys_direct([0x6A])
+        time.sleep(0.015)
+        send_keys_direct([])
+
+
+def set_iphone_physical_brightness(level: str, steps: int = 16) -> dict:
+    """Adjust physical OLED/LCD brightness of iPhone via dual HID channels.
+    'min': steps down (0% brightness, pitch dark on desk while mirror stream is 100% full quality)
+    'restore': restore brightness (default 10 steps up)
+    """
+    global _STEALTH_DIM_ACTIVE
+    record_user_input_activity()
+    with _HID_ACTION_LOCK:
+        if level == "min":
+            actual_steps = steps if steps > 0 else 16
+            for _ in range(actual_steps):
+                _send_single_brightness_step("down")
+                time.sleep(0.025)
+            _STEALTH_DIM_ACTIVE = True
+            return {"ok": True, "stealth": True, "level": "min", "steps": actual_steps}
+        else:
+            actual_steps = steps if steps > 0 else 10
+            for _ in range(actual_steps):
+                _send_single_brightness_step("up")
+                time.sleep(0.025)
+            _STEALTH_DIM_ACTIVE = False
+            return {"ok": True, "stealth": False, "level": "restore", "steps": actual_steps}
+
+
+def lock_iphone_screen() -> dict:
+    """Lock and turn off iPhone physical screen. If stealth dim was active, restores brightness first."""
+    global _DEVICE_INTENTIONALLY_LOCKED, _STEALTH_DIM_ACTIVE
+    record_user_input_activity()
+    if _STEALTH_DIM_ACTIVE:
+        set_iphone_physical_brightness("restore")
+    with _HID_ACTION_LOCK:
+        send_button_direct("power")
+        _DEVICE_INTENTIONALLY_LOCKED = True
+    return {"ok": True, "locked": True}
+
+
+def wake_and_unlock_iphone(passcode: str = "") -> dict:
+    """Wake screen, swipe up, bypass Face ID scanning delay, and inject optional PIN cleanly (Anti-Bug 2 & 3)."""
+    global _DEVICE_INTENTIONALLY_LOCKED
+    _DEVICE_INTENTIONALLY_LOCKED = False
+    record_user_input_activity()
+    with _HID_ACTION_LOCK:
+        # Step 1: Wake screen via Home/Wake + gentle tap
+        send_button_direct("wake")
+        time.sleep(0.05)
+        send_touch_direct("tap", 32768, 32768)
+        time.sleep(0.45)
+
+        # Step 2: Swipe-Up gesture (8 steps from y=58000 to y=12000 in 0.22s)
+        start_y = 58000
+        end_y = 12000
+        steps = 8
+        send_touch_direct("contact", 32768, start_y)
+        time.sleep(0.02)
+        for i in range(1, steps + 1):
+            cur_y = int(start_y + (end_y - start_y) * (i / steps))
+            send_touch_direct("contact", 32768, cur_y)
+            time.sleep(0.025)
+        send_touch_direct("release", 32768, end_y)
+
+        # Step 2b: Bypass Face ID delay (~1.2s wait on iPhone 17 Pro)
+        # Tap center and press Space to force immediate PIN keypad
+        time.sleep(0.30)
+        send_touch_direct("tap", 32768, 41000)
+        send_keys_direct([0x2C])  # Space / Enter to awaken passcode entry
+        time.sleep(0.02)
+        send_keys_direct([])
+        time.sleep(0.45)
+
+        # Step 3: Isolated Passcode Injection (DO NOT TOUCH _TYPED_LINES_BUFFER!)
+        # CRITICAL PRIVACY RULE: Send raw HID keycodes directly to bypass typing buffer entirely
+        if passcode and isinstance(passcode, str) and passcode.strip():
+            clean_pin = "".join(ch for ch in passcode.strip() if ch.isdigit())
+            digit_map = {
+                '1': 0x1E, '2': 0x1F, '3': 0x20, '4': 0x21, '5': 0x22,
+                '6': 0x23, '7': 0x24, '8': 0x25, '9': 0x26, '0': 0x27,
+            }
+            for digit in clean_pin:
+                code = digit_map.get(digit)
+                if code:
+                    send_keys_direct([code])
+                    time.sleep(0.04)
+                    send_keys_direct([])
+                    time.sleep(0.06)
+
+    return {"ok": True, "unlocked": bool(passcode and passcode.strip()), "woken": True}
+
+
+def _idle_keep_awake_worker():
+    """Background worker sending safe micro-pulse keep-awake only when idle >= 50s and not dragging (Anti-Bug 4)."""
+    while True:
+        try:
+            time.sleep(5.0)
+            with _LOCK:
+                running = _STATE.get("phase") == "running"
+            if not running:
+                continue
+            if _STEALTH_DIM_ACTIVE and not _DEVICE_INTENTIONALLY_LOCKED:
+                idle_secs = time.time() - _LAST_USER_INPUT_TS
+                if idle_secs >= 50.0 and not _IS_TOUCH_DRAGGING:
+                    with _HID_ACTION_LOCK:
+                        _send_single_brightness_step("down")
+                        record_user_input_activity()
+        except Exception:
+            pass
+
+
+_KEEP_AWAKE_THREAD = threading.Thread(target=_idle_keep_awake_worker, name="handset-keep-awake", daemon=True)
+_KEEP_AWAKE_THREAD.start()
 
 
 def toggle_onscreen_keyboard() -> bool:

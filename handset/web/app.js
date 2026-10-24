@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261025_tahap46_final_verdict_audit";
+const MIRROR_PAGE = "/mirror.html?v=20261025_tahap47_stealth_dim_and_lock_control";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
@@ -731,7 +731,8 @@ document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
 
 let selectedUdid = null;
 let screenTimer = 0;
-let transport = localStorage.getItem("handset-transport") === "wifi" ? "wifi" : "usb";
+// Tahap 47: Kunci Mode Cable (USB) sebagai default connection mode yang 100% instan & stabil
+let transport = "usb";
 let wifiPaired = [];
 let usbConnected = false;
 
@@ -757,7 +758,7 @@ async function triggerWifiScan(udid) {
     if (res?.wifi) {
       currentWifiState = res.wifi;
       renderWifi();
-      renderPill();
+      renderPills({ wifi: res.wifi, devices: usbConnected ? [{ udid }] : [] });
     }
   } catch (_) {}
 }
@@ -775,6 +776,147 @@ function setTransport(value, reload = true) {
   }
   if (reload) load();
 }
+
+// ======================================================================
+// Tahap 47: iPhone Screen & Stealth Control (Wake, Lock, Stealth Dim, PIN)
+// ======================================================================
+const btnWakeUnlock = document.querySelector("#btn-wake-unlock");
+const btnLockIphone = document.querySelector("#btn-lock-iphone");
+const btnStealthMode = document.querySelector("#btn-stealth-mode");
+const stealthModeHint = document.querySelector("#stealth-mode-hint");
+const inputUnlockPin = document.querySelector("#input-unlock-pin");
+const btnTogglePinVisibility = document.querySelector("#btn-toggle-pin-visibility");
+let currentStealthActive = false;
+
+// Load stored PIN from localStorage (private to local PC browser only)
+try {
+  const savedPin = localStorage.getItem("pane-unlock-pin") || "";
+  if (inputUnlockPin) inputUnlockPin.value = savedPin;
+} catch (_) {}
+
+inputUnlockPin?.addEventListener("input", () => {
+  inputUnlockPin.value = inputUnlockPin.value.replace(/\D/g, "").slice(0, 6);
+  try {
+    localStorage.setItem("pane-unlock-pin", inputUnlockPin.value);
+  } catch (_) {}
+});
+
+btnTogglePinVisibility?.addEventListener("click", () => {
+  if (!inputUnlockPin) return;
+  const isPass = inputUnlockPin.type === "password";
+  inputUnlockPin.type = isPass ? "text" : "password";
+  btnTogglePinVisibility.textContent = isPass ? "🔒" : "👁️";
+});
+
+function updateStealthDimUI(active) {
+  currentStealthActive = Boolean(active);
+  if (btnStealthMode) {
+    btnStealthMode.classList.toggle("is-active", currentStealthActive);
+    btnStealthMode.textContent = currentStealthActive ? "🌑 Stealth Dim Mode: ON" : "🌑 Stealth Dim Mode: OFF";
+  }
+  if (stealthModeHint) {
+    stealthModeHint.textContent = currentStealthActive ? "ON" : "OFF";
+    stealthModeHint.style.color = currentStealthActive ? "var(--accent)" : "";
+  }
+}
+
+async function triggerWakeUnlockIphone() {
+  if (btnWakeUnlock) {
+    btnWakeUnlock.disabled = true;
+    btnWakeUnlock.textContent = "🔓 Waking…";
+  }
+  try {
+    const pin = (inputUnlockPin?.value || "").trim();
+    const res = await postJson("/api/device/wake-unlock", { passcode: pin });
+    if (res?.ok) {
+      if (screenNote) {
+        screenNote.textContent = pin ? "🔓 Layar iPhone dibangunkan & PIN diinjeksi." : "🔓 Layar iPhone telah dibangunkan.";
+        screenNote.className = "ok";
+      }
+      try {
+        screenView?.contentWindow?.postMessage({ type: "refresh-stream" }, "*");
+      } catch (_) {}
+      try {
+        await postJson("/api/screen/restart", {});
+      } catch (_) {}
+      setTimeout(() => load(), 300);
+    }
+  } catch (err) {
+    console.error("Wake/unlock error:", err);
+    if (screenNote) {
+      screenNote.textContent = "Gagal membangunkan iPhone: " + (err.message || err);
+      screenNote.className = "warn";
+    }
+  } finally {
+    if (btnWakeUnlock) {
+      btnWakeUnlock.disabled = false;
+      btnWakeUnlock.textContent = "🔓 Wake / Unlock (Alt+U)";
+    }
+  }
+}
+
+async function triggerLockIphone() {
+  if (btnLockIphone) {
+    btnLockIphone.disabled = true;
+    btnLockIphone.textContent = "🔒 Locking…";
+  }
+  try {
+    const res = await postJson("/api/device/lock", {});
+    if (res?.ok) {
+      if (screenNote) {
+        screenNote.textContent = '🔒 iPhone Terkunci (Standby) — Layar fisik dimatikan. Klik "🔓 Wake / Unlock (Alt+U)" untuk membuka kembali.';
+        screenNote.className = "calm-standby";
+      }
+      setTimeout(() => load(), 200);
+    }
+  } catch (err) {
+    console.error("Lock error:", err);
+    if (screenNote) {
+      screenNote.textContent = "Gagal mengunci iPhone: " + (err.message || err);
+      screenNote.className = "warn";
+    }
+  } finally {
+    if (btnLockIphone) {
+      btnLockIphone.disabled = false;
+      btnLockIphone.textContent = "🔒 Lock iPhone (Alt+L)";
+    }
+  }
+}
+
+async function triggerToggleStealthDim(explicitState = null) {
+  const targetState = explicitState !== null ? Boolean(explicitState) : !currentStealthActive;
+  if (btnStealthMode) {
+    btnStealthMode.disabled = true;
+    btnStealthMode.textContent = targetState ? "🌑 Mengaktifkan Stealth Dim…" : "🌑 Mengembalikan Kecerahan…";
+  }
+  try {
+    const res = await postJson("/api/device/stealth", { enabled: targetState, restoreSteps: 10 });
+    if (res?.ok) {
+      updateStealthDimUI(res.stealth);
+      if (screenNote) {
+        screenNote.textContent = res.stealth
+          ? "🌑 Stealth Dim Mode ON: Layar fisik iPhone 0% (gelap), stream PC tetap terang."
+          : "☀️ Stealth Dim Mode OFF: Kecerahan fisik layar iPhone dikembalikan normal.";
+        screenNote.className = "ok";
+      }
+    }
+  } catch (err) {
+    console.error("Stealth dim error:", err);
+  } finally {
+    if (btnStealthMode) {
+      btnStealthMode.disabled = false;
+      updateStealthDimUI(currentStealthActive);
+    }
+  }
+}
+
+btnWakeUnlock?.addEventListener("click", triggerWakeUnlockIphone);
+btnLockIphone?.addEventListener("click", triggerLockIphone);
+btnStealthMode?.addEventListener("click", () => triggerToggleStealthDim());
+
+window.triggerWakeUnlockIphone = triggerWakeUnlockIphone;
+window.triggerLockIphone = triggerLockIphone;
+window.triggerToggleStealthDim = triggerToggleStealthDim;
 
 function renderWifi() {
   const wifi = currentWifiState || {};
@@ -943,7 +1085,9 @@ function renderPills(state) {
   const connected = (state.devices || []).length > 0;
   const wifi = state.wifi || currentWifiState || {};
   const overWifi = transport === "wifi";
-  if (state.screen?.phase === "running") {
+  if (state.screen?.intentionally_locked) {
+    setPill(pillConnection, "Standby · Locked", "ok");
+  } else if (state.screen?.phase === "running") {
     setPill(pillConnection, state.screen.transport === "wifi" ? "Mirroring · Wi‑Fi" : "Mirroring", "ok");
   } else if (overWifi && wifi.reachable) {
     setPill(pillConnection, wifi.ip ? `Wi‑Fi · ${wifi.ip}` : "Wi‑Fi Ready", "ok");
@@ -1142,6 +1286,9 @@ function sendAppMetrics() {
 
 function renderScreen(screen) {
   if (!screen) return;
+  if (typeof screen.stealth_dim === "boolean") {
+    updateStealthDimUI(screen.stealth_dim);
+  }
   const mirroring = screen.phase === "running";
   if (mirroring) {
     workspace.classList.add("is-live");
@@ -1150,8 +1297,14 @@ function renderScreen(screen) {
     restartScreen.hidden = false;
     restartScreen.disabled = false;
     kbToggle.hidden = false;
-    screenNote.textContent = "Mirroring — typing on your keyboard goes to the iPhone.";
-    screenNote.className = "";
+    if (screen.intentionally_locked) {
+      screenNote.textContent = '🔒 iPhone Terkunci (Standby) — Klik "🔓 Wake / Unlock (Alt+U)" untuk membuka kembali';
+      screenNote.className = "calm-standby";
+      if (screenErrorBanner) screenErrorBanner.style.display = "none";
+    } else {
+      screenNote.textContent = "Mirroring — typing on your keyboard goes to the iPhone.";
+      screenNote.className = "";
+    }
     showScreen.textContent = "⏹ Disconnect Mirroring";
     showScreen.classList.add("is-disconnect");
     showScreen.disabled = false;
