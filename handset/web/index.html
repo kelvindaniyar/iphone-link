@@ -14,7 +14,7 @@
     <header class="app-bar pywebview-drag-region">
       <div class="app-title-area" style="display: flex; align-items: center; gap: 6px;">
         <img src="/logo.svg" width="18" height="18" alt="iPhone Link" style="border-radius: 4px; pointer-events: none; flex-shrink: 0;">
-        <span style="font-weight: 600; font-size: 13px; color: var(--fg, #ffffff); letter-spacing: -0.2px; margin-right: 4px; user-select: none;">iPhone Link</span>
+        <span class="brand-title" style="font-weight: 600; font-size: 13px; color: var(--fg, #ffffff); letter-spacing: -0.2px; margin-right: 4px; user-select: none;">iPhone Link</span>
         <span class="pill" id="pill-connection" hidden></span>
         <span class="pill pill-muted" id="pill-device" hidden></span>
       </div>
@@ -25,13 +25,13 @@
             <polyline points="1 20 1 14 7 14"></polyline>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
           </svg>
-          <span>Restart</span>
+          <span class="btn-label">Restart</span>
         </button>
         <button type="button" class="bar-btn bar-btn-danger" id="stop-screen" title="Stop / Disconnect mirroring" hidden>
           <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
             <rect x="5" y="5" width="14" height="14" rx="2.5"/>
           </svg>
-          <span>Stop</span>
+          <span class="btn-label">Stop</span>
         </button>
         <button type="button" class="icon-btn" id="btn-audio-top" title="Toggle Audio Sink (iPhone ➔ PC)" aria-label="Audio Sink">
           <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">

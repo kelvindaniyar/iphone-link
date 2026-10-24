@@ -981,6 +981,7 @@ function toggleSettings(open) {
   controlPane.classList.toggle("open", shouldOpen);
   controlPane.setAttribute("aria-hidden", String(!shouldOpen));
   btnSettings?.classList.toggle("active", shouldOpen);
+  appRoot?.classList.toggle("drawer-open", shouldOpen);
   if (window.pywebview?.api?.set_orientation) {
     window.pywebview.api.set_orientation(isLandscapeMode, shouldOpen);
   } else if (window.pywebview?.api?.set_drawer) {

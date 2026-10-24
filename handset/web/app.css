@@ -1683,4 +1683,134 @@ iframe[hidden],
   aspect-ratio: 2656 / 1216 !important;
 }
 
+/* ====================================================================== */
+/* Tahap 49 V2: Responsive Compact Top Bar for Narrow Portrait Window     */
+/* ====================================================================== */
+.brand-title {
+  display: inline;
+  white-space: nowrap;
+}
+
+.btn-label {
+  display: inline;
+  white-space: nowrap;
+}
+
+/* Saat window dalam mode Portrait sempit (default): sembunyikan brand-title & teks label Restart */
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .brand-title {
+  display: none !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen .btn-label {
+  display: none !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen {
+  padding: 0 4px !important;
+  width: 24px !important;
+  height: 24px !important;
+  justify-content: center !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar {
+  padding: 0 4px !important;
+  gap: 2px !important;
+  overflow: hidden !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-title-area {
+  gap: 4px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .pill {
+  padding: 2px 6px !important;
+  font-size: 11px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen {
+  padding: 0 6px !important;
+  height: 24px !important;
+  font-size: 11px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-actions {
+  gap: 2px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .icon-btn {
+  width: 24px !important;
+  height: 24px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .window-controls {
+  margin-left: 1px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .win-btn {
+  width: 24px !important;
+  height: 24px !important;
+  flex-shrink: 0 !important;
+}
+
+/* Fallback media query saat window sempit (<= 520px) */
+@media (max-width: 520px) {
+  .brand-title {
+    display: none !important;
+  }
+  #restart-screen .btn-label {
+    display: none !important;
+  }
+  #restart-screen {
+    padding: 0 4px !important;
+    width: 24px !important;
+    height: 24px !important;
+    justify-content: center !important;
+  }
+  .app-bar {
+    padding: 0 4px !important;
+  }
+  .pill {
+    padding: 2px 6px !important;
+    font-size: 11px !important;
+  }
+  .icon-btn {
+    width: 24px !important;
+    height: 24px !important;
+    flex-shrink: 0 !important;
+  }
+  .win-btn {
+    width: 24px !important;
+    height: 24px !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+/* Ketika Side Drawer terbuka, mode Landscape, atau Full Screen: tampilkan kembali dengan lega */
+.app.drawer-open .brand-title,
+.app.is-landscape .brand-title,
+.app.is-fullsize .brand-title {
+  display: inline !important;
+}
+
+.app.drawer-open #restart-screen .btn-label,
+.app.is-landscape #restart-screen .btn-label,
+.app.is-fullsize #restart-screen .btn-label {
+  display: inline !important;
+}
+
+.app.drawer-open #restart-screen,
+.app.is-landscape #restart-screen,
+.app.is-fullsize #restart-screen {
+  width: auto !important;
+  padding: 0 6px !important;
+}
+
 

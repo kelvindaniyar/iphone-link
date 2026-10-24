@@ -1476,6 +1476,35 @@ Pembaruan terkini mencakup:
      - Dokumentasi [`README.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/README.md) diperbarui dengan fitur Landscape Gaming Mode dan shortcut `Alt + H`.
      - [`build_portable_release.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/build_portable_release.ps1) dijalankan ulang, menghasilkan [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) (`0.38 MB`) ter-update.
 
+---
+
+### Tahap 49 V2: Responsive Compact Top Bar Fix & Minimum Width Lock (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap49_v2.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap49_v2.py), [`scratch/verify_tahap49.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap49.py), dan [`scratch/verify_tahap48_v2.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap48_v2.py).
+- **Temuan Visual Pengujian Kelvin (Video `20261024-2239-40.8237569.mp4`)**:
+  - Pada status `"Ready"`, teks badge pendek sehingga tombol Full Screen (`⤢`) terlihat di tepi kanan.
+  - Namun begitu Kelvin memulai Mirroring:
+    1. Teks badge status memanjang dari `"Ready"` ke `"Mirroring"` (~24px lebih lebar).
+    2. Tombol `[⏹ Stop]` muncul.
+    3. Akumulasi lebar elemen di `.app-bar` mencapai ~444px, melebihi lebar window portrait sehingga ikon Full Screen (`⤢`) serta tombol minimize/close terpotong / terdorong ke luar layar.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Markup Semantik di [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html)**:
+     - Teks `"iPhone Link"` dibungkus dalam `<span class="brand-title">iPhone Link</span>`.
+     - Teks `"Restart"` dibungkus dalam `<span class="btn-label">Restart</span>`.
+     - Teks `"Stop"` dibungkus dalam `<span class="btn-label">Stop</span>`.
+  2. **Aturan CSS Responsive Compact di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css)**:
+     - Pada window Portrait sempit (`.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize)` dan `@media (max-width: 520px)`):
+       * Sembunyikan `.brand-title` (`display: none !important;`) — hanya menampilkan icon logo `18x18`, menghemat **~68px**.
+       * Sembunyikan `.btn-label` pada tombol `#restart-screen` (`display: none !important;`) — tombol tampil sebagai icon `↻` kompak, menghemat **~45px**.
+       * Rapatkan padding `.app-bar` (4px), gap (2px), dan ukuran icon button (24x24) dengan `flex-shrink: 0`.
+       * Total akumulasi lebar Top Bar pada mode Portrait Mirroring menjadi hanya **311px** (jauh di bawah batas lebar 368px, memiliki sisa clearance lega **57px**).
+     - Saat Side Drawer dibuka (`.drawer-open`), mode Landscape (`.is-landscape`), atau Full Screen (`.is-fullsize`), teks `.brand-title` dan `.btn-label` otomatis ditampilkan kembali dengan lega.
+  3. **Penguncian Batas Bawah Lebar Window di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) & [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js)**:
+     - Di `gui.py`: `min_size` lebar jendela dikunci minimal **`368px`** (`min_size=(368, 450)`).
+     - Di `app.js`: menambahkan sinkronisasi class `.drawer-open` pada `appRoot` saat drawer dibuka/ditutup.
+  4. **Hasil Verifikasi Eksekusi Nyata**:
+     - `scratch/verify_tahap49_v2.py`: 100% PASS (HTML markup, CSS rules, kalkulasi geometri lebar 311px vs 368px, zero regression).
+     - `release/iPhone-Link-Portable-v1.0.0.zip` (`0.38 MB`) berhasil di-rebuild ulang dengan paket rilis terbaru.
+
 
 
 
