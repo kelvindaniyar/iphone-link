@@ -981,13 +981,16 @@ function toggleSettings(open) {
   controlPane.classList.toggle("open", shouldOpen);
   controlPane.setAttribute("aria-hidden", String(!shouldOpen));
   btnSettings?.classList.toggle("active", shouldOpen);
-  if (window.pywebview?.api?.set_drawer) {
+  if (window.pywebview?.api?.set_orientation) {
+    window.pywebview.api.set_orientation(isLandscapeMode, shouldOpen);
+  } else if (window.pywebview?.api?.set_drawer) {
     window.pywebview.api.set_drawer(shouldOpen);
   }
 }
 
 btnSettings?.addEventListener("click", () => toggleSettings());
 closeSettings?.addEventListener("click", () => toggleSettings(false));
+document.querySelector("#btn-rotate-landscape")?.addEventListener("click", () => toggleLandscapeMode());
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !controlPane?.hidden) {
     toggleSettings(false);
@@ -1667,9 +1670,46 @@ function wireRemoteControls() {
   document.querySelector("#zoom-in")?.addEventListener("click", () => mirrorMessage("zoom-in"));
   document.querySelector("#zoom-out")?.addEventListener("click", () => mirrorMessage("zoom-out"));
   document.querySelector("#zoom-reset")?.addEventListener("click", () => mirrorMessage("zoom-reset"));
-  document.querySelector("#rotate-cw")?.addEventListener("click", () => mirrorMessage("rotate", { deg: 90 }));
-  document.querySelector("#rotate-ccw")?.addEventListener("click", () => mirrorMessage("rotate", { deg: -90 }));
+  document.querySelector("#rotate-cw")?.addEventListener("click", () => {
+    screenView?.contentWindow?.postMessage({ type: "rotate-step", delta: 90 }, "*");
+  });
+  document.querySelector("#rotate-ccw")?.addEventListener("click", () => {
+    screenView?.contentWindow?.postMessage({ type: "rotate-step", delta: -90 }, "*");
+  });
 }
+
+let isLandscapeMode = false;
+
+function applyOrientationUI(isLandscape) {
+  isLandscapeMode = Boolean(isLandscape);
+  appRoot?.classList.toggle("is-landscape", isLandscapeMode);
+  const btnRot = document.querySelector("#btn-rotate-landscape");
+  btnRot?.classList.toggle("active", isLandscapeMode);
+
+  const displayWidth = isLandscapeMode ? "840px" : "380px";
+  document.documentElement.style.setProperty("--display-width", displayWidth);
+  appRoot?.style.setProperty("--display-width", displayWidth);
+
+  const isDrawerOpen = !controlPane?.hidden && controlPane?.classList.contains("open");
+  if (window.pywebview?.api?.set_orientation) {
+    window.pywebview.api.set_orientation(isLandscapeMode, isDrawerOpen);
+  } else if (window.pywebview?.api?.set_drawer) {
+    window.pywebview.api.set_drawer(isDrawerOpen);
+  }
+
+  const notifyFrame = () => screenView?.contentWindow?.postMessage({ type: "resize" }, "*");
+  notifyFrame();
+  setTimeout(notifyFrame, 100);
+  setTimeout(notifyFrame, 300);
+}
+
+function toggleLandscapeMode() {
+  if (screenView?.contentWindow) {
+    screenView.contentWindow.postMessage({ type: "toggle-landscape" }, "*");
+  }
+}
+window.toggleLandscapeMode = toggleLandscapeMode;
+window.applyOrientationUI = applyOrientationUI;
 
 let lastDeviceAspect = null;
 function handleDeviceDimensions(width, height) {
@@ -1678,20 +1718,24 @@ function handleDeviceDimensions(width, height) {
   if (aspect < 0.35 || aspect > 2.5) return;
   lastDeviceAspect = aspect;
 
-  // Pertahankan lebar kolom display tetap stabil di 380px tanpa auto-shrink jendela
-  document.documentElement.style.setProperty("--display-width", "380px");
-  document.querySelector("#app-root")?.style.setProperty("--display-width", "380px");
+  const displayWidth = isLandscapeMode ? "840px" : "380px";
+  document.documentElement.style.setProperty("--display-width", displayWidth);
+  appRoot?.style.setProperty("--display-width", displayWidth);
 }
 
 window.addEventListener("message", (e) => {
   if (e.data && e.data.type === "video-dimensions") {
     handleDeviceDimensions(e.data.width, e.data.height);
   }
+  if (e.data && e.data.type === "rotation-changed") {
+    applyOrientationUI(e.data.isLandscape);
+  }
 });
 
 window.addEventListener("resize", () => {
-  document.documentElement.style.setProperty("--display-width", "380px");
-  document.querySelector("#app-root")?.style.setProperty("--display-width", "380px");
+  const displayWidth = isLandscapeMode ? "840px" : "380px";
+  document.documentElement.style.setProperty("--display-width", displayWidth);
+  appRoot?.style.setProperty("--display-width", displayWidth);
 });
 
 load();

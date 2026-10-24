@@ -1587,4 +1587,100 @@ iframe[hidden],
   border-color: var(--accent);
 }
 
+/* ====================================================================== */
+/* Tahap 49 — Horizontal / Landscape Gaming & Viewing Mode */
+/* ====================================================================== */
+
+.icon-btn.active,
+.icon-btn.is-active {
+  background: rgba(0, 120, 212, 0.25) !important;
+  color: #38bdf8 !important;
+  border-color: rgba(56, 189, 248, 0.5) !important;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2) !important;
+}
+
+/* 1. Mode Landscape Standard Window */
+.app.is-landscape .display-col {
+  width: var(--display-width, 840px) !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  flex: 1 1 auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.app.is-landscape .main-body:has(.side-drawer:not([hidden])) .display-col,
+.app.is-landscape .main-body:has(.side-drawer.open) .display-col {
+  width: var(--display-width, 840px) !important;
+  min-width: var(--display-width, 840px) !important;
+  max-width: var(--display-width, 840px) !important;
+  flex: 0 0 var(--display-width, 840px) !important;
+}
+
+.app.is-landscape .workspace,
+.app.is-landscape .stage,
+.app.is-landscape #phone-shell,
+.app.is-landscape .screen-stage,
+.app.is-landscape #phone-screen,
+.app.is-landscape .screen-viewport {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 36px) !important;
+  aspect-ratio: 19.5 / 9 !important;
+  flex: 1 1 auto !important;
+  margin: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.app.is-landscape iframe,
+.app.is-landscape #screen-view,
+.app.is-landscape #mirror-frame,
+.app.is-landscape .screen-frame {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: calc(100vh - 36px) !important;
+  aspect-ratio: 19.5 / 9 !important;
+}
+
+/* 2. Mode Landscape Full Screen / Maximize Monitor */
+.app.is-landscape.is-fullsize .workspace,
+.app.is-landscape.is-fullsize .stage {
+  width: 100vw !important;
+  height: calc(100vh - 36px) !important;
+  max-height: calc(100vh - 36px) !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.app.is-landscape.is-fullsize #phone-shell,
+.app.is-landscape.is-fullsize .screen-stage {
+  width: min(100vw, calc((100vh - 36px) * (2656 / 1216))) !important;
+  height: calc(100vh - 36px) !important;
+  max-height: calc(100vh - 36px) !important;
+  min-height: 0 !important;
+  aspect-ratio: 2656 / 1216 !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  flex: 0 0 auto !important;
+}
+
+.app.is-landscape.is-fullsize #phone-screen,
+.app.is-landscape.is-fullsize .screen-viewport,
+.app.is-landscape.is-fullsize iframe,
+.app.is-landscape.is-fullsize #screen-view {
+  width: 100% !important;
+  height: 100% !important;
+  max-height: calc(100vh - 36px) !important;
+  aspect-ratio: 2656 / 1216 !important;
+}
+
 

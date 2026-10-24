@@ -4,10 +4,38 @@ const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("mirror-status");
 
 let visualRotation = 0;
+let currentRotation = 0;
 let zoom = 1;
 const ZOOM_STEP = 1.2;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
+
+function setRotation(deg) {
+  currentRotation = ((deg % 360) + 360) % 360;
+  visualRotation = currentRotation;
+  const isLandscape = (currentRotation === 90 || currentRotation === 270);
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: "rotation-changed",
+        rotation: currentRotation,
+        isLandscape: isLandscape,
+      }, "*");
+    }
+  } catch (_) {}
+  if (lastFrame) drawFrame(lastFrame);
+  fitCanvas();
+}
+
+function toggleLandscapeMode() {
+  if (currentRotation === 0 || currentRotation === 180) {
+    setRotation(270);
+  } else {
+    setRotation(0);
+  }
+}
+window.setRotation = setRotation;
+window.toggleLandscapeMode = toggleLandscapeMode;
 
 let fitMode = localStorage.getItem("pane-fit-mode") || "fill";
 let currentCrop = { top: 0, bottom: 0, left: 0, right: 0 };
@@ -161,23 +189,34 @@ function setZoom(value) {
 
 function touchCoords(e) {
   const rect = cachedCanvasRect || canvas.getBoundingClientRect();
-  const sx = ((e.clientX - rect.left) * canvas.width) / rect.width;
-  const sy = ((e.clientY - rect.top) * canvas.height) / rect.height;
-  const cw = canvas.width;
-  const ch = canvas.height;
-  const sideways = Math.abs(visualRotation % 180) === 90;
-  const dw = sideways ? ch : cw;
-  const dh = sideways ? cw : ch;
-  const dx = sx - cw / 2;
-  const dy = sy - ch / 2;
-  const rad = (-visualRotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  const bx = dx * cos - dy * sin + dw / 2;
-  const by = dx * sin + dy * cos + dh / 2;
+  const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+  const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / (rect.height || 1)));
+
+  let iosX = nx;
+  let iosY = ny;
+
+  const rot = ((currentRotation % 360) + 360) % 360;
+  if (rot === 270) {
+    // 270° CW (= 90° CCW): Landscape standar game eFootball (Dynamic Island di kiri)
+    iosX = 1.0 - ny;
+    iosY = nx;
+  } else if (rot === 90) {
+    // 90° CW: Landscape terbalik (Dynamic Island di kanan)
+    iosX = ny;
+    iosY = 1.0 - nx;
+  } else if (rot === 180) {
+    // 180°: Portrait terbalik
+    iosX = 1.0 - nx;
+    iosY = 1.0 - ny;
+  } else {
+    // 0°: Portrait normal
+    iosX = nx;
+    iosY = ny;
+  }
+
   return {
-    x: Math.max(0, Math.min(65535, Math.round((bx / dw) * 65535))),
-    y: Math.max(0, Math.min(65535, Math.round((by / dh) * 65535))),
+    x: Math.max(0, Math.min(65535, Math.round(iosX * 65535))),
+    y: Math.max(0, Math.min(65535, Math.round(iosY * 65535))),
   };
 }
 
@@ -540,15 +579,25 @@ window.addEventListener("message", (e) => {
     }
     return;
   }
+  if (d.type === "set-rotation") {
+    setRotation(d.rotation !== undefined ? d.rotation : 0);
+    return;
+  }
+  if (d.type === "rotate-step") {
+    setRotation(currentRotation + (d.delta || 0));
+    return;
+  }
+  if (d.type === "toggle-landscape") {
+    toggleLandscapeMode();
+    return;
+  }
 
   if (e.origin !== window.location.origin) return;
   if (d.source !== "handset") return;
   if (d.cmd === "back") {
     triggerBackGesture();
   } else if (d.cmd === "rotate") {
-    visualRotation = (visualRotation + (d.deg || 0)) % 360;
-    if (lastFrame) drawFrame(lastFrame);
-    fitCanvas();
+    setRotation(currentRotation + (d.deg || 0));
   } else if (d.cmd === "zoom-in") {
     setZoom(zoom * ZOOM_STEP);
   } else if (d.cmd === "zoom-out") {
@@ -769,7 +818,7 @@ function drawFrame(f) {
       ? sourceFrame.codedHeight
       : (sourceFrame.displayHeight || sourceFrame.codedHeight || sourceFrame.height || 2556);
 
-    const sideways = Math.abs(visualRotation % 180) === 90;
+    const sideways = Math.abs(currentRotation % 180) === 90;
     const targetW = sideways ? rawH : rawW;
     const targetH = sideways ? rawW : rawH;
 
@@ -787,7 +836,7 @@ function drawFrame(f) {
 
     ctx.save();
     ctx.translate(dstW / 2, dstH / 2);
-    if (visualRotation) ctx.rotate((visualRotation * Math.PI) / 180);
+    if (currentRotation) ctx.rotate((currentRotation * Math.PI) / 180);
     ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
     ctx.restore();
 
@@ -805,7 +854,7 @@ function drawFrame(f) {
 
 window.captureFullResFrameDataUrl = function () {
   try {
-    if (canvas && canvas.width >= 600 && canvas.height >= 1000) {
+    if (canvas && ((canvas.width >= 600 && canvas.height >= 1000) || (canvas.width >= 1000 && canvas.height >= 600))) {
       return canvas.toDataURL("image/png");
     }
     if (lastFrame) {

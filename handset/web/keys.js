@@ -402,6 +402,21 @@
               }
               return;
             }
+
+            // Alt + H: Toggle Horizontal / Landscape Mode (Tahap 49)
+            if (e.code === "KeyH") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 500;
+              pressed.clear();
+              flush();
+              if (typeof window.top?.toggleLandscapeMode === "function") {
+                window.top.toggleLandscapeMode();
+              } else if (typeof window.toggleLandscapeMode === "function") {
+                window.toggleLandscapeMode();
+              }
+              return;
+            }
           }
         }
 

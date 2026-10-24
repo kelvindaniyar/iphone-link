@@ -22,6 +22,7 @@ class WindowApi:
         self._window = None
         self._current_display_width = 380
         self._drawer_open = False
+        self._is_landscape = False
 
     def set_window(self, window):
         self._window = window
@@ -62,26 +63,51 @@ class WindowApi:
         if self._window:
             self._window.toggle_fullscreen()
 
+    def set_orientation(self, landscape: bool, drawer_open: bool = False):
+        """Ubah ukuran jendela ke dimensi Landscape / Horizontal atau Portrait."""
+        if not self._window:
+            return
+        try:
+            self._is_landscape = bool(landscape)
+            self._drawer_open = bool(drawer_open)
+            if self._is_landscape:
+                target_w = 1200 if self._drawer_open else 840
+                target_h = 720 if self._drawer_open else 490
+            else:
+                target_w = 740 if self._drawer_open else 380
+                target_h = 840
+            self._window.resize(target_w, target_h)
+        except Exception as e:
+            print("set_orientation error:", e)
+
     def sync_device_aspect(self, display_width: int, drawer_open: bool = False):
         """Sesuaikan lebar jendela jika diminta secara manual."""
         if not self._window:
             return
         try:
-            dw = max(380, min(800, int(display_width)))
-            self._current_display_width = dw
             self._drawer_open = bool(drawer_open)
-            target_w = dw + (360 if self._drawer_open else 0)
-            h = max(self._window.height or 840, 840)
-            self._window.resize(target_w, h)
+            if self._is_landscape:
+                target_w = 1200 if self._drawer_open else 840
+                target_h = 720 if self._drawer_open else 490
+            else:
+                dw = max(380, min(800, int(display_width)))
+                self._current_display_width = dw
+                target_w = dw + (360 if self._drawer_open else 0)
+                target_h = max(self._window.height or 840, 840)
+            self._window.resize(target_w, target_h)
         except Exception as e:
             print("sync_device_aspect error:", e)
 
     def set_drawer(self, is_open: bool):
         if self._window:
             self._drawer_open = bool(is_open)
-            target_width = 740 if self._drawer_open else 380
-            h = max(self._window.height or 840, 840)
-            self._window.resize(target_width, h)
+            if self._is_landscape:
+                target_w = 1200 if self._drawer_open else 840
+                target_h = 720 if self._drawer_open else 490
+            else:
+                target_w = 740 if self._drawer_open else 380
+                target_h = 840
+            self._window.resize(target_w, target_h)
 
     def set_theme(self, theme: str):
         """Update native Windows 11 DWM dark/light mode attribute."""
@@ -199,7 +225,7 @@ def main():
         height=840,
         frameless=True,
         easy_drag=False,
-        min_size=(380, 700),
+        min_size=(360, 450),
         background_color="#0f172a",
     )
     api.set_window(window)

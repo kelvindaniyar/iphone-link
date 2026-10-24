@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 46 (Audit Final & Verdik Penentuan Koneksi Wi-Fi iOS 27.0.1: Full 16.384 Ephemeral Port Scan IPv4/IPv6, Service Audit Port 62078, UI Transparent Diagnostic Error, & 100% Zero Regression OCR Tahap 40 V2)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 49 (Horizontal / Landscape Gaming & Viewing Mode: Rotasi Kanvas 0°/90°/180°/270°, Inverse Touch Mapping Matrix eFootball 2027, Layout CSS Responsif Widescreen 19.5:9 & Full Screen, Dynamic Pywebview Resize 840x490, Tombol Top Bar & Shortcut Alt+H, serta 100% Zero-Regression Tahap 48 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261025_tahap46_final_verdict_audit`  
+> **Cache Buster:** `v=20261025_tahap49_landscape_mode`  
 
 ---
 
@@ -1437,6 +1437,44 @@ Pembaruan terkini mencakup:
 - **Hasil Verifikasi Eksekusi Nyata**:
   - `scratch/verify_tahap48.py`: 100% PASS (5/5 tes lulus).
   - Git commit: `c579f02` pada branch `feature/macos-sequoia-ui`.
+
+---
+
+### Tahap 49: Horizontal / Landscape Gaming & Viewing Mode (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap49.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap49.py) & [`scratch/verify_tahap48_v2.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap48_v2.py).
+- **Latar Belakang Analisa Video Kelvin (`20261024-2241-10.2738699.mp4`)**:
+  1. *Game Landscape eFootball 2027 (Menit 00:23 - 01:15)*: iOS merender stream game landscape di dalam framebuffer vertikal fisik (`1216 x 2656`), sehingga gambar game tampak miring 90 derajat dengan kepala Messi/Yamal menghadap ke kanan dan Dynamic Island di sisi atas kanvas potret.
+  2. *Tombol Rotate Belum Bekerja (Menit 00:44, 01:01 - 01:08)*: Mengklik tombol `↺` / `↻` di seksi `View` tidak menghasilkan efek apa pun karena `mirror.js` belum menangani sinkronisasi orientasi dan tidak menukar dimensi kanvas internal.
+  3. *Full Screen Terkunci Potret (Menit 01:09 - 01:11)*: Menekan tombol `Full screen` tetap mengunci kontainer video pada aspek rasio berdiri `9 / 19.5` sempit.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Komponen 1 — Rotasi Kanvas & Swap Dimensi di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js)**:
+     - Ditambahkan state `currentRotation` (`0`, `90`, `180`, `270`) dan fungsi `setRotation(deg)` dengan normalisasi sudut. Sudut **`270° CW` (= 90° CCW)** menjadi orientasi default untuk menegakkan game iOS (*eFootball*, dll.) dengan Dynamic Island di sebelah kiri.
+     - Buffer internal kanvas secara dinamis ditukar menjadi dimensi horizontal `2656 x 1216` (`canvas.width = rawH`, `canvas.height = rawW`) saat rotasi `90°` atau `270°`.
+     - Frame digambar menggunakan translasi matriks 2D terpusat: `ctx.translate(canvas.width / 2, canvas.height / 2); ctx.rotate((currentRotation * Math.PI) / 180); ctx.drawImage(sourceFrame, -rawW / 2, -rawH / 2, rawW, rawH);`.
+     - Fungsi snapshot OCR resolusi tinggi (`captureFullResFrameDataUrl`) diperbarui agar mendukung kanvas horizontal lebar (`width >= 1000 && height >= 600`).
+  2. **Komponen 2 — Pemetaan Sentuhan Balik (Inverse Touch Matrix) di [`handset/web/mirror.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/mirror.js)**:
+     - Mengimplementasikan rumus transformasi koordinat relatif `(nx, ny)` ke sensor fisik potret iOS `(iosX, iosY)` sebelum dikalikan `65535`:
+       * **Rotasi 270° (Landscape eFootball)**: `iosX = 1.0 - ny; iosY = nx;`
+       * **Rotasi 90° (Landscape Terbalik)**: `iosX = ny; iosY = 1.0 - nx;`
+       * **Rotasi 180° (Portrait Terbalik)**: `iosX = 1.0 - nx; iosY = 1.0 - ny;`
+       * **Rotasi 0° (Portrait Standar)**: `iosX = nx; iosY = ny;`
+     - Menjamin semua tombol navigasi dan klik di dalam game *eFootball* tepat sasaran 100%.
+  3. **Komponen 3 — Layout CSS Responsif Widescreen di [`handset/web/app.css`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.css)**:
+     - Menambahkan class `.app.is-landscape`:
+       * `.display-col` melebar dinamis ke `width: var(--display-width, 840px)` (atau `1200px` saat side drawer terbuka).
+       * `#phone-screen`, `#screen-view`, dan `#mirror-frame` mengadopsi aspek rasio widescreen `19.5 / 9`.
+     - Menambahkan class `.app.is-landscape.is-fullsize`:
+       * Kontainer video melebar memenuhi monitor desktop widescreen: `width: min(100vw, calc((100vh - 36px) * (2656 / 1216)))`, `height: calc(100vh - 36px)`, dan `aspect-ratio: 2656 / 1216` di tengah monitor.
+  4. **Komponen 4 — Kontrol Window Native Pywebview di [`handset/gui.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/gui.py) & UI Bindings**:
+     - Ditambahkan API `WindowApi.set_orientation(landscape, drawer_open)` di `gui.py` untuk me-resize window ke `840 x 490` (drawer tertutup) atau `1200 x 720` (drawer terbuka), serta `min_size` diturunkan ke `(360, 450)`.
+     - Menambahkan tombol icon **`🔄`** (`#btn-rotate-landscape`) pada Top Bar [`index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html) tepat di samping tombol Maximize.
+     - Menyambungkan tombol `↺` (`#rotate-ccw`) dan `↻` (`#rotate-cw`) di drawer `View` ke handler `rotate-step` via postMessage.
+     - Menambahkan shortcut keyboard global **`Alt + H`** di [`keys.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/keys.js) dan [`app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js) untuk instan toggle Landscape/Portrait.
+  5. **Komponen 5 — Verifikasi Nyata & Rebuild Portable Release**:
+     - `scratch/verify_tahap49.py`: 100% PASS (Inverse touch math, mirror.js protocol, UI controls, gui.py sizing, dan app.css rules).
+     - `scratch/verify_tahap48_v2.py`: 100% PASS (Zero regression OCR, stealth dim mode, PIN auto-unlock, dan double-enter spacing).
+     - Dokumentasi [`README.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/README.md) diperbarui dengan fitur Landscape Gaming Mode dan shortcut `Alt + H`.
+     - [`build_portable_release.ps1`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/build_portable_release.ps1) dijalankan ulang, menghasilkan [`release/iPhone-Link-Portable-v1.0.0.zip`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/release/iPhone-Link-Portable-v1.0.0.zip) (`0.38 MB`) ter-update.
 
 
 

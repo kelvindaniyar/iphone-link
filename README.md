@@ -38,6 +38,7 @@
 | **⚡ 60fps Zero-Delay Mirroring** | Ultra-responsive 60fps video stream over USB cable, powered by Edge WebView2 hardware-accelerated HEVC (H.265) decoding and WebCodecs. |
 | **🌑 Mac-Style Stealth Dim Mode** | Meremotely dims the physical iPhone OLED display down to **0% brightness (completely dark on your desk)** while mirroring remains 100% bright in Windows. |
 | **💡 Calibrated ~25% Brightness Restore** | Restores the physical iPhone display to exactly **4 single iOS bars (~25% brightness)** on exit or stealth toggle, with strict guards preventing 100% brightness surges. |
+| **🎮 Landscape Gaming Mode (`Alt+H`)** | Full 90°/270° canvas rotation with dynamic aspect-ratio adaptation (19.5:9 widescreen), inverse touch mapping matrix for landscape games (*eFootball*, *Genshin Impact*, *Call of Duty*), and maximized PC monitor viewing. |
 | **🔓 Remote Wake &amp; Auto-PIN Unlock** | Wakes your iPhone screen, executes an automated swipe-up, bypasses the Face ID scanning delay on newer devices (iPhone 16/17 Pro), and injects your PIN via isolated HID keycodes. |
 | **🔒 Remote Screen Lock (`Alt+L`)** | Instantly puts your physical iPhone into standby sleep with one keystroke or UI button. |
 | **📋 Bidirectional Smart OCR Copy-Paste** | High-precision Windows OCR engine for **Apple Notes** and **Google Keep**: repairs split words (`Cut-Off`), neutralizes selection handles, stitches multi-screen captions, and copies text directly to Windows Clipboard. |
@@ -54,6 +55,7 @@ iPhone Link provides intuitive global keyboard shortcuts mapped for maximum prod
 
 | Shortcut | Action | Description |
 | :---: | :--- | :--- |
+| **`Alt + H`** | **🔄 Toggle Landscape Mode** | Switches instantly between Vertical Portrait (0°) and Horizontal Landscape (270° eFootball Gaming Mode). |
 | **`Alt + C`** | **📥 Copy iPhone Text** | Runs Smart OCR on the selected iPhone screen region and copies clean text to your Windows Clipboard (`✓ Copied to PC!`). |
 | **`Alt + V`** | **📋 Paste PC Text** | Injects text from your Windows Clipboard into the active iPhone app as native keystrokes. |
 | **`Alt + R`** | **🧹 Clear Copy Cache** | Flushes OCR session chunk memory manually (`✓ Cache Cleared!`). |
