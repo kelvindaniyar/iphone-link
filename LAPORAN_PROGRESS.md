@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 24 (Akumulasi Keystroke Per-Karakter, Eliminasi Duplikasi Ketikan, Dual-Candidate OCR Engine, & Sinkronisasi Sempurna Ctrl+C)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 41 (Koneksi Wi-Fi Mirroring Tanpa Kabel, Real Network Discovery, Auto-Enable Wireless Lockdown, Error Banner Diagnostik, & 100% Zero Regression OCR Tahap 40 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap24_per_keystroke_accumulation_and_dual_ocr`  
+> **Cache Buster:** `v=20261024_tahap41_wifi_mirroring_and_network_discovery`  
 
 ---
 
@@ -1085,6 +1085,69 @@ Pembaruan terkini mencakup:
   - Test 3 (Smart Auto-Clear & Alt+R): Memori `_RECENT_LONG_OCR_CHUNKS` otomatis kosong (`len == 0`) setelah caption lengkap, dan aksi `clear-copy-cache` sukses [PASS].
   - Test 4 (Regresi Teks Pendek Menit 01:09): 4 baris pendek berjarak Enter ganda 100% terjaga dan identik [PASS].
   - Suite regresi Tahap 39 lulus 100% dalam 4.24 detik [PASS].
+
+### Tahap 40 V2: Polasan Mikro Restorasi '!olom' -> 'kolom' & Pembersihan Debris Simbol Bullet (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py) & [`scratch/verify_tahap39.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap39.py).
+- **Git Commit Checkpoint**: `2a7b913` — *fix(ocr): Tahap 40 micro-polish restoration of '!olom' -> 'kolom' and bullet token debris filtering*.
+- **Latar Belakang & Temuan Video Kelvin (Menit 02:35 & 03:54/04:15)**:
+  - Pada pengujian video menit 03:54 & 04:15, ditemukan salah tafsir optik huruf `'k'` menjadi `'!'` pada kalimat `"di !olom komentar"`.
+  - Pada menit 02:35, terdapat serpihan 1 token pendek di baris paling atas yang mengandung simbol bullet seperti `"•a•y"` yang ikut terbaca sebelum kalimat berita.
+- **Pekerjaan Rekayasa Presisi yang Dilakukan**:
+  1. **Restorasi Optik `!olom` $\rightarrow$ `kolom`**:
+     Di `_clean_ocr_line` ([`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py)), ditambahkan:
+     `t = re.sub(r'(?<=\s)!olom\b|^!olom\b', 'kolom', t, flags=re.IGNORECASE)`
+     Memulihkan `"di !olom komentar"` secara instan menjadi `"di kolom komentar"`.
+  2. **Pembersihan Debris Simbol Bullet / Titik Tengah**:
+     Di `_is_garbage_ocr_line` dan `_strip_top_unselected_debris` ([`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py)), ditambahkan filter:
+     `if len(t) < 8 and ('•' in t or '·' in t): return True`
+     Membuang token serpihan seperti `"•a•y"` atau `"·a"` tanpa membuang baris daftar bullet panjang.
+  3. **Penguncian Logika Lain**:
+     Logika cropping di `ocr_extractor.ps1`, batch/stitching di `screen.py`, dan endpoint `server.py` tetap 100% terkunci.
+- **Hasil Verifikasi**:
+  - `scratch/verify_tahap40.py` dan `scratch/verify_tahap39.py` lulus 100% tanpa regresi.
+
+### Tahap 41: Diagnosa Mendalam & Implementasi 4 Pilar Koneksi Wi-Fi Mirroring (Real Network Discovery, Auto-Enable Wireless Lockdown, & Error Banner) (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap41.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap41.py), [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py), & [`scratch/verify_tahap39.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap39.py).
+- **Git Commit Checkpoint**: `7daba19` — *feat(wifi): Tahap 41 - Auto-Enable Wireless Lockdown, wifi_state.json cache, real reachability discovery, and safe error banner reporting*.
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_41_WIFI_MIRRORING_DAN_NETWORK_DISCOVERY.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_41_WIFI_MIRRORING_DAN_NETWORK_DISCOVERY.md).
+- **Latar Belakang & Analisis Bukti Nyata Video Kelvin (00:53)**:
+  - Kelvin menguji tab `Wi-Fi` tanpa kabel (`Connection: No cable`). UI menampilkan `00008150-... (Wi-Fi)` dan status `✓ Wi-Fi ready`.
+  - Ketika `Start Mirroring` diklik (menit 00:11, 00:21, 00:39), tombol berubah menjadi `Connecting...` selama ~8.5 detik, terdengar suara proses berhenti di Windows (00:19), lalu tombol kembali menjadi `Start Mirroring` tanpa menampilkan layar iPhone dan tanpa pesan error apa pun di UI.
+  - **Akar Masalah #1 (Status Palsu)**: `renderWifi()` hanya memeriksa `wifi_paired_udids()` (keberadaan file plist lama di disk `%USERPROFILE%\.pymobiledevice3\remote_*.plist`), tanpa pernah memverifikasi keterjangkauan iPhone di jaringan lokal.
+  - **Akar Masalah #2 (Timeout 8.5s)**: `_wifi_provider` di `handset/wifi.py` menggunakan `BONJOUR_TIMEOUT = 8.0` detik untuk mencari siaran mDNS `_remotepairing._tcp.local.`. Karena tidak ditemukan, proses memblokir selama 8 detik lalu melempar `WifiNotFoundError`.
+  - **Akar Masalah #3 (Smoking Gun - Wireless Lockdown Mati)**: Layanan Wi-Fi Lockdown iOS (`com.apple.mobile.wireless_lockdown`) **wajib memiliki nilai `EnableWifiConnections = True`**. Jika belum disetel, iPhone mematikan port 62078 pada interface Wi-Fi dan tidak menyiarkan mDNS. Kode sebelumnya tidak pernah menyetel kunci ini secara otomatis saat kabel USB dicolokkan.
+  - **Akar Masalah #4 (Silent Error Wiping)**: `watchScreen()` di `app.js` langsung memanggil `load()` saat fase `error`, yang menimpa teks status dengan pesan default `"No cable. Choose Wi-Fi..."`, sementara elemen `screenNote` berada di dalam kontainer yang disembunyikan.
+  - **Akar Masalah #5 (Routing mDNS Windows)**: `_local_ipv4()` mengembalikan adapter APIPA `169.254.*` di awal, sehingga kueri mDNS keluar ke adapter yang salah.
+- **Pekerjaan Rekayasa yang Dilakukan (4 Pilar Solusi)**:
+  1. **PILAR 1: Auto-Enable Wireless Lockdown Saat Kabel USB Tercolok & Cache `wifi_state.json`**:
+     - Di `handset/server.py`: Begitu perangkat USB terdeteksi di `/api/status`, `trigger_auto_enable_wireless_lockdown(udid)` langsung dipicu di background thread.
+     - Di `handset/wifi.py`: Menyetel `EnableWifiConnections = True` di iPhone via `pymobiledevice3.lockdown`, membaca `wifi_mac_address`, mencari IP via ARP table (`find_ip_by_mac`), dan mencatat status ke [`wifi_state.json`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/wifi_state.json).
+     - Tombol *"Set up Wi-Fi"* (`pair_for_wifi`) juga mengintegrasikan pengaktifan kunci ini.
+  2. **PILAR 2: Penemuan Perangkat Wi-Fi Nyata (Real Network Discovery)**:
+     - Fungsi `probe_wifi_device(udid)` di `handset/wifi.py` menguji keterjangkauan nyata melalui:
+       * usbmux Network check (`list_devices()` bertipe Network).
+       * Direct TCP probe port 62078 ke `last_ip` (timeout 0.5s).
+       * ARP table cache lookup berdasarkan MAC address Wi-Fi iPhone.
+     - Status UI jujur dan transparan:
+       * `✓ Wi‑Fi Ready (Connected on LAN: 192.168.100.x)` jika terbukti aktif di LAN.
+       * `⚠️ Wi‑Fi Paired (Pastikan iPhone menyala & di Wi‑Fi yang sama)` jika profil pairing ada tetapi iPhone offline / terkunci di LAN.
+       * `🔌 Colok kabel USB 1x untuk aktifkan mode Wi‑Fi` jika izin Wireless Lockdown belum pernah diaktifkan.
+  3. **PILAR 3: Perbaikan Pipeline Streaming Layar & Kontrol di Mode Wi-Fi**:
+     - `_local_ipv4()` memprioritaskan IP private LAN (`192.168.*`, `10.*`) di urutan teratas dan memindahkan APIPA ke urutan terakhir.
+     - `BONJOUR_TIMEOUT` dipangkas dari 8.0 detik menjadi **3.5 detik**.
+     - Di `handset/screen.py`: Validasi `start_screen` memeriksa probe Wi-Fi dan `_serve` membungkus error dengan pesan diagnostik yang lengkap dengan informasi IP target.
+  4. **PILAR 4: Umpan Balik (Feedback) & Banner Diagnostik Jelas di UI**:
+     - Ditambahkan elemen `#screen-error-banner` tepat di bawah tombol `Start mirroring` di [`handset/web/index.html`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/index.html).
+     - Di [`handset/web/app.js`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/web/app.js): Pesan error tidak terhapus saat `load()` dipanggil, dan ditampilkan di banner merah tepat di bawah tombol:
+       `"⚠️ Gagal terhubung via Wi-Fi: iPhone tidak merespons di jaringan lokal. Pastikan layar iPhone menyala (unlocked), terhubung ke Wi-Fi yang sama dengan PC, atau colok kabel USB 1x untuk mengaktifkan izin Wi-Fi Sync."`
+     - Badge perangkat membedakan status `Wi-Fi (192.168.100.x)` (Online) dan `Wi-Fi (Offline)`.
+     - Bump cache buster ke `v=20261024_tahap41_wifi_mirroring_and_network_discovery`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap41.py`)**:
+  - Test 1 (Auto-Enable & `wifi_state.json` Persistence): PASS.
+  - Test 2 (Network Discovery & LAN Binding Prioritization): PASS.
+  - Test 3 (Backend `/api/status` & Wi-Fi Mirroring Error Reporting): PASS.
+  - Test 4 (Full Regression Tahap 40 OCR & Short Text): PASS.
+  - Pengujian regresi `scratch/verify_tahap40.py` dan `scratch/verify_tahap39.py` lulus 100% dalam 4.25 detik.
 
 
 
