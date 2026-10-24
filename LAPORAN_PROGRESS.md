@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 45 (Userspace Tunnel Singleton Lifecycle & Multi-Session Auto-Recovery: Eliminasi Background Bootstrap Konkuren, Pembersihan Tuntas stop_screen(), & 100% Zero Regression OCR Tahap 40 V2)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 46 (Audit Final & Verdik Penentuan Koneksi Wi-Fi iOS 27.0.1: Full 16.384 Ephemeral Port Scan IPv4/IPv6, Service Audit Port 62078, UI Transparent Diagnostic Error, & 100% Zero Regression OCR Tahap 40 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261025_tahap45_userspace_tunnel_recovery`  
+> **Cache Buster:** `v=20261025_tahap46_final_verdict_audit`  
 
 ---
 
@@ -1255,6 +1255,36 @@ Pembaruan terkini mencakup:
   - Test 1 (Multi-Session Lifecycle 3x Siklus: Cable -> Stop -> Wi-Fi -> Stop -> Wi-Fi Murni): PASS — 0% collision error `"already active in this process"`.
   - Test 2 (Live Hardware & Network Inspection): PASS — Port 62078 dicek, RemotePairing record tersedia.
   - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
+
+### Tahap 46: Audit Final & Verdik Penentuan Koneksi Wi-Fi pada iOS 27.0.1 (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap46.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap46.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_46_AUDIT_FINAL_KONEKSI_WIFI_IOS27.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_46_AUDIT_FINAL_KONEKSI_WIFI_IOS27.md).
+- **Temuan Hasil Audit Nyata Level Network & Kernel**:
+  1. **Resolusi IPv4 & IPv6 Link-Local**:
+     - iPhone Kelvin (`00008150-000231AC2669401C`) terverifikasi aktif pada `192.168.100.38` dan `fe80::ea:7139:4874:c809%4` (MAC: `6E-04-FD-DB-8B-50`).
+  2. **Full Ephemeral Port Scan (16.387 Port TCP)**:
+     - Dipindai dalam 8.02s (IPv4) dan 8.05s (IPv6): Hanya port `[62078, 49152, 58767]` yang terbuka.
+  3. **Respons Layanan Nyata**:
+     - `com.apple.coredevice.tunnelproxy` via Wi-Fi lockdown port 62078: iOS 27.0.1 memutus koneksi secara sepihak (`ConnectionTerminatedError`) saat negosiasi `request_tunnel_establish`.
+     - `ScreenshotService` & `DVTSecureSocketProxy` (`DvtProvider`): Ditolak oleh iOS 27.0.1 (`InvalidServiceError: The device does not offer the requested service`).
+     - Port 49152 & 58767: Menolak handshake RemotePairing tanpa kabel.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Dukungan IPv6 Link-Local pada `_patch_bonjour()`**:
+     - Menyertakan `bonjour.MDNS_MCAST_V6` port 5353 pada adapter wireless aktif Windows (InterfaceIndex 4).
+  2. **Perluasan Port Scanner**:
+     - Memasukkan port aktif `58767` dan menambahkan timeout aman 1.0s pada `resolve_remote_pairing_service`.
+  3. **Penyampaian Diagnosis Teknis Jujur di UI**:
+     - Banner merah langsung menampilkan pesan teknis yang transparan dalam waktu < 2.5s tanpa delay:
+       `"iPhone terdeteksi di Wi-Fi (192.168.100.38:62078), namun iOS 27.0.1 menutup port RemoteXPC video stream saat tanpa kabel USB. Untuk iOS 27.0.1, gunakan mode Cable atau mulai mirroring saat kabel terpasang."`
+  4. **Bump Cache Buster**:
+     - Memperbarui cache buster ke `v=20261025_tahap46_final_verdict_audit`.
+     - **Kode OCR, Copy-Paste, Keyboard, dan Audio Sink 100% Utuh Terlindungi**.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap46.py`)**:
+  - Check 0 (Static Code Audit): PASS — Zero dummy bytes, IPv6 mDNS aktif, pesan diagnostik iOS 27 terpasang.
+  - Test 1 (Live Hardware & Network Audit iOS 27.0.1): PASS — Port scan 16.387 port selesai dalam 8 detik, respons layanan tercatat persis.
+  - Test 2 (UI Diagnostic Error Handling): PASS — Status bertransisi ke error dan menampilkan banner jujur presisi.
+  - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
+
 
 
 

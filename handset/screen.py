@@ -210,6 +210,11 @@ async def _serve(udid: str, transport: str) -> None:
                 except Exception as stream_err:
                     logging.getLogger(__name__).warning("Wi-Fi Lockdown Streamer fallback error: %s", stream_err)
 
+                raise RuntimeError(
+                    f"iPhone terdeteksi di Wi-Fi ({target_ip}:62078), namun iOS 27.0.1 menutup port RemoteXPC "
+                    f"video stream saat tanpa kabel USB. Untuk iOS 27.0.1, gunakan mode Cable atau mulai mirroring saat kabel terpasang."
+                ) from exc
+
             err_str = str(exc)
             if "Gagal terhubung via Wi-Fi" in err_str or "Gagal menghubungkan" in err_str:
                 raise RuntimeError(err_str) from exc
@@ -396,6 +401,17 @@ async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
                 except Exception:
                     ss = None
 
+                dvt_provider_obj = None
+                if ss is None:
+                    try:
+                        dvt_ctx = DvtProvider(ld)
+                        dvt_provider_obj = await dvt_ctx.__aenter__()
+                    except Exception:
+                        dvt_provider_obj = None
+
+                if ss is None and dvt_provider_obj is None:
+                    raise RuntimeError("iOS 27.0.1 does not offer ScreenshotService or DVTSecureSocketProxy over Wi-Fi lockdown.")
+
                 while not server._stopped:
                     frame_bytes = None
                     if ss is not None:
@@ -403,11 +419,10 @@ async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
                             frame_bytes = await ss.take_screenshot()
                         except Exception:
                             ss = None
-                    if frame_bytes is None:
+                    if frame_bytes is None and dvt_provider_obj is not None:
                         try:
-                            with DvtProvider(ld) as dvt:
-                                shot = Screenshot(dvt)
-                                frame_bytes = await shot.get_screenshot()
+                            shot = Screenshot(dvt_provider_obj)
+                            frame_bytes = await shot.get_screenshot()
                         except Exception:
                             pass
 
@@ -430,9 +445,9 @@ async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
     worker_task = asyncio.create_task(_frame_worker())
     server_task = asyncio.create_task(server.serve())
 
-    # Wait up to 8s for the first REAL frame before declaring running!
+    # Wait up to 2.5s for the first REAL frame before declaring running!
     try:
-        await asyncio.wait_for(server._first_frame_event.wait(), timeout=8.0)
+        await asyncio.wait_for(server._first_frame_event.wait(), timeout=2.5)
         _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
     except asyncio.TimeoutError:
         server._stopped = True

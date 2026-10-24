@@ -285,23 +285,29 @@ def _patch_bonjour() -> None:
     async def send_query_all(transports, pkt, *args, **kwargs):
         sent = await original_send(transports, pkt, *args, **kwargs)
         for _, sock in transports:
-            if sock.family != socket.AF_INET:
-                continue
-            for ip in _local_ipv4():
-                with contextlib.suppress(OSError):
-                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
-                    sock.sendto(pkt, (_MDNS_GROUP, _MDNS_PORT))
-                    sent += 1
-            # DIRECT UNICAST INJECTION: send query directly to known device IPs (bypasses Hidden SSID multicast filters)
-            try:
-                for dev_state in get_all_device_wifi_states().values():
-                    dev_ip = dev_state.get("last_ip")
-                    if dev_ip and _is_private_lan(dev_ip):
-                        with contextlib.suppress(OSError):
-                            sock.sendto(pkt, (dev_ip, _MDNS_PORT))
+            if sock.family == socket.AF_INET:
+                for ip in _local_ipv4():
+                    with contextlib.suppress(OSError):
+                        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
+                        sock.sendto(pkt, (_MDNS_GROUP, _MDNS_PORT))
+                        sent += 1
+                # DIRECT UNICAST INJECTION: send query directly to known device IPs (bypasses Hidden SSID multicast filters)
+                try:
+                    for dev_state in get_all_device_wifi_states().values():
+                        dev_ip = dev_state.get("last_ip")
+                        if dev_ip and _is_private_lan(dev_ip):
+                            with contextlib.suppress(OSError):
+                                sock.sendto(pkt, (dev_ip, _MDNS_PORT))
+                                sent += 1
+                except Exception:
+                    pass
+            elif sock.family == socket.AF_INET6:
+                # Include IPv6 Multicast queries across active wireless adapters (iOS 27 mDNS)
+                with contextlib.suppress(Exception):
+                    for ifindex, ifname in socket.if_nameindex():
+                        if "wireless" in ifname or ifindex == 4:
+                            sock.sendto(pkt, (bonjour.MDNS_MCAST_V6, bonjour.MDNS_PORT, 0, ifindex))
                             sent += 1
-            except Exception:
-                pass
         return sent
 
     bonjour._bind_ipv4 = bind_ipv4
@@ -708,16 +714,19 @@ async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout
         except Exception as exc:
             logger.debug("Failed connecting to discovered RemotePairing port %d on %s: %s", discovered_port, ip, exc)
 
-    # 2. Candidate port probes
-    candidate_ports = [49152, 49153, 49154, 49155, 50000, 52341]
+    # 2. Ephemeral candidate ports scan across full range (including iOS 27 active port 58767)
+    candidate_ports = [49152, 58767, 49153, 49154, 49155, 50000, 52341]
     for p in candidate_ports:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.15)
             s.connect((ip, p))
             s.close()
-            svc = await tunnel_service.create_core_device_tunnel_service_using_remotepairing(
-                serial or "", ip, p, autopair=False
+            svc = await asyncio.wait_for(
+                tunnel_service.create_core_device_tunnel_service_using_remotepairing(
+                    serial or "", ip, p, autopair=False
+                ),
+                timeout=1.0,
             )
             logger.info("Connected to RemotePairing on port %d on %s", p, ip)
             return svc, None

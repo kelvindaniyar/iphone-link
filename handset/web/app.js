@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261025_tahap45_userspace_tunnel_recovery";
+const MIRROR_PAGE = "/mirror.html?v=20261025_tahap46_final_verdict_audit";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
