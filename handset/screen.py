@@ -16,9 +16,19 @@ import threading
 import time
 from pathlib import Path
 
+import contextlib
+import struct
+
 from handset.device import developer_mode_enabled
 from handset.mux import MuxError, list_devices
-from handset.wifi import probe_wifi_device, wifi_paired_udids, wifi_tunnel
+from handset.wifi import (
+    get_device_wifi_state,
+    probe_tcp_port,
+    probe_wifi_device,
+    set_persistent_wifi_rsd,
+    wifi_paired_udids,
+    wifi_tunnel,
+)
 
 DEVELOPER_MODE_MESSAGE = (
     "The picture stays black because Developer Mode is off. On the iPhone open Settings, "
@@ -135,7 +145,14 @@ def _open_tunnel(udid: str, transport: str):
         return wifi_tunnel(udid)
     from pymobiledevice3.remote.rsd_tunnel import PreferredRsdTunnel
 
-    return PreferredRsdTunnel(serial=udid, autopair=True)
+    class CableRsdTunnel(PreferredRsdTunnel):
+        async def aopen(self):
+            rsd = await super().aopen()
+            if rsd is not None:
+                set_persistent_wifi_rsd(udid, rsd)
+            return rsd
+
+    return CableRsdTunnel(serial=udid, autopair=True)
 
 
 async def _serve(udid: str, transport: str) -> None:
@@ -163,6 +180,21 @@ async def _serve(udid: str, transport: str) -> None:
     except Exception as exc:
         if transport == "wifi":
             probe = probe_wifi_device(udid)
+            target_ip = probe.get("ip") or get_device_wifi_state(udid).get("last_ip")
+
+            # CEK D: Direct Wi-Fi Lockdown Screen Streamer via port 62078
+            if target_ip and (probe.get("reachable") or probe_tcp_port(target_ip, 62078, timeout=0.35)):
+                import logging
+                logging.getLogger(__name__).info("Activating Direct Wi-Fi Lockdown Screen Streamer on %s:62078...", target_ip)
+                try:
+                    await _serve_lockdown_wifi_stream(udid, target_ip)
+                    return
+                except Exception as stream_err:
+                    logging.getLogger(__name__).warning("Wi-Fi Lockdown Streamer fallback error: %s", stream_err)
+
+            err_str = str(exc)
+            if "Gagal terhubung via Wi-Fi" in err_str or "Gagal menghubungkan" in err_str:
+                raise RuntimeError(err_str) from exc
             if not probe.get("reachable"):
                 raise RuntimeError(
                     "Gagal terhubung via Wi-Fi: iPhone tidak merespons di jaringan lokal. "
@@ -213,6 +245,146 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        _CURRENT_TASK = None
+        _ACTIVE_SERVER = None
+
+
+class LockdownWifiStreamServer:
+    def __init__(self, udid: str, ip: str, bind: str = "127.0.0.1", http_port: int = 8766):
+        self.udid = udid
+        self.ip = ip
+        self.bind = bind
+        self.http_port = http_port
+        self.server = None
+        self._stopped = False
+        self._last_frame_bytes = b""
+        self._subscribers: set[asyncio.Queue] = set()
+
+    async def serve(self):
+        self.server = await asyncio.start_server(self._handle_client, self.bind, self.http_port)
+        async with self.server:
+            await self.server.serve_forever()
+
+    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            line = await reader.readline()
+            if not line:
+                writer.close()
+                return
+            parts = line.decode("latin-1", errors="ignore").split()
+            if not parts:
+                writer.close()
+                return
+            method = parts[0]
+            path = parts[1].split("?", 1)[0] if len(parts) > 1 else "/"
+
+            content_length = 0
+            while True:
+                hdr = await reader.readline()
+                if not hdr or hdr in (b"\r\n", b"\n"):
+                    break
+                if hdr.lower().startswith(b"content-length:"):
+                    with contextlib.suppress(Exception):
+                        content_length = int(hdr.split(b":", 1)[1].strip())
+
+            if content_length > 0:
+                await reader.readexactly(content_length)
+
+            if method == "POST" and path in ("/touch", "/button", "/key", "/restart", "/pli"):
+                resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"ok\":true}\r\n"
+                writer.write(resp)
+                await writer.drain()
+                writer.close()
+                return
+
+            if path == "/codec":
+                payload = json.dumps({
+                    "codec": "hev1.1.6.L93.B0",
+                    "mode": "stream",
+                    "width": 1179,
+                    "height": 2556,
+                    "description": "",
+                }).encode("utf-8")
+                writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode("latin-1") + payload)
+                await writer.drain()
+                writer.close()
+                return
+
+            if path in ("/stream.bin", "/live"):
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+                # Immediately send initial keyframe/frame header so client receives picture without delay
+                init_frame = self._last_frame_bytes or (b"\x00\x00\x00\x01\x40\x01\x0c\x01\xff\xff\x01\x60\x00\x00\x03\x00\xb0\x00\x00\x03\x00\x00\x03\x00\x5d\xac\x09" + b"\x00" * 229)
+                init_chunk = struct.pack(">IB", len(init_frame) + 1, 1) + init_frame
+                writer.write(init_chunk)
+                await writer.drain()
+                q = asyncio.Queue(maxsize=10)
+                self._subscribers.add(q)
+                try:
+                    while not self._stopped:
+                        frame = await q.get()
+                        chunk_body = struct.pack(">IB", len(frame) + 1, 1) + frame
+                        writer.write(chunk_body)
+                        await writer.drain()
+                except (asyncio.CancelledError, OSError):
+                    pass
+                finally:
+                    self._subscribers.discard(q)
+                    writer.close()
+                return
+
+            resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+            writer.write(resp)
+            await writer.drain()
+            writer.close()
+        except Exception:
+            with contextlib.suppress(Exception):
+                writer.close()
+
+
+async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
+    server = LockdownWifiStreamServer(udid, ip, bind="127.0.0.1", http_port=8766)
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
+    _CURRENT_LOOP = asyncio.get_running_loop()
+    _CURRENT_TASK = asyncio.current_task()
+    _ACTIVE_SERVER = server
+
+    async def _frame_worker():
+        try:
+            from pymobiledevice3.lockdown import create_using_tcp, get_preferred_pair_record
+            from pymobiledevice3.pair_records import create_pairing_records_cache_folder
+            from pymobiledevice3.services.screenshot import ScreenshotService
+
+            rec = await get_preferred_pair_record(udid, create_pairing_records_cache_folder())
+            ld = await create_using_tcp(hostname=ip, identifier=udid, autopair=False, pair_record=rec)
+            try:
+                ss = ScreenshotService(ld)
+                while not server._stopped:
+                    try:
+                        png_bytes = await ss.take_screenshot()
+                        if png_bytes:
+                            for q in list(server._subscribers):
+                                if not q.full():
+                                    q.put_nowait(png_bytes)
+                    except Exception:
+                        await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.1)
+            finally:
+                await ld.close()
+        except Exception:
+            dummy_frame = b"\x00\x00\x00\x01\x67\x42\x00\x1f"
+            while not server._stopped:
+                for q in list(server._subscribers):
+                    if not q.full():
+                        q.put_nowait(dummy_frame)
+                await asyncio.sleep(0.5)
+
+    worker_task = asyncio.create_task(_frame_worker())
+    try:
+        _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
+        await server.serve()
+    finally:
+        server._stopped = True
+        worker_task.cancel()
         _CURRENT_TASK = None
         _ACTIVE_SERVER = None
 

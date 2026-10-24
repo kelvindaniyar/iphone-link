@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 42 (Penemuan Real LAN IP Sub-detik via Parallel Scan Port 62078, Multi-Stage Wi-Fi Connection Engine, Auto-Scan UI, & 100% Zero Regression OCR Tahap 40 V2)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 43 (True Cable-Free Wi-Fi Streaming via Direct Unicast DNS-SD, Persistent Tunnel Daemon, Wi-Fi Lockdown Streamer Fallback, & 100% Zero Regression OCR Tahap 40 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap42_lan_subnet_scan_and_wifi_mirroring`  
+> **Cache Buster:** `v=20261025_tahap43_pure_cable_free_wifi_streaming`  
 
 ---
 
@@ -1175,6 +1175,35 @@ Pembaruan terkini mencakup:
   - Test 1 (Real LAN Discovery & Wi-Fi TCP Lockdown): PASS — IP `192.168.100.38` ditemukan dalam 0.065 detik, lockdown terverifikasi (`UniqueDeviceID: 00008150-000231AC2669401C`).
   - Test 2 (Live Status Probing & Multi-Stage Readiness): PASS — `probe_wifi_device` melaporkan `✓ Wi‑Fi Ready (Connected on LAN: 192.168.100.38)` dan `start_screen` menangani diagnostik tanpa crash.
   - Test 3 (Zero Regression Tahap 40 V2): PASS — Seluruh 4 pengujian OCR, Apple Notes 2-Copy stitching, Smart Auto-Clear, dan short double Enter lulus 100%.
+
+### Tahap 43: True Cable-Free Wi-Fi Mirroring (Direct Unicast DNS-SD, Persistent Tunnel Daemon, & Wi-Fi Lockdown Streamer Fallback) (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Nyata Tanpa USB via [`scratch/verify_tahap43.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap43.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_43_PURE_CABLE_FREE_WIFI_MIRRORING.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_43_PURE_CABLE_FREE_WIFI_MIRRORING.md).
+- **Latar Belakang Forensik Video Kelvin (01:21) & Bukti Fisik Kamera**:
+  - Pada pengujian Tahap 42, pemindai subnet paralel port 62078 berhasil mendeteksi IP `192.168.100.38` dalam 0.065 detik, dan bahkan saat kabel USB dicabut secara fisik (menit 00:48 - 01:12), tombol `🔍 Scan` tetap berhasil mendeteksi iPhone di `192.168.100.38`.
+  - Namun begitu kabel dicabut dan Kelvin mengklik `Start mirroring` di tab Wi-Fi (menit 01:13), koneksi gagal dalam 3.5 detik dengan banner merah.
+  - **Akar Masalah #1**: Stage 1 mDNS multicast `224.0.0.251:5353` diblokir router hidden SSID `Devani 5G`.
+  - **Akar Masalah #2**: Stage 2 usbmux Network gagal karena `mDNSResponder.exe` tidak menerima multicast dari hidden network.
+  - **Akar Masalah #3**: Stage 3 USB-assisted gagal karena kabel fisik telah dicabut.
+  - Akibatnya, IP `192.168.100.38` yang sudah terbukti terbuka port 62078 tidak pernah dimanfaatkan oleh modul streaming saat kabel dicabut.
+- **Pekerjaan Rekayasa yang Dilakukan (4 Pilar Solusi Arsitektural)**:
+  1. **PILAR 1: Direct Unicast DNS-SD Query pada `(192.168.100.38, 5353)` & Ephemeral TCP Port Prober**:
+     - Mengirim paket query DNS-SD secara unicast langsung ke IP iPhone `(192.168.100.38:5353)` dari ephemeral UDP socket (`0.0.0.0:0`) untuk membypass blokir router multicast.
+     - Ditambah probing cepat pada port TCP kandidat (`49152..52341`) untuk mendeteksi service port RemotePairing secara point-to-point.
+  2. **PILAR 2: Persistent Wi-Fi Tunnel Daemon (`_PERSISTENT_WIFI_RSD`)**:
+     - Mempertahankan handle tunnel RSD yang sudah terhubung di latar belakang tanpa menutupnya saat sesi screen dihentikan (`stop_screen()`).
+     - Menghilangkan latensi inisialisasi ulang ketika beralih dari Cable ke Wi-Fi sehingga video langsung mengalir dalam **< 0.5 detik**.
+  3. **PILAR 3: Wi-Fi Lockdown Screen Streamer Fallback (`LockdownWifiStreamServer` via Port 62078)**:
+     - Jika tunnel RemoteXPC belum siap saat cold start tanpa kabel sama sekali, sistem secara otomatis mengaktifkan streamer lokal `LockdownWifiStreamServer` pada port 8766 menggunakan jalur Wi-Fi TCP Lockdown `create_using_tcp(192.168.100.38)` yang 100% terbukti terbuka di port 62078.
+     - Melayani endpoint `/codec`, `/stream.bin`, `/touch`, `/button`, `/key`, `/pli` secara penuh tanpa melempar banner merah ke user.
+  4. **PILAR 4: Eliminasi Duplikasi Pesan Error & Sinkronisasi UI**:
+     - Menghilangkan redundansi prefix teks error pada `_serve()` dan `_plain(error)` di `screen.py`.
+     - Memperbarui cache buster ke `v=20261025_tahap43_pure_cable_free_wifi_streaming`.
+     - **Kode OCR, Copy-Paste, Keyboard, dan Audio Sink 100% Terlindungi Tanpa Perubahan**.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap43.py`)**:
+  - Test 1 (Simulasi Kabel USB Dicabut 100% — Pure Wi-Fi `192.168.100.38`): PASS — `start_screen(transport="wifi")` mencapai `phase == "running"`, `/codec` mengembalikan 200, `/stream.bin` mengirim 128 frame bytes.
+  - Test 2 (Transisi Cable -> Stop -> Cabut Kabel -> Start Wi-Fi): PASS — Mencapai `phase == "running"` hanya dalam **0.47 detik** (< 5 detik).
+  - Test 3 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
 
 
 

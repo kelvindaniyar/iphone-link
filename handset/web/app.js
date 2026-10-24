@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap42_lan_subnet_scan_and_wifi_mirroring";
+const MIRROR_PAGE = "/mirror.html?v=20261025_tahap43_pure_cable_free_wifi_streaming";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 

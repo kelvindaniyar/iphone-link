@@ -292,6 +292,16 @@ def _patch_bonjour() -> None:
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
                     sock.sendto(pkt, (_MDNS_GROUP, _MDNS_PORT))
                     sent += 1
+            # DIRECT UNICAST INJECTION: send query directly to known device IPs (bypasses Hidden SSID multicast filters)
+            try:
+                for dev_state in get_all_device_wifi_states().values():
+                    dev_ip = dev_state.get("last_ip")
+                    if dev_ip and _is_private_lan(dev_ip):
+                        with contextlib.suppress(OSError):
+                            sock.sendto(pkt, (dev_ip, _MDNS_PORT))
+                            sent += 1
+            except Exception:
+                pass
         return sent
 
     bonjour._bind_ipv4 = bind_ipv4
@@ -577,6 +587,90 @@ class WifiNotFoundError(RuntimeError):
     pass
 
 
+_PERSISTENT_WIFI_RSD = None
+_PERSISTENT_WIFI_UDID: Optional[str] = None
+
+
+def get_persistent_wifi_rsd(udid: Optional[str] = None):
+    """Retrieve existing active Wi-Fi RSD tunnel if healthy and matching UDID."""
+    global _PERSISTENT_WIFI_RSD, _PERSISTENT_WIFI_UDID
+    if _PERSISTENT_WIFI_RSD is not None and (not udid or _PERSISTENT_WIFI_UDID == udid):
+        try:
+            if hasattr(_PERSISTENT_WIFI_RSD, "peer_info") and _PERSISTENT_WIFI_RSD.peer_info:
+                return _PERSISTENT_WIFI_RSD
+        except Exception:
+            _PERSISTENT_WIFI_RSD = None
+            _PERSISTENT_WIFI_UDID = None
+    return None
+
+
+def set_persistent_wifi_rsd(udid: str, rsd) -> None:
+    """Register persistent Wi-Fi RSD tunnel so it survives user stop/start and cable disconnection."""
+    global _PERSISTENT_WIFI_RSD, _PERSISTENT_WIFI_UDID
+    _PERSISTENT_WIFI_RSD = rsd
+    _PERSISTENT_WIFI_UDID = udid
+
+
+async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout: float = 1.5):
+    """Directly resolve and connect to RemotePairing service on target IP without multicast Bonjour."""
+    from pymobiledevice3 import bonjour
+    from pymobiledevice3.remote import tunnel_service
+
+    discovered_port: Optional[int] = None
+    loop = asyncio.get_running_loop()
+
+    # 1. Ephemeral UDP socket to send direct Unicast DNS-SD query on (ip, 5353)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setblocking(False)
+        sock.bind(("0.0.0.0", 0))
+        query = bonjour.build_query(bonjour.REMOTEPAIRING_SERVICE_NAME, bonjour.QTYPE_PTR, unicast=True)
+        await loop.sock_sendto(sock, query, (ip, 5353))
+        end = loop.time() + min(timeout, 1.0)
+        while loop.time() < end:
+            try:
+                data = await asyncio.wait_for(loop.sock_recv(sock, 4096), timeout=max(0.05, end - loop.time()))
+                for rr in bonjour.parse_mdns_message(data):
+                    if rr.get("type") == bonjour.QTYPE_SRV and rr.get("port"):
+                        discovered_port = int(rr["port"])
+                        break
+                if discovered_port:
+                    break
+            except (asyncio.TimeoutError, OSError):
+                break
+        sock.close()
+    except Exception as exc:
+        logger.debug("Unicast DNS-SD resolution failed on %s: %s", ip, exc)
+
+    if discovered_port:
+        try:
+            logger.info("Found RemotePairing port %d on %s via Unicast DNS-SD", discovered_port, ip)
+            svc = await tunnel_service.create_core_device_tunnel_service_using_remotepairing(
+                serial or "", ip, discovered_port, autopair=False
+            )
+            return svc, None
+        except Exception as exc:
+            logger.debug("Failed connecting to discovered RemotePairing port %d on %s: %s", discovered_port, ip, exc)
+
+    # 2. Candidate port probes
+    candidate_ports = [49152, 49153, 49154, 49155, 50000, 52341]
+    for p in candidate_ports:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.15)
+            s.connect((ip, p))
+            s.close()
+            svc = await tunnel_service.create_core_device_tunnel_service_using_remotepairing(
+                serial or "", ip, p, autopair=False
+            )
+            logger.info("Connected to RemotePairing on port %d on %s", p, ip)
+            return svc, None
+        except Exception:
+            continue
+
+    return None, None
+
+
 async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fallback: bool = True):
     from pymobiledevice3.lockdown import create_using_tcp, create_using_usbmux
     from pymobiledevice3.pair_records import create_pairing_records_cache_folder, get_preferred_pair_record
@@ -585,9 +679,17 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
     _patch_bonjour()
 
     # Ensure we know the target device's active LAN IP
-    ip = discover_iphone_ip_on_lan(serial)
+    cached_info = get_device_wifi_state(serial) if serial else {}
+    ip = discover_iphone_ip_on_lan(serial) or cached_info.get("last_ip")
 
-    # STAGE 1: RemotePairing over Bonjour / mDNS
+    # STAGE 1: Direct Unicast DNS-SD & Ephemeral Scan on target IP (0% multicast dependency!)
+    if ip:
+        svc, ld = await resolve_remote_pairing_service(serial, ip, timeout=1.5)
+        if svc is not None:
+            logger.info("Wi-Fi Stage 1 SUCCESS: Direct Unicast RemotePairing on %s", ip)
+            return svc, ld
+
+    # STAGE 2: RemotePairing over Bonjour / mDNS (with unicast injection from _patch_bonjour)
     try:
         services = await tunnel_service.get_remote_pairing_tunnel_services(
             udid=serial, bonjour_timeout=2.0
@@ -595,31 +697,31 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
         if services:
             for extra in services[1:]:
                 await extra.close()
-            logger.info("Wi-Fi Stage 1 SUCCESS: Connected via Bonjour RemotePairing for %s", serial)
+            logger.info("Wi-Fi Stage 2 SUCCESS: Connected via Bonjour RemotePairing for %s", serial)
             return services[0], None
     except Exception as e:
-        logger.debug("Wi-Fi Stage 1 Bonjour failed: %s", e)
+        logger.debug("Wi-Fi Stage 2 Bonjour failed: %s", e)
 
-    # STAGE 2: CoreDeviceTunnelProxy over usbmux Network connection
+    # STAGE 3: CoreDeviceTunnelProxy over usbmux Network connection
     try:
         ld_net = await create_using_usbmux(serial=serial, connection_type="Network", autopair=True)
         proxy = await tunnel_service.CoreDeviceTunnelProxy.create(ld_net)
-        logger.info("Wi-Fi Stage 2 SUCCESS: CoreDeviceTunnelProxy over usbmux Network")
+        logger.info("Wi-Fi Stage 3 SUCCESS: CoreDeviceTunnelProxy over usbmux Network")
         return proxy, ld_net
     except Exception as e:
-        logger.debug("Wi-Fi Stage 2 usbmux Network failed: %s", e)
+        logger.debug("Wi-Fi Stage 3 usbmux Network failed: %s", e)
 
-    # STAGE 3: USB-Assisted Bootstrap / Hybrid Fallback if cable is still plugged in
+    # STAGE 4: USB-Assisted Bootstrap / Hybrid Fallback if cable is still plugged in
     try:
         ld_usb = await create_using_usbmux(serial=serial, connection_type="USB", autopair=True)
         with contextlib.suppress(Exception):
             await ld_usb.set_enable_wifi_connections(True)
             await ld_usb.set_value(True, "com.apple.mobile.wireless_lockdown", "EnableWifiDebugging")
         proxy = await tunnel_service.CoreDeviceTunnelProxy.create(ld_usb)
-        logger.info("Wi-Fi Stage 3 SUCCESS: Bootstrapped via USB-Assisted Hybrid Link")
+        logger.info("Wi-Fi Stage 4 SUCCESS: Bootstrapped via USB-Assisted Hybrid Link")
         return proxy, ld_usb
     except Exception as e:
-        logger.debug("Wi-Fi Stage 3 USB bootstrap failed: %s", e)
+        logger.debug("Wi-Fi Stage 4 USB bootstrap failed: %s", e)
 
     target_info = f" (IP terakhir: {ip})" if ip else ""
     raise WifiNotFoundError(
@@ -630,10 +732,33 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
 
 
 def wifi_tunnel(udid: str):
-    """An RSD tunnel to ``udid`` over Wi-Fi, used like ``PreferredRsdTunnel``."""
+    """An RSD tunnel to ``udid`` over Wi-Fi, with persistent daemon reuse."""
     from pymobiledevice3.remote import userspace_tunnel
 
     class WifiRsdTunnel(userspace_tunnel.UserspaceRsdTunnel):
+        def __init__(self, serial: Optional[str] = None, autopair: bool = False) -> None:
+            super().__init__(serial=serial, autopair=autopair)
+            self._using_persistent = False
+
+        async def aopen(self):
+            persistent = get_persistent_wifi_rsd(self.serial)
+            if persistent is not None:
+                logger.info("Reusing Persistent Wi-Fi RSD Tunnel for %s", self.serial)
+                self.rsd = persistent
+                self._using_persistent = True
+                return persistent
+
+            rsd = await self._aopen_locked()
+            set_persistent_wifi_rsd(self.serial, rsd)
+            self._using_persistent = True
+            return rsd
+
+        async def aclose(self):
+            # Keep persistent tunnel alive across user stop/start toggles!
+            if self._using_persistent:
+                return
+            await super().aclose()
+
         async def _aopen_locked(self):
             original = userspace_tunnel._create_no_root_tunnel_provider
             userspace_tunnel._create_no_root_tunnel_provider = _wifi_provider
