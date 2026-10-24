@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 build/
 dist/
+release/
 *.log
 .playwright-mcp/
 .venv/
@@ -13,3 +14,13 @@ venv/
 pair_records/
 *.egg-info/
 scratch/
+.pane_webview_storage/
+*.zip
+
+# Debug, OCR Temporary artifacts & Personal state files
+debug_ocr_*
+debug_metrics.json
+typed_history.json
+user_settings.json
+wifi_state.json
+

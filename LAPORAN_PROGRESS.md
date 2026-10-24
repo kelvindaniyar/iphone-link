@@ -1353,6 +1353,35 @@ Pembaruan terkini mencakup:
   - Test 5 (Safe Idle Keep-Awake & Drag Protection): PASS — Seleksi teks dilindungi 100%.
   - Test 6 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
 
+---
+
+### Tahap 48: Rebranding Resmi "iPhone Link", Logo Native (.SVG/.PNG/.ICO), Portable Release Builder, & Dokumentasi GitHub (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap48.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap48.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_48_REBRANDING_DAN_PORTABLE_RELEASE.md).
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Pembuatan Aset Logo & Icon Native**:
+     - Desain visual: Squircle Windows 11 Fluent Liquid Glass dengan gradasi diagonal halus (`#0078D4` $\rightarrow$ `#00B4D8` $\rightarrow$ `#4F46E5`), border kristal mengkilap, siluet translucent glass pane Windows 11 di background-right, siluet modern iPhone dengan Dynamic Island di foreground, dan ikon "Link" cyan-putih bercahaya di tengah layar iPhone yang memancarkan sinyal gelombang konektivitas ke jendela Windows.
+     - Dihasilkan aset: `assets/logo.svg`, `handset/web/logo.svg`, `assets/logo.png` (512x512 RGBA), dan `assets/iphone_link.ico` (multi-size: 16, 32, 48, 64, 128, 256).
+  2. **Rebranding UI & Windows Native Window**:
+     - `handset/gui.py`: Window title `"iPhone Link"`, integrasi `SetCurrentProcessExplicitAppUserModelID("Kelvin.iPhoneLink.Desktop.1")` dan `WM_SETICON` pada HWND Win32 sehingga Taskbar Windows 11 menampilkan icon resmi iPhone Link.
+     - `handset/web/index.html` & `mirror.html`: Judul `"iPhone Link — iPhone Mirroring & Control for Windows"`, icon logo 18px di Top Bar, placeholder logo 76px di `#screen-empty`, dan atribusi fork ke `teyboxv1/pane-iphone-mirror-windows` di footer Side Drawer.
+     - `pyproject.toml`: Paket dinamai `iphone-link` v1.0.0.
+  3. **Peluncur Portable & 1-Click Shortcut Creator**:
+     - `iPhone Link.bat`: Peluncur silent tanpa jendela hitam konsol CMD (menggunakan `pythonw.exe`).
+     - `Create-Desktop-Shortcut.bat`: Script 1-klik membuat shortcut Desktop dan Start Menu Windows lengkap dengan icon native `assets/iphone_link.ico`.
+     - `build_portable_release.ps1`: Otomasi pembuatan paket rilis bersih `release/iPhone-Link-Portable-v1.0.0.zip` (0.38 MB).
+  4. **Proteksi Mutlak Data Pribadi Kelvin di `.gitignore`**:
+     - Menjamin 0% data pribadi Kelvin (`debug_ocr_*`, `debug_metrics.json`, `typed_history.json`, `user_settings.json`, `wifi_state.json`, `scratch/`, `release/`) ter-push ke GitHub publik dengan meng-untrack dan menguncinya di `.gitignore`.
+  5. **Dokumentasi GitHub Kelas Dunia (`README.md`)**:
+     - Banner logo, atribusi fork hulu ke `teyboxv1/pane-iphone-mirror-windows` di bawah GPL-3.0, tabel 11 fitur utama, tabel keyboard shortcuts lengkap, panduan Quick Start (Portable & Source), dan diagram arsitektur.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap48.py`)**:
+  - Test 1 (Logo & Icon Assets): PASS — SVG, PNG 512x512, dan multi-size ICO (16, 32, 48, 64, 128, 256) valid.
+  - Test 2 (Application & UI Rebranding): PASS — GUI, index, mirror, dan pyproject konsisten.
+  - Test 3 (Launchers, Shortcut & Packaging): PASS — Silent launcher, shortcut script, dan build script valid.
+  - Test 4 (Security & Documentation): PASS — .gitignore melindungi seluruh file privat dan README memuat atribusi lengkap.
+  - Test 5 (Zero Regression Tahap 47 V2 & Tahap 40 OCR): PASS — Seluruh fitur stealth, wake/unlock, lock, OCR, dan copy-paste lulus 100%.
+
+
 
 
 

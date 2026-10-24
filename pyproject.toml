@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pane"
-version = "0.2.0"
-description = "Mirror and control iPhone on Windows"
+name = "iphone-link"
+version = "1.0.0"
+description = "iPhone Link — Native iPhone Mirroring and Control for Windows 11"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -16,3 +16,4 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["handset*"]
+

@@ -2,12 +2,12 @@
 setlocal
 set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
 taskkill /F /IM python.exe >nul 2>&1
-title Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
+title iPhone Link — Native iPhone Mirroring for Windows 11
 
 cd /d "%~dp0"
 
 echo ===================================================
-echo   Pane - iPhone Mirroring (WinUI 3 Liquid Glass)
+echo   iPhone Link — Native iPhone Mirroring
 echo ===================================================
 echo.
 

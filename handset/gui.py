@@ -29,7 +29,10 @@ class WindowApi:
     def _get_hwnd(self):
         try:
             import ctypes
-            return ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+            h = ctypes.windll.user32.FindWindowW(None, "iPhone Link")
+            if not h:
+                h = ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+            return h
         except Exception:
             return None
 
@@ -86,7 +89,7 @@ class WindowApi:
         try:
             import ctypes
             from ctypes import wintypes
-            hwnd = ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+            hwnd = self._get_hwnd()
             if hwnd:
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     wintypes.HWND(hwnd),
@@ -101,15 +104,42 @@ class WindowApi:
         return True
 
 
-def apply_dwm_effects(title="iPhone Mirroring"):
-    """Terapkan efek DWM Windows 11 (sudut membulat + dark mode) secara aman pada HWND."""
+def apply_dwm_effects(title="iPhone Link"):
+    """Terapkan efek DWM Windows 11 (sudut membulat + dark mode) dan icon native pada HWND."""
     try:
         import ctypes
         from ctypes import wintypes
         time.sleep(0.7)
         hwnd = ctypes.windll.user32.FindWindowW(None, title)
         if not hwnd:
+            hwnd = ctypes.windll.user32.FindWindowW(None, "iPhone Mirroring")
+        if not hwnd:
             return
+
+        # 0. Set Native Windows Window Icon (.ico)
+        try:
+            ico_candidates = [
+                Path(__file__).resolve().parent.parent / "assets" / "iphone_link.ico",
+                Path(__file__).resolve().parent.parent / "packaging" / "pane.ico",
+            ]
+            for ico_p in ico_candidates:
+                if ico_p.exists():
+                    IMAGE_ICON = 1
+                    LR_LOADFROMFILE = 0x0010
+                    LR_DEFAULTSIZE = 0x0040
+                    WM_SETICON = 0x0080
+                    ICON_SMALL = 0
+                    ICON_BIG = 1
+                    hicon = ctypes.windll.user32.LoadImageW(
+                        None, str(ico_p), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+                    )
+                    if hicon:
+                        ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_SMALL, hicon)
+                        ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_BIG, hicon)
+                    break
+        except Exception:
+            pass
+
         dwmapi = getattr(ctypes.windll, "dwmapi", None)
         if not dwmapi:
             return
@@ -135,7 +165,7 @@ def wait_for_server(url="http://127.0.0.1:8765/api/status", timeout=10):
     start = time.time()
     while time.time() - start < timeout:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Pane-Launcher"})
+            req = urllib.request.Request(url, headers={"User-Agent": "iPhoneLink-Launcher"})
             with urllib.request.urlopen(req, timeout=1.0) as resp:
                 if resp.status == 200:
                     return True
@@ -147,14 +177,22 @@ def wait_for_server(url="http://127.0.0.1:8765/api/status", timeout=10):
 def main():
     api = WindowApi()
     
+    # Set explicit AppUserModelID agar Taskbar Windows 11 menampilkan Logo iPhone Link
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Kelvin.iPhoneLink.Desktop.1")
+        except Exception:
+            pass
+
     # Tunggu server aktif jika baru diluncurkan
     wait_for_server()
 
-    # Jadwalkan penerapan efek DWM sudut membulat saat HWND window siap
-    threading.Thread(target=apply_dwm_effects, args=("iPhone Mirroring",), daemon=True).start()
+    # Jadwalkan penerapan efek DWM sudut membulat dan icon native saat HWND window siap
+    threading.Thread(target=apply_dwm_effects, args=("iPhone Link",), daemon=True).start()
 
     window = webview.create_window(
-        title="iPhone Mirroring",
+        title="iPhone Link",
         url=f"http://127.0.0.1:8765/?t={int(time.time())}",
         js_api=api,
         width=380,
