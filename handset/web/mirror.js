@@ -564,12 +564,21 @@ async function fetchCodecWithRetry() {
         continue;
       }
       const info = await resp.json();
+      if (info.codec === "jpeg_stream" || info.codec === "mjpeg" || info.mode === "image") {
+        return {
+          codec: (info.codec || "jpeg_stream").trim(),
+          description: null,
+          isImageStream: true,
+          width: info.width || 1179,
+          height: info.height || 2556,
+        };
+      }
       if (!info.codec || !info.description) {
         lastErr = "waiting for video parameters";
         continue;
       }
       const description = Uint8Array.from(atob(info.description), (c) => c.charCodeAt(0));
-      return { codec: info.codec.trim(), description };
+      return { codec: info.codec.trim(), description, isImageStream: false };
     } catch (err) {
       lastErr = err.message || String(err);
     }
@@ -747,10 +756,10 @@ function drawFrame(f) {
   try {
     const rawW = (sourceFrame.codedWidth && sourceFrame.codedHeight > sourceFrame.displayHeight)
       ? sourceFrame.codedWidth
-      : (sourceFrame.displayWidth || sourceFrame.codedWidth);
+      : (sourceFrame.displayWidth || sourceFrame.codedWidth || sourceFrame.width || 1179);
     const rawH = (sourceFrame.codedHeight && sourceFrame.codedHeight > sourceFrame.displayHeight)
       ? sourceFrame.codedHeight
-      : (sourceFrame.displayHeight || sourceFrame.codedHeight);
+      : (sourceFrame.displayHeight || sourceFrame.codedHeight || sourceFrame.height || 2556);
 
     const sideways = Math.abs(visualRotation % 180) === 90;
     const targetW = sideways ? rawH : rawW;
@@ -1009,8 +1018,8 @@ function drawPending() {
   pendingFrame = null;
   if (!f) return;
 
-  const rawW = (f.codedWidth && f.codedHeight > f.displayHeight) ? f.codedWidth : f.displayWidth;
-  const rawH = (f.codedHeight && f.codedHeight > f.displayHeight) ? f.codedHeight : f.displayHeight;
+  const rawW = (f.codedWidth && f.codedHeight > f.displayHeight) ? f.codedWidth : (f.displayWidth || f.width || 1179);
+  const rawH = (f.codedHeight && f.codedHeight > f.displayHeight) ? f.codedHeight : (f.displayHeight || f.height || 2556);
   const landscape = rawW > rawH;
 
   if (lastFrameLandscape !== null && landscape !== lastFrameLandscape && visualRotation !== 0) {
@@ -1036,6 +1045,82 @@ function drawPending() {
   lastFrame = f;
 }
 
+async function runImageStream(generation, codecInfo) {
+  setStatus("Connecting to image stream…");
+  let resp = null;
+  const streamDelays = [200, 400, 800, 1500, 2500, 4000];
+  for (let a = 0; a <= streamDelays.length; a++) {
+    if (generation !== runGeneration) return;
+    if (a > 0) {
+      await new Promise((r) => setTimeout(r, streamDelays[a - 1]));
+    }
+    try {
+      const r = await fetch(`${MIRROR}/live`, { cache: "no-store" });
+      if (r.ok) {
+        resp = r;
+        break;
+      }
+    } catch (_) {}
+  }
+  if (!resp || generation !== runGeneration) {
+    setStatus("Cannot reach the image stream. Press Restart screen.", "warn");
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  abortStream = () => reader.cancel().catch(() => {});
+  let buf = new Uint8Array(0);
+
+  try {
+    while (generation === runGeneration) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const merged = new Uint8Array(buf.length + value.length);
+      merged.set(buf);
+      merged.set(value, buf.length);
+      buf = merged;
+
+      while (buf.length >= 4) {
+        const len = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+        if (len <= 0 || len > 10000000) {
+          buf = new Uint8Array(0);
+          break;
+        }
+        if (buf.length < 4 + len) break;
+        const imgBytes = buf.slice(4, 4 + len);
+        buf = buf.subarray(4 + len);
+
+        try {
+          const blob = new Blob([imgBytes], { type: "image/png" });
+          const bmp = await createImageBitmap(blob);
+          if (generation !== runGeneration) {
+            bmp.close();
+            return;
+          }
+          if (pendingFrame) {
+            try { pendingFrame.close(); } catch (_) {}
+          }
+          pendingFrame = bmp;
+          if (!rafScheduled) {
+            rafScheduled = true;
+            requestAnimationFrame(drawPending);
+          }
+          frameCount += 1;
+        } catch (decodeErr) {
+          console.warn("createImageBitmap error:", decodeErr);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("runImageStream loop ended:", err);
+  } finally {
+    try { reader.cancel(); } catch (_) {}
+  }
+  if (generation === runGeneration) {
+    setStatus("Stream ended — press Restart screen", "warn");
+  }
+}
+
 async function run(generation) {
   setStatus("Connecting to stream…");
   frameCount = 0;
@@ -1055,8 +1140,16 @@ async function run(generation) {
     }
   }, 1000);
 
-  const { codec, description } = await fetchCodecWithRetry();
+  const codecInfo = await fetchCodecWithRetry();
   if (generation !== runGeneration) return;
+
+  if (codecInfo.isImageStream) {
+    window.clearInterval(watchdog);
+    await runImageStream(generation, codecInfo);
+    return;
+  }
+
+  const { codec, description } = codecInfo;
 
   const spsDims = parseHevcSpsDimensions(description);
   const streamWidth = spsDims?.width || 1216;

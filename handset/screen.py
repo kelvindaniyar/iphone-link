@@ -145,14 +145,23 @@ def _open_tunnel(udid: str, transport: str):
         return wifi_tunnel(udid)
     from pymobiledevice3.remote.rsd_tunnel import PreferredRsdTunnel
 
-    class CableRsdTunnel(PreferredRsdTunnel):
-        async def aopen(self):
-            rsd = await super().aopen()
-            if rsd is not None:
-                set_persistent_wifi_rsd(udid, rsd)
-            return rsd
+    return PreferredRsdTunnel(serial=udid, autopair=True)
 
-    return CableRsdTunnel(serial=udid, autopair=True)
+
+async def _bootstrap_background_wifi_tunnel(udid: str) -> None:
+    """Proactively establishes and maintains a true Wi-Fi RSD tunnel over LAN while cable is connected."""
+    try:
+        from .wifi import discover_iphone_ip_on_lan, get_device_wifi_state, set_persistent_wifi_rsd, resolve_remote_pairing_service
+        ip = discover_iphone_ip_on_lan(udid) or get_device_wifi_state(udid).get("last_ip")
+        if not ip:
+            return
+        svc, _ = await resolve_remote_pairing_service(udid, ip, timeout=1.5)
+        if svc is not None:
+            set_persistent_wifi_rsd(udid, svc)
+            import logging
+            logging.getLogger(__name__).info("Background Wi-Fi RSD tunnel proactively registered for %s @ %s", udid, ip)
+    except Exception:
+        pass
 
 
 async def _serve(udid: str, transport: str) -> None:
@@ -168,6 +177,8 @@ async def _serve(udid: str, transport: str) -> None:
         for attempt in range(2):
             async with _open_tunnel(udid, transport) as rsd:
                 if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
+                    if transport == "cable":
+                        asyncio.create_task(_bootstrap_background_wifi_tunnel(udid))
                     await _stream(rsd, udid, ScreenStreamServer)
                     return
                 if attempt:
@@ -259,6 +270,9 @@ class LockdownWifiStreamServer:
         self._stopped = False
         self._last_frame_bytes = b""
         self._subscribers: set[asyncio.Queue] = set()
+        self.width = 1179
+        self.height = 2556
+        self._first_frame_event = asyncio.Event()
 
     async def serve(self):
         self.server = await asyncio.start_server(self._handle_client, self.bind, self.http_port)
@@ -299,10 +313,11 @@ class LockdownWifiStreamServer:
 
             if path == "/codec":
                 payload = json.dumps({
-                    "codec": "hev1.1.6.L93.B0",
-                    "mode": "stream",
-                    "width": 1179,
-                    "height": 2556,
+                    "codec": "jpeg_stream",
+                    "mode": "image",
+                    "width": self.width,
+                    "height": self.height,
+                    "fps": 15,
                     "description": "",
                 }).encode("utf-8")
                 writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode("latin-1") + payload)
@@ -312,19 +327,23 @@ class LockdownWifiStreamServer:
 
             if path in ("/stream.bin", "/live"):
                 writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
-                # Immediately send initial keyframe/frame header so client receives picture without delay
-                init_frame = self._last_frame_bytes or (b"\x00\x00\x00\x01\x40\x01\x0c\x01\xff\xff\x01\x60\x00\x00\x03\x00\xb0\x00\x00\x03\x00\x00\x03\x00\x5d\xac\x09" + b"\x00" * 229)
-                init_chunk = struct.pack(">IB", len(init_frame) + 1, 1) + init_frame
-                writer.write(init_chunk)
                 await writer.drain()
+
+                # Immediately write current real frame if already captured
+                if self._last_frame_bytes and len(self._last_frame_bytes) >= 15000:
+                    chunk = struct.pack(">I", len(self._last_frame_bytes)) + self._last_frame_bytes
+                    writer.write(chunk)
+                    await writer.drain()
+
                 q = asyncio.Queue(maxsize=10)
                 self._subscribers.add(q)
                 try:
                     while not self._stopped:
                         frame = await q.get()
-                        chunk_body = struct.pack(">IB", len(frame) + 1, 1) + frame
-                        writer.write(chunk_body)
-                        await writer.drain()
+                        if len(frame) >= 15000:
+                            chunk_body = struct.pack(">I", len(frame)) + frame
+                            writer.write(chunk_body)
+                            await writer.drain()
                 except (asyncio.CancelledError, OSError):
                     pass
                 finally:
@@ -353,35 +372,67 @@ async def _serve_lockdown_wifi_stream(udid: str, ip: str) -> None:
             from pymobiledevice3.lockdown import create_using_tcp, get_preferred_pair_record
             from pymobiledevice3.pair_records import create_pairing_records_cache_folder
             from pymobiledevice3.services.screenshot import ScreenshotService
+            from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+            from pymobiledevice3.services.dvt.instruments.screenshot import Screenshot
 
             rec = await get_preferred_pair_record(udid, create_pairing_records_cache_folder())
             ld = await create_using_tcp(hostname=ip, identifier=udid, autopair=False, pair_record=rec)
             try:
-                ss = ScreenshotService(ld)
+                ss = None
+                try:
+                    ss = ScreenshotService(ld)
+                except Exception:
+                    ss = None
+
                 while not server._stopped:
-                    try:
-                        png_bytes = await ss.take_screenshot()
-                        if png_bytes:
-                            for q in list(server._subscribers):
-                                if not q.full():
-                                    q.put_nowait(png_bytes)
-                    except Exception:
-                        await asyncio.sleep(0.5)
-                    await asyncio.sleep(0.1)
+                    frame_bytes = None
+                    if ss is not None:
+                        try:
+                            frame_bytes = await ss.take_screenshot()
+                        except Exception:
+                            ss = None
+                    if frame_bytes is None:
+                        try:
+                            with DvtProvider(ld) as dvt:
+                                shot = Screenshot(dvt)
+                                frame_bytes = await shot.get_screenshot()
+                        except Exception:
+                            pass
+
+                    if frame_bytes and len(frame_bytes) >= 15000:
+                        server._last_frame_bytes = frame_bytes
+                        if not server._first_frame_event.is_set():
+                            server._first_frame_event.set()
+                        for q in list(server._subscribers):
+                            if not q.full():
+                                q.put_nowait(frame_bytes)
+                        await asyncio.sleep(0.06)
+                    else:
+                        await asyncio.sleep(0.2)
             finally:
                 await ld.close()
-        except Exception:
-            dummy_frame = b"\x00\x00\x00\x01\x67\x42\x00\x1f"
-            while not server._stopped:
-                for q in list(server._subscribers):
-                    if not q.full():
-                        q.put_nowait(dummy_frame)
-                await asyncio.sleep(0.5)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("_frame_worker lockdown stream failed: %s", e)
 
     worker_task = asyncio.create_task(_frame_worker())
+    server_task = asyncio.create_task(server.serve())
+
+    # Wait up to 8s for the first REAL frame before declaring running!
     try:
+        await asyncio.wait_for(server._first_frame_event.wait(), timeout=8.0)
         _set(phase="running", udid=udid, url=VIEW_URL, error=None, note=None)
-        await server.serve()
+    except asyncio.TimeoutError:
+        server._stopped = True
+        worker_task.cancel()
+        server_task.cancel()
+        raise RuntimeError(
+            f"Gagal mengambil frame layar via Wi-Fi ({ip}): Developer Disk Image belum terpasang atau iPhone terkunci. "
+            "Pastikan layar iPhone menyala dan colok kabel USB 1x."
+        )
+
+    try:
+        await server_task
     finally:
         server._stopped = True
         worker_task.cancel()

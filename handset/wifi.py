@@ -718,6 +718,7 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
             await ld_usb.set_enable_wifi_connections(True)
             await ld_usb.set_value(True, "com.apple.mobile.wireless_lockdown", "EnableWifiDebugging")
         proxy = await tunnel_service.CoreDeviceTunnelProxy.create(ld_usb)
+        setattr(proxy, "_is_usb_fallback", True)
         logger.info("Wi-Fi Stage 4 SUCCESS: Bootstrapped via USB-Assisted Hybrid Link")
         return proxy, ld_usb
     except Exception as e:
@@ -739,6 +740,7 @@ def wifi_tunnel(udid: str):
         def __init__(self, serial: Optional[str] = None, autopair: bool = False) -> None:
             super().__init__(serial=serial, autopair=autopair)
             self._using_persistent = False
+            self._is_pure_network = True
 
         async def aopen(self):
             persistent = get_persistent_wifi_rsd(self.serial)
@@ -749,7 +751,8 @@ def wifi_tunnel(udid: str):
                 return persistent
 
             rsd = await self._aopen_locked()
-            set_persistent_wifi_rsd(self.serial, rsd)
+            if self._is_pure_network:
+                set_persistent_wifi_rsd(self.serial, rsd)
             self._using_persistent = True
             return rsd
 
@@ -761,7 +764,14 @@ def wifi_tunnel(udid: str):
 
         async def _aopen_locked(self):
             original = userspace_tunnel._create_no_root_tunnel_provider
-            userspace_tunnel._create_no_root_tunnel_provider = _wifi_provider
+
+            async def _custom_wifi_provider(serial, autopair, remotepairing_fallback=True):
+                svc, ld = await _wifi_provider(serial, autopair, remotepairing_fallback)
+                if getattr(svc, "_is_usb_fallback", False) or getattr(ld, "_is_usb_fallback", False):
+                    self._is_pure_network = False
+                return svc, ld
+
+            userspace_tunnel._create_no_root_tunnel_provider = _custom_wifi_provider
             try:
                 return await super()._aopen_locked()
             finally:
