@@ -901,6 +901,9 @@ def _strip_top_unselected_debris(lines: list[str]) -> list[str]:
         if re.match(r'^[-—–_=]{2,}$', first):
             result.pop(0)
             continue
+        if len(first) < 8 and ('•' in first or '·' in first):
+            result.pop(0)
+            continue
         if first.startswith("#") or ("#" in first and len(first) < 40 and not first.endswith(".")):
             result.pop(0)
             continue
@@ -961,6 +964,10 @@ def _is_garbage_ocr_line(text: str) -> bool:
 
     # iOS popup callout border edge fragments (Tahap 38: e.g. "r I", "I I", "r l", "| I", "r |", "r")
     if re.match(r'^[rIl1|/\[\]\(\)\-]{1,2}(\s+[rIl1|/\[\]\(\)\-]{1,2})*$', t):
+        return True
+
+    # Debris lines with bullet/middle-dot symbols (Tahap 40: e.g. "•a•y", "• y", "·a")
+    if len(t) < 8 and ('•' in t or '·' in t):
         return True
 
     # Hallucinated words mixing letters and digits randomly
@@ -1058,6 +1065,9 @@ def _clean_ocr_line(line: str) -> str:
     t = re.sub(r'#irf2026\b', '#jrf2026', t, flags=re.IGNORECASE)
     t = re.sub(r'#iakarta\b', '#jakarta', t, flags=re.IGNORECASE)
     t = re.sub(r'#irf\b', '#jrf', t, flags=re.IGNORECASE)
+
+    # o. Optical restoration of "!olom" -> "kolom" (Tahap 40: e.g. "di !olom komentar" -> "di kolom komentar")
+    t = re.sub(r'(?<=\s)!olom\b|^!olom\b', 'kolom', t, flags=re.IGNORECASE)
 
     return t
 
