@@ -87,7 +87,7 @@ def stop_screen() -> dict:
     global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONALLY_LOCKED
     if _STEALTH_DIM_ACTIVE:
         try:
-            set_iphone_physical_brightness("restore")
+            set_iphone_physical_brightness("restore", steps=4)
         except Exception:
             pass
         _STEALTH_DIM_ACTIVE = False
@@ -647,7 +647,7 @@ def send_touch_direct(touch_type: str, x: int, y: int, timeout: float = 0.5) -> 
 
 
 def _send_single_brightness_step(direction: str) -> None:
-    """Send simultaneous Consumer and Apple Magic Keyboard brightness increment/decrement (Anti-Bug 1)."""
+    """Send HID brightness increment/decrement (Anti-Bug 1 Calibrated)."""
     if direction == "down":
         # 1. Consumer Page: 0x0C, Usage 0x0070 (Display Brightness Decrement)
         send_button_direct("brightness-down")
@@ -656,18 +656,16 @@ def _send_single_brightness_step(direction: str) -> None:
         time.sleep(0.015)
         send_keys_direct([])
     else:  # "up"
-        # 1. Consumer Page: 0x0C, Usage 0x006F (Display Brightness Increment)
+        # Consumer Page: 0x0C, Usage 0x006F (Display Brightness Increment) - exactly 1 bar (6.25%) per step
+        # (JANGAN mengirim Keyboard 0x6A bersamaan saat "up" agar langkah tidak berlipat ganda!)
         send_button_direct("brightness-up")
-        # 2. Apple Magic Keyboard: Keyboard Page 0x07, Usage 0x6A (F15) & 0x48 (Pause)
-        send_keys_direct([0x6A])
-        time.sleep(0.015)
-        send_keys_direct([])
 
 
-def set_iphone_physical_brightness(level: str, steps: int = 16) -> dict:
-    """Adjust physical OLED/LCD brightness of iPhone via dual HID channels.
-    'min': steps down (0% brightness, pitch dark on desk while mirror stream is 100% full quality)
-    'restore': restore brightness (default 10 steps up)
+def set_iphone_physical_brightness(level: str, steps: int = 4) -> dict:
+    """Adjust physical OLED/LCD brightness of iPhone.
+    'min': 16 steps down (0% brightness, pitch dark on desk while mirror stream is 100% full quality)
+    'restore': exactly 4 single steps up (~25% brightness, 4 bars iOS).
+    Strict protection: if already restored / not active, 0 signals are sent.
     """
     global _STEALTH_DIM_ACTIVE
     record_user_input_activity()
@@ -680,20 +678,23 @@ def set_iphone_physical_brightness(level: str, steps: int = 16) -> dict:
             _STEALTH_DIM_ACTIVE = True
             return {"ok": True, "stealth": True, "level": "min", "steps": actual_steps}
         else:
-            actual_steps = steps if steps > 0 else 10
+            # STRICT GUARD: If Stealth Dim is already OFF, do NOT send any brightness-up signals!
+            if not _STEALTH_DIM_ACTIVE:
+                return {"ok": True, "stealth": False, "stealthDimActive": False, "skipped": True, "steps": 0}
+            _STEALTH_DIM_ACTIVE = False
+            actual_steps = min(steps, 4) if steps > 0 else 4
             for _ in range(actual_steps):
                 _send_single_brightness_step("up")
                 time.sleep(0.025)
-            _STEALTH_DIM_ACTIVE = False
             return {"ok": True, "stealth": False, "level": "restore", "steps": actual_steps}
 
 
 def lock_iphone_screen() -> dict:
-    """Lock and turn off iPhone physical screen. If stealth dim was active, restores brightness first."""
+    """Lock and turn off iPhone physical screen. If stealth dim was active, restores brightness to ~25% first."""
     global _DEVICE_INTENTIONALLY_LOCKED, _STEALTH_DIM_ACTIVE
     record_user_input_activity()
     if _STEALTH_DIM_ACTIVE:
-        set_iphone_physical_brightness("restore")
+        set_iphone_physical_brightness("restore", steps=4)
     with _HID_ACTION_LOCK:
         send_button_direct("power")
         _DEVICE_INTENTIONALLY_LOCKED = True

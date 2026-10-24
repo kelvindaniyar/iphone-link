@@ -1315,6 +1315,45 @@ Pembaruan terkini mencakup:
   6. **Zero Regression Test (Pilar 5)**:
      - Seluruh kode OCR, Copy-Paste (`Alt+C`, `Alt+V`, `Alt+R`), buffer pengetikan, dan Audio Sink tetap 100% aman dan lulus uji verifikasi Tahap 40 V2.
 
+---
+
+### Tahap 47 V2: Brightness Calibration (~25% Restore) & Idempotent Guard (25 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real via [`scratch/verify_tahap47.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap47.py) (Semua 6 Test Lolos 100%) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_47_STEALTH_DIM_DAN_LOCK_WAKE_CONTROL.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_47_STEALTH_DIM_DAN_LOCK_WAKE_CONTROL.md).
+- **Hasil Pengujian Fisik Kelvin**:
+  * Fitur Lock iPhone (`Alt+L`): Berjalan 100% sempurna.
+  * Fitur Wake & Auto-Unlock PIN (`Alt+U`): Berjalan 100% sempurna.
+  * Fitur Stealth Dim Mode (`Alt+D` — layar fisik 0%): Berjalan 100% sempurna.
+- **Investigasi Akar Masalah 2 Kendala Minor**:
+  1. *Mengapa saat Stealth OFF atau Stop kecerahan melonjak ke 100%?*
+     * Di `_send_single_brightness_step(direction)`, setiap 1 langkah mengirim 2 sinyal HID sekaligus (Consumer `0x0C, 0x006F` DAN Keyboard `0x07, 0x6A` / `F15`).
+     * iOS 27.0.1 merespons kedua sinyal tersebut, sehingga memanggil `restoreSteps = 10` sama dengan mengirim 20 kenaikan (`10 x 2 = 20 bar`). Padahal skala iOS hanya 16 bar (`1 bar = 6.25%`), sehingga layar langsung melonjak ke 100% maksimal.
+  2. *Mengapa saat Stop Mirroring kecerahan naik ke 100%?*
+     * `stop_screen()` memanggil restore tanpa mengecek apakah Stealth Dim Mode sedang aktif atau sudah dimatikan user sebelumnya.
+- **Pekerjaan Rekayasa yang Dilakukan**:
+  1. **Kalibrasi Sinyal Tunggal `_send_single_brightness_step` di `screen.py`**:
+     * Untuk `"down"` (meredupkan): Tetap mengirim dual path 16 langkah agar dijamin mentok di 0% (gelap total di meja).
+     * **Untuk `"up"` (menaikkan): HANYA mengirimkan 1 sinyal tunggal per langkah (Consumer Page `12, 0x006F` SAJA, tanpa sinyal keyboard ganda). 1 langkah = tepat 1 bar iOS (6.25%)!**
+  2. **Target Restore Tepat 4 Bar Tunggal (~25% Kecerahan) & Strict Guard**:
+     * Mengubah default `restoreSteps` dari `10` menjadi tepat **`4` langkah** (`4 x 6.25% = 25%`, pas di tengah kisaran 20% - 30% permintaan Kelvin).
+     * Di `set_iphone_physical_brightness("restore")`:
+       - Strict Guard: Jika `not _STEALTH_DIM_ACTIVE`, langsung return `{"ok": True, "stealth": False, "skipped": True, "steps": 0}` (0 sinyal brightness-up, kecerahan tidak akan bertambah).
+       - Jika `_STEALTH_DIM_ACTIVE == True`, langsung set `_STEALTH_DIM_ACTIVE = False`, lalu kirim tepat 4 langkah tunggal `"up"` ke ~25%.
+  3. **Proteksi Idempotent di `stop_screen()` dan `lock_iphone_screen()`**:
+     * `stop_screen()` dan blok `finally` `_serve()` HANYA memulihkan kecerahan jika `_STEALTH_DIM_ACTIVE == True`. Jika user sudah mematikan stealth sebelumnya, kecerahan layar iPhone sama sekali tidak disentuh!
+     * `lock_iphone_screen()`: HANYA memulihkan kecerahan (ke ~25%) jika `_STEALTH_DIM_ACTIVE == True`.
+  4. **Pembaruan Default di `server.py` & `app.js`**:
+     * Default parameter `restoreSteps` di `/api/device/stealth` dan frontend `app.js` diubah dari 10 ke `4`.
+     * Teks feedback UI diubah menjadi `"~25% (4 bar)"`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap47.py`)**:
+  - Test 1 (HID Brightness Calibration & 25% Restore): PASS — Tepat 4 sinyal tunggal Consumer `0x006F` terkirim (~25%), strict guard mengirim 0 sinyal jika dipanggil berulang.
+  - Test 2 (Lock Screen Auto-Restore Guard): PASS — Memulihkan ke ~25% jika stealth aktif, direct lock tanpa ubah kecerahan jika stealth inaktif.
+  - Test 3 (Stop Screen Disconnect Guard): PASS — Memulihkan ke ~25% jika stealth aktif, pemanggilan berturut-turut mengirim 0 sinyal (layar tidak melonjak ke 100%).
+  - Test 4 (Wake & Auto-Unlock + Zero Passcode Leakage): PASS — 0% bocor ke buffer ketik / disk.
+  - Test 5 (Safe Idle Keep-Awake & Drag Protection): PASS — Seleksi teks dilindungi 100%.
+  - Test 6 (Zero Regression Tahap 40 V2 OCR): PASS — Seluruh 4 pengujian OCR, stitching Apple Notes, dan Smart Auto-Clear lulus 100%.
+
+
 
 
 

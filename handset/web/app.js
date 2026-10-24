@@ -890,13 +890,13 @@ async function triggerToggleStealthDim(explicitState = null) {
     btnStealthMode.textContent = targetState ? "🌑 Mengaktifkan Stealth Dim…" : "🌑 Mengembalikan Kecerahan…";
   }
   try {
-    const res = await postJson("/api/device/stealth", { enabled: targetState, restoreSteps: 10 });
+    const res = await postJson("/api/device/stealth", { enabled: targetState, restoreSteps: 4 });
     if (res?.ok) {
       updateStealthDimUI(res.stealth);
       if (screenNote) {
         screenNote.textContent = res.stealth
           ? "🌑 Stealth Dim Mode ON: Layar fisik iPhone 0% (gelap), stream PC tetap terang."
-          : "☀️ Stealth Dim Mode OFF: Kecerahan fisik layar iPhone dikembalikan normal.";
+          : "☀️ Stealth Dim Mode OFF: Kecerahan fisik layar iPhone dikembalikan ke ~25% (4 bar).";
         screenNote.className = "ok";
       }
     }

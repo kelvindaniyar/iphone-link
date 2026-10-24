@@ -623,7 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/device/stealth":
             enabled = bool(payload.get("enabled", True))
-            restore_steps = int(payload.get("restoreSteps") or 10)
+            restore_steps = int(payload.get("restoreSteps") or 4)
             level = "min" if enabled else "restore"
             steps = 16 if enabled else restore_steps
             self._json(set_iphone_physical_brightness(level, steps=steps))

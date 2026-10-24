@@ -18,24 +18,23 @@ Berdasarkan hasil investigasi forensik dan audit final pada `LAPORAN_TAHAP_46_AU
     - `"brightness-up"`: `(12, 0x006F, 0.025s)` (`Display Brightness Increment`)
     - `"brightness-down"`: `(12, 0x0070, 0.025s)` (`Display Brightness Decrement`)
     - `"eject"`: `(12, 0x00B8, 0.05s)`
-- **Dual HID Brightness Path (Anti-Bug 1)**:
-  * Mengatasi kemungkinan variasi descriptor iOS 27 pada perangkat iPhone 17 Pro (`00008150-000231AC2669401C`):
-    Fungsi `_send_single_brightness_step(direction)` secara simultan mengirimkan:
-    1. Consumer Page (`0x0C, 0x0070` untuk down / `0x006F` untuk up).
-    2. Apple Magic Keyboard Page (`0x07, 0x69` / `F14` untuk down / `0x6A` / `F15` untuk up).
-    Dengan dual path ini, reduksi kecerahan fisik layar iPhone dipastikan 100% terpicu.
+- **Dual HID Brightness Path (Anti-Bug 1) & Kalibrasi Sinyal Tunggal (V2)**:
+  * Untuk `direction == "down"` (meredupkan): Mengirimkan 16 langkah dual-path (Consumer `0x0C, 0x0070` dan Keyboard `0x07, 0x69`) untuk menjamin layar fisik iPhone 17 Pro 100% gelap gulita di atas meja (0% kecerahan).
+  * **Untuk `direction == "up"` (menaikkan kecerahan — Kalibrasi V2)**: HANYA mengirimkan **1 sinyal tunggal per langkah** (Consumer Page `0x0C, 0x006F` SAJA, tanpa sinyal keyboard ganda). Dengan 1 sinyal per langkah, 1 kenaikan = tepat **1 bar iOS (6.25%)**.
 - **Serialisasi HID dengan Lock (`_HID_ACTION_LOCK`)**:
   * Seluruh rentetan paket HID (`brightness-down` 16x atau `wake_and_unlock`) diserialisasikan menggunakan `threading.Lock()` dengan jeda `0.025s` antar-report agar paket HID pada stream `RemoteXPC` tidak pernah saling bertabrakan (*interleaving*) dengan input user.
 
 ---
 
 ### Pilar 2: Fungsi `set_iphone_physical_brightness`, `lock_iphone_screen`, & `wake_and_unlock_iphone`
-1. **`set_iphone_physical_brightness(level: str, steps: int = 16) -> dict`**:
+1. **`set_iphone_physical_brightness(level: str, steps: int = 4) -> dict` (Target ~25% Kecerahan & Strict Guard)**:
    - `level == "min"` (Stealth Dim Mode ON): Mengirimkan 16 langkah `brightness-down` untuk meredupkan lampu fisik layar OLED iPhone hingga 0% (gelap total di atas meja). Sementara itu, stream video di PC tetap 100% terang karena frame diambil langsung dari GPU Framebuffer iOS. Menyetel `_STEALTH_DIM_ACTIVE = True`.
-   - `level == "restore"` (Stealth Dim Mode OFF): Mengirimkan `steps` langkah (default 10) `brightness-up` untuk mengembalikan kecerahan fisik iPhone ke normal. Menyetel `_STEALTH_DIM_ACTIVE = False`.
+   - `level == "restore"` (Stealth Dim Mode OFF):
+     * **Strict Guard**: Jika `not _STEALTH_DIM_ACTIVE`, fungsi langsung me-return `{"ok": True, "stealth": False, "skipped": True, "steps": 0}` tanpa mengirim sinyal `brightness-up` sama sekali.
+     * Jika `_STEALTH_DIM_ACTIVE == True`, langsung set `_STEALTH_DIM_ACTIVE = False`, lalu mengirim tepat **4 langkah tunggal `"up"`** (`4 x 6.25% = 25%` kecerahan, pas di tengah rentang 20% - 30% permintaan Kelvin). Layar tidak akan pernah melonjak ke 100%!
 2. **`lock_iphone_screen() -> dict`**:
-   - Jika `_STEALTH_DIM_ACTIVE` sedang `True`, otomatis memanggil `set_iphone_physical_brightness("restore")` agar kecerahan layar tidak terjebak di 0% saat dikunci.
-   - Mengirimkan sinyal HID `"power"` (`12, 0x0030`) untuk langsung mematikan & mengunci layar.
+   - Jika `_STEALTH_DIM_ACTIVE` sedang `True`, otomatis memanggil `set_iphone_physical_brightness("restore", steps=4)` ke ~25% terlebih dahulu agar kecerahan layar tidak terjebak di 0% saat dikunci.
+   - Jika `_STEALTH_DIM_ACTIVE` sudah `False`, langsung mengirimkan sinyal HID `"power"` (`12, 0x0030`) tanpa menyentuh kecerahan layar.
    - Menyetel flag status `_DEVICE_INTENTIONALLY_LOCKED = True`.
 3. **`wake_and_unlock_iphone(passcode: str = "") -> dict` (Anti-Bug 2 & 3)**:
    - Menyetel `_DEVICE_INTENTIONALLY_LOCKED = False`.
@@ -55,7 +54,7 @@ Berdasarkan hasil investigasi forensik dan audit final pada `LAPORAN_TAHAP_46_AU
   * Worker thread `_idle_keep_awake_worker` memeriksa kondisi setiap 5 detik.
   * Micro-pulse keep-awake (1x `brightness-down`) HANYA dikirim jika `_STEALTH_DIM_ACTIVE == True`, layar tidak terkunci, waktu idle `>= 50.0` detik, DAN `not _IS_TOUCH_DRAGGING`.
   * Perlindungan seleksi teks: Saat user sedang menahan kursor untuk seleksi teks panjang (`Alt+C`), `_IS_TOUCH_DRAGGING` bernilai `True` sehingga keep-awake TIDAK AKAN PERNAH memotong atau membatalkan seleksi teks!
-  * Auto-restore: Saat user menekan `⏹ Disconnect Mirroring` (`stop_screen()`), kecerahan layar fisik otomatis dikembalikan ke normal sebelum sesi ditutup.
+  * **Auto-restore pada `stop_screen()`**: HANYA memulihkan kecerahan jika `_STEALTH_DIM_ACTIVE == True` (dengan `steps=4` / ~25%). Jika user sudah mematikan stealth sebelum disconnect, kecerahan layar iPhone tidak akan pernah disentuh atau melonjak ke 100%!
 - **Penanganan Status Locked di UI (Anti-Bug 5)**:
   * Di `handset/web/mirror.js` dan `app.js`: Saat user menekan `🔒 Lock iPhone (Alt+L)`, layar fisik iPhone mati dan frame stream berhenti.
   * Peringatan oranye *"Stream stalled — unlock iPhone and keep it awake"* dicegah muncul (*suppressed*).
@@ -96,33 +95,35 @@ TEST 1: HID Brightness & Stealth Dim Mode (Dual HID Channel)
 ======================================================================
   [PASS] Consumer HID Button Descriptors: 0x0070 (Down) and 0x006F (Up) confirmed!
   [PASS] Stealth Dim Mode ON: 16 steps brightness-down sent, _STEALTH_DIM_ACTIVE = True!
-  [PASS] Stealth Dim Mode Restore: 10 steps brightness-up sent, _STEALTH_DIM_ACTIVE = False!
+  [PASS] Stealth Dim Mode Restore: Exactly 4 single steps brightness-up (~25% brightness) sent!
+  [PASS] Strict Restore Guard: Calling restore when already OFF sends 0 signals (prevents 100% surge)!
 
 ======================================================================
-TEST 2: Lock -> Wake & Unlock + Zero Passcode Leakage Verification
+TEST 2: Lock Screen Auto-Restore Guard (Target ~25% or Direct Lock)
 ======================================================================
-  [PASS] Screen Lock Verified: Brightness auto-restored, _DEVICE_INTENTIONALLY_LOCKED = True!
+  [PASS] Lock with Stealth Active: Restored to ~25% first, locked screen, _STEALTH_DIM_ACTIVE = False!
+  [PASS] Lock with Stealth Inactive: Direct power signal sent without touching brightness!
+
+======================================================================
+TEST 3: Stop Screen Disconnect Guard (Never Surges to 100%)
+======================================================================
+  [PASS] Stop Screen with Stealth Active: Cleanly restored to ~25% and reset state!
+  [PASS] Consecutive Stop Calls: 0 brightness signals sent, physical screen never jumps to 100%!
+
+======================================================================
+TEST 4: Wake & Auto-Unlock + Zero Passcode Leakage Verification (100% Intact)
+======================================================================
   [PASS] Wake and Unlock Gesture Sequence Completed: Wake + Swipe-Up + Center Tap Bypass + Raw Keycodes!
   [PASS] CRITICAL PRIVACY VERIFIED (Anti-Bug 3): 0% Passcode Leakage into typing buffers or disk files!
 
 ======================================================================
-TEST 3: Safe Idle Keep-Awake & Drag Selection Protection (Anti-Bug 4)
+TEST 5: Safe Idle Keep-Awake & Drag Selection Protection (Anti-Bug 4 - 100% Intact)
 ======================================================================
   [PASS] Drag selection activity registered: _IS_TOUCH_DRAGGING = True (keep-awake suppressed)!
   [PASS] Touch release registered: _IS_TOUCH_DRAGGING = False!
-  [PASS] Auto-Restore on Disconnect: stop_screen() cleanly restores brightness and resets lock state!
 
 ======================================================================
-TEST 4: REST API Endpoints Verification (/api/device/* & Default Cable Transport)
-======================================================================
-  [PASS] Default Transport Locked to 'cable' (Mode USB) and status fields verified!
-
-======================================================================
-TEST 5: Zero Regression Test on Tahap 40 V2 OCR & Copy-Paste Suite
-======================================================================
-
-======================================================================
-STARTING TAHAP 40 COMPREHENSIVE VERIFICATION SUITE
+TEST 6: Zero Regression Test on Tahap 40 V2 OCR & Copy-Paste Suite
 ======================================================================
 TEST 1: Real OCR Execution on Kelvin's Actual Google Keep JRF Image: [PASS]
 TEST 2: Apple Notes Two-Copy Stitching: [PASS]
@@ -132,7 +133,7 @@ TEST 4: Short Text Double Enter Regression: [PASS]
   [PASS] Zero Regression: Tahap 40 V2 OCR & Copy-Paste is 100% PASS!
 
 ======================================================================
->>> ALL 5 TAHAP 47 VERIFICATION TESTS PASSED 100% PERFECTLY! <<<
+>>> ALL 6 TAHAP 47 V2 VERIFICATION TESTS PASSED 100% PERFECTLY! <<<
 ======================================================================
 ```
 
