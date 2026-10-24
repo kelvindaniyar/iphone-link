@@ -18,7 +18,7 @@ from pathlib import Path
 
 from handset.device import developer_mode_enabled
 from handset.mux import MuxError, list_devices
-from handset.wifi import wifi_paired_udids, wifi_tunnel
+from handset.wifi import probe_wifi_device, wifi_paired_udids, wifi_tunnel
 
 DEVELOPER_MODE_MESSAGE = (
     "The picture stays black because Developer Mode is off. On the iPhone open Settings, "
@@ -91,15 +91,29 @@ def start_screen(udid: str | None, transport: str = "auto") -> dict:
         transport = "usb" if chosen in usb else "wifi"
     if transport == "usb" and chosen not in usb:
         return _set(phase="error", udid=chosen, url=None, error="The iPhone is not on the cable. Plug it in or choose Wi-Fi.")
-    if transport == "wifi" and chosen not in wifi:
-        return _set(phase="error", udid=chosen, url=None, error="Set up Wi-Fi once with the cable plugged in.")
+    if transport == "wifi":
+        probe = probe_wifi_device(chosen)
+        if not probe.get("paired") and not probe.get("wifi_enabled"):
+            return _set(
+                phase="error",
+                udid=chosen,
+                url=None,
+                error="Mode Wi-Fi belum di-setup. Colokkan kabel USB satu kali dan klik 'Set up Wi-Fi'.",
+            )
+        if probe.get("reachable"):
+            ip_label = f" ({probe.get('ip')})" if probe.get("ip") else ""
+            note = f"Menghubungkan ke iPhone via Wi-Fi{ip_label}… Pastikan iPhone tidak terkunci."
+        else:
+            note = "Mencari iPhone di jaringan Wi-Fi lokal… Pastikan layar iPhone menyala (unlocked) dan di Wi-Fi yang sama."
+    else:
+        note = None
+
     if transport == "usb" and developer_mode_enabled(chosen) is False:
         return _set(phase="error", udid=chosen, url=None, error=DEVELOPER_MODE_MESSAGE)
 
     with _LOCK:
         if _STATE["phase"] in {"starting", "running"} and _STATE["udid"] == chosen:
             return dict(_STATE)
-        note = "Looking for the iPhone on Wi-Fi…" if transport == "wifi" else None
         _STATE.update(phase="starting", udid=chosen, url=None, error=None, note=note, transport=transport)
     threading.Thread(target=_run, args=(chosen, transport), name="handset-screen", daemon=True).start()
     return screen_status()
@@ -133,18 +147,34 @@ async def _serve(udid: str, transport: str) -> None:
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
     _NAMED_BUTTONS.pop("keyboard-toggle", None)
 
-    for attempt in range(2):
-        async with _open_tunnel(udid, transport) as rsd:
-            if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
-                await _stream(rsd, udid, ScreenStreamServer)
-                return
-            if attempt:
+    try:
+        for attempt in range(2):
+            async with _open_tunnel(udid, transport) as rsd:
+                if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
+                    await _stream(rsd, udid, ScreenStreamServer)
+                    return
+                if attempt:
+                    raise RuntimeError(
+                        "The developer image mounted, but the iPhone still offers no display service. "
+                        "Unplug it, plug it back in, and press Show screen again."
+                    )
+                _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
+                await auto_mount(rsd)
+    except Exception as exc:
+        if transport == "wifi":
+            probe = probe_wifi_device(udid)
+            if not probe.get("reachable"):
                 raise RuntimeError(
-                    "The developer image mounted, but the iPhone still offers no display service. "
-                    "Unplug it, plug it back in, and press Show screen again."
-                )
-            _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
-            await auto_mount(rsd)
+                    "Gagal terhubung via Wi-Fi: iPhone tidak merespons di jaringan lokal. "
+                    "Pastikan layar iPhone menyala (unlocked), terhubung ke Wi-Fi yang sama dengan PC, "
+                    "atau colok kabel USB 1x untuk mengaktifkan izin Wi-Fi Sync."
+                ) from exc
+            ip_str = f" ({probe.get('ip')})" if probe.get("ip") else ""
+            raise RuntimeError(
+                f"Gagal menghubungkan tunnel mirroring Wi-Fi ke iPhone{ip_str}: {exc}. "
+                "Pastikan Developer Mode aktif dan firewall Windows mengizinkan koneksi lokal."
+            ) from exc
+        raise
 
 
 async def _stream(rsd, udid: str, ScreenStreamServer) -> None:

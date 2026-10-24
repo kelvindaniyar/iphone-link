@@ -20,8 +20,10 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap39_centralized_ocr_and_bidirectional_stitch";
+const screenErrorBanner = document.querySelector("#screen-error-banner");
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap41_wifi_mirroring_and_network_discovery";
 const MIRROR_API = "/mirror";
+let currentWifiState = {};
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";
 let currentFitMode = localStorage.getItem("pane-fit-mode") || "fill";
@@ -750,10 +752,17 @@ function setTransport(value, reload = true) {
 }
 
 function renderWifi() {
-  const ready = selectedUdid ? wifiPaired.includes(selectedUdid) : wifiPaired.length > 0;
-  wifiState.textContent = ready ? "✓ Wi‑Fi ready" : "Wi‑Fi not set up";
-  wifiState.classList.toggle("ok", ready);
-  wifiPair.hidden = ready;
+  const wifi = currentWifiState || {};
+  if (wifi.statusText) {
+    wifiState.textContent = wifi.statusText;
+    wifiState.className = "wifi-state" + (wifi.statusTone ? ` ${wifi.statusTone}` : "");
+  } else {
+    const ready = wifi.reachable === true;
+    wifiState.textContent = ready ? "✓ Wi‑Fi ready" : "Wi‑Fi not set up";
+    wifiState.className = "wifi-state" + (ready ? " ok" : "");
+  }
+  const isPairedAndEnabled = Boolean(wifi.paired && wifi.paired.length > 0 && wifi.enabled);
+  wifiPair.hidden = Boolean(wifi.reachable || isPairedAndEnabled);
   wifiPair.disabled = !usbConnected;
   wifiPair.title = usbConnected ? "One-time setup over the cable" : "Plug in the cable once to set up Wi‑Fi";
 }
@@ -887,6 +896,7 @@ async function load() {
   try {
     const state = await getJson("/api/status");
     wifiPaired = state.wifi?.paired || [];
+    currentWifiState = state.wifi || {};
     usbConnected = (state.devices || []).length > 0;
     renderStatus(state);
     renderDevices(state.devices || []);
@@ -906,11 +916,16 @@ async function load() {
 function renderPills(state) {
   const driver = state.driver || {};
   const connected = (state.devices || []).length > 0;
-  const overWifi = transport === "wifi" && wifiPaired.length > 0;
+  const wifi = state.wifi || currentWifiState || {};
+  const overWifi = transport === "wifi";
   if (state.screen?.phase === "running") {
     setPill(pillConnection, state.screen.transport === "wifi" ? "Mirroring · Wi‑Fi" : "Mirroring", "ok");
+  } else if (overWifi && wifi.reachable) {
+    setPill(pillConnection, wifi.ip ? `Wi‑Fi · ${wifi.ip}` : "Wi‑Fi Ready", "ok");
+  } else if (overWifi && (wifi.paired || []).length > 0) {
+    setPill(pillConnection, "Wi‑Fi Paired (Offline)", "warn");
   } else if (overWifi) {
-    setPill(pillConnection, "Wi‑Fi ready", "ok");
+    setPill(pillConnection, "Plug USB 1x", "bad");
   } else if (state.error) {
     setPill(pillConnection, "Error", "bad");
   } else if (!driver.ready) {
@@ -978,7 +993,9 @@ function renderStatus(state) {
 function renderDevices(list) {
   devicesEl.replaceChildren();
   if (!list.length && transport === "wifi" && wifiPaired.length) {
-    list = wifiPaired.map((udid) => ({ udid, connection: "Wi‑Fi", wifiOnly: true }));
+    const wifi = currentWifiState || {};
+    const connLabel = wifi.reachable ? (wifi.ip ? `Wi‑Fi (${wifi.ip})` : "Wi‑Fi (Online)") : "Wi‑Fi (Offline)";
+    list = wifiPaired.map((udid) => ({ udid, connection: connLabel, wifiOnly: true, reachable: Boolean(wifi.reachable) }));
   }
   if (!list.length) {
     const item = document.createElement("li");
@@ -1181,20 +1198,29 @@ function renderScreen(screen) {
     showScreen.disabled = true;
     showScreen.textContent = "Connecting…";
     restartScreen.disabled = true;
+    if (screenErrorBanner) screenErrorBanner.style.display = "none";
     return;
   }
   if (screen.error) {
     screenNote.textContent = screen.error;
     screenNote.className = "warn";
+    if (screenErrorBanner) {
+      screenErrorBanner.textContent = screen.error;
+      screenErrorBanner.style.display = "block";
+    }
     return;
   }
   screenNote.textContent = "";
   screenNote.className = "";
+  if (screenErrorBanner) {
+    screenErrorBanner.style.display = "none";
+  }
 }
 
 async function showPhone() {
   showScreen.disabled = true;
   showScreen.textContent = "Connecting…";
+  if (screenErrorBanner) screenErrorBanner.style.display = "none";
   try {
     renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport }));
     watchScreen();
@@ -1202,6 +1228,10 @@ async function showPhone() {
   } catch (error) {
     screenNote.textContent = error.message;
     screenNote.className = "warn";
+    if (screenErrorBanner) {
+      screenErrorBanner.textContent = error.message;
+      screenErrorBanner.style.display = "block";
+    }
     showScreen.textContent = "Start mirroring";
     showScreen.classList.remove("is-disconnect");
     showScreen.disabled = false;
@@ -1230,10 +1260,19 @@ function watchScreen() {
       renderScreen(screen);
       if (screen.phase !== "starting") {
         window.clearInterval(screenTimer);
-        load();
+        const lastErr = screen.error;
+        await load();
+        if (lastErr && screenErrorBanner) {
+          screenErrorBanner.textContent = lastErr;
+          screenErrorBanner.style.display = "block";
+        }
       }
     } catch (error) {
       screenNote.textContent = error.message;
+      if (screenErrorBanner) {
+        screenErrorBanner.textContent = error.message;
+        screenErrorBanner.style.display = "block";
+      }
       window.clearInterval(screenTimer);
     }
   }, 1000);

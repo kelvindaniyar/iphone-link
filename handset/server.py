@@ -9,7 +9,7 @@ import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
@@ -40,7 +40,13 @@ from handset.screen import (
     trigger_ios_shortcut,
     type_text_to_iphone,
 )
-from handset.wifi import pair_for_wifi, wifi_paired_udids
+from handset.wifi import (
+    get_wifi_status,
+    pair_for_wifi,
+    probe_wifi_device,
+    trigger_auto_enable_wireless_lockdown,
+    wifi_paired_udids,
+)
 from handset.audio import audio_manager
 
 ROOT = Path(__file__).resolve().parent / "web"
@@ -376,9 +382,22 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             payload = snapshot()
             payload["screen"] = screen_status()
-            payload["wifi"] = {"paired": wifi_paired_udids()}
+            devices = payload.get("devices") or []
+            selected_udid = None
+            for d in devices:
+                if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
+                    trigger_auto_enable_wireless_lockdown(d["udid"])
+                    if not selected_udid:
+                        selected_udid = d["udid"]
+                    break
+            payload["wifi"] = get_wifi_status(selected_udid)
             payload["audio"] = audio_manager.status()
             self._json(payload)
+            return
+        if path.startswith("/api/wifi/probe"):
+            query = parse_qs(urlparse(self.path).query)
+            target_udid = (query.get("udid") or [None])[0]
+            self._json({"ok": True, "wifi": get_wifi_status(target_udid)})
             return
         if path == "/api/settings":
             self._json(load_user_settings())
