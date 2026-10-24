@@ -32,6 +32,9 @@ from handset.screen import (
     toggle_onscreen_keyboard,
     trigger_ios_shortcut,
     type_text_to_iphone,
+    _strip_top_unselected_debris,
+    _is_generic_template_line,
+    _score_gap_quality,
 )
 from handset.wifi import pair_for_wifi, wifi_paired_udids
 from handset.audio import audio_manager
@@ -175,18 +178,28 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
         project_root = Path(__file__).resolve().parent.parent
 
         for idx, furl in enumerate(frame_data_urls):
-            if not furl or "," not in furl:
+            if not furl:
                 continue
-            header, b64data = furl.split(",", 1)
-            raw_bytes = base64.b64decode(b64data)
-            if len(raw_bytes) < 100:
-                continue
-            suffix = ".png" if "image/png" in header else ".jpg"
-            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-            tmp.write(raw_bytes)
-            tmp.close()
-            tmp_files.append(tmp.name)
-            valid_frames.append((idx, tmp.name, raw_bytes))
+            if furl.startswith("data:") and "," in furl:
+                header, b64data = furl.split(",", 1)
+                raw_bytes = base64.b64decode(b64data)
+                if len(raw_bytes) < 100:
+                    continue
+                suffix = ".png" if "image/png" in header else ".jpg"
+                tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                tmp.write(raw_bytes)
+                tmp.close()
+                tmp_files.append(tmp.name)
+                valid_frames.append((idx, tmp.name, raw_bytes))
+            elif os.path.isfile(furl):
+                abs_f = os.path.abspath(furl)
+                tmp_files.append(abs_f)
+                try:
+                    with open(abs_f, "rb") as rf:
+                        raw_bytes = rf.read()
+                    valid_frames.append((idx, abs_f, raw_bytes))
+                except Exception:
+                    pass
 
         if not tmp_files:
             return []
@@ -219,11 +232,13 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
         print(f"extract_text_batch error: {e}", flush=True)
         return []
     finally:
+        temp_dir = tempfile.gettempdir()
         for tpath in tmp_files:
-            try:
-                os.remove(tpath)
-            except Exception:
-                pass
+            if temp_dir in tpath:
+                try:
+                    os.remove(tpath)
+                except Exception:
+                    pass
 
 
 def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str | None:
@@ -238,6 +253,8 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
             clear_recent_long_ocr_chunks()
             return None
         if raw_text:
+            lines = _strip_top_unselected_debris([l.strip() for l in raw_text.splitlines()])
+            raw_text = "\r\n".join(lines).strip()
             corrected_text = auto_correct_ocr_text(raw_text)
             corrected_text = ensure_paragraph_formatting(corrected_text)
         else:
@@ -487,43 +504,50 @@ class Handler(BaseHTTPRequestHandler):
                         if not valid_texts:
                             return None
 
-                        # Parse SEL_BOUNDS metadata if emitted (Tahap 35 Perbaikan 2)
-                        sel_top = -1.0
-                        sel_bot = -1.0
-                        for t in batch_texts:
-                            bounds_m = re.search(r'<<<SEL_BOUNDS:top=([0-9.]+),bot=([0-9.]+)>>>', t)
-                            if bounds_m:
-                                try:
-                                    sel_top = float(bounds_m.group(1))
-                                    sel_bot = float(bounds_m.group(2))
-                                except Exception:
-                                    pass
-
-                        # Strip SEL_BOUNDS tokens from all texts
-                        clean_valid_texts = []
+                        # Tahap 36: Clean each frame from unselected top debris (e.g. #toltangerangmerak #infotangerang\n---)
+                        cleaned_valid_texts = []
                         for t in valid_texts:
-                            cleaned = re.sub(r'<<<SEL_BOUNDS:[^>]+>>>', '', t).strip()
+                            c_lines = _strip_top_unselected_debris([l.strip() for l in t.splitlines()])
+                            cleaned = "\r\n".join(c_lines).strip()
                             if cleaned:
-                                clean_valid_texts.append(cleaned)
-                        valid_texts = clean_valid_texts
+                                cleaned_valid_texts.append(cleaned)
+                        valid_texts = cleaned_valid_texts
                         if not valid_texts:
                             return None
 
                         last_text = valid_texts[-1]
                         last_lines = [l.strip() for l in last_text.splitlines() if l.strip()]
-                        has_hashtag_end = any(l.startswith("#") for l in last_lines[-2:]) if last_lines else False
-                        is_self_contained = (sel_top >= 0.160 and (sel_bot <= 0.865 or has_hashtag_end))
 
-                        if len(valid_texts) == 1 or is_self_contained:
+                        # ATURAN EMAS 1 (Tahap 36): Short text (<= 5 non-empty lines, total chars < 200)
+                        # NEVER stitch with history frames or past chunks!
+                        is_short_snippet = (len(last_lines) <= 5 and all(len(l) < 55 for l in last_lines) and sum(len(l) for l in last_lines) < 200)
+                        if is_short_snippet:
                             raw_text = last_text
                             final_text = auto_correct_ocr_text(raw_text)
+                            final_text = ensure_paragraph_formatting(final_text)
                         else:
-                            stitched = stitch_multiline_ocr_frames(valid_texts)
-                            final_text = stitched if stitched else last_text
-                            final_text = auto_correct_ocr_text(final_text)
+                            # ATURAN EMAS 2 & 3: Check single-screen complete caption vs multi-screen
+                            has_hashtag_end = any(l.startswith("#") for l in last_lines[-2:]) if last_lines else False
+                            first_line = last_lines[0] if last_lines else ""
+                            is_middle_para = bool(re.match(r'^(momen\s+menegangkan|situasi\s+darurat|dalam\s+unggahan|konten\s+tersebut|fenomena\s+ini|seluruh\s+\d+|bagaimana\s+(perasaan|tanggapan|menurut)|source\s*:|sumber\s*:)', first_line, re.IGNORECASE))
+                            has_body_start = (
+                                not is_middle_para
+                                and len(first_line) >= 20
+                                and not _is_generic_template_line(first_line)
+                                and first_line[0].isupper()
+                                and not first_line.endswith(",")
+                            )
+                            is_complete_single_screen = (has_hashtag_end and has_body_start and len(last_lines) >= 6)
 
-                        # PERBAIKAN 1: Call ensure_paragraph_formatting PALING AKHIR
-                        final_text = ensure_paragraph_formatting(final_text)
+                            if len(valid_texts) == 1 or (is_complete_single_screen and _score_gap_quality(last_lines) >= 0):
+                                raw_text = last_text
+                                final_text = auto_correct_ocr_text(raw_text)
+                            else:
+                                stitched = stitch_multiline_ocr_frames(valid_texts)
+                                final_text = stitched if stitched else last_text
+                                final_text = auto_correct_ocr_text(final_text)
+
+                            final_text = ensure_paragraph_formatting(final_text)
 
                         # Save debug info
                         try:

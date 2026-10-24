@@ -924,7 +924,34 @@ Pembaruan terkini mencakup:
   - Test 2B: Apple Notes "KMP Batumandi" Copy di Atas (03:42) mengisi gap baris `"tengah evakuasi KMP Batumandi ini,"` dan mempertahankan ekor Source + 5 Hashtag secara utuh dalam tepat 6 blok paragraf [PASS].
   - Test 3: Teks pendek berjarak Enter (01:44) memulihkan `"the"` $\rightarrow$ `"the beatles"` dan `"hincfia"` $\rightarrow$ `"hindia"` dengan spasi Enter ganda terjaga sempurna (`pamungkas kenangan manis \r\n\r\n barasuara \r\n\r\n the beatles \r\n\r\n hindia`) [PASS].
   - Test 4: Inspeksi kode `ocr_extractor.ps1` untuk netralisasi gagang terarah, threshold $206/228$, scan horizontal $\ge 25$, `Merge-LineLists`, bounds token, dan history full-viewport crop [PASS].
-  - Seluruh pengujian regresi Tahap 26-34 terverifikasi lulus.
-
-
-
+### Tahap 36: Real OCR Execution Verification, Zero-Crash PowerShell, Golden Rules Separation, & Robust Synthetic PNG Verification (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap36.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap36.py) (Semua Uji Eksekusi Nyata PowerShell PASS) serta regresi Tahap 32-35.
+- **Latar Belakang & Investigasi Regresi Kritis**:
+  - Pada video pengujian terbaru oleh Kelvin (menit 00:49, 01:09, 01:35, 02:08) serta screenshot `Screenbox_20261024_171546.jpg`, fitur "Copy iPhone Text (Alt+C)" mati total dan hanya menampilkan `"✓ Copied (iOS)"` (bukan `"✓ Copied to PC!"`), serta clipboard Windows kosong.
+  - Akar penyebab utama:
+    1. Error sintaks casting PowerShell pada baris 932 (`(int)(...)` alih-alih `[int](...)`) yang menyebabkan `ParserError` fatal saat script dimuat, sehingga proses PowerShell gagal menghasilkan output dan mengembalikan string kosong.
+    2. Fungsi `extract_text_batch` di `server.py` mengabaikan path file PNG langsung karena hanya memvalidasi Data URL (`"," not in furl`).
+    3. `VerifyLineHighlight` membandingkan koordinat canvas crop upscaled 2.5x dengan bitmap asli dan membuang 100% baris teks karena rasio 0.
+    4. Emisi token kotor `<<<SEL_BOUNDS:...>>>` dan pemanggilan `exit 0` di tengah pemrosesan batch.
+- **Pekerjaan Arsitektural yang Dilakukan**:
+  1. **Rombak Total & Penyederhanaan `handset/ocr_extractor.ps1`**:
+     - Memperbaiki seluruh type cast menjadi sintaks PowerShell valid `[int]`.
+     - Menghapus fungsi `VerifyLineHighlight` dan `GetLineHighlightRatio` secara total.
+     - Menghapus emisi token `<<<SEL_BOUNDS>>>` dan `exit 0` di tengah loop; memformat pemisah batch bersih `---FRAME_SPLIT---`.
+     - Ambang batas seleksi baris horizontal diatur `>= 8` piksel (termasuk highlight kuning pucat Apple Notes `R=253, G=246, B=225` dan biru Google Keep).
+     - Netralisasi terarah untuk gagang kuning pekat, gagang biru, dan titik merah spellcheck iOS (`r > 165 && r-g > 42 && r-b > 42 && g < 135`).
+     - Dual-Candidate Processing: Kandidat 1 (Clean Natural RGB) dan Kandidat 2 (Red/Luma Contrast Enhanced) masing-masing di-upscale `2.5x` (`HighQualityBicubic`) dengan margin putih 60px.
+  2. **Dukungan Path File Fisik & Data URL pada `server.py`**:
+     - `extract_text_batch` mendukung Data URL Base64 dan path file PNG lokal secara fleksibel, dan hanya menghapus file sementara di direktori temp OS.
+     - Pembersihan debris unselected atas (`_strip_top_unselected_debris`) diaplikasikan pada setiap frame sebelum validasi.
+  3. **Implementasi Tiga Aturan Emas (Golden Rules)**:
+     - **Aturan Emas 1**: Teks pendek ($\le 5$ baris non-kosong dan panjang baris $< 55$ serta total karakter $< 200$) langsung diproses tanpa digabung ke history/chunk, mempertahankan spasi enter ganda (`\r\n\r\n`).
+     - **Aturan Emas 2**: Teks caption 1-layar utuh (dimulai pembuka berita valid berhuruf kapital, tanpa koma di akhir, dan diakhiri hashtag) tidak ditimpa oleh history tercemar.
+     - **Aturan Emas 3**: Teks caption multi-layar (Apple Notes KMP Batumandi) disambungkan secara dua arah (*bidirectional*) via `merge_two_overlapping_blocks()` untuk memastikan Paragraf 1 dan ekor hashtag tetap utuh 6 blok.
+  4. **Pembaruan Tag Cache Frontend**: Bump ke `v=20261024_tahap36_real_ocr_execution_and_golden_rules` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap36.py`)**:
+  - **Test 1**: Eksekusi nyata PowerShell `ocr_extractor.ps1` pada gambar fisik `debug_ocr_raw.png` milik Kelvin menghasilkan exit code 0, teks tidak kosong (`"pamungkas kenangan manis\r\n\r\nbarasuara\r\n\r\nthe beatles\r\n\r\nhindia"`), dan sukses ditulis ke Clipboard Windows [PASS].
+  - **Test 2**: Eksekusi nyata PowerShell pada bitmap sintetis Google Keep Biru (`test_google_keep_blue.png`) dan Apple Notes Kuning (`test_apple_notes_yellow.png`) sukses mengekstrak 100% teks tanpa crash dan tanpa kehilangan baris [PASS].
+  - **Test 3**: Verifikasi 3 Ground-Truth Kelvin (Google Keep Pesona Tol Balaraja, Apple Notes KMP Batumandi copy bawah & copy atas, serta teks pendek) 100% identik kata demi kata [PASS].
+  - **Test 4**: Inspeksi arsitektur kode `ocr_extractor.ps1` menjamin 0% residu fungsi bermasalah dan kepatuhan penuh terhadap aturan Tahap 36 [PASS].
+  - Seluruh pengujian regresi Tahap 32 dan Tahap 33 lulus 100%.

@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap35_dual_candidate_and_bidirectional_stitch";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap36_real_ocr_execution_and_golden_rules";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";

@@ -650,7 +650,9 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             for cand in candidates:
                 c_strip = cand.strip()
                 c_lower = c_strip.lower()
-                if c_lower.startswith(l_lower + " "):
+                if (c_lower.startswith(l_lower + " ") and 
+                    len(c_lower.split()) <= len(l_lower.split()) + 1 and 
+                    len(c_lower) <= len(l_lower) + 10):
                     prefix_cand = c_strip
                     break
 
@@ -1482,7 +1484,13 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
 
     curr_frame = valid_texts[-1]
     curr_raw = [_clean_ocr_line(l) for l in curr_frame.splitlines() if l.strip() and not _is_garbage_ocr_line(l)]
+    curr_raw = _strip_top_unselected_debris(curr_raw)
     curr_lines = _unsplit_broken_lines(curr_raw)
+
+    # ATURAN EMAS 1 (Tahap 36): Short text (<= 5 non-empty lines, total chars < 200) -> NEVER stitch with history!
+    is_short_snippet = (len(curr_lines) <= 5 and all(len(l) < 55 for l in curr_lines) and sum(len(l) for l in curr_lines) < 200)
+    if is_short_snippet:
+        return curr_frame
 
     # Middle paragraph opener regex (Tahap 35 Perbaikan 3A)
     # These phrases can NEVER qualify as the opening of the document!
@@ -1493,10 +1501,23 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
     first_line_clean = curr_lines[0] if curr_lines else ""
     is_middle_para = bool(middle_para_opener_re.match(first_line_clean))
 
-    # Check if current frame already contains a complete single-screen text (Tahap 34 Fast-Path)
+    # Check if current frame already contains a complete single-screen text (Tahap 36 Golden Rule 2)
     has_closing = any(l.startswith("#") for l in curr_lines[-2:]) if len(curr_lines) >= 2 else False
-    has_body_start = (not is_middle_para and len(first_line_clean) >= 20 and not _is_generic_template_line(first_line_clean))
-    is_complete_single_screen = (has_closing and has_body_start and len(curr_lines) >= 4)
+    if doc_start_norm:
+        has_body_start = (_normalize_line_for_match(first_line_clean) == doc_start_norm)
+    else:
+        has_body_start = (
+            not is_middle_para
+            and len(first_line_clean) >= 20
+            and not _is_generic_template_line(first_line_clean)
+            and first_line_clean[0].isupper()
+            and not first_line_clean.endswith(",")
+        )
+    is_complete_single_screen = (has_closing and has_body_start and len(curr_lines) >= 6)
+
+    # If current frame is 100% complete and has no broken occlusion gap, do not contaminate with history!
+    if is_complete_single_screen and _score_gap_quality(curr_lines) >= 0:
+        return "\r\n".join(curr_lines)
 
     # Stitch backwards anchored on curr_lines so current frame is NEVER dropped!
     current_lines = list(curr_lines)
