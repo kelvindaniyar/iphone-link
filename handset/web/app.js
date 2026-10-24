@@ -20,7 +20,7 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap32_notes_list_rejection_and_tight_paragraphs";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap33_short_enter_and_list_rejection";
 const MIRROR_API = "/mirror";
 
 let currentTheme = localStorage.getItem("pane-theme") || "dark";

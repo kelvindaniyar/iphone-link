@@ -277,7 +277,7 @@ public class DualOcrPreprocessor {
         cropX = Math.Max(0, (int)(W * 0.03));
         int cropW = Math.Min(W - cropX, (int)(W * 0.94));
 
-        if (!isFullViewport && foundHighlight) {
+        if (foundHighlight) {
             // Strictly follow actual highlight vertical bounds!
             cropY = Math.Max((int)(H * 0.115), minY - (int)(H * 0.015));
             int bottomLimit = Math.Min((int)(H * 0.88), maxY + (int)(H * 0.030));
@@ -286,10 +286,9 @@ public class DualOcrPreprocessor {
             }
             cropH = Math.Max(20, bottomLimit - cropY);
         } else {
-            // Full-Viewport Content Crop (for history frames or unhighlighted notes)
-            // Exclude top banner / date (< 0.145 * H) and bottom floating toolbar (> 0.768 * H)
-            // If virtual keyboard is open in lower screen, restrict cropBottom to 0.49 * H
-            cropY = (int)(H * 0.145);
+            // Full-Viewport Content Crop (for unhighlighted notes or top date reading)
+            // Lowered top bound to 0.118 * H so date header at 0.125 * H - 0.140 * H is fully captured (Tahap 33)
+            cropY = (int)(H * 0.118);
             int cropBottom = hasKeyboard ? (int)(H * 0.49) : (int)(H * 0.768);
             cropH = Math.Max(20, cropBottom - cropY);
         }
@@ -483,15 +482,45 @@ public class DualOcrPreprocessor {
         $dateRegex = '(?i)^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December|Oktober|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(\s+(at|pukul)\s+\d{1,2}[.:]\d{2})?'
         $timeRegex = '^[lu0-9OIl]{1,2}[.:][0-9OIl]{2}\b'
         $calloutRegex = '^(Cut|Copy|Paste|Delete|Select|Select All|Look Up|Translate|Share\.\.\.|No Replacements Found|Device Hub|This device was viewed remotely|Co|py|Pas|te|>\s*|\.\.\.)$'
-        $notesListHeaderRegex = '(?i)^(Today|Yesterday|Previous\s+\d+\s+Days|iCloud|Notes|\d+\s+Notes|Catatan|\d+\s+Catatan)$'
-        $notesListPreviewRegex = '(?i)^\d{1,2}[.:]\d{2}\s+(Tidak ada teks|No additional text|Catatan baru|New note)\b'
+
+        # LAPIS 1 (Tahap 33): Detect Notes Folder List View across all raw lines
+        $folderListHeaderRegex = '(?i)^(Today|Yesterday|Previous\s+\d+\s+Days|Hari Ini|Kemarin|\d+\s+Hari Sebelumnya|Notes|Catatan|\d+\s+Notes|\d+\s+Catatan|iCloud|January|February|March|April|May|June|July|August|September|October|November|December)$'
+        $folderListPreviewRegex = '(?i)^\d{1,2}[.:]\d{2}\s+\S+'
+
+        $ellipsisCount = 0
+        $isNotesListView = $false
+        foreach ($l in $ocrResult.Lines) {
+            $rawT = $l.Text.Trim()
+            if (!$rawT) { continue }
+            if ($rawT -match $folderListHeaderRegex) {
+                $isNotesListView = $true
+                break
+            }
+            if ($rawT -match $folderListPreviewRegex) {
+                $isNotesListView = $true
+                break
+            }
+            if ($rawT -match '(\.\.\.|…)$') {
+                $ellipsisCount++
+                if ($ellipsisCount -ge 2) {
+                    $isNotesListView = $true
+                    break
+                }
+            }
+        }
+
+        if ($isNotesListView) {
+            return @("<<<NOTES_LIST_VIEW>>>")
+        }
 
         $parsedLines = @()
+        $hasDateHeader = $false
         $dateMinY = -1.0
         foreach ($l in $ocrResult.Lines) {
             $t = $l.Text.Trim()
             if (!$t) { continue }
             if ($t -match $dateRegex) {
+                $hasDateHeader = $true
                 $minY_d = 9999999
                 foreach ($w in $l.Words) {
                     if ($w.BoundingRect.Y -lt $minY_d) { $minY_d = $w.BoundingRect.Y }
@@ -501,7 +530,6 @@ public class DualOcrPreprocessor {
                 }
                 continue
             }
-            if ($t -match $notesListHeaderRegex -or $t -match $notesListPreviewRegex) { continue }
             if ($t -match $timeRegex) { continue }
             if ($t -match $calloutRegex) { continue }
             if ($t -match '(?i)(jendela-kecil|Device Hub|This device was viewed remotely|remotely from Mac)') { continue }
@@ -594,13 +622,20 @@ public class DualOcrPreprocessor {
         }
         $avgH = $sumH / $sortedLines.Count
 
+        # BUG 1 (Tahap 33): Adaptive line gap threshold based on line count
+        $isShortText = ($sortedLines.Count -le 6)
+        $gapThreshold = if ($isShortText) { ($avgH * 0.40) } else { ($avgH * 0.85) }
+
         $lines = @()
+        if ($hasDateHeader) {
+            $lines += "<<<DOC_START>>>"
+        }
         for ($i = 0; $i -lt $sortedLines.Count; $i++) {
             $curr = $sortedLines[$i]
             if ($i -gt 0) {
                 $prev = $sortedLines[$i - 1]
                 $gap = $curr.MinY - $prev.MaxY
-                if ($gap -gt ($avgH * 0.85)) {
+                if ($gap -gt $gapThreshold) {
                     $lines += ""
                 }
             }
@@ -655,6 +690,14 @@ public class DualOcrPreprocessor {
             }
         }
 
+        # If frame is identified as Notes Folder List View, exit immediately with token
+        if ($bestLines -contains "<<<NOTES_LIST_VIEW>>>") {
+            $srcBmp.Dispose()
+            if ($candNat -ne $null) { $candNat.Dispose() }
+            if ($candRed -ne $null) { $candRed.Dispose() }
+            return @("<<<NOTES_LIST_VIEW>>>")
+        }
+
         # If it's the last (current) frame, save debug_ocr_cleaned.png
         if ($isLast -and $bestBmp -ne $null) {
             $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
@@ -671,8 +714,14 @@ public class DualOcrPreprocessor {
     $lastIdx = $pathList.Count - 1
     # Process current frame (at $lastIdx) first:
     $currentLines = @(Process-SingleFrame $pathList[$lastIdx].Trim() $true $false)
-    $nonEmptyCurrent = @($currentLines | Where-Object { $_.Trim().Length -gt 0 })
+    $nonEmptyCurrent = @($currentLines | Where-Object { $_.Trim().Length -gt 0 -and $_ -ne "<<<DOC_START>>>" })
     $charCountCurrent = ($currentLines -join "").Length
+
+    # If current frame is Notes Folder List view, output token immediately and exit
+    if ($currentLines -contains "<<<NOTES_LIST_VIEW>>>") {
+        [Console]::WriteLine("<<<NOTES_LIST_VIEW>>>")
+        exit 0
+    }
 
     # If only 1 frame, OR if current frame is short (< 4 non-empty lines and < 150 chars):
     # Output immediately and exit! (Ultra-fast single pass ~0.4s)
@@ -685,11 +734,16 @@ public class DualOcrPreprocessor {
 
     # Otherwise, it's long text (>= 4 lines or >= 150 chars) and multiple frames are provided.
     # Process history frames 0 .. ($lastIdx - 1) in the exact same process
+    # LAPIS 4: pass isFullViewport = $false to enable Highlight-Crop on history frames
     $allOutputs = @()
     for ($i = 0; $i -lt $lastIdx; $i++) {
-        $histLines = @(Process-SingleFrame $pathList[$i].Trim() $false $true)
+        $histLines = @(Process-SingleFrame $pathList[$i].Trim() $false $false)
         if ($histLines.Count -gt 0) {
-            $allOutputs += ($histLines -join "`r`n")
+            if ($histLines -contains "<<<NOTES_LIST_VIEW>>>") {
+                $allOutputs += "<<<NOTES_LIST_VIEW>>>"
+            } else {
+                $allOutputs += ($histLines -join "`r`n")
+            }
         }
     }
 

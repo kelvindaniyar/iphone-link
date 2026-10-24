@@ -437,6 +437,12 @@ def record_typed_char(char: str) -> None:
                     _TYPED_LINES_BUFFER.pop(0)
                 _LAST_TYPED_ACTIVE_LINE = trimmed
                 _LAST_TYPED_TIMESTAMP = time.time()
+            elif not trimmed:
+                # Consecutive Enter -> record empty line in buffer
+                if _TYPED_LINES_BUFFER and _TYPED_LINES_BUFFER[-1] != "":
+                    _TYPED_LINES_BUFFER.append("")
+                    if len(_TYPED_LINES_BUFFER) > 60:
+                        _TYPED_LINES_BUFFER.pop(0)
             # Reset current line accumulator for next sentence, but KEEP _LAST_TYPED_ACTIVE_LINE intact!
             _CURRENT_TYPED_LINE = ""
         elif char in ("Space", " "):
@@ -477,6 +483,12 @@ def record_typed_text(text: str) -> None:
                         _TYPED_LINES_BUFFER.pop(0)
                     _LAST_TYPED_ACTIVE_LINE = trimmed
                     _LAST_TYPED_TIMESTAMP = time.time()
+                elif trimmed == "":
+                    # If empty line between typed items, record empty line in buffer
+                    if _TYPED_LINES_BUFFER and _TYPED_LINES_BUFFER[-1] != "":
+                        _TYPED_LINES_BUFFER.append("")
+                        if len(_TYPED_LINES_BUFFER) > 60:
+                            _TYPED_LINES_BUFFER.pop(0)
             _CURRENT_TYPED_LINE = ""
         else:
             # Append chunk (single char or word snippet) to _CURRENT_TYPED_LINE
@@ -541,7 +553,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
 
             # SequenceMatcher match against full raw_ocr
             ratio = difflib.SequenceMatcher(None, raw_lower, act_lower).ratio()
-            if ratio >= 0.55:
+            if ratio >= 0.78:
                 return active_line
 
     if not raw_ocr.strip():
@@ -595,7 +607,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                 best_score = score
                 best_cand = c_strip
 
-        if best_score >= 0.55 and best_cand:
+        if best_score >= 0.78 and best_cand:
             return best_cand
 
     # --- Priority 3: Line-by-line correction strictly preserving empty lines ---
@@ -626,7 +638,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             if r > line_ratio:
                 line_ratio = r
                 line_best = c_strip
-        if line_ratio >= 0.55:
+        if line_ratio >= 0.78:
             corrected_lines.append(line_best)
         else:
             corrected_lines.append(c_line)
@@ -656,32 +668,96 @@ def _is_notes_folder_list_frame(lines: list[str] | str) -> bool:
     r"""
     Detect whether a frame belongs to the iOS Notes Folder List view (halaman Daftar Folder Notes).
     Contains headers like: ^Today$, ^Yesterday$, ^Previous \d+ Days$, ^iCloud$, ^Notes$, ^\d+ Notes$,
-    or note preview timestamp lines (e.g. '07:02 Tidak ada teks' or '07.02 No additional text').
+    months (September, March, etc.), or note preview timestamp lines (e.g. '07.42 prabowo gibran').
     """
     if not lines:
         return False
     if isinstance(lines, str):
+        if "<<<NOTES_LIST_VIEW>>>" in lines:
+            return True
         lines_list = [l.strip() for l in lines.splitlines() if l.strip()]
     else:
         lines_list = [l.strip() for l in lines if l and l.strip()]
+        if any("<<<NOTES_LIST_VIEW>>>" in l for l in lines_list):
+            return True
 
     folder_list_header_re = re.compile(
-        r'^(today|yesterday|previous\s+\d+\s+days|icloud|notes|\d+\s+notes|catatan|\d+\s+catatan)$',
+        r'^(today|yesterday|previous\s+\d+\s+days|hari\s+ini|kemarin|\d+\s+hari\s+sebelumnya|icloud|notes|\d+\s+notes|catatan|\d+\s+catatan|january|february|march|april|may|june|july|august|september|october|november|december|januari|februari|maret|mei|juni|juli|agustus|oktober|desember)$',
         re.IGNORECASE
     )
     folder_list_preview_re = re.compile(
-        r'^\d{1,2}[.:]\d{2}\s+(tidak ada teks|no additional text|catatan baru|new note)\b',
+        r'^\d{1,2}[.:]\d{2}\s+\S+',
         re.IGNORECASE
     )
 
+    ellipsis_count = 0
     for line in lines_list:
         clean = line.strip()
         if folder_list_header_re.match(clean):
             return True
-        if folder_list_preview_re.search(clean):
+        if folder_list_preview_re.match(clean):
             return True
+        if re.search(r'(\.\.\.|…)$', clean):
+            ellipsis_count += 1
+            if ellipsis_count >= 2:
+                return True
 
     return False
+
+
+def _strip_typed_buffer_contamination_from_top(lines: list[str]) -> list[str]:
+    """
+    LAPIS 3 (Tahap 33): For long text (>= 6 lines), strip contaminated top lines
+    (e.g. old note titles like 'banten feeds test 17 pro' or 'banten feeds iphone 17 pro')
+    that match entries in the user's typed history buffer or Notes list preview items.
+    """
+    if not lines or len(lines) < 6:
+        return lines
+
+    typed_cands = get_typed_candidates()
+    if not typed_cands:
+        return lines
+
+    result = list(lines)
+    # Check top 1-2 lines
+    for _ in range(2):
+        if len(result) < 6:
+            break
+        top_line = result[0].strip()
+        top_low = top_line.lower()
+
+        # Never strip news article paragraph openers or hashtags
+        if top_line.startswith("#") or re.search(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)$', top_line):
+            break
+
+        is_contamination = False
+        for cand in typed_cands:
+            c_clean = cand.strip()
+            if len(c_clean) < 4:
+                continue
+            c_low = c_clean.lower()
+            # If cand is part of a long news sentence, don't strip
+            if len(c_clean) > 50 or re.search(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)$', c_clean):
+                continue
+
+            # Check exact match, fuzzy ratio >= 0.75, or containment
+            ratio = difflib.SequenceMatcher(None, top_low, c_low).ratio()
+            if ratio >= 0.75 or (len(c_low) >= 8 and (c_low in top_low or top_low in c_low)):
+                is_contamination = True
+                break
+
+        # Also strip if top line is a Notes folder list artifact or timestamp preview
+        if not is_contamination:
+            if _is_notes_folder_list_frame(top_line) or re.match(r'^\d{1,2}[.:]\d{2}\s+', top_line):
+                is_contamination = True
+
+        if is_contamination:
+            print(f"[Tahap 33] Stripped top contaminated line: '{result[0]}'", flush=True)
+            result.pop(0)
+        else:
+            break
+
+    return result
 
 
 def _normalize_line_for_match(text: str) -> str:
@@ -697,6 +773,8 @@ def _is_garbage_ocr_line(text: str) -> bool:
     if not text or not text.strip():
         return False
     t = text.strip()
+    if t in ("<<<DOC_START>>>", "<<<NOTES_LIST_VIEW>>>"):
+        return True
     t_low = t.lower()
 
     # System banners & floating toolbar text
@@ -704,11 +782,11 @@ def _is_garbage_ocr_line(text: str) -> bool:
         return True
 
     # iOS Notes Folder List headers (e.g. "Today", "Yesterday", "Previous 7 Days", "Previous 30 Days", "iCloud", "Notes", "9 Notes")
-    if re.match(r'^(today|yesterday|previous\s+\d+\s+days|icloud|notes|\d+\s+notes|catatan|\d+\s+catatan)$', t, re.IGNORECASE):
+    if re.match(r'^(today|yesterday|previous\s+\d+\s+days|hari\s+ini|kemarin|\d+\s+hari\s+sebelumnya|icloud|notes|\d+\s+notes|catatan|\d+\s+catatan|january|february|march|april|may|june|july|august|september|october|november|december|januari|februari|maret|mei|juni|juli|agustus|oktober|desember)$', t, re.IGNORECASE):
         return True
 
-    # iOS Notes Folder List preview timestamp line (e.g. "07:02 Tidak ada teks", "14.30 No additional text")
-    if re.match(r'^\d{1,2}[.:]\d{2}\s+(tidak ada teks|no additional text|catatan baru|new note)\b', t, re.IGNORECASE):
+    # iOS Notes Folder List preview timestamp line (e.g. "07:02 Tidak ada teks", "07.42 prabowo gibran", "14.30 No additional text")
+    if re.match(r'^\d{1,2}[.:]\d{2}\s+\S+', t, re.IGNORECASE):
         return True
 
     # iOS Notes date line (e.g. "24 October 2026 at 04.31" or "20 Oktober 2026")
@@ -1139,7 +1217,7 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
     if not valid_texts:
         return ""
 
-    # Look for iOS Notes date header in input texts to determine absolute document start (DOC_START)
+    # Look for iOS Notes date header or <<<DOC_START>>> in input texts to determine absolute document start (DOC_START)
     doc_start_norm: str | None = None
     date_header_re = re.compile(
         r'^\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Oktober|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(?:\s+(?:at|pukul)\s+\d{1,2}[.:]\d{2})?$',
@@ -1149,11 +1227,11 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
     for t in valid_texts:
         raw_lines = [l.strip() for l in t.splitlines() if l.strip()]
         for idx, line in enumerate(raw_lines):
-            if date_header_re.match(line):
-                # The line immediately following the date header is DOC_START
+            if line == "<<<DOC_START>>>" or date_header_re.match(line):
+                # The line immediately following <<<DOC_START>>> or date header is DOC_START
                 for nxt_idx in range(idx + 1, len(raw_lines)):
                     candidate = _clean_ocr_line(raw_lines[nxt_idx])
-                    if candidate and not _is_garbage_ocr_line(candidate):
+                    if candidate and not _is_garbage_ocr_line(candidate) and candidate != "<<<DOC_START>>>":
                         doc_start_norm = _normalize_line_for_match(candidate)
                         break
                 if doc_start_norm:
@@ -1197,6 +1275,9 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                     current_lines = current_lines[idx:]
                 break
 
+    # LAPIS 3 (Tahap 33): Strip typed buffer contamination from top of long text
+    current_lines = _strip_typed_buffer_contamination_from_top(current_lines)
+
     # If long note (>= 4 lines), check and merge with session chunk memory (_RECENT_LONG_OCR_CHUNKS)
     if len(current_lines) >= 4:
         now = time.time()
@@ -1214,6 +1295,7 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                                 if idx > 0:
                                     hist_merged = hist_merged[idx:]
                                 break
+                    hist_merged = _strip_typed_buffer_contamination_from_top(hist_merged)
                     current_lines = hist_merged
 
             _RECENT_LONG_OCR_CHUNKS.append({"ts": now, "lines": list(current_lines)})
@@ -1230,6 +1312,8 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
                     current_lines = current_lines[idx:]
                 break
 
+    current_lines = _strip_typed_buffer_contamination_from_top(current_lines)
+
     if len(current_lines) <= 1:
         return "\r\n".join(current_lines)
 
@@ -1239,10 +1323,11 @@ def stitch_multiline_ocr_frames(texts: list[str]) -> str:
 
 def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = None) -> str:
     """
-    Final Paragraph Formatter (Tahap 32):
+    Final Paragraph Formatter (Tahap 32 & Tahap 33):
     Called AS THE VERY LAST STEP before sending to Windows Clipboard.
     Guarantees clean double newlines (\\r\\n\\r\\n) between paragraphs and single newlines (\\r\\n) within paragraphs and hashtags.
-    Strictly forbids fake double newlines (\\r\\n\\r\\n) mid-sentence!
+    Strictly forbids fake double newlines (\\r\\n\\r\\n) mid-sentence for long text!
+    For short text (<= 5 lines), 100% preserves empty lines between lines!
     """
     if not text or not text.strip():
         return ""
@@ -1260,6 +1345,9 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
         else:
             if non_empty_lines:
                 has_blank_after.add(len(non_empty_lines) - 1)
+
+    # LAPIS 3 (Tahap 33): Strip typed buffer contamination from top of long text (>= 6 lines)
+    non_empty_lines = _strip_typed_buffer_contamination_from_top(non_empty_lines)
 
     # Clamp tail: discard any garbage or debris after the hashtag block
     last_hashtag_idx = -1
@@ -1285,6 +1373,9 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     if len(non_empty_lines) <= 1:
         return non_empty_lines[0]
 
+    is_short_text = len(non_empty_lines) <= 5
+    is_long_text = len(non_empty_lines) >= 6
+
     # Compute average full line length
     full_line_lengths = [len(l) for l in non_empty_lines if len(l) >= 28 and not l.startswith("#")]
     avg_full_line_len = (sum(full_line_lengths) / len(full_line_lengths)) if full_line_lengths else 42.0
@@ -1298,8 +1389,6 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
         re.IGNORECASE
     )
     terminal_punct_re = re.compile(r'(\.|\)\.|\]\.|\"\.|\'\.|\?|!)[ \t]*$')
-
-    is_long_text = len(non_empty_lines) >= 6
 
     output_lines: list[str] = []
     for i, line in enumerate(non_empty_lines):
@@ -1316,39 +1405,40 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
 
             is_para_end = False
 
-            # Rule 4: Between consecutive hashtag lines, STRICTLY FORBIDDEN to insert blank line!
-            if is_curr_hashtag and is_next_hashtag:
-                is_para_end = False
-            # Rule 3: Always insert \r\n\r\n before Source/Sumber or before first #
-            elif is_next_source:
-                is_para_end = True
-            elif is_next_hashtag and not is_curr_hashtag:
-                is_para_end = True
+            if is_short_text:
+                # BUG 1 (Tahap 33): For short text (<= 5 non-empty lines), 100% preserve all blank lines!
+                if i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks):
+                    is_para_end = True
             else:
-                # Rule 1: Syarat Wajib Kalimat Selesai: line MUST end with terminal punct or be Source
-                has_sentence_end = bool(terminal_punct_re.search(line)) or is_curr_source
+                # Long text rules (Tahap 32)
+                # Rule 4: Between consecutive hashtag lines, STRICTLY FORBIDDEN to insert blank line!
+                if is_curr_hashtag and is_next_hashtag:
+                    is_para_end = False
+                # Rule 3: Always insert \r\n\r\n before Source/Sumber or before first #
+                elif is_next_source:
+                    is_para_end = True
+                elif is_next_hashtag and not is_curr_hashtag:
+                    is_para_end = True
+                else:
+                    # Rule 1: Syarat Wajib Kalimat Selesai: line MUST end with terminal punct or be Source
+                    has_sentence_end = bool(terminal_punct_re.search(line)) or is_curr_source
 
-                # In short text (< 6 lines), preserve blank if sentence is finished or short line
-                if not is_long_text and (i in has_blank_after or (raw_para_breaks and norm_curr in raw_para_breaks)):
-                    if has_sentence_end or len(line) < (0.85 * avg_full_line_len):
-                        is_para_end = True
+                    if has_sentence_end:
+                        # Rule 2: Indikator batas paragraf
+                        if section_opener_re.match(nxt):
+                            is_para_end = True
+                        elif para_closing_re.search(line):
+                            is_para_end = True
+                        elif (
+                            len(line) < (0.82 * avg_full_line_len)
+                            and re.match(r'^[A-Z]', nxt)
+                            and not is_curr_hashtag
+                        ):
+                            is_para_end = True
 
-                if has_sentence_end:
-                    # Rule 2: Indikator batas paragraf
-                    if section_opener_re.match(nxt):
-                        is_para_end = True
-                    elif para_closing_re.search(line):
-                        is_para_end = True
-                    elif (
-                        len(line) < (0.82 * avg_full_line_len)
-                        and re.match(r'^[A-Z]', nxt)
-                        and not is_curr_hashtag
-                    ):
-                        is_para_end = True
-
-            # Rule 4: Di antara dua baris yang belum berakhir titik, DILARANG KERAS menyisipkan \r\n\r\n!
-            if not is_curr_source and not terminal_punct_re.search(line) and not is_next_source and not (is_next_hashtag and not is_curr_hashtag):
-                is_para_end = False
+                    # Rule 4: Di antara dua baris yang belum berakhir titik, DILARANG KERAS menyisipkan \r\n\r\n!
+                    if not is_curr_source and not terminal_punct_re.search(line) and not is_next_source and not (is_next_hashtag and not is_curr_hashtag):
+                        is_para_end = False
 
             if is_para_end:
                 output_lines.append("")

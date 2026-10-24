@@ -267,9 +267,9 @@ def test_4_ocr_extractor_script_inspection():
     ps1_path = PROJECT_ROOT / "handset" / "ocr_extractor.ps1"
     content = ps1_path.read_text(encoding="utf-8")
 
-    assert "$gap -gt ($avgH * 0.85)" in content, "Threshold ($avgH * 0.85) not found in ocr_extractor.ps1!"
+    assert "($avgH * 0.85)" in content, "Threshold ($avgH * 0.85) not found in ocr_extractor.ps1!"
     assert "$avgH * 0.32" not in content, "Old low threshold 0.32 still present in ocr_extractor.ps1!"
-    print("[PASS] 1. Line gap threshold successfully raised to ($avgH * 0.85).")
+    print("[PASS] 1. Line gap threshold successfully raised to ($avgH * 0.85) with adaptive short text support.")
 
     assert "$dateMinY" in content, "Top-of-Note Lock variable $dateMinY not found in ocr_extractor.ps1!"
     assert "$parsedLines = @($parsedLines | Where-Object { $_.MinY -gt $dateMinY })" in content, (
@@ -277,7 +277,7 @@ def test_4_ocr_extractor_script_inspection():
     )
     print("[PASS] 2. Top-of-Note Lock discarding lines above date header found in ocr_extractor.ps1.")
 
-    assert "$notesListHeaderRegex" in content, "$notesListHeaderRegex not found in ocr_extractor.ps1!"
+    assert "$folderListHeaderRegex" in content or "$notesListHeaderRegex" in content, "Notes list header regex not found in ocr_extractor.ps1!"
     print("[PASS] 3. Notes list header regex filter present in ocr_extractor.ps1.")
 
 

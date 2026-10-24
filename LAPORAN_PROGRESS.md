@@ -832,6 +832,30 @@ Pembaruan terkini mencakup:
   - Test 4: Inspeksi script `ocr_extractor.ps1` untuk threshold `0.85*avgH` dan Top-of-Note Lock `$dateMinY` [PASS].
   - Seluruh pengujian regresi Tahap 26-31 lulus 100%.
 
+### Tahap 33: Adaptive Enter Spacing, Notes List View Rejection, Top Contamination Stripping, & Auto-Correct Collision Fix (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi via [`scratch/verify_tahap33.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap33.py) serta seluruh uji regresi Tahap 26-32.
+- **Latar Belakang & Analisis Video**: Dari evaluasi video pengujian Kelvin (`20261024-0004-19.1371220.mp4`), format paragraf caption panjang KMP Batumandi (menit 02:39 & 03:16) sudah 100% rapi identik dalam 6 blok paragraf dan 10 perbaikan typo optik OCR tetap bersih. Namun ditemukan 2 bug:
+  1. **Bug 1 (Menit 00:31 - 01:15)**: Kalimat pendek dengan jarak 1 baris kosong (`prabowo gibran \n\n teddy gemoy \n\n jokowi`) kehilangan baris kosongnya saat di-copy ke Windows. Serta kata `"prabowo gibran"` berubah menjadi `"jokowi gibran"` karena threshold fuzzy auto-correct terlalu rendah (`0.55`) sehingga kata kedua yang sama (`"gibran"`) memicu tabrakan kata.
+  2. **Bug 2 (Menit 01:49, 02:39, 03:16)**: Judul catatan lama `"banten feeds test 17 pro"` masih nyangkut tepat di atas `"Rekaman video amatir..."` akibat self-sabotage detektor daftar catatan lama di PowerShell, crop batas atas tanggal terpotong di `0.145*H`, dan frame riwayat tanpa seleksi kuning ikut disambungkan.
+- **Pekerjaan yang Dilakukan**:
+  1. **Ambang Jarak Baris Adaptif & Preservasi Baris Kosong Teks Pendek**:
+     - Di `ocr_extractor.ps1`: Ambang gap vertikal adaptif: jika $\le 6$ baris disetel ke `0.40 * avgH` (sensitif), jika $> 6$ baris disetel ke `0.85 * avgH`.
+     - Di `screen.py`: Untuk teks pendek ($\le 5$ baris), 100% mempertahankan seluruh baris kosong `""` tanpa dibatalkan oleh Rule 4 tanda titik.
+     - Di `screen.py`: Pengetatan ambang kemiripan fuzzy `auto_correct_ocr_text` dari `0.55` ke `0.78`, mencegah tabrakan kata `"prabowo gibran"` $\rightarrow$ `"jokowi gibran"`.
+     - Di `screen.py`: Pencatatan baris kosong `""` pada double enter berturut-turut di `record_typed_text` dan `record_typed_char`.
+  2. **Pertahanan 4 Lapis Terhadap Notes List & Kontaminasi Judul**:
+     - **Lapis 1 (Deteksi Daftar Notes Komprehensif)**: `ocr_extractor.ps1` memeriksa seluruh baris mentah untuk header daftar, jam preview, dan elipsis preview, mengembalikan token tunggal `<<<NOTES_LIST_VIEW>>>`. Di Python, frame tersebut langsung dibuang dan memicu `clear_recent_long_ocr_chunks()`.
+     - **Lapis 2 (Token `<<<DOC_START>>>` & Top-of-Note Lock)**: Batas crop tanggal diturunkan ke `0.118 * H`. Deteksi `$dateRegex` mencetak token `<<<DOC_START>>>`. Baris setelah token dikunci sebagai `doc_start_norm` dan dilarang menambahkan baris di atasnya.
+     - **Lapis 3 (Pembersihan Kontaminasi Buffer `_strip_typed_buffer_contamination_from_top`)**: Pada teks panjang ($\ge 6$ baris), baris ke-1 atau ke-2 yang cocok ($\ge 0.75$) dengan riwayat ketikan buffer (`_TYPED_LINES_BUFFER` / `typed_history.json`, seperti `"banten feeds test 17 pro"`) otomatis dihapus!
+     - **Lapis 4 (Highlight-Crop History Frames)**: Memprioritaskan highlight-crop (`isFullViewport = $false`) pada history frames.
+  3. **Pembaruan Tag Cache**: Bump ke `v=20261024_tahap33_short_enter_and_list_rejection` di `mirror.html`, `index.html`, dan `app.js`.
+- **Hasil Verifikasi (`verify_tahap33.py`)**:
+  - Test 1: 3 baris pendek dengan enter ganda (`prabowo gibran \n\n teddy gemoy \n\n jokowi`) 100% mempertahankan baris kosong dan nama asli [PASS].
+  - Test 2: Frame 0 daftar Notes ditolak 100% sebagai `<<<NOTES_LIST_VIEW>>>`, judul kontaminasi `"banten feeds test 17 pro"` otomatis dibuang, dan hasil mulai tepat pada `DOC_START` (`"Rekaman video amatir..."`) [PASS].
+  - Test 3: Inspeksi kode `ocr_extractor.ps1` untuk crop `0.118*H`, gap adaptif `0.40*avgH`, token `<<<NOTES_LIST_VIEW>>>`, dan `<<<DOC_START>>>` [PASS].
+  - Test 4: Format caption berita KMP Batumandi 100% utuh dalam tepat 6 blok paragraf tanpa kontaminasi judul [PASS].
+  - Seluruh pengujian regresi Tahap 26-32 lulus 100%.
+
 
 
 

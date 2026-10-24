@@ -232,6 +232,9 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
     try:
         results = extract_text_batch([frame_data_url], save_debug=save_debug)
         raw_text = results[0] if results else ""
+        if raw_text == "<<<NOTES_LIST_VIEW>>>" or _is_notes_folder_list_frame(raw_text):
+            clear_recent_long_ocr_chunks()
+            return None
         if raw_text:
             corrected_text = auto_correct_ocr_text(raw_text)
             corrected_text = ensure_paragraph_formatting(corrected_text)
@@ -469,12 +472,12 @@ class Handler(BaseHTTPRequestHandler):
                         # Single-Pass Batch OCR: executes PowerShell ONLY ONCE (< 2s)!
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
 
-                        # Detect if any frame is a Notes folder list frame (Tahap 32 Bug 1)
-                        has_folder_list = any(_is_notes_folder_list_frame(t) for t in batch_texts)
+                        # Detect if any frame is a Notes folder list frame (Tahap 32 & Tahap 33)
+                        has_folder_list = any(_is_notes_folder_list_frame(t) or "<<<NOTES_LIST_VIEW>>>" in t for t in batch_texts)
                         if has_folder_list:
                             clear_recent_long_ocr_chunks()
 
-                        valid_texts = [t for t in batch_texts if t and t.strip() and not _is_notes_folder_list_frame(t)]
+                        valid_texts = [t for t in batch_texts if t and t.strip() and not _is_notes_folder_list_frame(t) and "<<<NOTES_LIST_VIEW>>>" not in t]
                         if not valid_texts:
                             return None
 
