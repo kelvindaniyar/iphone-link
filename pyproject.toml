@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "iphone-link"
 version = "1.0.0"
+authors = [{ name = "Kelvin Daniyar", email = "kelvindaniyar@users.noreply.github.com" }]
 description = "iPhone Link — Native iPhone Mirroring and Control for Windows 11"
 readme = "README.md"
 requires-python = ">=3.9"

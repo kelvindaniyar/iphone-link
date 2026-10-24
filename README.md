@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/kelvindaniyar"><img src="https://img.shields.io/badge/Developer-Kelvin%20Daniyar%20(%40kelvindaniyar)-4F46E5?style=flat-square&logo=github" alt="Developer: Kelvin Daniyar"></a>
   <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows"><img src="https://img.shields.io/badge/Forked%20from-teyboxv1%2Fpane--iphone--mirror--windows-blue?style=flat-square&logo=github" alt="Forked from teyboxv1"></a>
   <img src="https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square" alt="License: GPL-3.0">
   <img src="https://img.shields.io/badge/Verified%20OS-Windows%2011%2026H2%20(64--bit)-0078D4.svg?style=flat-square&logo=windows" alt="Verified OS: Windows 11 26H2">
@@ -24,9 +25,11 @@
 
 ---
 
-### 🌟 Attribution & Open-Source Lineage
-> **iPhone Link** is an advanced open-source fork developed from [**teyboxv1/pane-iphone-mirror-windows**](https://github.com/teyboxv1/pane-iphone-mirror-windows), licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
-> We gratefully acknowledge and credit **teyboxv1** and the open-source contributors of Pane and **pymobiledevice3** for establishing the foundational USB RemoteXPC tunneling mechanism that made native iOS mirroring on Windows possible.
+### 🌟 Author, Attribution & Open-Source Lineage
+> - **Creator & Lead Developer of iPhone Link**: **Kelvin Daniyar** ([GitHub `@kelvindaniyar`](https://github.com/kelvindaniyar) · [Instagram `@kelvin.daniyar`](https://www.instagram.com/kelvin.daniyar/) · [TikTok `@kelvindaniyar`](https://www.tiktok.com/@kelvindaniyar)).  
+>   Designed and engineered **iPhone Link** (WinUI 3 Liquid Glass Frameless UI, Responsive Compact Top Bar, Mac-Style Stealth Dim Mode 0% with ~25% Calibrated Restore, Remote Wake & Auto-PIN Unlock, Landscape Gaming Mode `Alt+H` with Inverse Touch Matrix, Bidirectional Smart OCR Copy-Paste for Apple Notes & Google Keep, Smart Auto-Clear Cache, and Bluetooth Audio Sink).
+> - **Upstream Open-Source Source (Forked From)**: Developed from the foundational open-source project [**teyboxv1/pane-iphone-mirror-windows**](https://github.com/teyboxv1/pane-iphone-mirror-windows) by **teyboxv1**, licensed under the **GNU General Public License v3.0 (GPL-3.0)**.  
+>   We gratefully acknowledge and credit **teyboxv1** and the open-source contributors of Pane and **[pymobiledevice3](https://github.com/doronz88/pymobiledevice3)** (by Doron Zavelevsky) for establishing the foundational USB RemoteXPC tunneling mechanism that made native iOS mirroring on Windows possible.
 
 ---
 
@@ -128,8 +131,8 @@ Sebelum menjalankan iPhone Link, pengguna **WAJIB** mengaktifkan **Developer Mod
 
 ```powershell
 # 1. Clone repository
-git clone https://github.com/teyboxv1/pane-iphone-mirror-windows.git
-cd pane-iphone-mirror-windows
+git clone https://github.com/kelvindaniyar/iphone-link.git
+cd iphone-link
 
 # 2. Set up Python virtual environment
 python -m venv venv
@@ -172,6 +175,7 @@ iPhone Link establishes a secure, local-only communication pipeline between your
 
 ## 📄 License & Credits
 
+- **Creator & Lead Developer**: [**Kelvin Daniyar**](https://github.com/kelvindaniyar) ([@kelvindaniyar](https://github.com/kelvindaniyar)).
 - **License**: GNU General Public License v3.0 ([GPL-3.0](LICENSE)).
-- **Upstream Project**: Forked and enhanced from [**teyboxv1/pane-iphone-mirror-windows**](https://github.com/teyboxv1/pane-iphone-mirror-windows).
+- **Upstream Project**: Forked and enhanced from [**teyboxv1/pane-iphone-mirror-windows**](https://github.com/teyboxv1/pane-iphone-mirror-windows) by teyboxv1.
 - **Core Library**: Powered by [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) by Doron Zavelevsky.

@@ -24,3 +24,9 @@ typed_history.json
 user_settings.json
 wifi_state.json
 
+# Development Reports & Packaging
+LAPORAN_PENGEMBANGAN/
+LAPORAN_*.md
+packaging/
+*.egg-info/
+
