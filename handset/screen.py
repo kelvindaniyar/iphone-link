@@ -2211,7 +2211,7 @@ def _set(**values) -> dict:
 def _plain(error: Exception) -> str:
     text = str(error).strip() or type(error).__name__
     name = type(error).__name__
-    if name == "WifiNotFoundError":
+    if name == "WifiNotFoundError" or "Wi-Fi" in text or "Wi‑Fi" in text:
         return text
     if name in {"ConnectionFailedToUsbmuxdError", "MuxError"} or "27015" in text or "usbmux" in text.lower():
         return "Apple Mobile Device Service is not running. Install Apple Devices, reconnect the iPhone, and tap Trust."

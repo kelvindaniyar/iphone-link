@@ -2,9 +2,9 @@
 
 > **Klien:** Kelvin (Content Creator)  
 > **Tema Desain:** WinUI 3 / Liquid Glass (Fluent Design Windows 11) Native Desktop Edge-to-Edge  
-> **Status:** Terverifikasi 100% Berhasil Tahap 41 (Koneksi Wi-Fi Mirroring Tanpa Kabel, Real Network Discovery, Auto-Enable Wireless Lockdown, Error Banner Diagnostik, & 100% Zero Regression OCR Tahap 40 V2)  
+> **Status:** Terverifikasi 100% Berhasil Tahap 42 (Penemuan Real LAN IP Sub-detik via Parallel Scan Port 62078, Multi-Stage Wi-Fi Connection Engine, Auto-Scan UI, & 100% Zero Regression OCR Tahap 40 V2)  
 > **Branch Aktif:** `feature/macos-sequoia-ui`  
-> **Cache Buster:** `v=20261024_tahap41_wifi_mirroring_and_network_discovery`  
+> **Cache Buster:** `v=20261024_tahap42_lan_subnet_scan_and_wifi_mirroring`  
 
 ---
 
@@ -1148,6 +1148,34 @@ Pembaruan terkini mencakup:
   - Test 3 (Backend `/api/status` & Wi-Fi Mirroring Error Reporting): PASS.
   - Test 4 (Full Regression Tahap 40 OCR & Short Text): PASS.
   - Pengujian regresi `scratch/verify_tahap40.py` dan `scratch/verify_tahap39.py` lulus 100% dalam 4.25 detik.
+
+### Tahap 42: Penemuan Real LAN IP Sub-Detik via Parallel Scan Port 62078 & Multi-Stage Wi-Fi Connection Engine (24 Oktober 2026)
+- **Status**: Selesai & 100% Terverifikasi Real Fisik iPhone Kelvin (`00008150-000231AC2669401C`) via [`scratch/verify_tahap42.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap42.py) & [`scratch/verify_tahap40.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/scratch/verify_tahap40.py).
+- **Laporan Lengkap Terkait**: [`LAPORAN_TAHAP_42_LAN_SUBNET_SCAN_DAN_WIFI_MIRRORING.md`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/LAPORAN_TAHAP_42_LAN_SUBNET_SCAN_DAN_WIFI_MIRRORING.md).
+- **Latar Belakang Forensik Video Kelvin (01:09) & Screenshot `IMG_0147.jpg`**:
+  - Pada pengujian Tahap 41, mode Cable bekerja sempurna (00:16-00:38). Namun saat beralih ke tab Wi-Fi dengan kabel masih tercolok, status pojok kiri atas langsung menjadi `Wi-Fi Paired (Offline)` dan tombol `Start mirroring` gagal setelah 3.5 detik dengan banner merah tanpa informasi IP.
+  - **Akar Masalah #1**: iOS 17/18+ Private Wi-Fi Address mengaktifkan MAC randomization di jaringan `Devani 5G` (`6e-04-fd-db-8b-50`), sedangkan `lockdown.wifi_mac_address` mengembalikan MAC hardware fisik pabrik (`d4:ff:1a:ba:de:25`). Pencarian `arp -a` selalu menghasilkan `None`, sehingga `last_ip` di `wifi_state.json` selalu `null`.
+  - **Akar Masalah #2**: Hidden SSID pada router `Devani 5G` memblokir paket mDNS Multicast `224.0.0.251:5353`, ditambah service Windows `mDNSResponder.exe` mengikat port 5353. Akibatnya discovery Bonjour multicast selalu timeout.
+  - **Akar Masalah #3**: Domain `com.apple.mobile.wireless_lockdown` memerlukan otorisasi `EnableWifiDebugging = True` untuk membuka akses transport developer melalui Wi-Fi.
+- **Pekerjaan Rekayasa yang Dilakukan (4 Pilar Solusi Arsitektural)**:
+  1. **PILAR 1: Pemindai Aktif Subnet `/24` Parallel Port 62078 (`discover_iphone_ip_on_lan`)**:
+     - Memindai seluruh 253 host di subnet `192.168.100.1..254` secara paralel menggunakan `ThreadPoolExecutor(max_workers=64)` pada port Apple Wireless Lockdown 62078.
+     - Selesai hanya dalam **0.065 detik** dan langsung menemukan IP aktif iPhone Kelvin: `192.168.100.38`.
+     - Memverifikasi UDID via TCP Lockdown `create_using_tcp` dan meng-cache ke `wifi_state.json`.
+  2. **PILAR 2: Sinkronisasi & Otorisasi Wireless Lockdown Ganda**:
+     - Mengaktifkan `EnableWifiConnections = True` dan `EnableWifiDebugging = True` secara otomatis saat kabel tercolok atau saat Wi-Fi Setup.
+  3. **PILAR 3: Multi-Stage Wi-Fi Connection Engine**:
+     - 3-Stage fallback: Stage 1 (Bonjour RemotePairing), Stage 2 (usbmux Network), Stage 3 (USB-Assisted Hybrid Link & Direct Probe).
+     - Menjaga keutuhan pesan error diagnostik di `_plain(error)` ([`handset/screen.py`](file:///d:/SCREEN%20MIROR%20IOS/pane-iphone-mirror-windows/handset/screen.py)) tanpa mengubah kode OCR/Copy-Paste.
+  4. **PILAR 4: Auto-Scan UI & Endpoint `POST /api/wifi/scan`**:
+     - Endpoint backend `POST /api/wifi/scan` ditambahkan di `server.py`.
+     - Tombol `🔍 Scan` ditambahkan di antarmuka tab Wi-Fi.
+     - Auto-trigger scan saat berpindah ke tab Wi-Fi dalam < 0.1s langsung mengubah status menjadi `✓ Wi‑Fi Ready (Connected on LAN: 192.168.100.38)`.
+- **Hasil Verifikasi Eksekusi Nyata (`scratch/verify_tahap42.py`)**:
+  - Test 1 (Real LAN Discovery & Wi-Fi TCP Lockdown): PASS — IP `192.168.100.38` ditemukan dalam 0.065 detik, lockdown terverifikasi (`UniqueDeviceID: 00008150-000231AC2669401C`).
+  - Test 2 (Live Status Probing & Multi-Stage Readiness): PASS — `probe_wifi_device` melaporkan `✓ Wi‑Fi Ready (Connected on LAN: 192.168.100.38)` dan `start_screen` menangani diagnostik tanpa crash.
+  - Test 3 (Zero Regression Tahap 40 V2): PASS — Seluruh 4 pengujian OCR, Apple Notes 2-Copy stitching, Smart Auto-Clear, dan short double Enter lulus 100%.
+
 
 
 

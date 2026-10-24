@@ -20,8 +20,9 @@ const phoneScreen = document.querySelector("#phone-screen");
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
+const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261024_tahap41_wifi_mirroring_and_network_discovery";
+const MIRROR_PAGE = "/mirror.html?v=20261024_tahap42_lan_subnet_scan_and_wifi_mirroring";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
@@ -738,7 +739,28 @@ document.querySelectorAll("[data-transport]").forEach((btn) => {
   btn.addEventListener("click", () => setTransport(btn.dataset.transport));
 });
 wifiPair.addEventListener("click", () => setUpWifi());
+wifiScan?.addEventListener("click", async () => {
+  wifiScan.disabled = true;
+  wifiScan.textContent = "Scanning…";
+  try {
+    await triggerWifiScan(selectedUdid);
+  } finally {
+    wifiScan.disabled = false;
+    wifiScan.textContent = "🔍 Scan";
+  }
+});
 setTransport(transport, false);
+
+async function triggerWifiScan(udid) {
+  try {
+    const res = await postJson("/api/wifi/scan", { udid: udid || selectedUdid });
+    if (res?.wifi) {
+      currentWifiState = res.wifi;
+      renderWifi();
+      renderPill();
+    }
+  } catch (_) {}
+}
 
 function setTransport(value, reload = true) {
   transport = value === "wifi" ? "wifi" : "usb";
@@ -748,6 +770,9 @@ function setTransport(value, reload = true) {
     btn.classList.toggle("is-active", active);
     btn.setAttribute("aria-checked", String(active));
   });
+  if (transport === "wifi" && (selectedUdid || (currentWifiState?.paired || []).length)) {
+    triggerWifiScan(selectedUdid || currentWifiState.paired[0]);
+  }
   if (reload) load();
 }
 
@@ -1023,13 +1048,13 @@ function renderDevices(list) {
       selectedUdid = device.udid;
       devicesEl.querySelectorAll(".device").forEach((el) => el.classList.remove("selected"));
       button.classList.add("selected");
-      if (!device.wifiOnly) openDevice(device.udid);
+      openDevice(device.udid);
       renderWifi();
     });
     item.append(button);
     devicesEl.append(item);
   }
-  if (list.length === 1 && !list[0].wifiOnly) openDevice(list[0].udid);
+  if (list.length === 1) openDevice(list[0].udid);
 }
 
 async function openDevice(udid) {

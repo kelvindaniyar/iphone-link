@@ -390,6 +390,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break
+            if not selected_udid:
+                paired_list = wifi_paired_udids()
+                if paired_list:
+                    selected_udid = paired_list[0]
             payload["wifi"] = get_wifi_status(selected_udid)
             payload["audio"] = audio_manager.status()
             self._json(payload)
@@ -616,6 +620,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(pair_for_wifi(udid))
             return
+        if path == "/api/wifi/scan":
+            from handset.wifi import discover_iphone_ip_on_lan
+            found_ip = discover_iphone_ip_on_lan(udid)
+            self._json({"ok": True, "ip": found_ip, "wifi": get_wifi_status(udid)})
+            return
         if path != "/api/screen":
             self._json({"error": "Unknown action."}, status=404)
             return
@@ -667,6 +676,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._json(read_handset(udid))
         except MuxError as error:
+            from handset.wifi import get_device_wifi_state, wifi_paired_udids
+            cached = get_device_wifi_state(udid)
+            if cached.get("wifi_enabled_on_device") or udid in wifi_paired_udids():
+                name = cached.get("device_name") or "iPhone"
+                self._json({
+                    "udid": udid,
+                    "paired": True,
+                    "info": {
+                        "DeviceName": name,
+                        "WiFiAddress": cached.get("mac_address"),
+                        "LastIP": cached.get("last_ip"),
+                    },
+                    "wifi": True,
+                })
+                return
             self._json({"udid": udid, "paired": False, "error": str(error)}, status=409)
 
     def _json(self, payload: dict, status: int = 200) -> None:
