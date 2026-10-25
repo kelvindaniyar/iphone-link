@@ -48,6 +48,7 @@ Write-Host "      Copying launchers and documentation..." -ForegroundColor Green
 $CoreFiles = @(
     "iPhone Link.bat",
     "Create-Desktop-Shortcut.bat",
+    "Uninstall-iPhone-Link.bat",
     "run.bat",
     "README.md",
     "LICENSE",

@@ -55,6 +55,7 @@ from handset.screen import (
     trigger_ios_shortcut,
     type_text_to_iphone,
     wake_and_unlock_iphone,
+    wipe_all_privacy_data,
 )
 from handset.wifi import (
     get_wifi_status,
@@ -641,6 +642,9 @@ class Handler(BaseHTTPRequestHandler):
             level = "min" if enabled else "restore"
             steps = 16 if enabled else restore_steps
             self._json(set_iphone_physical_brightness(level, steps=steps))
+            return
+        if path == "/api/device/wipe-privacy-data":
+            self._json(wipe_all_privacy_data())
             return
 
         udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None

@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/kelvindaniyar"><img src="https://img.shields.io/badge/Developer-Kelvin%20Daniyar%20(%40kelvindaniyar)-4F46E5?style=flat-square&logo=github" alt="Developer: Kelvin Daniyar"></a>
+  <a href="https://saweria.co/kelvindaniyar" target="_blank"><img src="https://img.shields.io/badge/☕_Support_on-Saweria-F59E0B?style=flat-square&logo=buymeacoffee&logoColor=white" alt="Support on Saweria"></a>
   <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows"><img src="https://img.shields.io/badge/Forked%20from-teyboxv1%2Fpane--iphone--mirror--windows-blue?style=flat-square&logo=github" alt="Forked from teyboxv1"></a>
   <img src="https://img.shields.io/badge/License-GPL--3.0-green.svg?style=flat-square" alt="License: GPL-3.0">
   <img src="https://img.shields.io/badge/Verified%20OS-Windows%2011%2026H2%20(64--bit)-0078D4.svg?style=flat-square&logo=windows" alt="Verified OS: Windows 11 26H2">
@@ -127,6 +128,19 @@ Sebelum menjalankan iPhone Link, pengguna **WAJIB** mengaktifkan **Developer Mod
 
 ---
 
+### 🔒 Privacy & Clean Uninstall
+
+Privasi dan kendali data Anda adalah prioritas mutlak iPhone Link:
+- **Hapus Bersih dari UI**: Di dalam menu Pengaturan (Side Drawer) bagian *iPhone Screen & Stealth Control*, klik tombol **`🗑️ Clear Saved PIN & Privacy Data`** untuk menghapus instan PIN dari memori browser, riwayat viewport, dan file log lokal.
+- **1-Klik Clean Uninstaller (`Uninstall-iPhone-Link.bat`)**: Ingin menghapus total iPhone Link dari PC Anda? Cukup klik 2x script **`Uninstall-iPhone-Link.bat`** di dalam folder rilis. Script ini otomatis:
+  1. Menghentikan semua proses latar belakang iPhone Link.
+  2. Menghapus tuntas seluruh cache WebView2 / `pywebview` (termasuk PIN `localStorage`).
+  3. Menghapus riwayat ketik lokal, pengaturan, dan cache OCR.
+  4. Menghapus shortcut Desktop dan Start Menu Windows.
+  5. Memberikan opsi konfirmasi untuk menghapus seluruh folder aplikasi dari harddisk.
+
+---
+
 ### Option 2: Run from Source
 
 ```powershell
@@ -170,6 +184,20 @@ iPhone Link establishes a secure, local-only communication pipeline between your
 2. **Hardware HEVC Decoding**: Streams raw H.265 NAL units directly to Edge WebView2's WebCodecs video decoder, eliminating frame lag.
 3. **Isolated Direct HID Injection**: Passes mouse clicks as capacitive touch points (`0..32768`) and keyboard strokes through USB HID Consumer and Keyboard usage pages.
 4. **Local Privacy**: 100% of video streaming, OCR computation, and keyboard inputs stay on your local machine (`127.0.0.1`). No cloud telemetry or third-party servers are ever contacted.
+
+---
+
+## 💖 Support This Project (Donasi & Dukungan)
+
+Jika **iPhone Link** membantu produktivitas harian, pekerjaan kreatif, atau pengalaman gaming Anda di Windows 11, Anda dapat mendukung pengembangan proyek open-source ini melalui **Saweria**:
+
+<p align="left">
+  <a href="https://saweria.co/kelvindaniyar" target="_blank">
+    <img src="https://img.shields.io/badge/☕_Dukung_Kelvin_Daniyar_di_Saweria-saweria.co%2Fkelvindaniyar-F59E0B?style=for-the-badge&logo=coffee&logoColor=white" alt="Support Kelvin Daniyar on Saweria">
+  </a>
+</p>
+
+* 🔗 **Saweria Link:** [**https://saweria.co/kelvindaniyar**](https://saweria.co/kelvindaniyar)
 
 ---
 

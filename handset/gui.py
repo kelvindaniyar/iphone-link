@@ -129,6 +129,12 @@ class WindowApi:
     def is_pywebview(self):
         return True
 
+    def wipe_privacy_data(self):
+        """Wipe in-memory and disk privacy data (Tahap 52)."""
+        from handset.screen import wipe_all_privacy_data
+        return wipe_all_privacy_data()
+
+
 
 def apply_dwm_effects(title="iPhone Link"):
     """Terapkan efek DWM Windows 11 (sudut membulat + dark mode) dan icon native pada HWND."""

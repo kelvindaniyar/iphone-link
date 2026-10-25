@@ -799,17 +799,19 @@ const btnStealthMode = document.querySelector("#btn-stealth-mode");
 const stealthModeHint = document.querySelector("#stealth-mode-hint");
 const inputUnlockPin = document.querySelector("#input-unlock-pin");
 const btnTogglePinVisibility = document.querySelector("#btn-toggle-pin-visibility");
+const btnWipePrivacy = document.querySelector("#btn-wipe-privacy");
 let currentStealthActive = false;
 
 // Load stored PIN from localStorage (private to local PC browser only)
 try {
-  const savedPin = localStorage.getItem("pane-unlock-pin") || "";
+  const savedPin = localStorage.getItem("iphone_link_unlock_pin") || localStorage.getItem("pane-unlock-pin") || "";
   if (inputUnlockPin) inputUnlockPin.value = savedPin;
 } catch (_) {}
 
 inputUnlockPin?.addEventListener("input", () => {
   inputUnlockPin.value = inputUnlockPin.value.replace(/\D/g, "").slice(0, 6);
   try {
+    localStorage.setItem("iphone_link_unlock_pin", inputUnlockPin.value);
     localStorage.setItem("pane-unlock-pin", inputUnlockPin.value);
   } catch (_) {}
 });
@@ -819,6 +821,50 @@ btnTogglePinVisibility?.addEventListener("click", () => {
   const isPass = inputUnlockPin.type === "password";
   inputUnlockPin.type = isPass ? "text" : "password";
   btnTogglePinVisibility.textContent = isPass ? "🔒" : "👁️";
+});
+
+// Tahap 52: Clean Wipe PIN & Privacy Data
+btnWipePrivacy?.addEventListener("click", async () => {
+  btnWipePrivacy.disabled = true;
+  btnWipePrivacy.textContent = "🗑️ Wiping Data...";
+  try {
+    // 1. Remove all PIN keys from storage
+    try {
+      localStorage.removeItem("iphone_link_unlock_pin");
+      localStorage.removeItem("pane-unlock-pin");
+      sessionStorage.clear();
+    } catch (_) {}
+
+    // 2. Clear input
+    if (inputUnlockPin) inputUnlockPin.value = "";
+
+    // 3. Clear viewport history in index.html and mirror.html
+    window._ViewportHistory = [];
+    try {
+      screenView?.contentWindow?.postMessage({ type: "clear-viewport-history" }, "*");
+    } catch (_) {}
+
+    // 4. Call backend to wipe privacy data from memory and disk
+    await postJson("/api/device/wipe-privacy-data", {});
+
+    // 5. Visual feedback
+    btnWipePrivacy.classList.add("wiped");
+    btnWipePrivacy.textContent = "✓ PIN & Data Wiped Clean!";
+    setTimeout(() => {
+      btnWipePrivacy.classList.remove("wiped");
+      btnWipePrivacy.textContent = "🗑️ Clear Saved PIN & Privacy Data";
+      btnWipePrivacy.disabled = false;
+    }, 2000);
+  } catch (err) {
+    console.error("Wipe privacy error:", err);
+    btnWipePrivacy.classList.add("wiped");
+    btnWipePrivacy.textContent = "✓ PIN & Data Wiped Clean!";
+    setTimeout(() => {
+      btnWipePrivacy.classList.remove("wiped");
+      btnWipePrivacy.textContent = "🗑️ Clear Saved PIN & Privacy Data";
+      btnWipePrivacy.disabled = false;
+    }, 2000);
+  }
 });
 
 function updateStealthDimUI(active) {

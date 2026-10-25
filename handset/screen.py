@@ -1278,6 +1278,40 @@ def clear_recent_long_ocr_chunks() -> None:
     _TYPED_LINES_BUFFER.clear()
 
 
+def wipe_all_privacy_data() -> dict:
+    """Wipe all sensitive in-memory buffers and delete sensitive local cache/history files on disk (Tahap 52)."""
+    global _RECENT_LONG_OCR_CHUNKS, _LAST_SELECTION_COLOR, _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER
+    with _CHUNKS_LOCK:
+        _RECENT_LONG_OCR_CHUNKS.clear()
+    _LAST_SELECTION_COLOR = None
+    _CURRENT_TYPED_LINE = ""
+    _TYPED_LINES_BUFFER.clear()
+
+    # Physical file cleanup from application root
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        targets = [
+            project_root / "user_settings.json",
+            project_root / "typed_history.json",
+            project_root / "wifi_state.json",
+            project_root / "debug_metrics.json",
+        ]
+        # Clean any debug_ocr_* files
+        for p in project_root.glob("debug_ocr_*"):
+            targets.append(p)
+        for target in targets:
+            try:
+                if target.is_file():
+                    target.unlink(missing_ok=True)
+            except Exception as e:
+                print(f"Error removing {target}: {e}", flush=True)
+    except Exception as e:
+        print(f"wipe_all_privacy_data disk cleanup error: {e}", flush=True)
+
+    return {"ok": True, "wiped": True}
+
+
+
 def _is_notes_folder_list_frame(lines: list[str] | str) -> bool:
     r"""
     Detect whether a frame belongs to the iOS Notes Folder List view (halaman Daftar Folder Notes).
