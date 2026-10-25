@@ -141,16 +141,24 @@
 
   async function triggerClearCopyCache() {
     try {
-      if (typeof window.clearOcrSessionMemory === "function") {
+      if (typeof window.clearViewportHistory === "function") {
+        window.clearViewportHistory();
+      } else if (typeof window.clearOcrSessionMemory === "function") {
         window.clearOcrSessionMemory();
       } else {
         window._ViewportHistory = [];
+      }
+      if (window.parent && window.parent !== window) {
+        try {
+          window.parent.postMessage({ type: "trigger-clear-copy-cache" }, "*");
+        } catch (_) {}
       }
       const resp = await fetch("/api/keyboard/shortcut", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "clear-copy-cache" }),
       });
+      fetch("/api/ocr/clear-chunks", { method: "POST" }).catch(() => {});
       return await resp.json();
     } catch (err) {
       console.warn("triggerClearCopyCache error:", err);
@@ -343,14 +351,29 @@
           }
 
           if (isAlt && !isCtrlOrMeta) {
-            // Alt + R: Clear copy cache (Tahap 40)
-            if (e.code === "KeyR") {
+            // Alt + R: Clear copy cache (Tahap 40 / 51)
+            if (e.code === "KeyR" || e.key === "r" || e.key === "R") {
               e.preventDefault();
               e.stopPropagation();
               ignoreKeyUpUntil = Date.now() + 400;
               pressed.clear();
               flush();
-              if (typeof window.triggerClearCopyCacheWithFeedback === "function") {
+              if (typeof window.clearViewportHistory === "function") {
+                window.clearViewportHistory();
+              } else if (typeof window.clearOcrSessionMemory === "function") {
+                window.clearOcrSessionMemory();
+              } else {
+                window._ViewportHistory = [];
+              }
+
+              if (window.parent && window.parent !== window) {
+                try {
+                  window.parent.postMessage({ type: "trigger-clear-copy-cache" }, "*");
+                  if (typeof window.parent.triggerClearCopyCacheWithFeedback === "function") {
+                    window.parent.triggerClearCopyCacheWithFeedback();
+                  }
+                } catch (_) {}
+              } else if (typeof window.triggerClearCopyCacheWithFeedback === "function") {
                 window.triggerClearCopyCacheWithFeedback();
               } else {
                 triggerClearCopyCache();

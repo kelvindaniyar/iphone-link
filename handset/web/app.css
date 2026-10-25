@@ -86,15 +86,16 @@ a:hover { text-decoration: underline; }
   transition: background 0.2s ease;
 }
 
-/* 1. WinUI 3 Liquid Glass Top Toolbar (~36px Frameless Drag Region) */
+/* 1. WinUI 3 Liquid Glass Top Toolbar (~38px Frameless Drag Region) */
 .app-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 0 8px;
-  height: 36px;
-  min-height: 36px;
-  max-height: 36px;
+  padding: 0 10px 0 12px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  gap: 6px !important;
   background: var(--bg-acrylic);
   backdrop-filter: blur(32px) saturate(190%);
   -webkit-backdrop-filter: blur(32px) saturate(190%);
@@ -1684,11 +1685,42 @@ iframe[hidden],
 }
 
 /* ====================================================================== */
-/* Tahap 49 V2: Responsive Compact Top Bar for Narrow Portrait Window     */
+/* Tahap 49 V2 / 51: Responsive Compact Top Bar for Narrow Portrait Window */
 /* ====================================================================== */
+.brand,
+.app-title-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px !important;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.app-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  display: block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
 .brand-title {
-  display: inline;
+  color: var(--text) !important;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   white-space: nowrap;
+  user-select: none;
+}
+
+[data-theme="light"] .brand-title {
+  color: #0f172a !important;
+}
+
+[data-theme="dark"] .brand-title {
+  color: #f8fafc !important;
 }
 
 .btn-label {
@@ -1713,13 +1745,13 @@ iframe[hidden],
 }
 
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar {
-  padding: 0 4px !important;
-  gap: 2px !important;
+  padding: 0 10px 0 12px !important;
+  gap: 4px !important;
   overflow: hidden !important;
 }
 
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-title-area {
-  gap: 4px !important;
+  gap: 6px !important;
   flex-shrink: 0 !important;
 }
 
@@ -1775,7 +1807,8 @@ iframe[hidden],
     justify-content: center !important;
   }
   .app-bar {
-    padding: 0 4px !important;
+    padding: 0 10px 0 12px !important;
+    gap: 4px !important;
   }
   .pill {
     padding: 2px 6px !important;

@@ -565,6 +565,15 @@ window.addEventListener("message", (e) => {
     applyCropStyles(d.crop);
     return;
   }
+  if (d.type === "clear-viewport-history") {
+    if (typeof window.clearViewportHistory === "function") {
+      window.clearViewportHistory();
+    } else {
+      window._ViewportHistory = [];
+      if (window._PinnedTopFrames) window._PinnedTopFrames = [];
+    }
+    return;
+  }
   if (d.type === "set-trackpad-speed") {
     const s = parseInt(d.speed, 10);
     if (!isNaN(s) && s >= 30 && s <= 200) {
@@ -883,10 +892,12 @@ window.captureFullResFrameDataUrl = function () {
 // --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 30) ---
 window._ViewportHistory = []; // Capacity 24 snapshots, expires 180s (3 minutes)
 
-window.clearOcrSessionMemory = function() {
+window.clearViewportHistory = function() {
   window._ViewportHistory = [];
+  if (window._PinnedTopFrames) window._PinnedTopFrames = [];
   fetch("/api/ocr/clear-chunks", { method: "POST" }).catch(() => {});
 };
+window.clearOcrSessionMemory = window.clearViewportHistory;
 let _lastEventSampleTs = 0;
 
 function computeViewportSignature() {

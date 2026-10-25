@@ -609,21 +609,26 @@ function initKeyboardSettingsControls() {
     const btnClearCache = document.querySelector("#btn-clear-copy-cache");
     if (btnClearCache) {
       btnClearCache.disabled = true;
-      btnClearCache.textContent = "⏳ Clearing…";
+      btnClearCache.textContent = "🧹 Clearing…";
     }
     try {
-      if (typeof window.clearOcrSessionMemory === "function") {
-        window.clearOcrSessionMemory();
-      } else {
-        window._ViewportHistory = [];
+      window._ViewportHistory = [];
+      const mirrorFrame = document.querySelector("#mirror-frame");
+      if (mirrorFrame?.contentWindow) {
+        mirrorFrame.contentWindow.postMessage({ type: "clear-viewport-history" }, "*");
+        if (typeof mirrorFrame.contentWindow.clearViewportHistory === "function") {
+          mirrorFrame.contentWindow.clearViewportHistory();
+        } else if (typeof mirrorFrame.contentWindow.clearOcrSessionMemory === "function") {
+          mirrorFrame.contentWindow.clearOcrSessionMemory();
+        }
       }
-      if (window.HandsetKeys?.clearCopyCache) {
-        await window.HandsetKeys.clearCopyCache();
-      } else {
-        await postJson("/api/keyboard/shortcut", { action: "clear-copy-cache" });
-      }
+      await Promise.allSettled([
+        postJson("/api/keyboard/shortcut", { action: "clear-copy-cache" }),
+        fetch("/api/ocr/clear-chunks", { method: "POST" }),
+      ]);
       if (btnClearCache) {
         btnClearCache.textContent = "✓ Cache Cleared!";
+        btnClearCache.classList.add("copied");
         btnClearCache.classList.add("is-saved");
       }
     } catch (_) {
@@ -631,11 +636,12 @@ function initKeyboardSettingsControls() {
     } finally {
       setTimeout(() => {
         if (btnClearCache) {
-          btnClearCache.textContent = CLEAR_COPY_CACHE_LABEL;
+          btnClearCache.textContent = CLEAR_COPY_CACHE_LABEL || "🧹 Clear Copy Cache (Alt+R)";
+          btnClearCache.classList.remove("copied");
           btnClearCache.classList.remove("is-saved");
           btnClearCache.disabled = false;
         }
-      }, 1200);
+      }, 1500);
     }
   };
 
@@ -654,22 +660,29 @@ function initKeyboardSettingsControls() {
     window.triggerClearCopyCacheWithFeedback();
   });
 
-  // Global keydown on window to catch cross-platform shortcuts (Alt+C, Alt+V, Alt+R) even when focus is on outer page
-  window.addEventListener("keydown", (e) => {
-    const target = e.target;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+  // Global keydown on window to catch cross-platform shortcuts (Alt+C, Alt+V, Alt+R) with capture phase
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      const target = e.target;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
 
-    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyC") {
-      e.preventDefault();
-      window.triggerCopyIphoneTextWithFeedback();
-    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyV") {
-      e.preventDefault();
-      window.triggerPastePcTextWithFeedback();
-    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyR") {
-      e.preventDefault();
-      window.triggerClearCopyCacheWithFeedback();
-    }
-  });
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyC" || e.key === "c" || e.key === "C")) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.triggerCopyIphoneTextWithFeedback();
+      } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyV" || e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.triggerPastePcTextWithFeedback();
+      } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyR" || e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.triggerClearCopyCacheWithFeedback();
+      }
+    },
+    true,
+  );
 
   const btnToggleOnscreen = document.querySelector("#btn-toggle-onscreen-kb");
   btnToggleOnscreen?.addEventListener("click", async () => {
@@ -1730,6 +1743,9 @@ window.addEventListener("message", (e) => {
   }
   if (e.data && e.data.type === "rotation-changed") {
     applyOrientationUI(e.data.isLandscape);
+  }
+  if (e.data && e.data.type === "trigger-clear-copy-cache") {
+    window.triggerClearCopyCacheWithFeedback();
   }
 });
 

@@ -3,9 +3,21 @@
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, Dict, Optional
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
+
 
 
 class AudioManager:
@@ -122,13 +134,6 @@ if ($devices.Count -eq 0) {
 }
 """
             try:
-                # Launch background PowerShell process
-                startupinfo = None
-                if os.name == "nt":
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 0  # SW_HIDE
-
                 self._proc = subprocess.Popen(
                     [
                         "powershell",
@@ -143,8 +148,7 @@ if ($devices.Count -eq 0) {
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
-                    startupinfo=startupinfo,
-                    creationflags=0x08000000 if os.name == "nt" else 0,  # CREATE_NO_WINDOW
+                    **_WIN_NO_WINDOW_KWARGS,
                 )
                 self._enabled = True
 

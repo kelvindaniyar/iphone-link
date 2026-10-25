@@ -9,15 +9,27 @@ decodes it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
 import json
 import re
+import struct
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
-import contextlib
-import struct
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
+
 
 from handset.device import developer_mode_enabled
 from handset.mux import MuxError, list_devices
@@ -1257,11 +1269,13 @@ _LAST_SELECTION_COLOR: str | None = None
 
 
 def clear_recent_long_ocr_chunks() -> None:
-    """Clear session OCR chunk memory when switching notes, clearing cache, or detecting folder list view (Tahap 32/40)."""
-    global _RECENT_LONG_OCR_CHUNKS, _LAST_SELECTION_COLOR
+    """Clear session OCR chunk memory, selection color, and temporary typed line buffers (Tahap 32/40/51)."""
+    global _RECENT_LONG_OCR_CHUNKS, _LAST_SELECTION_COLOR, _CURRENT_TYPED_LINE, _TYPED_LINES_BUFFER
     with _CHUNKS_LOCK:
         _RECENT_LONG_OCR_CHUNKS.clear()
     _LAST_SELECTION_COLOR = None
+    _CURRENT_TYPED_LINE = ""
+    _TYPED_LINES_BUFFER.clear()
 
 
 def _is_notes_folder_list_frame(lines: list[str] | str) -> bool:

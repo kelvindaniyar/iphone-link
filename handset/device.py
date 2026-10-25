@@ -5,7 +5,18 @@ from __future__ import annotations
 import asyncio
 import socket
 import subprocess
+import sys
 from pathlib import Path
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
 
 from handset.mux import MuxError, list_devices, lockdown_request, open_lockdown
 
@@ -125,7 +136,7 @@ def _service_state(name: str) -> str | None:
             text=True,
             timeout=8,
             check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **_WIN_NO_WINDOW_KWARGS,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

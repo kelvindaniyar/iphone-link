@@ -23,8 +23,20 @@ import re
 import socket
 import struct
 import subprocess
+import sys
 import threading
 from datetime import datetime
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
+
 from pathlib import Path
 from typing import Optional
 
@@ -146,7 +158,7 @@ def find_ip_by_mac(mac: str) -> Optional[str]:
         return None
     target = mac.lower().replace(":", "-")
     try:
-        out = subprocess.check_output(["arp", "-a"], text=True, timeout=1.5)
+        out = subprocess.check_output(["arp", "-a"], text=True, timeout=1.5, **_WIN_NO_WINDOW_KWARGS)
     except Exception:
         return None
     for line in out.splitlines():
@@ -202,7 +214,7 @@ def discover_iphone_ip_on_lan(udid: Optional[str] = None, timeout: float = 0.35)
     # 1. ARP cache candidates
     arp_ips: list[str] = []
     try:
-        out = subprocess.check_output(["arp", "-a"], text=True, timeout=1.0)
+        out = subprocess.check_output(["arp", "-a"], text=True, timeout=1.0, **_WIN_NO_WINDOW_KWARGS)
         for line in out.splitlines():
             m = re.search(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", line)
             if m and _is_private_lan(m.group(1)):

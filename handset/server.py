@@ -5,11 +5,24 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import sys
+import subprocess
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
+
 
 from handset.device import read_handset, snapshot
 from handset.mux import MuxError
@@ -235,6 +248,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
             encoding="utf-8",
             errors="replace",
             timeout=timeout_sec,
+            **_WIN_NO_WINDOW_KWARGS,
         )
 
         stdout_raw = res.stdout or ""
