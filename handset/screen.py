@@ -2734,38 +2734,60 @@ def type_text_to_iphone(text: str) -> int:
         .replace("\r\n", "\n")
         .replace("\r", "\n")
     )
-    # Clear any active modifiers and pause cleanly before starting typing
-    send_keys_direct([])
-    time.sleep(0.05)
-    typed_count = 0
-    prev_usages = None
-    for ch in text:
-        if ch == "\n":
-            send_keys_direct([0x28])
-            time.sleep(0.025)
-            send_keys_direct([])
-            time.sleep(0.025)
-            prev_usages = None
-            typed_count += 1
-            continue
-
-        usages = _CHAR_TO_HID.get(ch)
-        if usages is None:
-            if ch.lower() in _CHAR_TO_HID:
-                usages = _CHAR_TO_HID[ch.lower()]
-            else:
-                continue
-        # If identical to previous character (e.g. "ll" or "oo"), ensure a clean release pause
-        if usages == prev_usages:
-            time.sleep(0.012)
-        send_keys_direct(usages)
-        time.sleep(0.010)
+    with _HID_ACTION_LOCK:
+        # Clear any active modifiers and pause cleanly before starting typing
         send_keys_direct([])
-        time.sleep(0.010)
-        prev_usages = usages
-        typed_count += 1
-    send_keys_direct([])
-    return typed_count
+        time.sleep(0.05)
+        typed_count = 0
+        prev_usages = None
+        for ch in text:
+            if ch == "\n":
+                send_keys_direct([0x28])
+                time.sleep(0.025)
+                send_keys_direct([])
+                time.sleep(0.025)
+                prev_usages = None
+                typed_count += 1
+                continue
+
+            usages = _CHAR_TO_HID.get(ch)
+            if usages is None:
+                if ch.lower() in _CHAR_TO_HID:
+                    usages = _CHAR_TO_HID[ch.lower()]
+                else:
+                    continue
+
+            # Multi-Step Shift Latching (Tahap 53): prevents iOS race condition where '?' typed as '/'
+            needs_shift = len(usages) >= 2 and usages[0] == 0xE1
+            keycode = usages[-1]
+
+            if needs_shift:
+                # Step 1: Latch Shift down first so iOS registers modifier state
+                send_keys_direct([0xE1])
+                time.sleep(0.014)
+                # Step 2: Press the key while Shift is held down
+                send_keys_direct([0xE1, keycode])
+                time.sleep(0.018)
+                # Step 3: Release the key first while Shift is still held
+                send_keys_direct([0xE1])
+                time.sleep(0.008)
+                # Step 4: Release Shift cleanly
+                send_keys_direct([])
+                time.sleep(0.012)
+            else:
+                # If identical to previous character (e.g. "ll" or "oo"), ensure a clean release pause
+                if usages == prev_usages:
+                    time.sleep(0.012)
+                send_keys_direct(usages)
+                time.sleep(0.010)
+                send_keys_direct([])
+                time.sleep(0.010)
+
+            prev_usages = usages
+            typed_count += 1
+
+        send_keys_direct([])
+        return typed_count
 
 
 def _usb_udids() -> list[str]:

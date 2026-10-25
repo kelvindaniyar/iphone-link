@@ -67,19 +67,47 @@ let lastFrameLandscape = null;
 let frameCount = 0;
 let runGeneration = 0;
 let abortStream = null;
+let hasRenderedFirstFrame = false;
+let streamActive = false;
+window._isDeviceLocked = false;
 
 function setStatus(text, tone) {
   if (!statusEl) return;
+  if (!text) {
+    statusEl.textContent = "";
+    statusEl.style.display = "none";
+    statusEl.hidden = true;
+    return;
+  }
+  // Sembunyikan pill jika device dalam mode Standby / Locked
   try {
     const parentNote = window.parent?.document?.getElementById("screen-note");
-    if (parentNote && parentNote.classList.contains("calm-standby")) {
-      statusEl.textContent = "🔒 iPhone Terkunci (Standby)";
-      statusEl.className = "mirror-status ok";
+    if (parentNote && (parentNote.classList.contains("calm-standby") || (parentNote.textContent && parentNote.textContent.includes("Terkunci")))) {
+      statusEl.textContent = "";
+      statusEl.style.display = "none";
+      statusEl.hidden = true;
+      return;
+    }
+    if (window._isDeviceLocked || document.body.classList.contains("device-locked")) {
+      statusEl.textContent = "";
+      statusEl.style.display = "none";
+      statusEl.hidden = true;
       return;
     }
   } catch (_) {}
+
+  // Jangan pernah memunculkan 'Waiting for video…' atau 'Connecting to stream…' jika canvas sudah menampilkan frame
+  if (hasRenderedFirstFrame && (text.includes("Waiting") || text.includes("Connecting"))) {
+    statusEl.textContent = "";
+    statusEl.style.display = "none";
+    statusEl.hidden = true;
+    return;
+  }
+
   statusEl.textContent = text;
   statusEl.className = "mirror-status" + (tone ? ` ${tone}` : "");
+  statusEl.style.display = "block";
+  statusEl.hidden = false;
 }
 
 function postDebugLog(event, data = {}) {
@@ -1096,8 +1124,9 @@ function drawPending() {
   lastFrameLandscape = landscape;
   try {
     drawFrame(f);
-    if (frameCount === 1) {
-      setStatus("Live", "ok");
+    if (!hasRenderedFirstFrame) {
+      hasRenderedFirstFrame = true;
+      setStatus("");
       fitCanvas();
       setTimeout(fitCanvas, 50);
       setTimeout(fitCanvas, 200);
@@ -1190,7 +1219,11 @@ async function runImageStream(generation, codecInfo) {
 }
 
 async function run(generation) {
-  setStatus("Connecting to stream…");
+  if (!hasRenderedFirstFrame) {
+    setStatus("Connecting to stream…");
+  } else {
+    setStatus("");
+  }
   frameCount = 0;
   const startedAt = performance.now();
   const watchdog = window.setInterval(() => {
@@ -1198,13 +1231,15 @@ async function run(generation) {
       window.clearInterval(watchdog);
       return;
     }
-    if (frameCount > 0) {
+    if (frameCount > 0 || hasRenderedFirstFrame) {
       window.clearInterval(watchdog);
       return;
     }
     if (performance.now() - startedAt > 12000) {
       window.clearInterval(watchdog);
-      setStatus("No picture yet — press Restart screen on the right", "warn");
+      if (!hasRenderedFirstFrame) {
+        setStatus("No picture yet — press Restart screen on the right", "warn");
+      }
     }
   }, 1000);
 
@@ -1288,7 +1323,11 @@ async function run(generation) {
   let decoder = buildDecoder();
   decoder.configure(decoderConfig);
   postDebugLog("decoder_configured", { codec, state: decoder.state });
-  setStatus("Waiting for video…");
+  if (!hasRenderedFirstFrame) {
+    setStatus("Waiting for video…");
+  } else {
+    setStatus("");
+  }
 
   let resp = null;
   const streamDelays = [300, 600, 1200, 2000, 3000, 5000, 8000];
@@ -1323,66 +1362,72 @@ async function run(generation) {
 
   const reader = resp.body.getReader();
   abortStream = () => reader.cancel().catch(() => {});
+  streamActive = true;
   let buf = new Uint8Array(0);
   let timestamp = 0;
   let gotKey = false;
 
-  while (generation === runGeneration) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    const merged = new Uint8Array(buf.length + value.length);
-    merged.set(buf);
-    merged.set(value, buf.length);
-    buf = merged;
-    while (buf.length >= 4) {
-      const len = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
-      if (buf.length < 4 + len) break;
-      const type = buf[4];
-      const data = buf.slice(5, 4 + len);
-      buf = buf.subarray(4 + len);
+  try {
+    while (generation === runGeneration) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const merged = new Uint8Array(buf.length + value.length);
+      merged.set(buf);
+      merged.set(value, buf.length);
+      buf = merged;
+      while (buf.length >= 4) {
+        const len = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+        if (buf.length < 4 + len) break;
+        const type = buf[4];
+        const data = buf.slice(5, 4 + len);
+        buf = buf.subarray(4 + len);
 
-      if (type === 2) {
-        try {
-          decoder.close();
-        } catch (_) {}
-        decoder = buildDecoder();
-        decoder.configure(decoderConfig);
-        needsResync = false;
-        gotKey = true;
-      } else if (type === 0) {
-        gotKey = true;
-        if (needsResync) {
+        if (type === 2) {
           try {
             decoder.close();
           } catch (_) {}
           decoder = buildDecoder();
           decoder.configure(decoderConfig);
           needsResync = false;
+          gotKey = true;
+        } else if (type === 0) {
+          gotKey = true;
+          if (needsResync) {
+            try {
+              decoder.close();
+            } catch (_) {}
+            decoder = buildDecoder();
+            decoder.configure(decoderConfig);
+            needsResync = false;
+          }
+        }
+        if (!gotKey || needsResync) continue;
+        if (decoder.state !== "configured") {
+          try {
+            decoder.close();
+          } catch (_) {}
+          decoder = buildDecoder();
+          decoder.configure(decoderConfig);
+          needsResync = true;
+          continue;
+        }
+        try {
+          decoder.decode(
+            new EncodedVideoChunk({
+              type: type === 0 || type === 2 ? "key" : "delta",
+              timestamp,
+              data,
+            }),
+          );
+          timestamp += 16666;
+        } catch (_) {
+          needsResync = true;
         }
       }
-      if (!gotKey || needsResync) continue;
-      if (decoder.state !== "configured") {
-        try {
-          decoder.close();
-        } catch (_) {}
-        decoder = buildDecoder();
-        decoder.configure(decoderConfig);
-        needsResync = true;
-        continue;
-      }
-      try {
-        decoder.decode(
-          new EncodedVideoChunk({
-            type: type === 0 || type === 2 ? "key" : "delta",
-            timestamp,
-            data,
-          }),
-        );
-        timestamp += 16666;
-      } catch (_) {
-        needsResync = true;
-      }
     }
+  } finally {
+    streamActive = false;
+    try { reader.cancel(); } catch (_) {}
   }
   if (generation === runGeneration) {
     setStatus("Stream ended — press Restart screen", "warn");
@@ -1417,7 +1462,30 @@ function beginRun() {
 beginRun();
 
 window.addEventListener("message", (e) => {
-  if (e.data && e.data.type === "refresh-stream") {
-    beginRun();
+  if (!e.data || typeof e.data !== "object") return;
+  if (e.data.type === "device-locked") {
+    window._isDeviceLocked = true;
+    setStatus("");
+  } else if (e.data.type === "wake-stream-pli") {
+    window._isDeviceLocked = false;
+    setStatus("");
+    // Request instant keyframe from iOS encoder without breaking stream
+    fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+    setTimeout(() => {
+      fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+    }, 300);
+    if (!streamActive) {
+      beginRun();
+    }
+  } else if (e.data.type === "refresh-stream") {
+    if (streamActive && hasRenderedFirstFrame) {
+      setStatus("");
+      fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+      setTimeout(() => {
+        fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+      }, 300);
+    } else {
+      beginRun();
+    }
   }
 });

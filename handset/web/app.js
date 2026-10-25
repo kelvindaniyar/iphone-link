@@ -892,13 +892,11 @@ async function triggerWakeUnlockIphone() {
         screenNote.textContent = pin ? "🔓 Layar iPhone dibangunkan & PIN diinjeksi." : "🔓 Layar iPhone telah dibangunkan.";
         screenNote.className = "ok";
       }
+      // Tahap 53: Do NOT break the active stream! Send wake-stream-pli to request keyframes cleanly
       try {
-        screenView?.contentWindow?.postMessage({ type: "refresh-stream" }, "*");
+        screenView?.contentWindow?.postMessage({ type: "wake-stream-pli" }, "*");
       } catch (_) {}
-      try {
-        await postJson("/api/screen/restart", {});
-      } catch (_) {}
-      setTimeout(() => load(), 300);
+      setTimeout(() => load(), 200);
     }
   } catch (err) {
     console.error("Wake/unlock error:", err);
@@ -926,6 +924,10 @@ async function triggerLockIphone() {
         screenNote.textContent = '🔒 iPhone Terkunci (Standby) — Layar fisik dimatikan. Klik "🔓 Wake / Unlock (Alt+U)" untuk membuka kembali.';
         screenNote.className = "calm-standby";
       }
+      // Tahap 53: Inform mirror iframe to hide status pill completely during locked mode
+      try {
+        screenView?.contentWindow?.postMessage({ type: "device-locked" }, "*");
+      } catch (_) {}
       setTimeout(() => load(), 200);
     }
   } catch (err) {

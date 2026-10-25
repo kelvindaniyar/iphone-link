@@ -87,3 +87,10 @@ body.fit-contain #c {
 .mirror-status.warn {
   color: #ff9f0a;
 }
+
+.mirror-status:empty,
+.mirror-status[hidden] {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
