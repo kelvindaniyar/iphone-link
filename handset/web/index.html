@@ -69,7 +69,7 @@
 
         <!-- Native Window Controls -->
         <div class="window-controls">
-          <button type="button" class="win-btn" id="win-min" title="Minimize" aria-label="Minimize">
+          <button type="button" class="win-btn" id="win-min" title="Minimize (Klik Kiri) · Hide to System Tray (Klik Kanan)" aria-label="Minimize">
             <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
               <rect y="5" width="10" height="1.2" rx="0.5"/>
             </svg>
@@ -364,6 +364,9 @@
               <button type="button" class="ctl ctl-sm btn-wipe-privacy" id="btn-wipe-privacy" style="width: 100%; margin-top: 6px;" title="Wipe saved PIN, local cache, and history data">
                 🗑️ Clear Saved PIN &amp; Privacy Data
               </button>
+              <button type="button" class="ctl ctl-sm" id="btn-hide-to-tray" style="width: 100%; margin-top: 6px;" title="Sembunyikan jendela ke Windows 11 System Tray (Mirroring &amp; Audio tetap aktif)">
+                ➖ Hide Window to System Tray
+              </button>
             </div>
           </section>
 
@@ -471,6 +474,6 @@
   </div>
 
   <script src="/keys.js?v=20261026_tahap53_pli_shift_fix"></script>
-  <script src="/app.js?v=20261030_tahap55_clean_slate_pin"></script>
+  <script src="/app.js?v=20261030_tahap56_tray_audio_ram"></script>
 </body>
 </html>

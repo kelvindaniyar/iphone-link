@@ -462,6 +462,19 @@ def save_user_settings(new_settings: dict) -> dict:
     return current
 
 
+_CACHED_DEVICE_SNAPSHOT: dict | None = None
+_CACHED_WIFI_STATUS: dict | None = None
+_LAST_WIFI_PROBE_TS: float = 0.0
+
+
+def _trigger_post_ocr_memory_trim() -> None:
+    try:
+        from handset.gui import schedule_working_set_trim
+        schedule_working_set_trim(0.4)
+    except Exception:
+        pass
+
+
 class Handler(BaseHTTPRequestHandler):
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -475,22 +488,55 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_mirror("GET")
             return
         if path == "/api/status":
-            payload = snapshot()
-            payload["screen"] = screen_status()
+            global _CACHED_DEVICE_SNAPSHOT, _CACHED_WIFI_STATUS, _LAST_WIFI_PROBE_TS
+            scr = screen_status()
+            aud = audio_manager.status()
+            stream_or_audio_active = (scr.get("phase") == "running") or bool(aud.get("active"))
+
+            # Tahap 56 Zero-Stutter Radio Guard:
+            # Never run LAN/ARP/subnet Wi-Fi scans or sc query subprocesses while mirroring or A2DP audio is active!
+            if stream_or_audio_active and _CACHED_DEVICE_SNAPSHOT is not None:
+                payload = dict(_CACHED_DEVICE_SNAPSHOT)
+            else:
+                payload = snapshot()
+                _CACHED_DEVICE_SNAPSHOT = dict(payload)
+
+            payload["screen"] = scr
             devices = payload.get("devices") or []
             selected_udid = None
             for d in devices:
                 if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
-                    trigger_auto_enable_wireless_lockdown(d["udid"])
+                    if not stream_or_audio_active:
+                        trigger_auto_enable_wireless_lockdown(d["udid"])
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break
-            if not selected_udid:
-                paired_list = wifi_paired_udids()
-                if paired_list:
-                    selected_udid = paired_list[0]
-            payload["wifi"] = get_wifi_status(selected_udid)
-            payload["audio"] = audio_manager.status()
+            paired_list = wifi_paired_udids()
+            if not selected_udid and paired_list:
+                selected_udid = paired_list[0]
+
+            now_ts = time.time()
+            if stream_or_audio_active:
+                if _CACHED_WIFI_STATUS is not None:
+                    payload["wifi"] = dict(_CACHED_WIFI_STATUS)
+                else:
+                    payload["wifi"] = {
+                        "paired": paired_list,
+                        "enabled": bool(paired_list),
+                        "reachable": scr.get("transport") == "wifi",
+                        "ip": None,
+                        "statusText": "✓ Wi‑Fi ready" if paired_list else "Wi‑Fi not set up",
+                        "statusTone": "ok" if paired_list else "",
+                    }
+            elif _CACHED_WIFI_STATUS is not None and (now_ts - _LAST_WIFI_PROBE_TS) < 8.0:
+                payload["wifi"] = dict(_CACHED_WIFI_STATUS)
+            else:
+                wifi_st = get_wifi_status(selected_udid)
+                _CACHED_WIFI_STATUS = dict(wifi_st) if isinstance(wifi_st, dict) else wifi_st
+                _LAST_WIFI_PROBE_TS = now_ts
+                payload["wifi"] = wifi_st
+
+            payload["audio"] = aud
             payload["folderInstanceId"] = get_folder_instance_id()
             payload["isFreshFolder"] = is_fresh_extracted_folder()
             self._json(payload)
@@ -645,6 +691,7 @@ class Handler(BaseHTTPRequestHandler):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
                                 print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
+                        _trigger_post_ocr_memory_trim()
                         return final_text, auto_cleared
                     except Exception as err:
                         import traceback

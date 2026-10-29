@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261025_tahap47_stealth_dim_and_lock_control";
+const MIRROR_PAGE = "/mirror.html?v=20261030_tahap56_tray_audio_ram";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
@@ -245,6 +245,7 @@ async function toggleAudio(forcedState) {
     console.warn("toggleAudio error:", err);
   }
 }
+window.trayToggleAudio = () => toggleAudio();
 
 async function setAudioVolume(vol) {
   try {
@@ -1091,9 +1092,25 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// Native Window Controls (Minimize, Close, Full Size)
+// Native Window Controls (Minimize on Left-Click, Hide to System Tray on Right-Click)
 document.querySelector("#win-min")?.addEventListener("click", () => {
   window.pywebview?.api?.minimize();
+});
+document.querySelector("#win-min")?.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (window.pywebview?.api?.minimize_to_tray) {
+    window.pywebview.api.minimize_to_tray();
+  } else {
+    window.pywebview?.api?.minimize?.();
+  }
+});
+document.querySelector("#btn-hide-to-tray")?.addEventListener("click", () => {
+  if (window.pywebview?.api?.minimize_to_tray) {
+    window.pywebview.api.minimize_to_tray();
+  } else {
+    window.pywebview?.api?.minimize?.();
+  }
 });
 document.querySelector("#win-close")?.addEventListener("click", () => {
   if (window.pywebview?.api?.close) {
@@ -1436,9 +1453,11 @@ function renderScreen(screen) {
       screenView.contentWindow?.postMessage({ type: "resize" }, "*");
     }, 200);
 
-    // Kirim telemetri ukuran elemen DOM saat mirroring aktif
-    setTimeout(sendAppMetrics, 100);
-    setTimeout(sendAppMetrics, 600);
+    // Kirim telemetri ukuran elemen DOM cukup 1x per sesi agar tidak memicu spike disk I/O
+    if (!window._sentInitialAppMetrics) {
+      window._sentInitialAppMetrics = true;
+      setTimeout(sendAppMetrics, 250);
+    }
     return;
   }
 

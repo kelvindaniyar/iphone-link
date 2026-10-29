@@ -49,7 +49,8 @@
 | **⌨️ Direct PC-to-iPhone Paste (`Alt+V`)** | Pastes text from your Windows Clipboard directly into the focused iOS text field via raw HID keystroke simulation. |
 | **🧹 Smart Auto-Clear Cache** | Automatically flushes OCR stitching memory whenever you return Home, switch apps, or press Back, preventing cross-app text contamination. |
 | **🖱️ 2-Finger Trackpad &amp; Smooth Scroll** | Natural precision scrolling with mouse wheel and Windows laptop trackpads. |
-| **🔊 Bluetooth Audio Sink** | Stream iPhone media audio directly into Windows PC speakers or headphones. |
+| **🔊 Zero-Stutter Bluetooth Audio Sink** | Stream iPhone media audio (TikTok, YouTube, Spotify) directly into Windows PC speakers or headphones with EcoQoS anti-throttling, 1ms multimedia timer scheduling, and radio-safe polling. |
+| **📥 Windows 11 System Tray &amp; Low RAM** | Native System Tray icon (`Shell_NotifyIconW`) with Left-Click Show/Hide, Right-Click Quick Actions menu, and automatic Win32 Working Set trimming so mirroring &amp; audio run lightweight in the background. |
 
 ---
 

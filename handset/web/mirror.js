@@ -393,8 +393,10 @@ window.addEventListener("auxclick", (e) => {
 function onMove(e) {
   if (e.pointerId !== activePointer) return;
   e.preventDefault();
-  if (typeof recordSelectionSnapshot === "function") {
-    recordSelectionSnapshot(false);
+  if (e.pointerType !== "mouse" || (e.buttons & 1) === 1) {
+    if (typeof recordSelectionSnapshot === "function") {
+      recordSelectionSnapshot(false);
+    }
   }
   lastCoords = touchCoords(e);
   if (edgeSwipe) {
@@ -833,8 +835,14 @@ function drawFrame(f) {
   let sourceFrame = f;
   let clonedFrame = null;
 
-  // Un-crop VideoFrame jika hardware decoder meng-clamp visibleRect ke 720p
-  if (f.codedWidth && f.codedHeight && f.visibleRect && f.visibleRect.height < f.codedHeight) {
+  // Tahap 56 Zero-Wrapper Fast-Path: hanya alokasikan VideoFrame baru jika visibleRect benar-benar ter-crop
+  const needsUncrop = Boolean(
+    f.codedWidth &&
+    f.codedHeight &&
+    f.visibleRect &&
+    (f.visibleRect.width < f.codedWidth || f.visibleRect.height < f.codedHeight)
+  );
+  if (needsUncrop) {
     try {
       clonedFrame = new VideoFrame(f, {
         visibleRect: { x: 0, y: 0, width: f.codedWidth, height: f.codedHeight },
@@ -877,7 +885,7 @@ function drawFrame(f) {
     ctx.drawImage(sourceFrame, -fpW / 2, -fpH / 2, fpW, fpH);
     ctx.restore();
 
-    if (frameCount === 1 || frameCount === 5 || frameCount === 15 || frameCount === 30 || frameCount % 60 === 0) {
+    if (frameCount === 1 || frameCount === 15 || frameCount === 60) {
       sendMirrorMetrics(sourceFrame, frameCount);
     }
   } finally {
@@ -917,8 +925,22 @@ window.captureFullResFrameDataUrl = function () {
   return null;
 };
 
-// --- Continuous Visual-Change Viewport History for Long Note Stitching (Tahap 30) ---
-window._ViewportHistory = []; // Capacity 24 snapshots, expires 180s (3 minutes)
+// Tahap 56: Slim JPEG encoder (0.92) khusus untuk slot riwayat scroll agar hemat ~85% RAM
+window.captureHistoryFrameDataUrl = function () {
+  try {
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      return canvas.toDataURL("image/jpeg", 0.92);
+    }
+    return window.captureFullResFrameDataUrl();
+  } catch (err) {
+    return window.captureFullResFrameDataUrl();
+  }
+};
+
+// --- Event-Driven Visual-Change Viewport History for Long Note Stitching (Tahap 30 & Tahap 56) ---
+const MAX_VIEWPORT_HISTORY = 6;
+window.MAX_VIEWPORT_HISTORY = MAX_VIEWPORT_HISTORY;
+window._ViewportHistory = []; // Capacity 6 snapshots (slimmed in Tahap 56), expires 180s (3 minutes)
 
 window.clearViewportHistory = function() {
   window._ViewportHistory = [];
@@ -964,11 +986,14 @@ function getSignatureDelta(sig1, sig2) {
 function sampleViewportIfChanged(force = false, minInterval = 0) {
   try {
     const now = Date.now();
-    if (minInterval > 0 && (now - _lastEventSampleTs) < minInterval) return;
+    if (!force && minInterval > 0 && (now - _lastEventSampleTs) < minInterval) return;
     _lastEventSampleTs = now;
 
     if (frameCount === 0) return;
-    if (typeof window.captureFullResFrameDataUrl !== "function") return;
+    const captureHistoryFn = typeof window.captureHistoryFrameDataUrl === "function"
+      ? window.captureHistoryFrameDataUrl
+      : window.captureFullResFrameDataUrl;
+    if (typeof captureHistoryFn !== "function") return;
 
     // Prune history older than 180s (3 minutes)
     if (window._ViewportHistory.length > 0) {
@@ -979,7 +1004,7 @@ function sampleViewportIfChanged(force = false, minInterval = 0) {
     if (!sig) return;
 
     if (window._ViewportHistory.length === 0) {
-      const dataUrl = window.captureFullResFrameDataUrl();
+      const dataUrl = captureHistoryFn();
       if (dataUrl) {
         window._ViewportHistory.push({ ts: now, sig, dataUrl });
       }
@@ -999,18 +1024,18 @@ function sampleViewportIfChanged(force = false, minInterval = 0) {
 
     // If minDiff < 7.5 (already recorded viewport position), refresh slot timestamp & dataUrl without pushing a new slot!
     if (minDiff < 7.5 && closestIndex >= 0) {
-      const dataUrl = window.captureFullResFrameDataUrl();
+      const dataUrl = captureHistoryFn();
       if (dataUrl) {
         window._ViewportHistory[closestIndex].ts = now;
         window._ViewportHistory[closestIndex].sig = sig;
         window._ViewportHistory[closestIndex].dataUrl = dataUrl;
       }
     } else {
-      // Truly new scroll position: push new slot
-      const dataUrl = window.captureFullResFrameDataUrl();
+      // Truly new scroll position: push new slot (capped strictly at MAX_VIEWPORT_HISTORY = 6)
+      const dataUrl = captureHistoryFn();
       if (dataUrl) {
         window._ViewportHistory.push({ ts: now, sig, dataUrl });
-        if (window._ViewportHistory.length > 24) {
+        while (window._ViewportHistory.length > MAX_VIEWPORT_HISTORY) {
           window._ViewportHistory.shift();
         }
       }
@@ -1021,14 +1046,13 @@ function sampleViewportIfChanged(force = false, minInterval = 0) {
 }
 window.sampleViewportIfChanged = sampleViewportIfChanged;
 
-// 1. Continuous background sampling every 900ms during active mirroring
-setInterval(() => {
-  sampleViewportIfChanged(false, 0);
-}, 900);
+// Tahap 56 Zero-Stutter Audio & GPU Fix:
+// Passive 900ms setInterval REMOVED so watching TikTok/video never triggers background canvas.toDataURL() stalls!
+// Snapshots are captured strictly on user interaction (wheel, pointerdown, active drag, Ctrl+A, Alt+C).
 
-// Event hooks (anti-reset: never wipes previous history on pointerdown)
+// Event hooks (anti-reset: never wipes previous history on pointerdown; throttled 700ms during scroll/drag)
 window.recordScrollSnapshot = function () {
-  sampleViewportIfChanged(false, 600);
+  sampleViewportIfChanged(false, 700);
 };
 
 window.startDragSelectionSnapshot = function () {
@@ -1036,32 +1060,36 @@ window.startDragSelectionSnapshot = function () {
 };
 
 window.updateDragSelectionSnapshot = function () {
-  sampleViewportIfChanged(false, 600);
+  sampleViewportIfChanged(false, 700);
 };
 
 window.endDragSelectionSnapshot = function () {};
 
 window.recordSelectionSnapshot = function (force = false) {
-  sampleViewportIfChanged(force, force ? 0 : 600);
+  sampleViewportIfChanged(force, force ? 0 : 700);
 };
 
 window.getRecentSelectionFrames = function () {
   try {
     const now = Date.now();
-    // Guarantee latest viewport is checked
+    // Guarantee latest viewport is checked on explicit copy request
     sampleViewportIfChanged(true, 0);
+    // Current live frame is ALWAYS captured as 100% lossless PNG for maximum OCR sharpness
+    const liveLosslessPng = typeof window.captureFullResFrameDataUrl === "function"
+      ? window.captureFullResFrameDataUrl()
+      : null;
 
     const validHistory = (window._ViewportHistory || []).filter(item => (now - item.ts) <= 180000);
     if (validHistory.length === 0) {
-      if (typeof window.captureFullResFrameDataUrl === "function") {
-        const cur = window.captureFullResFrameDataUrl();
-        if (cur) return [cur];
-      }
-      return [];
+      return liveLosslessPng ? [liveLosslessPng] : [];
     }
 
     if (validHistory.length <= 4) {
-      return validHistory.map(item => item.dataUrl);
+      const frames = validHistory.map(item => item.dataUrl);
+      if (liveLosslessPng && frames.length > 0) {
+        frames[frames.length - 1] = liveLosslessPng;
+      }
+      return frames;
     }
 
     // Select up to 4 frames (max 3 history + 1 current), ordered chronologically (top -> mid -> bottom)
@@ -1101,7 +1129,11 @@ window.getRecentSelectionFrames = function () {
       chosen.sort((a, b) => a.ts - b.ts);
     }
 
-    return chosen.map(item => item.dataUrl);
+    const resultFrames = chosen.map(item => item.dataUrl);
+    if (liveLosslessPng && resultFrames.length > 0) {
+      resultFrames[resultFrames.length - 1] = liveLosslessPng;
+    }
+    return resultFrames;
   } catch (err) {
     console.warn("getRecentSelectionFrames error:", err);
     return [];
