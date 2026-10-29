@@ -1,21 +1,22 @@
 """Native Frameless Launcher for iPhone Link using pywebview (Edge WebView2 on Windows).
 
-Tahap 54–56:
-- Runs the backend HTTP server directly in-process via a background daemon thread
-  (_ensure_backend_server_running), eliminating any separate console/zombie server process.
-- Supports both normal Python execution (`python handset/gui.py` / `python -m handset`)
-  and standalone frozen PyInstaller executable (`iPhone Link.exe`).
-- Tahap 55: Per-folder WebView2 storage isolation (.pane_webview_storage).
-- Tahap 56:
-  * Disables Windows 11 EcoQoS Power Throttling + sets AboveNormal/High audio priority.
-  * Memory-optimized WebView2 flags + safe Win32 Working Set trimmer (_trim_process_working_set).
-  * Native Windows 11 System Tray icon (handset.tray.SystemTrayIcon) with Left-Click Show/Hide
-    and Right-Click Quick Actions menu + guaranteed NIM_DELETE cleanup.
+Tahap 58 Architecture (Pure Tahap 53 2-Process Isolation + Win32 Job Object Anti-Zombie):
+- Runs Backend Server (`handset.server` + `screen.py` + `audio.py`) in a SEPARATE isolated OS
+  child process (`--server-child` for `.exe`, `-m handset --server-child` for `.py`) with
+  CREATE_NO_WINDOW — zero shared GIL or COM apartment interference with pywebview WinForms/.NET CLR!
+- Binds the isolated server child process (and its PowerShell A2DP audio worker) to a kernel
+  Win32 Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000), guaranteeing
+  0% zombie background processes even if iPhone Link is force-killed from Task Manager.
+- Restores pure Tahap 53 WebView2 arguments (`--enable-features=PlatformHEVCDecoderSupport`),
+  keeps per-folder WebView2 storage isolation (Tahap 55), clean box-free Windows 11 System Tray
+  (Tahap 57), and one-shot startup (+5s) + minimize-only working set trim (no periodic timer).
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -34,47 +35,185 @@ if not getattr(sys, "frozen", False):
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
 
-# 3. Tahap 56–57: Memory-optimized + Zero-Audio-Interference WebView2 arguments (Hardware HEVC GPU active)
-WEBVIEW2_OPTIMIZED_ARGS = (
-    "--enable-features=PlatformHEVCDecoderSupport "
-    "--mute-audio "
-    "--disable-audio-output "
-    "--disable-background-networking "
-    "--disable-component-update "
-    "--disable-domain-reliability "
-    "--disable-sync "
-    "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,AudioServiceOutOfProcess "
-    "--js-flags=--max-old-space-size=96"
-)
-os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = WEBVIEW2_OPTIMIZED_ARGS
+
+def _parse_server_cli_args(argv: list[str]) -> tuple[str, int]:
+    host = os.environ.get("PANE_HOST", "127.0.0.1")
+    port = int(os.environ.get("PANE_PORT", "8765"))
+    for idx, arg in enumerate(argv):
+        if arg == "--host" and idx + 1 < len(argv):
+            host = argv[idx + 1]
+        elif arg.startswith("--host="):
+            host = arg.split("=", 1)[1]
+        elif arg == "--port" and idx + 1 < len(argv):
+            try:
+                port = int(argv[idx + 1])
+            except ValueError:
+                pass
+        elif arg.startswith("--port="):
+            try:
+                port = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+    return host, port
+
+
+# 3. EARLY SERVER-CHILD INTERCEPT (BEFORE importing webview / pythonnet / .NET CLR!):
+#    Guarantees 100% pure Python backend server process identical to Tahap 53 (`-m handset.server`).
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    if "--server-child" in sys.argv or "--server-only" in sys.argv:
+        _srv_host, _srv_port = _parse_server_cli_args(sys.argv[1:])
+        from handset.server import serve as _serve_backend
+        _serve_backend(host=_srv_host, port=_srv_port)
+        raise SystemExit(0)
+
+# 4. Pure Tahap 53 WebView2 Hardware HEVC Decoder Acceleration flag
+WEBVIEW2_DEFAULT_ARGS = "--enable-features=PlatformHEVCDecoderSupport"
+os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = WEBVIEW2_DEFAULT_ARGS
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
 
 from handset import get_app_root, get_bundle_root
 
-_ACTIVE_HTTP_SERVER = None
-_SERVER_THREAD: threading.Thread | None = None
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JobObjectExtendedLimitInformation = 9
+
 _SERVER_LOCK = threading.Lock()
+_SERVER_PROC: subprocess.Popen | None = None
+_SERVER_JOB_HANDLE: int | None = None
+_SERVER_ENDPOINT: tuple[str, int] = ("127.0.0.1", 8765)
 _ACTIVE_TRAY_ICON = None
 _TRIM_LOCK = threading.Lock()
-_TRIMMER_STARTED = False
 
 
-def _trim_process_working_set(skip_if_audio_active: bool = False) -> int:
-    """Safely trim unused working set pages for Python + child WebView2 processes via Win32 API.
+def _create_kill_on_close_job_object() -> int | None:
+    """Create a Win32 Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000).
 
-    Uses CreateToolhelp32Snapshot + psapi.EmptyWorkingSet (0 subprocesses, < 2ms overhead,
-    100% safe for active streams because hot pages remain resident).
-    When skip_if_audio_active=True (periodic background timer), skips trimming while Bluetooth
-    A2DP Audio Sink is active to guarantee zero soft page-fault jitter during audio playback.
+    When the parent GUI process closes (even via Task Manager End Task), the Windows NT kernel
+    immediately terminates all assigned child & grandchild processes (server + PowerShell audio).
     """
     if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        hjob = kernel32.CreateJobObjectW(None, None)
+        if not hjob:
+            return None
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = bool(
+            kernel32.SetInformationJobObject(
+                wintypes.HANDLE(hjob),
+                JobObjectExtendedLimitInformation,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            )
+        )
+        if not ok:
+            kernel32.CloseHandle(wintypes.HANDLE(hjob))
+            return None
+        return int(hjob)
+    except Exception:
+        return None
+
+
+def _assign_process_to_job(job_handle: int | None, proc: subprocess.Popen) -> bool:
+    """Bind a spawned subprocess to the Win32 Job Object."""
+    if sys.platform != "win32" or not job_handle or proc is None:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        return bool(
+            kernel32.AssignProcessToJobObject(
+                wintypes.HANDLE(job_handle),
+                wintypes.HANDLE(int(proc._handle)),
+            )
+        )
+    except Exception:
+        return False
+
+
+def _close_job_handle(job_handle: int | None) -> None:
+    if sys.platform != "win32" or not job_handle:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle(wintypes.HANDLE(job_handle))
+    except Exception:
+        pass
+
+
+def _trim_process_working_set() -> int:
+    """One-shot safe working set trim (used ONLY once at startup +5s and when minimized to tray)."""
+    if sys.platform != "win32":
         return 0
-    if skip_if_audio_active:
-        try:
-            from handset.audio import audio_manager
-            if audio_manager.status().get("active"):
-                return 0
-        except Exception:
-            pass
     if not _TRIM_LOCK.acquire(blocking=False):
         return 0
     trimmed_count = 0
@@ -135,7 +274,6 @@ def _trim_process_working_set(skip_if_audio_active: bool = False) -> int:
             finally:
                 kernel32.CloseHandle(snap)
 
-        # Collect current process + all descendant processes (WebView2 Browser/Renderer/GPU/Utility)
         target_pids: list[int] = [root_pid]
         queue = [root_pid]
         seen = {root_pid}
@@ -166,38 +304,70 @@ def _trim_process_working_set(skip_if_audio_active: bool = False) -> int:
     return trimmed_count
 
 
-def schedule_working_set_trim(delay_sec: float = 0.25, skip_if_audio_active: bool = False) -> None:
-    """Trigger a non-blocking working set trim after delay_sec."""
+def schedule_working_set_trim(delay_sec: float = 0.25) -> None:
+    """Trigger a single non-blocking working set trim after delay_sec (no periodic loop)."""
     def _delayed():
         if delay_sec > 0:
             time.sleep(delay_sec)
-        _trim_process_working_set(skip_if_audio_active=skip_if_audio_active)
+        _trim_process_working_set()
 
     threading.Thread(target=_delayed, name="iphone-link-ram-trim", daemon=True).start()
 
 
-def _start_periodic_memory_trimmer(interval_sec: float = 45.0) -> None:
-    """Start single lightweight daemon thread: trims once at +4s after startup, then every 45s (skipped when audio active)."""
-    global _TRIMMER_STARTED
-    if _TRIMMER_STARTED or sys.platform != "win32":
+def _cleanup_stale_zombie_processes(host: str = "127.0.0.1", port: int = 8765) -> None:
+    """Clean up any orphaned iPhone Link / handset.server / AudioPlaybackConnection background processes
+    left over from an earlier crashed session before starting a fresh GUI + server pair."""
+    if sys.platform != "win32":
         return
-    _TRIMMER_STARTED = True
 
-    def _loop():
-        time.sleep(4.0)
-        _trim_process_working_set(skip_if_audio_active=False)
-        while True:
-            time.sleep(interval_sec)
-            _trim_process_working_set(skip_if_audio_active=True)
+    # 1. Politely tell any lingering server on `port` to shut down first
+    try:
+        req = urllib.request.Request(
+            f"http://{host}:{port}/api/server/shutdown",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=0.6):
+            pass
+    except Exception:
+        pass
 
-    threading.Thread(target=_loop, name="iphone-link-periodic-trimmer", daemon=True).start()
+    # 2. Terminate any orphan iPhone Link.exe, handset server python, or AudioPlaybackConnection PowerShell
+    my_pid = os.getpid()
+    my_ppid = os.getppid()
+    ps_sweep = f"""
+$myPid = {my_pid}
+$myPpid = {my_ppid}
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
+    $_.ProcessId -ne $PID -and $_.ProcessId -ne $myPid -and $_.ProcessId -ne $myPpid -and (
+        ($_.Name -ieq 'iPhone Link.exe') -or
+        ($_.Name -match '^pythonw?(\\.exe)?$' -and $_.CommandLine -match '(handset\\.server|handset\\\\server\\.py|--server-child|--server-only|audio\\.py)') -or
+        ($_.Name -match '^powershell(\\.exe)?$' -and $_.CommandLine -match 'AudioPlaybackConnection')
+    )
+}} | ForEach-Object {{
+    try {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }} catch {{}}
+}}
+"""
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_sweep],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            **_WIN_NO_WINDOW_KWARGS,
+        )
+    except Exception:
+        pass
 
 
 class WindowApi:
     """JS-accessible API exposed under window.pywebview.api."""
 
-    def __init__(self):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
         self._window = None
+        self._host = host
+        self._port = port
         self._cached_hwnd: int | None = None
         self._current_display_width = 380
         self._drawer_open = False
@@ -231,6 +401,18 @@ class WindowApi:
         except Exception:
             pass
 
+    def _api_post(self, path: str, payload: bytes = b"{}", timeout: float = 1.5) -> dict:
+        import json
+
+        req = urllib.request.Request(
+            f"http://{self._host}:{self._port}{path}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
     def start_window_drag(self) -> None:
         """Start native Windows window dragging without pywebview global hook."""
         if self._window is None or sys.platform != "win32":
@@ -240,6 +422,7 @@ class WindowApi:
             if hwnd:
                 import ctypes
                 from ctypes import wintypes
+
                 ctypes.windll.user32.ReleaseCapture()
                 ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), 0x00A1, 2, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
         except Exception:
@@ -259,8 +442,9 @@ class WindowApi:
                 try:
                     import ctypes
                     from ctypes import wintypes
+
                     ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), 0)  # SW_HIDE
-                    schedule_working_set_trim(0.3)
+                    schedule_working_set_trim(0.35)
                     return {"ok": True, "hidden": True}
                 except Exception:
                     pass
@@ -269,7 +453,7 @@ class WindowApi:
                 self._window.hide()
             except Exception:
                 pass
-        schedule_working_set_trim(0.3)
+        schedule_working_set_trim(0.35)
         return {"ok": True, "hidden": True}
 
     def restore_from_tray(self):
@@ -281,6 +465,7 @@ class WindowApi:
                 try:
                     import ctypes
                     from ctypes import wintypes
+
                     user32 = ctypes.windll.user32
                     wh = wintypes.HWND(hwnd)
                     if not user32.IsWindowVisible(wh):
@@ -308,6 +493,7 @@ class WindowApi:
                 try:
                     import ctypes
                     from ctypes import wintypes
+
                     user32 = ctypes.windll.user32
                     wh = wintypes.HWND(hwnd)
                     if self._hidden_to_tray or not user32.IsWindowVisible(wh) or user32.IsIconic(wh):
@@ -331,8 +517,7 @@ class WindowApi:
             self._eval_js("if (window.triggerToggleStealthDim) window.triggerToggleStealthDim();")
             return
         try:
-            from handset.screen import _STEALTH_DIM_ACTIVE, set_iphone_physical_brightness
-            set_iphone_physical_brightness("restore" if _STEALTH_DIM_ACTIVE else "min", steps=4 if _STEALTH_DIM_ACTIVE else 16)
+            self._api_post("/api/device/stealth", b'{"enabled": true}')
         except Exception:
             pass
 
@@ -341,30 +526,29 @@ class WindowApi:
             self._eval_js("if (window.trayToggleAudio) window.trayToggleAudio();")
             return
         try:
-            from handset.audio import audio_manager
-            audio_manager.toggle()
+            self._api_post("/api/audio/toggle", b"{}")
         except Exception:
             pass
 
     def tray_clear_copy_cache(self):
         try:
-            from handset.screen import clear_recent_long_ocr_chunks
-            clear_recent_long_ocr_chunks()
+            self._api_post("/api/ocr/clear-chunks", b"{}", timeout=0.8)
         except Exception:
             pass
         self._eval_js("if (window.triggerClearCopyCacheWithFeedback) window.triggerClearCopyCacheWithFeedback();")
 
     def get_tray_menu_state(self) -> dict[str, bool]:
+        """Query live stealth & audio state from isolated server child process when tray menu opens."""
         stealth_on = False
         audio_on = False
         try:
-            from handset.screen import _STEALTH_DIM_ACTIVE
-            stealth_on = bool(_STEALTH_DIM_ACTIVE)
-        except Exception:
-            pass
-        try:
-            from handset.audio import audio_manager
-            audio_on = audio_manager.is_active()
+            import json
+
+            req = urllib.request.Request(f"http://{self._host}:{self._port}/api/tray-state")
+            with urllib.request.urlopen(req, timeout=0.35) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                stealth_on = bool(data.get("stealth"))
+                audio_on = bool(data.get("audio"))
         except Exception:
             pass
         return {
@@ -444,6 +628,7 @@ class WindowApi:
         try:
             import ctypes
             from ctypes import wintypes
+
             hwnd = self._get_hwnd()
             if hwnd:
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -459,9 +644,12 @@ class WindowApi:
         return True
 
     def wipe_privacy_data(self):
-        """Wipe in-memory and disk privacy data (Tahap 52)."""
-        from handset.screen import wipe_all_privacy_data
-        return wipe_all_privacy_data()
+        """Wipe in-memory and disk privacy data via isolated server (with local fallback)."""
+        try:
+            return self._api_post("/api/device/wipe-privacy-data", b"{}", timeout=2.0)
+        except Exception:
+            from handset.screen import wipe_all_privacy_data
+            return wipe_all_privacy_data()
 
 
 def _resolve_icon_path() -> Path | None:
@@ -484,6 +672,7 @@ def apply_dwm_effects(title: str = "iPhone Link", api: WindowApi | None = None) 
     try:
         import ctypes
         from ctypes import wintypes
+
         time.sleep(0.7)
         hwnd = ctypes.windll.user32.FindWindowW(None, title)
         if not hwnd:
@@ -533,7 +722,7 @@ def apply_dwm_effects(title: str = "iPhone Link", api: WindowApi | None = None) 
         pass
 
 
-def _is_server_responding(url: str, timeout: float = 4.0) -> bool:
+def _is_server_responding(url: str, timeout: float = 2.0) -> bool:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "iPhoneLink-Launcher"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -542,49 +731,66 @@ def _is_server_responding(url: str, timeout: float = 4.0) -> bool:
         return False
 
 
-def wait_for_server(url: str = "http://127.0.0.1:8765/api/status", timeout: float = 8.0) -> bool:
+def wait_for_server(url: str = "http://127.0.0.1:8765/api/tray-state", timeout: float = 10.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
-        if _is_server_responding(url, timeout=4.0):
+        if _is_server_responding(url, timeout=5.0):
             return True
-        time.sleep(0.15)
+        time.sleep(0.12)
     return False
+
+
+def _build_server_child_command(host: str, port: int) -> list[str]:
+    """Build hidden child-process command line for isolated backend server (Tahap 58)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--server-child", "--host", host, "--port", str(port)]
+    return [sys.executable, "-m", "handset", "--server-child", "--host", host, "--port", str(port)]
 
 
 def _ensure_backend_server_running(
     host: str = "127.0.0.1",
     port: int = 8765,
-    timeout: float = 8.0,
+    timeout: float = 10.0,
 ) -> bool:
-    """Ensure the backend HTTP server is running in-process inside a daemon thread."""
-    global _ACTIVE_HTTP_SERVER, _SERVER_THREAD
-    status_url = f"http://{host}:{port}/api/status"
-    if _is_server_responding(status_url, timeout=4.0):
-        return True
+    """Launch the backend HTTP server in an isolated child OS process bound to a Win32 Job Object."""
+    global _SERVER_PROC, _SERVER_JOB_HANDLE, _SERVER_ENDPOINT
+    ready_url = f"http://{host}:{port}/api/tray-state"
 
     with _SERVER_LOCK:
-        if _is_server_responding(status_url, timeout=4.0):
+        if _SERVER_PROC is not None and _SERVER_PROC.poll() is None and _is_server_responding(ready_url, timeout=1.0):
             return True
-        from handset.server import create_http_server
-        try:
-            srv = create_http_server(host=host, port=port)
-            _ACTIVE_HTTP_SERVER = srv
-            t = threading.Thread(
-                target=srv.serve_forever,
-                name=f"iphone-link-server-{port}",
-                daemon=True,
-            )
-            t.start()
-            _SERVER_THREAD = t
-        except OSError:
-            pass
 
-    return wait_for_server(url=status_url, timeout=timeout)
+        if _is_server_responding(ready_url, timeout=0.6):
+            return True
+
+        if _SERVER_JOB_HANDLE is None:
+            _SERVER_JOB_HANDLE = _create_kill_on_close_job_object()
+
+        cmd = _build_server_child_command(host, port)
+        child_env = dict(os.environ)
+        child_env["PANE_HOST"] = host
+        child_env["PANE_PORT"] = str(port)
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(get_app_root()),
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_WIN_NO_WINDOW_KWARGS,
+        )
+        _assign_process_to_job(_SERVER_JOB_HANDLE, proc)
+        _SERVER_PROC = proc
+        _SERVER_ENDPOINT = (host, port)
+
+    return wait_for_server(url=ready_url, timeout=timeout)
 
 
 def shutdown_backend_server() -> None:
-    """Cleanly stop System Tray icon, restore Stealth brightness if active, and stop server/audio."""
-    global _ACTIVE_HTTP_SERVER, _SERVER_THREAD, _ACTIVE_TRAY_ICON
+    """Cleanly stop System Tray icon, shut down isolated child server + audio worker, and close Job Object."""
+    global _SERVER_PROC, _SERVER_JOB_HANDLE, _ACTIVE_TRAY_ICON
+
     tray = _ACTIVE_TRAY_ICON
     _ACTIVE_TRAY_ICON = None
     if tray is not None:
@@ -592,28 +798,39 @@ def shutdown_backend_server() -> None:
             tray.stop()
         except Exception:
             pass
-    try:
-        from handset import screen as _scr
-        if getattr(_scr, "_STEALTH_DIM_ACTIVE", False):
-            _scr.set_iphone_physical_brightness("restore", steps=4)
-        _scr.stop_screen()
-    except Exception:
-        pass
-    try:
-        from handset.audio import audio_manager
-        audio_manager.shutdown()
-    except Exception:
-        pass
+
     with _SERVER_LOCK:
-        srv = _ACTIVE_HTTP_SERVER
-        _ACTIVE_HTTP_SERVER = None
-        _SERVER_THREAD = None
-    if srv is not None:
+        proc = _SERVER_PROC
+        job_handle = _SERVER_JOB_HANDLE
+        host, port = _SERVER_ENDPOINT
+        _SERVER_PROC = None
+        _SERVER_JOB_HANDLE = None
+
+    if proc is not None and proc.poll() is None:
         try:
-            srv.shutdown()
-            srv.server_close()
+            req = urllib.request.Request(
+                f"http://{host}:{port}/api/server/shutdown",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=1.2):
+                pass
         except Exception:
             pass
+
+        try:
+            proc.wait(timeout=1.5)
+        except Exception:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
+
+    # Closing the Job Object handle instructs the Windows kernel to immediately kill any remaining child/audio processes!
+    if job_handle is not None:
+        _close_job_handle(job_handle)
 
 
 def _focus_existing_window_if_running(host: str, port: int) -> bool:
@@ -625,7 +842,7 @@ def _focus_existing_window_if_running(host: str, port: int) -> bool:
         from ctypes import wintypes
 
         hwnd = ctypes.windll.user32.FindWindowW(None, "iPhone Link")
-        if hwnd and _is_server_responding(f"http://{host}:{port}/api/status", timeout=0.6):
+        if hwnd and _is_server_responding(f"http://{host}:{port}/api/tray-state", timeout=0.5):
             wh = wintypes.HWND(hwnd)
             if not ctypes.windll.user32.IsWindowVisible(wh):
                 ctypes.windll.user32.ShowWindow(wh, 5)  # SW_SHOW
@@ -639,7 +856,7 @@ def _focus_existing_window_if_running(host: str, port: int) -> bool:
 
 
 def _run_smoke_test() -> int:
-    """Headless self-test for verifying standalone EXE & portable builds."""
+    """Headless self-test for verifying standalone EXE & portable 2-process isolation."""
     import json
     import socket
     import webview  # noqa: F401
@@ -654,15 +871,37 @@ def _run_smoke_test() -> int:
         s.bind(("127.0.0.1", 0))
         free_port = s.getsockname()[1]
 
+    app_root = get_app_root()
+    transient_names = (
+        "wifi_state.json",
+        "user_settings.json",
+        "typed_history.json",
+        "debug_metrics.json",
+        ".audio_worker.pid",
+    )
+    pre_existing = {name for name in transient_names if (app_root / name).exists()}
+
+    child_pid = None
     try:
-        ok = _ensure_backend_server_running(host="127.0.0.1", port=free_port, timeout=8.0)
+        ok = _ensure_backend_server_running(host="127.0.0.1", port=free_port, timeout=10.0)
         if not ok:
             return 2
+        if _SERVER_PROC is None or _SERVER_PROC.pid == os.getpid():
+            return 7
+        child_pid = _SERVER_PROC.pid
+
+        req_tray = urllib.request.Request(f"http://127.0.0.1:{free_port}/api/tray-state")
+        with urllib.request.urlopen(req_tray, timeout=2.0) as resp_tray:
+            tray_data = json.loads(resp_tray.read().decode("utf-8"))
+            if not tray_data.get("ok"):
+                return 8
+
         req = urllib.request.Request(f"http://127.0.0.1:{free_port}/api/status")
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=8.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if "screen" not in data:
                 return 3
+
         web_root = _resolve_web_root()
         ocr_script = Path(_resolve_ocr_script_path())
         icon_path = _resolve_icon_path()
@@ -675,6 +914,14 @@ def _run_smoke_test() -> int:
         return 0
     finally:
         shutdown_backend_server()
+        if child_pid:
+            time.sleep(0.1)
+        for name in transient_names:
+            if name not in pre_existing:
+                try:
+                    (app_root / name).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
 
 def _resolve_webview_storage_path() -> str:
@@ -685,6 +932,7 @@ def _resolve_webview_storage_path() -> str:
         return str(local_dir)
     except OSError:
         import hashlib
+
         folder_id = hashlib.sha256(
             os.path.normcase(str(get_app_root().resolve())).encode("utf-8")
         ).hexdigest()[:12]
@@ -695,25 +943,28 @@ def _resolve_webview_storage_path() -> str:
 
 def main() -> None:
     global _ACTIVE_TRAY_ICON
+    if "--server-child" in sys.argv or "--server-only" in sys.argv:
+        srv_host, srv_port = _parse_server_cli_args(sys.argv[1:])
+        from handset.server import serve as _serve_backend
+        _serve_backend(host=srv_host, port=srv_port)
+        return
+
     if "--smoke-test" in sys.argv:
         raise SystemExit(_run_smoke_test())
 
     import webview
-    from handset.audio import disable_process_power_throttling, set_audio_process_priority
-    from handset.server import HOST as DEFAULT_HOST, PORT as DEFAULT_PORT
     from handset.tray import SystemTrayIcon
 
-    host = DEFAULT_HOST
-    port = int(os.environ.get("PANE_PORT", DEFAULT_PORT))
+    host = os.environ.get("PANE_HOST", "127.0.0.1")
+    port = int(os.environ.get("PANE_PORT", "8765"))
 
     if _focus_existing_window_if_running(host, port):
         return
 
-    # Tahap 56: Disable Windows 11 EcoQoS throttling & elevate baseline process priority
-    disable_process_power_throttling()
-    set_audio_process_priority(high_for_audio=False)
+    # Step A: Clean up any stale zombie server / audio processes from crashed sessions
+    _cleanup_stale_zombie_processes(host=host, port=port)
 
-    api = WindowApi()
+    api = WindowApi(host=host, port=port)
 
     # Set explicit AppUserModelID agar Taskbar Windows 11 menampilkan Logo iPhone Link
     if sys.platform == "win32":
@@ -723,13 +974,13 @@ def main() -> None:
         except Exception:
             pass
 
-    # Nyalakan server backend secara in-process (daemon thread) jika belum berjalan
-    _ensure_backend_server_running(host=host, port=port, timeout=5.0)
+    # Step B & C: Launch backend server in an isolated child OS process bound to Win32 Job Object
+    _ensure_backend_server_running(host=host, port=port, timeout=10.0)
 
     # Jadwalkan penerapan efek DWM sudut membulat dan icon native saat HWND window siap
     threading.Thread(target=apply_dwm_effects, args=("iPhone Link", api), daemon=True).start()
 
-    # Tahap 56: Start Native Windows 11 System Tray Icon
+    # Start Native Windows 11 System Tray Icon (Clean Box-Free ASCII Menu)
     tray = SystemTrayIcon(
         icon_path=_resolve_icon_path(),
         on_restore=api.restore_from_tray,
@@ -745,8 +996,8 @@ def main() -> None:
     tray.start(wait_ready=1.5)
     _ACTIVE_TRAY_ICON = tray
 
-    # Tahap 56: Start safe periodic working set trimmer (+5s & every 45s)
-    _start_periodic_memory_trimmer(interval_sec=45.0)
+    # One-shot startup working set trim (+5.0s after launch only — NO periodic 45s timer!)
+    schedule_working_set_trim(5.0)
 
     window = webview.create_window(
         title="iPhone Link",
@@ -769,13 +1020,10 @@ def main() -> None:
             storage_path=storage_path,
         )
     finally:
-        if _ACTIVE_TRAY_ICON is not None:
-            try:
-                _ACTIVE_TRAY_ICON.stop()
-            except Exception:
-                pass
-            _ACTIVE_TRAY_ICON = None
         shutdown_backend_server()
+
+    # Guarantee 0% lingering .NET CLR / pythonnet background threads after GUI closes
+    os._exit(0)
 
 
 if __name__ == "__main__":

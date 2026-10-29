@@ -60,10 +60,10 @@ from handset.screen import (
     wipe_all_privacy_data,
 )
 from handset.wifi import (
-    disable_wireless_lockdown_for_clean_audio,
     get_wifi_status,
     pair_for_wifi,
     probe_wifi_device,
+    trigger_auto_enable_wireless_lockdown,
     wifi_paired_udids,
 )
 from handset.audio import audio_manager
@@ -462,21 +462,6 @@ def save_user_settings(new_settings: dict) -> dict:
     return current
 
 
-_CACHED_DEVICE_SNAPSHOT: dict | None = None
-_CACHED_RUNNING_DEVICES: list[dict] = []
-_CACHED_DEVICE_DETAIL: dict[str, dict] = {}
-_CACHED_WIFI_STATUS: dict | None = None
-_LAST_WIFI_PROBE_TS: float = 0.0
-
-
-def _trigger_post_ocr_memory_trim() -> None:
-    try:
-        from handset.gui import schedule_working_set_trim
-        schedule_working_set_trim(0.4, skip_if_audio_active=True)
-    except Exception:
-        pass
-
-
 class Handler(BaseHTTPRequestHandler):
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -490,75 +475,33 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_mirror("GET")
             return
         if path == "/api/status":
-            global _CACHED_DEVICE_SNAPSHOT, _CACHED_RUNNING_DEVICES, _CACHED_WIFI_STATUS, _LAST_WIFI_PROBE_TS
-            scr = screen_status()
-            aud = audio_manager.status()
-            stream_or_audio_active = (scr.get("phase") == "running") or bool(aud.get("active"))
-
-            # Tahap 56–57 Zero-Stutter Radio & USB Lockdown Guard:
-            # NEVER call snapshot() (usbmux.list_devices(), developer_mode lockdown, or sc query) while mirroring or A2DP audio is active!
-            if stream_or_audio_active:
-                if _CACHED_DEVICE_SNAPSHOT is not None:
-                    payload = dict(_CACHED_DEVICE_SNAPSHOT)
-                else:
-                    synth_devices = list(_CACHED_RUNNING_DEVICES)
-                    if not synth_devices and scr.get("udid"):
-                        synth_devices = [
-                            {
-                                "udid": scr["udid"],
-                                "connection": "Wi-Fi" if scr.get("transport") == "wifi" else "USB",
-                            }
-                        ]
-                    payload = {
-                        "library": {"ready": True, "version": "usbmux"},
-                        "driver": {"ready": True, "paths": [], "service": "RUNNING", "detail": ""},
-                        "devices": synth_devices,
-                        "developerMode": True,
-                        "error": None,
-                    }
-            else:
-                payload = snapshot()
-                _CACHED_DEVICE_SNAPSHOT = dict(payload)
-                if payload.get("devices"):
-                    _CACHED_RUNNING_DEVICES = list(payload["devices"])
-
-            payload["screen"] = scr
+            payload = snapshot()
+            payload["screen"] = screen_status()
             devices = payload.get("devices") or []
             selected_udid = None
             for d in devices:
                 if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
+                    trigger_auto_enable_wireless_lockdown(d["udid"])
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break
-            paired_list = wifi_paired_udids()
-            if not selected_udid and paired_list:
-                selected_udid = paired_list[0]
-
-            now_ts = time.time()
-            if stream_or_audio_active:
-                if _CACHED_WIFI_STATUS is not None:
-                    payload["wifi"] = dict(_CACHED_WIFI_STATUS)
-                else:
-                    payload["wifi"] = {
-                        "paired": paired_list,
-                        "enabled": bool(paired_list),
-                        "reachable": scr.get("transport") == "wifi",
-                        "ip": None,
-                        "statusText": "✓ Wi‑Fi ready" if paired_list else "Wi‑Fi not set up",
-                        "statusTone": "ok" if paired_list else "",
-                    }
-            elif _CACHED_WIFI_STATUS is not None and (now_ts - _LAST_WIFI_PROBE_TS) < 8.0:
-                payload["wifi"] = dict(_CACHED_WIFI_STATUS)
-            else:
-                wifi_st = get_wifi_status(selected_udid)
-                _CACHED_WIFI_STATUS = dict(wifi_st) if isinstance(wifi_st, dict) else wifi_st
-                _LAST_WIFI_PROBE_TS = now_ts
-                payload["wifi"] = wifi_st
-
-            payload["audio"] = aud
+            if not selected_udid:
+                paired_list = wifi_paired_udids()
+                if paired_list:
+                    selected_udid = paired_list[0]
+            payload["wifi"] = get_wifi_status(selected_udid)
+            payload["audio"] = audio_manager.status()
             payload["folderInstanceId"] = get_folder_instance_id()
             payload["isFreshFolder"] = is_fresh_extracted_folder()
             self._json(payload)
+            return
+        if path == "/api/tray-state":
+            from handset.screen import _STEALTH_DIM_ACTIVE
+            self._json({
+                "ok": True,
+                "stealth": bool(_STEALTH_DIM_ACTIVE),
+                "audio": bool(audio_manager.is_active()),
+            })
             return
         if path.startswith("/api/wifi/probe"):
             query = parse_qs(urlparse(self.path).query)
@@ -632,11 +575,24 @@ class Handler(BaseHTTPRequestHandler):
             saved = save_user_settings(payload)
             self._json({"ok": True, "settings": saved})
             return
+        if path == "/api/server/shutdown":
+            import threading
+            try:
+                from handset import screen as _scr
+                if getattr(_scr, "_STEALTH_DIM_ACTIVE", False):
+                    _scr.set_iphone_physical_brightness("restore", steps=4)
+                _scr.stop_screen()
+            except Exception:
+                pass
+            try:
+                audio_manager.shutdown()
+            except Exception:
+                pass
+            self._json({"ok": True, "shuttingDown": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
         if path == "/api/audio/toggle":
             enabled = payload.get("enabled") if "enabled" in payload else None
-            scr_now = screen_status()
-            if (enabled is True or (enabled is None and not audio_manager.status().get("enabled"))) and scr_now.get("transport") != "wifi":
-                disable_wireless_lockdown_for_clean_audio(scr_now.get("udid"))
             st = audio_manager.toggle(enabled)
             save_user_settings({"audioSinkEnabled": st.get("enabled", False)})
             self._json(st)
@@ -713,7 +669,6 @@ class Handler(BaseHTTPRequestHandler):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
                                 print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
-                        _trigger_post_ocr_memory_trim()
                         return final_text, auto_cleared
                     except Exception as err:
                         import traceback
@@ -819,8 +774,6 @@ class Handler(BaseHTTPRequestHandler):
         transport = payload.get("transport")
         if transport not in {"usb", "wifi", "cable"}:
             transport = "cable"
-        if transport in {"usb", "cable"}:
-            disable_wireless_lockdown_for_clean_audio(udid)
         self._json(start_screen(udid, transport))
 
     def log_message(self, fmt: str, *args) -> None:
@@ -863,19 +816,8 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Failed to write debug_metrics.json: {e}", flush=True)
 
     def _device(self, udid: str) -> None:
-        scr = screen_status()
-        aud = audio_manager.status()
-        if (scr.get("phase") == "running") or bool(aud.get("active")):
-            if udid in _CACHED_DEVICE_DETAIL:
-                self._json(_CACHED_DEVICE_DETAIL[udid])
-                return
-            self._json({"udid": udid, "paired": True, "info": {"DeviceName": "iPhone"}})
-            return
         try:
-            detail_payload = read_handset(udid)
-            if isinstance(detail_payload, dict) and detail_payload.get("paired"):
-                _CACHED_DEVICE_DETAIL[udid] = dict(detail_payload)
-            self._json(detail_payload)
+            self._json(read_handset(udid))
         except MuxError as error:
             from handset.wifi import get_device_wifi_state, wifi_paired_udids
             cached = get_device_wifi_state(udid)
@@ -1037,13 +979,19 @@ class SingleServer(ThreadingHTTPServer):
 
 def create_http_server(host: str = HOST, port: int = PORT) -> SingleServer:
     """Create and configure the local ThreadingHTTPServer without blocking."""
+    server = SingleServer((host, port), Handler)
     settings = load_user_settings()
     if settings.get("audioSinkEnabled"):
-        try:
-            audio_manager.enable()
-        except Exception:
-            pass
-    return SingleServer((host, port), Handler)
+        import threading
+
+        def _restore_audio_async() -> None:
+            try:
+                audio_manager.enable()
+            except Exception:
+                pass
+
+        threading.Thread(target=_restore_audio_async, name="handset-audio-restore", daemon=True).start()
+    return server
 
 
 def serve(host: str = HOST, port: int = PORT) -> None:
@@ -1061,9 +1009,25 @@ def serve(host: str = HOST, port: int = PORT) -> None:
 
 
 def main() -> None:
-    import os
+    host = os.environ.get("PANE_HOST", HOST)
     port = int(os.environ.get("PANE_PORT", PORT))
-    serve(host=HOST, port=port)
+    argv = sys.argv[1:]
+    for idx, arg in enumerate(argv):
+        if arg == "--host" and idx + 1 < len(argv):
+            host = argv[idx + 1]
+        elif arg.startswith("--host="):
+            host = arg.split("=", 1)[1]
+        elif arg == "--port" and idx + 1 < len(argv):
+            try:
+                port = int(argv[idx + 1])
+            except ValueError:
+                pass
+        elif arg.startswith("--port="):
+            try:
+                port = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+    serve(host=host, port=port)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport --mute-audio --disable-audio-output --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,AudioServiceOutOfProcess --js-flags=--max-old-space-size=96"
+set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
 title iPhone Link - Native iPhone Mirroring for Windows 11
 
 echo ==============================================================
@@ -112,7 +112,7 @@ endlocal
 exit /b 1
 
 :RUN_APP
-echo Menjalankan iPhone Link (In-Process Server + Native Frameless Window)...
+echo Menjalankan iPhone Link (Isolated Backend Server + Native Frameless Window)...
 "%~dp0venv\Scripts\python.exe" "%~dp0handset\gui.py"
 
 if !ERRORLEVEL! NEQ 0 (

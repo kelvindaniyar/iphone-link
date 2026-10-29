@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 :: Hardware HEVC Decoder Acceleration for WebView2
-set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport --mute-audio --disable-audio-output --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,AudioServiceOutOfProcess --js-flags=--max-old-space-size=96"
+set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--enable-features=PlatformHEVCDecoderSupport"
 
 :: 1. Fast Path: Launch immediately if local venv is ready with webview & pymobiledevice3
 if exist "%~dp0venv\Scripts\python.exe" (

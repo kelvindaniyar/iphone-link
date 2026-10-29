@@ -38,6 +38,7 @@ $PrivatePatterns = @(
     "typed_history.json",
     "user_settings.json",
     "wifi_state.json",
+    ".audio_worker.pid",
     ".pane_webview_storage",
     "*.pairrecord",
     "scratch",
@@ -216,7 +217,7 @@ $AuditPy = Join-Path $RootDir "venv\Scripts\python.exe"
 if (Test-Path $AuditPy) {
     & $AuditPy -c "
 import zipfile, pathlib, sys
-forbidden = ('user_settings.json', 'typed_history.json', 'wifi_state.json', 'debug_metrics.json', '.pane_webview_storage', '.pairrecord')
+forbidden = ('user_settings.json', 'typed_history.json', 'wifi_state.json', 'debug_metrics.json', '.audio_worker.pid', '.pane_webview_storage', '.pairrecord')
 for zp_str in sys.argv[1:]:
     zp = pathlib.Path(zp_str)
     if not zp.is_file(): continue

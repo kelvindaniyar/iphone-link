@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -17,7 +16,12 @@ def get_app_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-if importlib.util.find_spec("lzss") is None or importlib.util.find_spec("lzfse") is None:
+# Tahap 58: Prefer native C extensions (pylzss / lzfse .pyd) at all times.
+# Only append pure-Python _shims at the very end of sys.path if native C import genuinely raises ImportError.
+try:
+    import lzfse as _native_lzfse  # noqa: F401
+    import lzss as _native_lzss  # noqa: F401
+except ImportError:
     _shims_candidates = [
         get_bundle_root() / "handset" / "_shims",
         Path(__file__).resolve().parent / "_shims",

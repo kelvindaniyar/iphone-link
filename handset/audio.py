@@ -1,14 +1,8 @@
 """Audio Sink Manager for iPhone -> PC Audio Routing via Windows 11 Bluetooth A2DP.
 
-Tahap 56–57 Zero-Stutter Bluetooth A2DP Architecture:
-- Runs the PowerShell WinRT AudioPlaybackConnection host explicitly in Multi-Threaded Apartment (-MTA)
-  with an active Win32 message pump (MsgWaitForMultipleObjectsEx + PeekMessageW) and async STDIN reader
-  ([Console]::In.ReadLineAsync()), eliminating STA COM message starvation during Reels/TikTok playback.
-- Pins $Global:ActiveAudioConn with [System.GC]::KeepAlive so .NET GC never collects or relocates the RCW.
-- Caches Bluetooth endpoint DeviceId (_cached_device_id) so subsequent connects call TryCreateFromId()
-  directly without scanning all radios via DeviceInformation::FindAllAsync.
-- Disables Windows 11 EcoQoS Power Throttling, sets High Priority (including audiodg.exe when permitted),
-  requests 1ms multimedia timer resolution, and registers MMCSS ("Pro Audio").
+Tahap 58: Restored to pure Tahap 53 (31b03c6) WinRT AudioPlaybackConnection architecture
+with _WIN_NO_WINDOW_KWARGS (zero PowerShell popup) + Pre-Start Orphan Audio Cleanup
+so duplicate AudioPlaybackConnection workers can never coexist in the background.
 """
 
 from __future__ import annotations
@@ -18,7 +12,10 @@ import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+from handset import get_app_root
 
 _WIN_NO_WINDOW_KWARGS: dict = {}
 if sys.platform == "win32":
@@ -30,142 +27,72 @@ if sys.platform == "win32":
         "startupinfo": _si,
     }
 
-ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
-HIGH_PRIORITY_CLASS = 0x00000080
-PROCESS_POWER_THROTTLING = 4
-PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
-PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
-PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION = 0x4
-
-_TIMER_LOCK = threading.Lock()
-_TIMER_1MS_ACTIVE = False
+AUDIO_WORKER_MARKER = "iPhoneLink-AudioPlaybackWorker"
 
 
-def disable_process_power_throttling() -> bool:
-    """Disable Windows 11 EcoQoS / Efficiency Mode throttling on the current process."""
+def _audio_pid_file() -> Path:
+    return get_app_root() / ".audio_worker.pid"
+
+
+def cleanup_orphan_audio_workers(exclude_pid: Optional[int] = None) -> int:
+    """Terminate any leftover PowerShell AudioPlaybackConnection or orphan audio.py workers."""
     if sys.platform != "win32":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
+        return 0
+    killed = 0
+    my_pid = os.getpid()
 
-        class PROCESS_POWER_THROTTLING_STATE(ctypes.Structure):
-            _fields_ = [
-                ("Version", wintypes.ULONG),
-                ("ControlMask", wintypes.ULONG),
-                ("StateMask", wintypes.ULONG),
-            ]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.GetCurrentProcess.argtypes = []
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        kernel32.SetProcessInformation.argtypes = [
-            wintypes.HANDLE,
-            ctypes.c_int,
-            wintypes.LPVOID,
-            wintypes.DWORD,
-        ]
-        kernel32.SetProcessInformation.restype = wintypes.BOOL
-
-        hproc = kernel32.GetCurrentProcess()
-        state = PROCESS_POWER_THROTTLING_STATE(
-            Version=PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-            ControlMask=(
-                PROCESS_POWER_THROTTLING_EXECUTION_SPEED
-                | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
-            ),
-            StateMask=0,
-        )
-        ok = bool(
-            kernel32.SetProcessInformation(
-                hproc,
-                PROCESS_POWER_THROTTLING,
-                ctypes.byref(state),
-                ctypes.sizeof(state),
-            )
-        )
-        if not ok:
-            state_fallback = PROCESS_POWER_THROTTLING_STATE(
-                Version=PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-                ControlMask=PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-                StateMask=0,
-            )
-            ok = bool(
-                kernel32.SetProcessInformation(
-                    hproc,
-                    PROCESS_POWER_THROTTLING,
-                    ctypes.byref(state_fallback),
-                    ctypes.sizeof(state_fallback),
-                )
-            )
-        return ok
-    except Exception:
-        return False
-
-
-def set_audio_process_priority(high_for_audio: bool = False) -> bool:
-    """Set HIGH_PRIORITY_CLASS when A2DP audio is active, else ABOVE_NORMAL_PRIORITY_CLASS."""
-    if sys.platform != "win32":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.GetCurrentProcess.argtypes = []
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        kernel32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.SetPriorityClass.restype = wintypes.BOOL
-
-        prio = HIGH_PRIORITY_CLASS if high_for_audio else ABOVE_NORMAL_PRIORITY_CLASS
-        return bool(kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), prio))
-    except Exception:
-        return False
-
-
-def set_multimedia_timer_1ms(enable: bool) -> bool:
-    """Request 1ms Windows multimedia scheduler resolution while A2DP audio is streaming."""
-    global _TIMER_1MS_ACTIVE
-    if sys.platform != "win32":
-        return False
-    with _TIMER_LOCK:
+    # 1. Fast PID-file cleanup if previous session left a tracked worker PID
+    pid_file = _audio_pid_file()
+    if pid_file.is_file():
         try:
-            import ctypes
-
-            winmm = ctypes.WinDLL("winmm", use_last_error=True)
-            if enable and not _TIMER_1MS_ACTIVE:
-                res = int(winmm.timeBeginPeriod(1))
-                if res == 0:
-                    _TIMER_1MS_ACTIVE = True
-                return _TIMER_1MS_ACTIVE
-            if not enable and _TIMER_1MS_ACTIVE:
-                winmm.timeEndPeriod(1)
-                _TIMER_1MS_ACTIVE = False
-                return True
-            return True
+            old_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            if old_pid > 0 and old_pid != my_pid and old_pid != exclude_pid:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(old_pid)],
+                    capture_output=True,
+                    timeout=3,
+                    **_WIN_NO_WINDOW_KWARGS,
+                )
+                killed += 1
         except Exception:
-            return False
+            pass
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-
-def register_mmcss_audio_thread() -> int:
-    """Register current thread with Windows Multimedia Class Scheduler Service (MMCSS)."""
-    if sys.platform != "win32":
-        return 0
+    # 2. Sweep any stray powershell.exe holding AudioPlaybackConnection or orphan python running audio.py
+    ps_cleanup = f"""
+$myPid = {my_pid}
+$exPid = {int(exclude_pid or 0)}
+$killed = 0
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
+    $_.ProcessId -ne $PID -and $_.ProcessId -ne $myPid -and $_.ProcessId -ne $exPid -and (
+        ($_.Name -match '^powershell(\\.exe)?$' -and $_.CommandLine -match 'AudioPlaybackConnection') -or
+        ($_.Name -match '^pythonw?(\\.exe)?$' -and $_.CommandLine -match 'audio\\.py')
+    )
+}} | ForEach-Object {{
+    try {{
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        $killed++
+    }} catch {{}}
+}}
+Write-Output $killed
+"""
     try:
-        import ctypes
-        from ctypes import wintypes
-
-        avrt = ctypes.WinDLL("avrt", use_last_error=True)
-        avrt.AvSetMmThreadCharacteristicsW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
-        avrt.AvSetMmThreadCharacteristicsW.restype = wintypes.HANDLE
-
-        task_idx = wintypes.DWORD(0)
-        handle = avrt.AvSetMmThreadCharacteristicsW("Pro Audio", ctypes.byref(task_idx))
-        if not handle:
-            handle = avrt.AvSetMmThreadCharacteristicsW("Audio", ctypes.byref(task_idx))
-        return int(handle or 0)
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cleanup],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            **_WIN_NO_WINDOW_KWARGS,
+        )
+        out = (res.stdout or "").strip().splitlines()
+        if out and out[-1].strip().isdigit():
+            killed += int(out[-1].strip())
     except Exception:
-        return 0
+        pass
+    return killed
 
 
 class AudioManager:
@@ -175,81 +102,57 @@ class AudioManager:
         self._enabled = False
         self._proc: Optional[subprocess.Popen] = None
         self._device_name = "iPhone"
-        self._cached_device_id: str = ""
         self._connection_state = "Closed"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._monitor_thread: Optional[threading.Thread] = None
-        self._cached_volume: int = 100
-        self._volume_initialized: bool = False
 
     def is_active(self) -> bool:
-        """Fast non-blocking check whether A2DP audio sink worker is currently live."""
+        """Fast non-blocking check whether the A2DP audio worker process is alive."""
         proc = self._proc
         return bool(self._enabled and proc is not None and proc.poll() is None)
 
     def status(self) -> Dict[str, Any]:
-        """Return instant in-memory A2DP status (0 radio scans, 0 subprocesses, 0 COM stalls)."""
-        need_initial_vol = False
         with self._lock:
-            if self._proc is not None and self._proc.poll() is not None:
-                self._proc = None
-                self._connection_state = "Closed"
-                set_multimedia_timer_1ms(False)
-                set_audio_process_priority(high_for_audio=False)
+            # Check if process is still alive
+            if self._proc is not None:
+                if self._proc.poll() is not None:
+                    # Process died unexpectedly
+                    self._proc = None
+                    self._connection_state = "Closed"
 
             is_active = self._enabled and (self._proc is not None)
-            if not self._volume_initialized and not is_active:
-                need_initial_vol = True
 
-            snapshot_state = {
+            return {
                 "enabled": self._enabled,
                 "active": is_active,
                 "device": self._device_name,
                 "state": self._connection_state if is_active else "Off",
-                "volume": self._cached_volume,
+                "volume": self.get_volume(),
             }
-
-        if need_initial_vol:
-            vol = self.get_volume()
-            with self._lock:
-                self._cached_volume = vol
-                self._volume_initialized = True
-                snapshot_state["volume"] = vol
-
-        return snapshot_state
 
     def get_volume(self) -> int:
         try:
             import ctypes
-
             ctypes.windll.ole32.CoInitialize(None)
             try:
                 from pycaw.pycaw import AudioUtilities
-
                 dev = AudioUtilities.GetSpeakers()
                 if dev and hasattr(dev, "EndpointVolume"):
-                    vol = round(dev.EndpointVolume.GetMasterVolumeLevelScalar() * 100)
-                    self._cached_volume = vol
-                    self._volume_initialized = True
-                    return vol
+                    return round(dev.EndpointVolume.GetMasterVolumeLevelScalar() * 100)
             finally:
                 ctypes.windll.ole32.CoUninitialize()
         except Exception:
             pass
-        return self._cached_volume
+        return 100
 
     def set_volume(self, level_percent: int) -> Dict[str, Any]:
         vol = max(0, min(100, int(level_percent)))
         scalar = vol / 100.0
-        self._cached_volume = vol
-        self._volume_initialized = True
         try:
             import ctypes
-
             ctypes.windll.ole32.CoInitialize(None)
             try:
                 from pycaw.pycaw import AudioUtilities
-
                 dev = AudioUtilities.GetSpeakers()
                 if dev and hasattr(dev, "EndpointVolume"):
                     dev.EndpointVolume.SetMasterVolumeLevelScalar(scalar, None)
@@ -268,211 +171,57 @@ class AudioManager:
             return {"ok": False, "error": str(e)}
 
     def enable(self) -> Dict[str, Any]:
-        disable_process_power_throttling()
-        set_audio_process_priority(high_for_audio=True)
-        set_multimedia_timer_1ms(True)
-
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 self._enabled = True
-                return {
-                    "enabled": True,
-                    "active": True,
-                    "device": self._device_name,
-                    "state": self._connection_state,
-                    "volume": self._cached_volume,
-                }
+                return self.status()
+
+            # Pre-Start Orphan Audio Cleanup: ensure zero duplicate AudioPlaybackConnection sessions exist
+            cleanup_orphan_audio_workers()
 
             ps_script = """
-try {
-    [System.Diagnostics.Process]::GetCurrentProcess().PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High
-} catch {}
-
-try {
-    Get-Process -Name audiodg -ErrorAction SilentlyContinue | ForEach-Object {
-        try { $_.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High } catch {}
-    }
-} catch {}
-
-try {
-    Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class WinAudioBoost {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_POWER_THROTTLING_STATE {
-        public uint Version;
-        public uint ControlMask;
-        public uint StateMask;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT {
-        public int X;
-        public int Y;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MSG {
-        public IntPtr hwnd;
-        public uint message;
-        public IntPtr wParam;
-        public IntPtr lParam;
-        public uint time;
-        public POINT pt;
-    }
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr GetCurrentProcess();
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool SetProcessInformation(IntPtr hProcess, int ProcessInformationClass, ref PROCESS_POWER_THROTTLING_STATE State, int Size);
-    [DllImport("winmm.dll")]
-    public static extern uint timeBeginPeriod(uint uPeriod);
-    [DllImport("winmm.dll")]
-    public static extern uint timeEndPeriod(uint uPeriod);
-    [DllImport("avrt.dll", CharSet=CharSet.Unicode)]
-    public static extern IntPtr AvSetMmThreadCharacteristicsW(string TaskName, out uint TaskIndex);
-    [DllImport("avrt.dll")]
-    public static extern bool AvRevertMmThreadCharacteristics(IntPtr AvrtHandle);
-    [DllImport("user32.dll")]
-    public static extern uint MsgWaitForMultipleObjectsEx(uint nCount, IntPtr pHandles, uint dwMilliseconds, uint dwWakeMask, uint dwFlags);
-    [DllImport("user32.dll")]
-    public static extern bool PeekMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
-    [DllImport("user32.dll")]
-    public static extern bool TranslateMessage(ref MSG lpMsg);
-    [DllImport("user32.dll")]
-    public static extern IntPtr DispatchMessageW(ref MSG lpMsg);
-
-    private static IntPtr _mmcss = IntPtr.Zero;
-
-    public static void Boost() {
-        var st = new PROCESS_POWER_THROTTLING_STATE { Version = 1, ControlMask = 5, StateMask = 0 };
-        if (!SetProcessInformation(GetCurrentProcess(), 4, ref st, Marshal.SizeOf(st))) {
-            var st2 = new PROCESS_POWER_THROTTLING_STATE { Version = 1, ControlMask = 1, StateMask = 0 };
-            SetProcessInformation(GetCurrentProcess(), 4, ref st2, Marshal.SizeOf(st2));
-        }
-        timeBeginPeriod(1);
-        uint idx = 0;
-        _mmcss = AvSetMmThreadCharacteristicsW("Pro Audio", out idx);
-        if (_mmcss == IntPtr.Zero) {
-            _mmcss = AvSetMmThreadCharacteristicsW("Audio", out idx);
-        }
-        MSG initMsg;
-        PeekMessageW(out initMsg, IntPtr.Zero, 0, 0, 0x0000);
-    }
-
-    public static void PumpWait(uint timeoutMs) {
-        MSG msg;
-        while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 0x0001)) {
-            TranslateMessage(ref msg);
-            DispatchMessageW(ref msg);
-        }
-        uint res = MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, timeoutMs, 0x04FF, 0x0004);
-        if (res == 0xFFFFFFFF) {
-            System.Threading.Thread.Sleep((int)timeoutMs);
-        }
-        while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 0x0001)) {
-            TranslateMessage(ref msg);
-            DispatchMessageW(ref msg);
-        }
-    }
-
-    public static void Unboost() {
-        if (_mmcss != IntPtr.Zero) {
-            AvRevertMmThreadCharacteristics(_mmcss);
-            _mmcss = IntPtr.Zero;
-        }
-        timeEndPeriod(1);
-    }
-}
-"@ -ErrorAction SilentlyContinue
-    [WinAudioBoost]::Boost()
-} catch {}
-
+# iPhoneLink-AudioPlaybackWorker
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Audio.AudioPlaybackConnection, Windows.Media.Audio, ContentType = WindowsRuntime]
 $null = [Windows.Devices.Enumeration.DeviceInformation, Windows.Devices.Enumeration, ContentType = WindowsRuntime]
 
-$conn = $null
-$devId = $env:PANE_CACHED_AUDIO_DEVICE_ID
-$devName = if ($env:PANE_CACHED_AUDIO_DEVICE_NAME) { $env:PANE_CACHED_AUDIO_DEVICE_NAME } else { "iPhone" }
+$selector = [Windows.Media.Audio.AudioPlaybackConnection]::GetDeviceSelector()
+$asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod } | Select-Object -First 1
+$asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Enumeration.DeviceInformationCollection])
+$op = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($selector)
+$task = $asTask.Invoke($null, @($op))
+$devices = $task.GetAwaiter().GetResult()
 
-if (-not [string]::IsNullOrWhiteSpace($devId)) {
-    try {
-        $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($devId)
-    } catch {
-        $conn = $null
-    }
-}
-
-if ($conn -eq $null) {
-    $selector = [Windows.Media.Audio.AudioPlaybackConnection]::GetDeviceSelector()
-    $asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod } | Select-Object -First 1
-    $asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Enumeration.DeviceInformationCollection])
-    $op = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($selector)
-    $task = $asTask.Invoke($null, @($op))
-    $devices = $task.GetAwaiter().GetResult()
-
-    if ($devices.Count -gt 0) {
-        $dev = $devices[0]
-        $devId = $dev.Id
-        $devName = $dev.Name
-        $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($devId)
-    } else {
-        Write-Output (@{ status = "no_device"; message = "No Bluetooth Audio Sink device found" } | ConvertTo-Json -Compress)
-    }
-}
-
-if ($conn -eq $null) {
-    if (-not [string]::IsNullOrWhiteSpace($devId)) {
-        Write-Output (@{ status = "error"; message = "Failed to create AudioPlaybackConnection" } | ConvertTo-Json -Compress)
-    }
-    $hasBoost = $null -ne ([System.Management.Automation.PSTypeName]'WinAudioBoost').Type
-    $readStop = [Console]::In.ReadLineAsync()
-    while (-not $readStop.IsCompleted) {
-        if ($hasBoost) { [WinAudioBoost]::PumpWait(250) } else { Start-Sleep -Milliseconds 250 }
-    }
+if ($devices.Count -eq 0) {
+    Write-Output '{"status": "no_device", "message": "No Bluetooth Audio Sink device found"}'
+    while ($true) { Start-Sleep -Seconds 2 }
 } else {
-    $Global:ActiveAudioConn = $conn
-    $Global:ActiveAudioConn.Start()
-    $openRes = $Global:ActiveAudioConn.Open()
-    [System.GC]::KeepAlive($Global:ActiveAudioConn)
-    Write-Output (@{
-        status = "active"
-        device = $devName
-        deviceId = $devId
-        state = $Global:ActiveAudioConn.State.ToString()
-        apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState().ToString()
-    } | ConvertTo-Json -Compress)
+    $dev = $devices[0]
+    $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($dev.Id)
+    if ($conn -eq $null) {
+        Write-Output '{"status": "error", "message": "Failed to create AudioPlaybackConnection"}'
+        while ($true) { Start-Sleep -Seconds 2 }
+    } else {
+        $conn.Start()
+        $null = $conn.Open()
+        Write-Output ("{`"status`": `"active`", `"device`": `"" + $dev.Name + "`", `"state`": `"" + $conn.State.ToString() + "`"}")
 
-    $hasBoost = $null -ne ([System.Management.Automation.PSTypeName]'WinAudioBoost').Type
-    $readTask = [Console]::In.ReadLineAsync()
-    while ($true) {
-        if ($readTask.IsCompleted) {
-            $line = $readTask.Result
-            if ($line -eq "stop" -or $null -eq $line) {
-                break
+        $running = $true
+        while ($running) {
+            $line = [Console]::In.ReadLine()
+            if ($line -eq "stop" -or $line -eq $null) {
+                $running = $false
             }
-            $readTask = [Console]::In.ReadLineAsync()
         }
-        if ($hasBoost) { [WinAudioBoost]::PumpWait(200) } else { Start-Sleep -Milliseconds 200 }
-        [System.GC]::KeepAlive($Global:ActiveAudioConn)
+        $conn.Dispose()
     }
-    $Global:ActiveAudioConn.Dispose()
-    $Global:ActiveAudioConn = $null
 }
-try { [WinAudioBoost]::Unboost() } catch {}
 """
             try:
-                worker_env = dict(os.environ)
-                if self._cached_device_id:
-                    worker_env["PANE_CACHED_AUDIO_DEVICE_ID"] = self._cached_device_id
-                if self._device_name:
-                    worker_env["PANE_CACHED_AUDIO_DEVICE_NAME"] = self._device_name
-
                 self._proc = subprocess.Popen(
                     [
                         "powershell",
                         "-NoProfile",
-                        "-NonInteractive",
-                        "-MTA",
                         "-ExecutionPolicy",
                         "Bypass",
                         "-Command",
@@ -481,26 +230,27 @@ try { [WinAudioBoost]::Unboost() } catch {}
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    env=worker_env,
                     text=True,
                     bufsize=1,
                     **_WIN_NO_WINDOW_KWARGS,
                 )
                 self._enabled = True
+                try:
+                    _audio_pid_file().write_text(str(self._proc.pid), encoding="utf-8")
+                except Exception:
+                    pass
 
+                # Read initial output line
                 def read_init():
-                    register_mmcss_audio_thread()
                     try:
                         if self._proc and self._proc.stdout:
                             line = self._proc.stdout.readline()
                             if line:
                                 data = json.loads(line.strip())
-                                if data.get("device"):
-                                    self._device_name = str(data["device"])
-                                if data.get("deviceId"):
-                                    self._cached_device_id = str(data["deviceId"])
-                                if data.get("state"):
-                                    self._connection_state = str(data["state"])
+                                if "device" in data:
+                                    self._device_name = data["device"]
+                                if "state" in data:
+                                    self._connection_state = data["state"]
                     except Exception:
                         pass
 
@@ -512,8 +262,6 @@ try { [WinAudioBoost]::Unboost() } catch {}
                 print(f"AudioManager enable failed: {e}", flush=True)
                 self._proc = None
                 self._enabled = False
-                set_multimedia_timer_1ms(False)
-                set_audio_process_priority(high_for_audio=False)
 
         return self.status()
 
@@ -536,9 +284,18 @@ try { [WinAudioBoost]::Unboost() } catch {}
                 except Exception:
                     pass
 
-        set_multimedia_timer_1ms(False)
-        set_audio_process_priority(high_for_audio=False)
+        try:
+            _audio_pid_file().unlink(missing_ok=True)
+        except Exception:
+            pass
+        cleanup_orphan_audio_workers()
         return self.status()
+
+    def shutdown(self) -> None:
+        self.disable()
+
+    def stop(self) -> Dict[str, Any]:
+        return self.disable()
 
     def toggle(self, enable: Optional[bool] = None) -> Dict[str, Any]:
         if enable is None:
@@ -548,10 +305,8 @@ try { [WinAudioBoost]::Unboost() } catch {}
 
         if should_enable:
             return self.enable()
-        return self.disable()
-
-    def shutdown(self) -> None:
-        self.disable()
+        else:
+            return self.disable()
 
 
 # Global Singleton instance

@@ -23,6 +23,7 @@ debug_metrics.json
 typed_history.json
 user_settings.json
 wifi_state.json
+.audio_worker.pid
 
 # Development Reports & Packaging
 LAPORAN_PENGEMBANGAN/

@@ -1,10 +1,8 @@
-"""Pre-seed pure-Python lzss & lzfse shims into a fresh venv when C wheels are unavailable.
+"""Pre-seed pure-Python lzss & lzfse shims ONLY when native C wheels are unavailable (ImportError).
 
-On Windows without MSVC C++ Build Tools, `pip install pymobiledevice3` -> `pyimg4`
-attempts to compile `pylzss` / `lzfse` from C source on newer Python versions (3.13+).
-Because iPhone Link never compresses/decompresses raw IMG4 firmware payloads, pre-seeding
-the pure-Python shims from `handset/_shims/` lets `pip install -r requirements.txt`
-succeed 100% from binary wheels without any C++ compiler.
+Tahap 58: Always preserve native C extensions (`lzss.cp312-win_amd64.pyd` / `lzfse.cp312-win_amd64.pyd`)
+on Python <= 3.12 or whenever already installed. Only activate fallback shims if importing raises ImportError
+on Python 3.13+ environments without MSVC C++ Build Tools.
 """
 
 from __future__ import annotations
@@ -16,8 +14,16 @@ from pathlib import Path
 
 
 def main() -> int:
+    try:
+        import lzfse  # noqa: F401
+        import lzss  # noqa: F401
+        return 0
+    except ImportError:
+        pass
+
     if sys.version_info < (3, 13):
         return 0
+
     shims_dir = Path(__file__).resolve().parent / "_shims"
     if not shims_dir.is_dir():
         return 0
@@ -31,6 +37,11 @@ def main() -> int:
         ("lzss.py", "pylzss", "0.3.4"),
         ("lzfse.py", "lzfse", "0.4.2.post1"),
     ):
+        try:
+            __import__(mod_file.removesuffix(".py"))
+            continue
+        except ImportError:
+            pass
         src = shims_dir / mod_file
         if src.is_file() and not (sp / mod_file).exists():
             shutil.copy2(src, sp / mod_file)
@@ -47,4 +58,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

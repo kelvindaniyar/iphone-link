@@ -835,14 +835,8 @@ function drawFrame(f) {
   let sourceFrame = f;
   let clonedFrame = null;
 
-  // Tahap 56 Zero-Wrapper Fast-Path: hanya alokasikan VideoFrame baru jika visibleRect benar-benar ter-crop
-  const needsUncrop = Boolean(
-    f.codedWidth &&
-    f.codedHeight &&
-    f.visibleRect &&
-    (f.visibleRect.width < f.codedWidth || f.visibleRect.height < f.codedHeight)
-  );
-  if (needsUncrop) {
+  // Un-crop VideoFrame jika hardware decoder meng-clamp visibleRect ke 720p
+  if (f.codedWidth && f.codedHeight && f.visibleRect && f.visibleRect.height < f.codedHeight) {
     try {
       clonedFrame = new VideoFrame(f, {
         visibleRect: { x: 0, y: 0, width: f.codedWidth, height: f.codedHeight },
