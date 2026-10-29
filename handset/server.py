@@ -60,10 +60,10 @@ from handset.screen import (
     wipe_all_privacy_data,
 )
 from handset.wifi import (
+    ensure_wireless_lockdown_disabled_for_bluetooth,
     get_wifi_status,
     pair_for_wifi,
     probe_wifi_device,
-    trigger_auto_enable_wireless_lockdown,
     wifi_paired_udids,
 )
 from handset.audio import audio_manager
@@ -481,7 +481,7 @@ class Handler(BaseHTTPRequestHandler):
             selected_udid = None
             for d in devices:
                 if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
-                    trigger_auto_enable_wireless_lockdown(d["udid"])
+                    ensure_wireless_lockdown_disabled_for_bluetooth(d["udid"])
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break
@@ -489,7 +489,8 @@ class Handler(BaseHTTPRequestHandler):
                 paired_list = wifi_paired_udids()
                 if paired_list:
                     selected_udid = paired_list[0]
-            payload["wifi"] = get_wifi_status(selected_udid)
+            # Zero network / ARP / TCP scan on routine /api/status polls!
+            payload["wifi"] = get_wifi_status(selected_udid, probe_network=False)
             payload["audio"] = audio_manager.status()
             payload["folderInstanceId"] = get_folder_instance_id()
             payload["isFreshFolder"] = is_fresh_extracted_folder()
@@ -506,7 +507,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/wifi/probe"):
             query = parse_qs(urlparse(self.path).query)
             target_udid = (query.get("udid") or [None])[0]
-            self._json({"ok": True, "wifi": get_wifi_status(target_udid)})
+            self._json({"ok": True, "wifi": get_wifi_status(target_udid, probe_network=True)})
             return
         if path in ("/api/settings", "/api/keyboard/settings"):
             self._json(load_user_settings(persist_instance=True))
@@ -766,7 +767,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/wifi/scan":
             from handset.wifi import discover_iphone_ip_on_lan
             found_ip = discover_iphone_ip_on_lan(udid)
-            self._json({"ok": True, "ip": found_ip, "wifi": get_wifi_status(udid)})
+            self._json({"ok": True, "ip": found_ip, "wifi": get_wifi_status(udid, probe_network=True)})
             return
         if path != "/api/screen":
             self._json({"error": "Unknown action."}, status=404)

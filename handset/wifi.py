@@ -47,6 +47,10 @@ _MDNS_GROUP = "224.0.0.251"
 _MDNS_PORT = 5353
 _bonjour_patched = False
 _AUTO_ENABLED_UDIDS: set[str] = set()
+_WIFI_LOCKDOWN_DISABLED_UDIDS: set[str] = set()
+_WIFI_LOCKDOWN_LOCK = threading.Lock()
+_WIFI_STATE_MEM_CACHE: tuple[str, float, dict] | None = None
+_PAIRED_UDIDS_MEM_CACHE: tuple[float, list[str]] | None = None
 
 from handset import get_app_root; WIFI_STATE_PATH = get_app_root() / "wifi_state.json"
 
@@ -56,17 +60,35 @@ from handset import get_app_root; WIFI_STATE_PATH = get_app_root() / "wifi_state
 # -----------------------------------------------------------------------------
 
 def load_wifi_state() -> dict:
-    if not WIFI_STATE_PATH.is_file():
+    global _WIFI_STATE_MEM_CACHE
+    wifi_path = get_app_root() / "wifi_state.json"
+    path_key = str(wifi_path)
+    if not wifi_path.is_file():
+        _WIFI_STATE_MEM_CACHE = (path_key, -1.0, {"devices": {}})
         return {"devices": {}}
     try:
-        return json.loads(WIFI_STATE_PATH.read_text(encoding="utf-8"))
+        mtime = wifi_path.stat().st_mtime
+        if (
+            _WIFI_STATE_MEM_CACHE is not None
+            and _WIFI_STATE_MEM_CACHE[0] == path_key
+            and _WIFI_STATE_MEM_CACHE[1] == mtime
+        ):
+            return _WIFI_STATE_MEM_CACHE[2]
+        parsed = json.loads(wifi_path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
+            parsed = {"devices": {}}
+        _WIFI_STATE_MEM_CACHE = (path_key, mtime, parsed)
+        return parsed
     except Exception:
         return {"devices": {}}
 
 
 def save_wifi_state(state: dict) -> None:
+    global _WIFI_STATE_MEM_CACHE
+    wifi_path = get_app_root() / "wifi_state.json"
     try:
-        WIFI_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        wifi_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        _WIFI_STATE_MEM_CACHE = (str(wifi_path), wifi_path.stat().st_mtime, state)
     except Exception as exc:
         logger.warning("Failed to save wifi_state.json: %s", exc)
 
@@ -368,19 +390,93 @@ async def auto_enable_wireless_lockdown(udid: str) -> dict:
 
 
 def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
-    """Non-blocking trigger to verify and enable Wireless Lockdown in the background."""
-    if not udid or udid in _AUTO_ENABLED_UDIDS:
-        return
+    """Tahap 59: Permanently disabled. Automatic Wireless Lockdown & Wireless Debugging
+    cause continuous 2.4 GHz Wi-Fi chatter between iPhone and AppleMobileDeviceService.exe
+    that collides with Bluetooth A2DP audio packets even when mirroring is stopped."""
+    return
 
-    _AUTO_ENABLED_UDIDS.add(udid)
 
-    def _worker():
+async def disable_wireless_lockdown_async(udid: str, lockdown=None) -> dict:
+    """Permanently set EnableWifiConnections=False & EnableWifiDebugging=False on iPhone NVRAM."""
+    from pymobiledevice3.lockdown import create_using_usbmux
+
+    owns_lockdown = lockdown is None
+    if owns_lockdown:
+        lockdown = await create_using_usbmux(serial=udid, connection_type="USB", autopair=False)
+
+    try:
+        await lockdown.set_value(False, "com.apple.mobile.wireless_lockdown", "EnableWifiConnections")
+        await lockdown.set_value(False, "com.apple.mobile.wireless_lockdown", "EnableWifiDebugging")
+        with contextlib.suppress(Exception):
+            await lockdown.set_enable_wifi_connections(False)
+
+        verified_domain = {}
+        with contextlib.suppress(Exception):
+            raw_dom = await lockdown.get_value("com.apple.mobile.wireless_lockdown")
+            if isinstance(raw_dom, dict):
+                verified_domain = raw_dom
+
+        with _WIFI_LOCKDOWN_LOCK:
+            _WIFI_LOCKDOWN_DISABLED_UDIDS.add(udid)
+
+        wifi_path = get_app_root() / "wifi_state.json"
+        if wifi_path.is_file():
+            device_name = None
+            with contextlib.suppress(Exception):
+                device_name = getattr(lockdown, "display_name", None) or (lockdown.short_info or {}).get("DeviceName")
+            update_device_wifi_state(udid, enabled=False, name=device_name, last_seen_cable=True)
+
+        return {
+            "ok": True,
+            "udid": udid,
+            "EnableWifiConnections": bool(verified_domain.get("EnableWifiConnections", False)),
+            "EnableWifiDebugging": bool(verified_domain.get("EnableWifiDebugging", False)),
+        }
+    finally:
+        if owns_lockdown and lockdown is not None:
+            with contextlib.suppress(Exception):
+                await lockdown.close()
+
+
+def ensure_wireless_lockdown_disabled_for_bluetooth(udid: str, *, blocking: bool = False) -> dict:
+    """Disable EnableWifiConnections & EnableWifiDebugging ONCE per plugged-in USB UDID."""
+    if not udid:
+        return {"ok": False, "reason": "missing_udid"}
+
+    with _WIFI_LOCKDOWN_LOCK:
+        if udid in _WIFI_LOCKDOWN_DISABLED_UDIDS and not blocking:
+            return {
+                "ok": True,
+                "udid": udid,
+                "cached": True,
+                "EnableWifiConnections": False,
+                "EnableWifiDebugging": False,
+            }
+        _WIFI_LOCKDOWN_DISABLED_UDIDS.add(udid)
+
+    if blocking:
         try:
-            asyncio.run(auto_enable_wireless_lockdown(udid))
+            return asyncio.run(disable_wireless_lockdown_async(udid))
         except Exception as exc:
-            logger.debug("Background auto_enable_wireless_lockdown failed for %s: %s", udid, exc)
+            logger.debug("ensure_wireless_lockdown_disabled_for_bluetooth(blocking) failed: %s", exc)
+            return {"ok": False, "udid": udid, "error": str(exc)}
 
-    threading.Thread(target=_worker, name=f"handset-wifi-enable-{udid[:8]}", daemon=True).start()
+    def _worker() -> None:
+        try:
+            asyncio.run(disable_wireless_lockdown_async(udid))
+        except Exception as exc:
+            logger.debug("Background disable_wireless_lockdown_async failed for %s: %s", udid, exc)
+
+    threading.Thread(target=_worker, name=f"handset-bt-clean-{udid[:8]}", daemon=True).start()
+    return {"ok": True, "udid": udid, "scheduled": True}
+
+
+def on_usb_devices_changed(active_usb_udids: set[str]) -> None:
+    """Clear per-plug state for any UDID that has been physically unplugged."""
+    with _WIFI_LOCKDOWN_LOCK:
+        disconnected = _WIFI_LOCKDOWN_DISABLED_UDIDS - set(active_usb_udids)
+        for dead in disconnected:
+            _WIFI_LOCKDOWN_DISABLED_UDIDS.discard(dead)
 
 
 # -----------------------------------------------------------------------------
@@ -388,16 +484,27 @@ def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
 # -----------------------------------------------------------------------------
 
 def wifi_paired_udids() -> list[str]:
+    global _PAIRED_UDIDS_MEM_CACHE
+    import time as _time
+
+    now = _time.monotonic()
+    if _PAIRED_UDIDS_MEM_CACHE is not None and (now - _PAIRED_UDIDS_MEM_CACHE[0]) < 15.0:
+        return list(_PAIRED_UDIDS_MEM_CACHE[1])
     try:
         from pymobiledevice3.pair_records import iter_remote_paired_identifiers
 
-        return sorted(set(iter_remote_paired_identifiers()))
+        paired = sorted(set(iter_remote_paired_identifiers()))
+        _PAIRED_UDIDS_MEM_CACHE = (now, paired)
+        return list(paired)
     except Exception:
         return []
 
 
 def pair_for_wifi(udid: str) -> dict:
     """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link."""
+    global _PAIRED_UDIDS_MEM_CACHE
+    with _WIFI_LOCKDOWN_LOCK:
+        _WIFI_LOCKDOWN_DISABLED_UDIDS.discard(udid)
 
     async def pair() -> None:
         from pymobiledevice3.exceptions import RemotePairingCompletedError
@@ -435,6 +542,7 @@ def pair_for_wifi(udid: str) -> dict:
     except Exception as error:
         return {"ok": False, "error": f"Wi-Fi setup needs the cable once: {error}"}
 
+    _PAIRED_UDIDS_MEM_CACHE = None
     paired_list = wifi_paired_udids()
     is_paired = udid in paired_list
     return {"ok": is_paired, "paired": paired_list, "wifi_enabled": True}
@@ -567,8 +675,13 @@ def probe_wifi_device(udid: str) -> dict:
     }
 
 
-def get_wifi_status(selected_udid: Optional[str] = None) -> dict:
-    """Return consolidated Wi-Fi status for /api/status endpoint."""
+def get_wifi_status(selected_udid: Optional[str] = None, *, probe_network: bool = False) -> dict:
+    """Return consolidated Wi-Fi status.
+
+    Tahap 59: When `probe_network=False` (default on `GET /api/status`), NEVER execute
+    network probing, ARP lookups (`arp -a`), TCP port 62078 scans, or UDP mDNS packets!
+    Active LAN scanning ONLY runs when `probe_network=True` (explicit Wi-Fi Scan / Probe).
+    """
     paired_list = wifi_paired_udids()
     target = selected_udid or (paired_list[0] if paired_list else None)
 
@@ -581,6 +694,36 @@ def get_wifi_status(selected_udid: Optional[str] = None) -> dict:
             "statusText": "Wi‑Fi not set up",
             "statusTone": "",
             "note": "Plug in the cable once to set up Wi‑Fi.",
+        }
+
+    if not probe_network:
+        cached = get_device_wifi_state(target)
+        last_ip = cached.get("last_ip")
+        is_paired = target in paired_list
+        wifi_enabled = bool(cached.get("wifi_enabled_on_device", False))
+        if is_paired:
+            ip_note = f" (IP terakhir: {last_ip})" if last_ip else ""
+            return {
+                "paired": paired_list,
+                "enabled": wifi_enabled,
+                "reachable": False,
+                "ip": last_ip,
+                "method": "cached",
+                "statusText": "📶 Klik 'Scan Wi‑Fi' jika ingin menyambung tanpa kabel",
+                "statusTone": "warn" if not wifi_enabled else "ok",
+                "note": f"Mode Cable + Bluetooth Audio bebas interferensi aktif{ip_note}.",
+                "udid": target,
+            }
+        return {
+            "paired": paired_list,
+            "enabled": False,
+            "reachable": False,
+            "ip": last_ip,
+            "method": "cached",
+            "statusText": "🔌 Colok kabel USB 1x untuk aktifkan mode Wi‑Fi",
+            "statusTone": "bad",
+            "note": "iPhone belum pernah di-setup untuk Wi-Fi. Colokkan kabel USB dan klik 'Set up Wi-Fi'.",
+            "udid": target,
         }
 
     probe = probe_wifi_device(target)

@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261030_tahap58_pure_audio_job_isolation";
+const MIRROR_PAGE = "/mirror.html?v=20261030_tahap59_sta_pump_clean_bt";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
@@ -1286,6 +1286,7 @@ function renderDevices(list) {
     item.textContent = "No iPhone detected.";
     devicesEl.append(item);
     selectedUdid = null;
+    _cachedDeviceDetails.clear();
     return;
   }
   if (list.length === 1) selectedUdid = list[0].udid;
@@ -1315,11 +1316,25 @@ function renderDevices(list) {
   if (list.length === 1) openDevice(list[0].udid);
 }
 
-async function openDevice(udid) {
+const _cachedDeviceDetails = new Map();
+
+async function openDevice(udid, force = false) {
   detail.hidden = false;
+  if (!force && _cachedDeviceDetails.has(udid)) {
+    const cachedDev = _cachedDeviceDetails.get(udid);
+    renderDetail(cachedDev);
+    if (cachedDev.info?.DeviceName) {
+      pillDevice.hidden = false;
+      pillDevice.textContent = cachedDev.info.DeviceName;
+    }
+    return;
+  }
   detail.textContent = "Reading device…";
   try {
     const device = await getJson(`/api/devices/${encodeURIComponent(udid)}`);
+    if (device && device.paired) {
+      _cachedDeviceDetails.set(udid, device);
+    }
     renderDetail(device);
     if (device.info?.DeviceName) {
       pillDevice.hidden = false;

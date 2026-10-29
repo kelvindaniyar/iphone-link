@@ -9,7 +9,7 @@ Tahap 58 Architecture (Pure Tahap 53 2-Process Isolation + Win32 Job Object Anti
   0% zombie background processes even if iPhone Link is force-killed from Task Manager.
 - Restores pure Tahap 53 WebView2 arguments (`--enable-features=PlatformHEVCDecoderSupport`),
   keeps per-folder WebView2 storage isolation (Tahap 55), clean box-free Windows 11 System Tray
-  (Tahap 57), and one-shot startup (+5s) + minimize-only working set trim (no periodic timer).
+  (Tahap 57), and eliminates working-set trimming so .NET/WinRT Audio pages stay 100% resident in RAM (Tahap 59).
 """
 
 from __future__ import annotations
@@ -91,7 +91,6 @@ _SERVER_PROC: subprocess.Popen | None = None
 _SERVER_JOB_HANDLE: int | None = None
 _SERVER_ENDPOINT: tuple[str, int] = ("127.0.0.1", 8765)
 _ACTIVE_TRAY_ICON = None
-_TRIM_LOCK = threading.Lock()
 
 
 def _create_kill_on_close_job_object() -> int | None:
@@ -208,110 +207,6 @@ def _close_job_handle(job_handle: int | None) -> None:
         kernel32.CloseHandle(wintypes.HANDLE(job_handle))
     except Exception:
         pass
-
-
-def _trim_process_working_set() -> int:
-    """One-shot safe working set trim (used ONLY once at startup +5s and when minimized to tray)."""
-    if sys.platform != "win32":
-        return 0
-    if not _TRIM_LOCK.acquire(blocking=False):
-        return 0
-    trimmed_count = 0
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        TH32CS_SNAPPROCESS = 0x00000002
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        PROCESS_SET_QUOTA = 0x0100
-
-        class PROCESSENTRY32W(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD),
-                ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.c_size_t),
-                ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", wintypes.LONG),
-                ("dwFlags", wintypes.DWORD),
-                ("szExeFile", wintypes.WCHAR * 260),
-            ]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        psapi = ctypes.WinDLL("psapi", use_last_error=True)
-
-        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-        kernel32.Process32FirstW.restype = wintypes.BOOL
-        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-        kernel32.Process32NextW.restype = wintypes.BOOL
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.SetProcessWorkingSetSize.argtypes = [wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t]
-        kernel32.SetProcessWorkingSetSize.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
-        psapi.EmptyWorkingSet.restype = wintypes.BOOL
-
-        root_pid = os.getpid()
-        parent_map: dict[int, list[int]] = {}
-
-        snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        invalid_handle = wintypes.HANDLE(-1).value
-        if snap and snap != invalid_handle:
-            try:
-                pe = PROCESSENTRY32W()
-                pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-                if kernel32.Process32FirstW(snap, ctypes.byref(pe)):
-                    while True:
-                        parent_map.setdefault(int(pe.th32ParentProcessID), []).append(int(pe.th32ProcessID))
-                        if not kernel32.Process32NextW(snap, ctypes.byref(pe)):
-                            break
-            finally:
-                kernel32.CloseHandle(snap)
-
-        target_pids: list[int] = [root_pid]
-        queue = [root_pid]
-        seen = {root_pid}
-        while queue:
-            cur = queue.pop(0)
-            for child in parent_map.get(cur, ()):
-                if child not in seen:
-                    seen.add(child)
-                    target_pids.append(child)
-                    queue.append(child)
-
-        all_minus_one = ctypes.c_size_t(-1).value
-        for pid in target_pids:
-            hproc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA, False, pid)
-            if hproc:
-                try:
-                    ok = bool(psapi.EmptyWorkingSet(hproc))
-                    if not ok:
-                        ok = bool(kernel32.SetProcessWorkingSetSize(hproc, all_minus_one, all_minus_one))
-                    if ok:
-                        trimmed_count += 1
-                finally:
-                    kernel32.CloseHandle(hproc)
-    except Exception:
-        pass
-    finally:
-        _TRIM_LOCK.release()
-    return trimmed_count
-
-
-def schedule_working_set_trim(delay_sec: float = 0.25) -> None:
-    """Trigger a single non-blocking working set trim after delay_sec (no periodic loop)."""
-    def _delayed():
-        if delay_sec > 0:
-            time.sleep(delay_sec)
-        _trim_process_working_set()
-
-    threading.Thread(target=_delayed, name="iphone-link-ram-trim", daemon=True).start()
 
 
 def _cleanup_stale_zombie_processes(host: str = "127.0.0.1", port: int = 8765) -> None:
@@ -431,7 +326,6 @@ class WindowApi:
     def minimize(self):
         if self._window:
             self._window.minimize()
-            schedule_working_set_trim(0.35)
 
     def minimize_to_tray(self):
         """Hide window to Windows 11 System Tray while keeping mirroring & audio alive in background."""
@@ -444,7 +338,6 @@ class WindowApi:
                     from ctypes import wintypes
 
                     ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), 0)  # SW_HIDE
-                    schedule_working_set_trim(0.35)
                     return {"ok": True, "hidden": True}
                 except Exception:
                     pass
@@ -453,7 +346,6 @@ class WindowApi:
                 self._window.hide()
             except Exception:
                 pass
-        schedule_working_set_trim(0.35)
         return {"ok": True, "hidden": True}
 
     def restore_from_tray(self):
@@ -995,9 +887,6 @@ def main() -> None:
     )
     tray.start(wait_ready=1.5)
     _ACTIVE_TRAY_ICON = tray
-
-    # One-shot startup working set trim (+5.0s after launch only — NO periodic 45s timer!)
-    schedule_working_set_trim(5.0)
 
     window = webview.create_window(
         title="iPhone Link",
