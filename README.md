@@ -119,12 +119,18 @@ Sebelum menjalankan iPhone Link, pengguna **WAJIB** mengaktifkan **Developer Mod
 
 ---
 
-### Option 1: Portable Release (Recommended — No Setup Required)
-1. Download the latest **`iPhone-Link-Portable-v1.0.0.zip`** from [**Releases**](../../releases/latest).
-2. Extract the ZIP archive anywhere on your PC.
-3. *(Optional 1-Click)* Double-click **`Create-Desktop-Shortcut.bat`** to generate a desktop and Start Menu shortcut with the official app icon!
-4. Double-click **`iPhone Link.bat`** to start the app.
+### Option 1A: Standalone Windows EXE (Recommended — Zero Python Required!)
+1. Download **`iPhone-Link-Win64-Standalone-EXE-v1.0.0.zip`** from [**Releases**](../../releases/latest).
+2. Extract the ZIP archive anywhere on your PC (e.g., `D:\iPhone-Link`).
+3. *(Optional 1-Click)* Double-click **`Create-Desktop-Shortcut.bat`** to generate a Desktop and Start Menu shortcut pointing directly to **`iPhone Link.exe`** with the official app icon!
+4. Double-click **`iPhone Link.exe`** to launch immediately — **no Python installation required**!
 5. Click **Start mirroring** and enjoy 60fps low-latency control!
+
+### Option 1B: Lightweight Smart-Portable Release (`iPhone-Link-Portable-v1.0.0.zip`)
+1. Download **`iPhone-Link-Portable-v1.0.0.zip`** from [**Releases**](../../releases/latest) and extract it anywhere on your PC.
+2. Double-click **`iPhone Link.bat`** (silent mode) or **`run.bat`** (console diagnostic mode).
+3. **Automatic First-Time Setup (Hanya 1x Saja)**: On the very first launch in a new folder, the Smart Auto-Bootstrapping Launcher automatically builds a local `venv` and installs `pywebview` & `pymobiledevice3` (and offers 1-click `winget` Python 3.12 installation if Python is missing). Every launch after that opens in **< 1 second with 0% console windows**!
+4. *(Optional 1-Click)* Double-click **`Create-Desktop-Shortcut.bat`** to generate a Desktop and Start Menu shortcut with the official app icon!
 
 ---
 
@@ -155,7 +161,7 @@ python -m venv venv
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Launch iPhone Link
+# 4. Launch iPhone Link (In-Process Server + Native Frameless Window)
 .\iPhone Link.bat
 # (or run via: python handset/gui.py)
 ```
@@ -168,22 +174,18 @@ iPhone Link establishes a secure, local-only communication pipeline between your
 
 ```
 ┌─────────────────┐       USB Cable (RemoteXPC / RSD Tunnel)       ┌────────────────────────┐
-│  iPhone Device  │ ◄─────────────────────────────────────────────► │ iPhone Link Server     │
-│  (iOS 17 - 27+) │   • 60fps HEVC Video Stream (Port 62078)        │ (127.0.0.1:8765)       │
-└─────────────────┘   • Direct HID Multi-Touch & Keystrokes         └───────────┬────────────┘
-                      • Consumer Page Display Brightness / Power                │
-                                                                                │ Local WebSockets / HTTP
-                                                                                ▼
-                                                                    ┌────────────────────────┐
-                                                                    │ WinUI 3 Frameless GUI  │
-                                                                    │ (WebView2 / WebCodecs) │
+│  iPhone Device  │ ◄─────────────────────────────────────────────► │ iPhone Link App        │
+│  (iOS 17 - 27+) │   • 60fps HEVC Video Stream (Port 62078)        │ (In-Process GUI+Server)│
+└─────────────────┘   • Direct HID Multi-Touch & Keystrokes         │ • 127.0.0.1:8765 HTTP  │
+                      • Consumer Page Display Brightness / Power    │ • WebView2 / WebCodecs │
                                                                     └────────────────────────┘
 ```
 
-1. **RSD / RemoteXPC Tunneling**: Uses `pymobiledevice3` to securely establish a CoreDevice tunnel over USB.
-2. **Hardware HEVC Decoding**: Streams raw H.265 NAL units directly to Edge WebView2's WebCodecs video decoder, eliminating frame lag.
-3. **Isolated Direct HID Injection**: Passes mouse clicks as capacitive touch points (`0..32768`) and keyboard strokes through USB HID Consumer and Keyboard usage pages.
-4. **Local Privacy**: 100% of video streaming, OCR computation, and keyboard inputs stay on your local machine (`127.0.0.1`). No cloud telemetry or third-party servers are ever contacted.
+1. **In-Process Unified Architecture**: `gui.py` embeds the local HTTP backend server directly in a background daemon thread—eliminating separate CMD server windows and orphaned background processes on exit.
+2. **RSD / RemoteXPC Tunneling**: Uses `pymobiledevice3` to securely establish a CoreDevice tunnel over USB.
+3. **Hardware HEVC Decoding**: Streams raw H.265 NAL units directly to Edge WebView2's WebCodecs video decoder, eliminating frame lag.
+4. **Isolated Direct HID Injection**: Passes mouse clicks as capacitive touch points (`0..32768`) and keyboard strokes through USB HID Consumer and Keyboard usage pages.
+5. **Local Privacy**: 100% of video streaming, OCR computation, and keyboard inputs stay on your local machine (`127.0.0.1`). No cloud telemetry or third-party servers are ever contacted.
 
 ---
 

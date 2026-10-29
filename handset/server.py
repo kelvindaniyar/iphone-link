@@ -66,8 +66,33 @@ from handset.wifi import (
 )
 from handset.audio import audio_manager
 
-ROOT = Path(__file__).resolve().parent / "web"
-SETTINGS_FILE = ROOT.parent.parent / "user_settings.json"
+from handset import get_app_root, get_bundle_root
+
+
+def _resolve_web_root() -> Path:
+    for cand in (
+        get_app_root() / "handset" / "web",
+        get_bundle_root() / "handset" / "web",
+        Path(__file__).resolve().parent / "web",
+    ):
+        if cand.is_dir():
+            return cand
+    return Path(__file__).resolve().parent / "web"
+
+
+def _resolve_ocr_script_path() -> str:
+    for cand in (
+        get_app_root() / "handset" / "ocr_extractor.ps1",
+        get_bundle_root() / "handset" / "ocr_extractor.ps1",
+        Path(__file__).resolve().parent / "ocr_extractor.ps1",
+    ):
+        if cand.is_file():
+            return str(cand)
+    return str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+
+
+ROOT = _resolve_web_root()
+SETTINGS_FILE = get_app_root() / "user_settings.json"
 HOST = "127.0.0.1"
 PORT = 8765
 MIRROR_PREFIX = "/mirror"
@@ -202,7 +227,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
         import base64, tempfile, subprocess, os, json
         valid_frames = []
         tmp_files = []
-        project_root = Path(__file__).resolve().parent.parent
+        project_root = get_app_root()
 
         for idx, furl in enumerate(frame_data_urls):
             if not furl:
@@ -239,7 +264,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
                 pass
 
         joined_paths = "|".join(tmp_files)
-        script_path = str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+        script_path = _resolve_ocr_script_path()
         timeout_sec = 18.0
 
         res = subprocess.run(
@@ -280,7 +305,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
         if save_debug:
             try:
                 import json
-                project_root = Path(__file__).resolve().parent.parent
+                project_root = get_app_root()
                 active_line, buffer_tail = get_debug_typed_state()
                 result_info = {
                     "raw_ocr_text": results[-1] if results else "",
@@ -442,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "action": "clear_chunks"})
             return
         if path == "/debug-metrics":
-            log_path = ROOT.parent.parent / "debug_metrics.json"
+            log_path = get_app_root() / "debug_metrics.json"
             if log_path.is_file():
                 try:
                     self._json(json.loads(log_path.read_text(encoding="utf-8")))
@@ -546,7 +571,7 @@ class Handler(BaseHTTPRequestHandler):
                         # Save debug info
                         try:
                             import json
-                            project_root = Path(__file__).resolve().parent.parent
+                            project_root = get_app_root()
                             active_line, buffer_tail = get_debug_typed_state()
                             result_info = {
                                 "raw_ocr_text": batch_texts[-1] if batch_texts else "",
@@ -572,7 +597,7 @@ class Handler(BaseHTTPRequestHandler):
                         err_trace = traceback.format_exc()
                         print(f"Async extract error: {err}\n{err_trace}", flush=True)
                         try:
-                            project_root = Path(__file__).resolve().parent.parent
+                            project_root = get_app_root()
                             with open(project_root / "debug_ocr_error.log", "w", encoding="utf-8") as f_err:
                                 f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
                         except Exception:
@@ -683,7 +708,7 @@ class Handler(BaseHTTPRequestHandler):
         print(json.dumps(payload, indent=2), flush=True)
         print("==================================================================\n", flush=True)
         
-        log_path = ROOT.parent.parent / "debug_metrics.json"
+        log_path = get_app_root() / "debug_metrics.json"
         data = {}
         if log_path.is_file():
             try:
@@ -739,7 +764,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except _CLIENT_GONE:
+            pass
 
     def _mirror_upstream_path(self) -> str:
         path = unquote(urlparse(self.path).path)
@@ -852,13 +880,18 @@ class Handler(BaseHTTPRequestHandler):
             ".css": "text/css; charset=utf-8",
             ".js": "text/javascript; charset=utf-8",
             ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".ico": "image/x-icon",
         }.get(target.suffix, "application/octet-stream")
         body = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except _CLIENT_GONE:
+            pass
 
 
 class SingleServer(ThreadingHTTPServer):
@@ -866,19 +899,35 @@ class SingleServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
-def main() -> None:
+def create_http_server(host: str = HOST, port: int = PORT) -> SingleServer:
+    """Create and configure the local ThreadingHTTPServer without blocking."""
     settings = load_user_settings()
     if settings.get("audioSinkEnabled"):
         try:
             audio_manager.enable()
         except Exception:
             pass
-    server = SingleServer((HOST, PORT), Handler)
-    print(f"Handset listening on http://{HOST}:{PORT}", flush=True)
+    return SingleServer((host, port), Handler)
+
+
+def serve(host: str = HOST, port: int = PORT) -> None:
+    """Run the local backend HTTP server forever (blocking)."""
+    server = create_http_server(host=host, port=port)
+    try:
+        if sys.stdout is not None:
+            print(f"Handset listening on http://{host}:{port}", flush=True)
+    except Exception:
+        pass
     try:
         server.serve_forever()
     finally:
         audio_manager.shutdown()
+
+
+def main() -> None:
+    import os
+    port = int(os.environ.get("PANE_PORT", PORT))
+    serve(host=HOST, port=port)
 
 
 if __name__ == "__main__":

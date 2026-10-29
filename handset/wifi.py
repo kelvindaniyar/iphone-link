@@ -48,7 +48,7 @@ _MDNS_PORT = 5353
 _bonjour_patched = False
 _AUTO_ENABLED_UDIDS: set[str] = set()
 
-WIFI_STATE_PATH = Path(__file__).resolve().parent.parent / "wifi_state.json"
+from handset import get_app_root; WIFI_STATE_PATH = get_app_root() / "wifi_state.json"
 
 
 # -----------------------------------------------------------------------------

@@ -1,4 +1,13 @@
-"""Native Frameless Launcher for Pane using pywebview (Edge WebView2 on Windows)."""
+"""Native Frameless Launcher for iPhone Link using pywebview (Edge WebView2 on Windows).
+
+Tahap 54:
+- Runs the backend HTTP server directly in-process via a background daemon thread
+  (_ensure_backend_server_running), eliminating any separate console/zombie server process.
+- Supports both normal Python execution (`python handset/gui.py` / `python -m handset`)
+  and standalone frozen PyInstaller executable (`iPhone Link.exe`).
+"""
+
+from __future__ import annotations
 
 import os
 import sys
@@ -7,12 +16,28 @@ import time
 import urllib.request
 from pathlib import Path
 
-# WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
+# 1. Ensure safe stdout/stderr handles when running windowless (pythonw.exe or frozen .exe)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+# 2. Ensure project root is in sys.path when invoked directly as `python handset/gui.py`
+if not getattr(sys, "frozen", False):
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+
+# 3. WebView2 arguments: pastikan dukungan hardware HEVC decoder aktif
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
     "--enable-features=PlatformHEVCDecoderSupport"
 )
 
-import webview
+from handset import get_app_root, get_bundle_root
+
+_ACTIVE_HTTP_SERVER = None
+_SERVER_THREAD: threading.Thread | None = None
+_SERVER_LOCK = threading.Lock()
 
 
 class WindowApi:
@@ -135,8 +160,22 @@ class WindowApi:
         return wipe_all_privacy_data()
 
 
+def _resolve_icon_path() -> Path | None:
+    """Locate iphone_link.ico across normal and PyInstaller frozen layouts."""
+    candidates = [
+        get_app_root() / "assets" / "iphone_link.ico",
+        get_bundle_root() / "assets" / "iphone_link.ico",
+        Path(__file__).resolve().parent.parent / "assets" / "iphone_link.ico",
+        get_app_root() / "packaging" / "pane.ico",
+        get_bundle_root() / "packaging" / "pane.ico",
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
 
-def apply_dwm_effects(title="iPhone Link"):
+
+def apply_dwm_effects(title: str = "iPhone Link") -> None:
     """Terapkan efek DWM Windows 11 (sudut membulat + dark mode) dan icon native pada HWND."""
     try:
         import ctypes
@@ -150,25 +189,20 @@ def apply_dwm_effects(title="iPhone Link"):
 
         # 0. Set Native Windows Window Icon (.ico)
         try:
-            ico_candidates = [
-                Path(__file__).resolve().parent.parent / "assets" / "iphone_link.ico",
-                Path(__file__).resolve().parent.parent / "packaging" / "pane.ico",
-            ]
-            for ico_p in ico_candidates:
-                if ico_p.exists():
-                    IMAGE_ICON = 1
-                    LR_LOADFROMFILE = 0x0010
-                    LR_DEFAULTSIZE = 0x0040
-                    WM_SETICON = 0x0080
-                    ICON_SMALL = 0
-                    ICON_BIG = 1
-                    hicon = ctypes.windll.user32.LoadImageW(
-                        None, str(ico_p), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
-                    )
-                    if hicon:
-                        ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_SMALL, hicon)
-                        ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_BIG, hicon)
-                    break
+            ico_p = _resolve_icon_path()
+            if ico_p is not None:
+                IMAGE_ICON = 1
+                LR_LOADFROMFILE = 0x0010
+                LR_DEFAULTSIZE = 0x0040
+                WM_SETICON = 0x0080
+                ICON_SMALL = 0
+                ICON_BIG = 1
+                hicon = ctypes.windll.user32.LoadImageW(
+                    None, str(ico_p), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+                )
+                if hicon:
+                    ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_SMALL, hicon)
+                    ctypes.windll.user32.SendMessageW(wintypes.HWND(hwnd), WM_SETICON, ICON_BIG, hicon)
         except Exception:
             pass
 
@@ -193,22 +227,150 @@ def apply_dwm_effects(title="iPhone Link"):
         pass
 
 
-def wait_for_server(url="http://127.0.0.1:8765/api/status", timeout=10):
+def _is_server_responding(url: str, timeout: float = 4.0) -> bool:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "iPhoneLink-Launcher"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def wait_for_server(url: str = "http://127.0.0.1:8765/api/status", timeout: float = 8.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "iPhoneLink-Launcher"})
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            time.sleep(0.3)
+        if _is_server_responding(url, timeout=4.0):
+            return True
+        time.sleep(0.15)
     return False
 
 
-def main():
+def _ensure_backend_server_running(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    timeout: float = 8.0,
+) -> bool:
+    """Ensure the backend HTTP server is running in-process inside a daemon thread."""
+    global _ACTIVE_HTTP_SERVER, _SERVER_THREAD
+    status_url = f"http://{host}:{port}/api/status"
+    if _is_server_responding(status_url, timeout=4.0):
+        return True
+
+    with _SERVER_LOCK:
+        if _is_server_responding(status_url, timeout=4.0):
+            return True
+        from handset.server import create_http_server
+        try:
+            srv = create_http_server(host=host, port=port)
+            _ACTIVE_HTTP_SERVER = srv
+            t = threading.Thread(
+                target=srv.serve_forever,
+                name=f"iphone-link-server-{port}",
+                daemon=True,
+            )
+            t.start()
+            _SERVER_THREAD = t
+        except OSError:
+            pass
+
+    return wait_for_server(url=status_url, timeout=timeout)
+
+
+def shutdown_backend_server() -> None:
+    """Cleanly stop in-process backend server, screen tunnel, and audio manager."""
+    global _ACTIVE_HTTP_SERVER, _SERVER_THREAD
+    try:
+        from handset.screen import stop_screen
+        stop_screen()
+    except Exception:
+        pass
+    try:
+        from handset.audio import audio_manager
+        audio_manager.shutdown()
+    except Exception:
+        pass
+    with _SERVER_LOCK:
+        srv = _ACTIVE_HTTP_SERVER
+        _ACTIVE_HTTP_SERVER = None
+        _SERVER_THREAD = None
+    if srv is not None:
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+
+
+def _focus_existing_window_if_running(host: str, port: int) -> bool:
+    """If an iPhone Link window is already open and backend is live, bring it to front."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.FindWindowW(None, "iPhone Link")
+        if hwnd and _is_server_responding(f"http://{host}:{port}/api/status", timeout=0.4):
+            if ctypes.windll.user32.IsIconic(hwnd):
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _run_smoke_test() -> int:
+    """Headless self-test for verifying standalone EXE & portable builds."""
+    import json
+    import socket
+    import webview  # noqa: F401
+    import pymobiledevice3  # noqa: F401
+    import pymobiledevice3.remote.core_device.screen_stream  # noqa: F401
+    import lzfse  # noqa: F401
+    import lzss  # noqa: F401
+    from handset.server import _resolve_ocr_script_path, _resolve_web_root
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        free_port = s.getsockname()[1]
+
+    try:
+        ok = _ensure_backend_server_running(host="127.0.0.1", port=free_port, timeout=8.0)
+        if not ok:
+            return 2
+        req = urllib.request.Request(f"http://127.0.0.1:{free_port}/api/status")
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if "screen" not in data:
+                return 3
+        web_root = _resolve_web_root()
+        ocr_script = Path(_resolve_ocr_script_path())
+        icon_path = _resolve_icon_path()
+        if not (web_root / "index.html").is_file():
+            return 4
+        if not ocr_script.is_file():
+            return 5
+        if icon_path is None or not icon_path.is_file():
+            return 6
+        return 0
+    finally:
+        shutdown_backend_server()
+
+
+def main() -> None:
+    if "--smoke-test" in sys.argv:
+        raise SystemExit(_run_smoke_test())
+
+    import webview
+    from handset.server import HOST as DEFAULT_HOST, PORT as DEFAULT_PORT
+
+    host = DEFAULT_HOST
+    port = int(os.environ.get("PANE_PORT", DEFAULT_PORT))
+
+    if _focus_existing_window_if_running(host, port):
+        return
+
     api = WindowApi()
-    
+
     # Set explicit AppUserModelID agar Taskbar Windows 11 menampilkan Logo iPhone Link
     if sys.platform == "win32":
         try:
@@ -217,15 +379,15 @@ def main():
         except Exception:
             pass
 
-    # Tunggu server aktif jika baru diluncurkan
-    wait_for_server()
+    # Nyalakan server backend secara in-process (daemon thread) jika belum berjalan
+    _ensure_backend_server_running(host=host, port=port, timeout=5.0)
 
     # Jadwalkan penerapan efek DWM sudut membulat dan icon native saat HWND window siap
     threading.Thread(target=apply_dwm_effects, args=("iPhone Link",), daemon=True).start()
 
     window = webview.create_window(
         title="iPhone Link",
-        url=f"http://127.0.0.1:8765/?t={int(time.time())}",
+        url=f"http://{host}:{port}/?t={int(time.time())}",
         js_api=api,
         width=380,
         height=840,
@@ -236,14 +398,16 @@ def main():
     )
     api.set_window(window)
 
-    # Jalankan webview dengan Edge Chromium (WebView2) di Windows
     storage_path = str(Path.home() / ".pane_webview_storage")
     os.makedirs(storage_path, exist_ok=True)
-    webview.start(
-        debug=False,
-        private_mode=False,
-        storage_path=storage_path,
-    )
+    try:
+        webview.start(
+            debug=False,
+            private_mode=False,
+            storage_path=storage_path,
+        )
+    finally:
+        shutdown_backend_server()
 
 
 if __name__ == "__main__":

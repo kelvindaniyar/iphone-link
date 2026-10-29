@@ -1,10 +1,13 @@
 # ======================================================================
-# iPhone Link — Portable Release Packaging Script
-# Creates a clean release distribution ready for GitHub Releases
+# iPhone Link - Portable & Standalone EXE Release Packaging Script
+# Creates two clean release distributions ready for GitHub Releases:
+#   1) release/iPhone-Link-Portable-v1.0.0.zip (Smart Auto-Bootstrap .bat)
+#   2) release/iPhone-Link-Win64-Standalone-EXE-v1.0.0.zip (Standalone .exe)
 # ======================================================================
 
 param (
-    [string]$Version = "v1.0.0"
+    [string]$Version = "v1.0.0",
+    [switch]$SkipExe = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,39 +15,12 @@ $RootDir = $PSScriptRoot
 if (-not $RootDir) { $RootDir = (Get-Location).Path }
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "   BUILDING IPHONE LINK PORTABLE RELEASE ($Version)" -ForegroundColor Cyan
+Write-Host "   BUILDING IPHONE LINK RELEASE PACKAGES ($Version)" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 $ReleaseBase = Join-Path $RootDir "release"
-$PackageName = "iPhone-Link-Portable-$Version"
-$TargetDir = Join-Path $ReleaseBase $PackageName
-$ZipOutput = Join-Path $ReleaseBase "$PackageName.zip"
+New-Item -ItemType Directory -Force -Path $ReleaseBase | Out-Null
 
-# Clean previous release directory if exists
-if (Test-Path $TargetDir) {
-    Write-Host "[1/5] Cleaning existing release folder: $TargetDir" -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $TargetDir
-}
-if (Test-Path $ZipOutput) {
-    Remove-Item -Force $ZipOutput
-}
-
-New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-Write-Host "[2/5] Creating release folder structure..." -ForegroundColor Green
-
-# 1. Copy handset directory without __pycache__
-Write-Host "[3/5] Copying handset application files..." -ForegroundColor Green
-$HandsetTarget = Join-Path $TargetDir "handset"
-Copy-Item -Recurse (Join-Path $RootDir "handset") $HandsetTarget
-Get-ChildItem -Path $HandsetTarget -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force
-Get-ChildItem -Path $HandsetTarget -Recurse -Include "*.pyc", "*.pyo" | Remove-Item -Force
-
-# 2. Copy assets
-Write-Host "      Copying assets (logo, icon)..." -ForegroundColor Green
-Copy-Item -Recurse (Join-Path $RootDir "assets") (Join-Path $TargetDir "assets")
-
-# 3. Copy launchers and core files
-Write-Host "      Copying launchers and documentation..." -ForegroundColor Green
 $CoreFiles = @(
     "iPhone Link.bat",
     "Create-Desktop-Shortcut.bat",
@@ -56,15 +32,6 @@ $CoreFiles = @(
     "pyproject.toml"
 )
 
-foreach ($f in $CoreFiles) {
-    $src = Join-Path $RootDir $f
-    if (Test-Path $src) {
-        Copy-Item -Force $src (Join-Path $TargetDir $f)
-    }
-}
-
-# 4. Strict Security & Privacy Check (Ensure 0% Kelvin Private Data is Packaged)
-Write-Host "[4/5] Running strict privacy and security sanity check..." -ForegroundColor Green
 $PrivatePatterns = @(
     "debug_ocr_*",
     "debug_metrics.json",
@@ -75,31 +42,177 @@ $PrivatePatterns = @(
     "LAPORAN_*.md"
 )
 
-$LeakCount = 0
-foreach ($p in $PrivatePatterns) {
-    $leaks = Get-ChildItem -Path $TargetDir -Recurse -Filter $p -ErrorAction SilentlyContinue
-    if ($leaks) {
-        foreach ($l in $leaks) {
-            Write-Host "      [WARNING] Removing leaked item: $($l.FullName)" -ForegroundColor Red
-            Remove-Item -Recurse -Force $l.FullName
-            $LeakCount++
+function Invoke-PrivacySanityCheck {
+    param([string]$ScanDir)
+    $LeakCount = 0
+    foreach ($p in $PrivatePatterns) {
+        $leaks = Get-ChildItem -Path $ScanDir -Recurse -Filter $p -ErrorAction SilentlyContinue
+        if ($leaks) {
+            foreach ($l in $leaks) {
+                Write-Host "      [WARNING] Removing leaked item: $($l.FullName)" -ForegroundColor Red
+                Remove-Item -Recurse -Force $l.FullName
+                $LeakCount++
+            }
         }
+    }
+    if ($LeakCount -eq 0) {
+        Write-Host "      [OK] 100% CLEAN: Zero personal PINs, debug dumps, or metrics found!" -ForegroundColor Green
     }
 }
 
-if ($LeakCount -eq 0) {
-    Write-Host "      [OK] 100% CLEAN: Zero personal PINs, debug dumps, or metrics found!" -ForegroundColor Green
+# ======================================================================
+# PACKAGE 1: Smart Auto-Bootstrapping Portable ZIP
+# ======================================================================
+$PackageName = "iPhone-Link-Portable-$Version"
+$TargetDir = Join-Path $ReleaseBase $PackageName
+$ZipOutput = Join-Path $ReleaseBase "$PackageName.zip"
+
+if (Test-Path $TargetDir) {
+    Write-Host "[1/6] Cleaning existing portable folder: $TargetDir" -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $TargetDir
+}
+if (Test-Path $ZipOutput) {
+    Remove-Item -Force $ZipOutput
 }
 
-# 5. Compress to ZIP archive
-Write-Host "[5/5] Compressing release package to ZIP..." -ForegroundColor Green
-Compress-Archive -Path $TargetDir -DestinationPath $ZipOutput -CompressionLevel Optimal
+New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+Write-Host "[2/6] Assembling Package 1 (Smart Auto-Bootstrap Portable)..." -ForegroundColor Green
 
+$HandsetTarget = Join-Path $TargetDir "handset"
+Copy-Item -Recurse (Join-Path $RootDir "handset") $HandsetTarget
+Get-ChildItem -Path $HandsetTarget -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force
+Get-ChildItem -Path $HandsetTarget -Recurse -Include "*.pyc", "*.pyo" | Remove-Item -Force
+
+Copy-Item -Recurse (Join-Path $RootDir "assets") (Join-Path $TargetDir "assets")
+
+foreach ($f in $CoreFiles) {
+    $src = Join-Path $RootDir $f
+    if (Test-Path $src) {
+        Copy-Item -Force $src (Join-Path $TargetDir $f)
+    }
+}
+
+Write-Host "[3/6] Running strict privacy sanity check on Package 1..." -ForegroundColor Green
+Invoke-PrivacySanityCheck -ScanDir $TargetDir
+
+Write-Host "[4/6] Compressing Package 1 -> $ZipOutput..." -ForegroundColor Green
+Compress-Archive -Path $TargetDir -DestinationPath $ZipOutput -CompressionLevel Optimal
 $ZipItem = Get-Item $ZipOutput
-$SizeInMB = [math]::Round($ZipItem.Length / 1048576, 2)
+$PortableSizeMB = [math]::Round($ZipItem.Length / 1048576, 2)
+
+# ======================================================================
+# PACKAGE 2: Standalone Windows Executable (iPhone Link.exe)
+# ======================================================================
+$ExePackageName = "iPhone-Link-Win64-Standalone-EXE-$Version"
+$ExeTargetDir = Join-Path $ReleaseBase $ExePackageName
+$ExeZipOutput = Join-Path $ReleaseBase "$ExePackageName.zip"
+
+if (-not $SkipExe) {
+    Write-Host "[5/6] Building Package 2 (Standalone iPhone Link.exe via PyInstaller)..." -ForegroundColor Green
+    $VenvPy = Join-Path $RootDir "venv\Scripts\python.exe"
+    if (-not (Test-Path $VenvPy)) {
+        throw "Local venv Python not found at $VenvPy. Create venv first before building Standalone EXE."
+    }
+
+    & $VenvPy -c "import PyInstaller" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "      Installing PyInstaller into local venv..." -ForegroundColor Yellow
+        & $VenvPy -m pip install pyinstaller --quiet
+    }
+
+    $SpecPath = Join-Path $RootDir "packaging\iphone_link.spec"
+    $BuildWorkDir = Join-Path $RootDir "build\pyinstaller_work"
+    $BuildDistDir = Join-Path $RootDir "build\pyinstaller_dist"
+    if (Test-Path $BuildDistDir) { Remove-Item -Recurse -Force $BuildDistDir }
+    New-Item -ItemType Directory -Force -Path $BuildWorkDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $BuildDistDir | Out-Null
+
+    if (Test-Path $SpecPath) {
+        & $VenvPy -m PyInstaller --noconfirm --clean --workpath $BuildWorkDir --distpath $BuildDistDir $SpecPath
+    }
+    else {
+        $IconArg = Join-Path $RootDir "assets\iphone_link.ico"
+        & $VenvPy -m PyInstaller --noconfirm --clean --onedir --windowed `
+            --name "iPhone Link" `
+            --icon $IconArg `
+            --workpath $BuildWorkDir `
+            --distpath $BuildDistDir `
+            --paths $RootDir `
+            --paths (Join-Path $RootDir "handset\_shims") `
+            --add-data "$(Join-Path $RootDir 'handset\web');handset/web" `
+            --add-data "$(Join-Path $RootDir 'handset\ocr_extractor.ps1');handset" `
+            --add-data "$(Join-Path $RootDir 'handset\_shims');handset/_shims" `
+            --add-data "$(Join-Path $RootDir 'assets');assets" `
+            --collect-all webview `
+            --collect-all pythonnet `
+            --collect-all clr_loader `
+            --collect-all pycaw `
+            --collect-all comtypes `
+            --collect-all pymobiledevice3 `
+            --collect-all pmd_pytcp `
+            --collect-all pytun_pmd3 `
+            --collect-all qh3 `
+            --collect-all pyimg4 `
+            --collect-all ipsw_parser `
+            --collect-all developer_disk_image `
+            --collect-all opack2 `
+            --collect-all bpylist2 `
+            --collect-all construct `
+            --collect-all srptools `
+            --collect-all ifaddr `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            --exclude-module IPython `
+            --exclude-module jedi `
+            --exclude-module pytest `
+            --exclude-module av `
+        (Join-Path $RootDir "handset\gui.py")
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller build failed with exit code $LASTEXITCODE"
+    }
+
+    $BuiltDir = Join-Path $BuildDistDir "iPhone Link"
+    $BuiltExe = Join-Path $BuiltDir "iPhone Link.exe"
+    if (-not (Test-Path $BuiltExe)) {
+        throw "Standalone executable was not generated at $BuiltExe"
+    }
+
+    if (Test-Path $ExeTargetDir) { Remove-Item -Recurse -Force $ExeTargetDir }
+    if (Test-Path $ExeZipOutput) { Remove-Item -Force $ExeZipOutput }
+    New-Item -ItemType Directory -Force -Path $ExeTargetDir | Out-Null
+
+    Copy-Item -Recurse -Force (Join-Path $BuiltDir "*") $ExeTargetDir
+    Copy-Item -Recurse -Force (Join-Path $RootDir "assets") (Join-Path $ExeTargetDir "assets")
+
+    $ExeCompanionFiles = @(
+        "iPhone Link.bat",
+        "Create-Desktop-Shortcut.bat",
+        "Uninstall-iPhone-Link.bat",
+        "run.bat",
+        "README.md",
+        "LICENSE"
+    )
+    foreach ($f in $ExeCompanionFiles) {
+        $src = Join-Path $RootDir $f
+        if (Test-Path $src) {
+            Copy-Item -Force $src (Join-Path $ExeTargetDir $f)
+        }
+    }
+
+    Invoke-PrivacySanityCheck -ScanDir $ExeTargetDir
+
+    Write-Host "[6/6] Compressing Package 2 -> $ExeZipOutput..." -ForegroundColor Green
+    & $VenvPy -c "import zipfile, pathlib, sys; src = pathlib.Path(sys.argv[1]); zpath = pathlib.Path(sys.argv[2]); zf = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED, compresslevel=6); [zf.write(f, str(f.relative_to(src.parent))) for f in src.rglob('*') if f.is_file()]; zf.close()" $ExeTargetDir $ExeZipOutput
+    $ExeZipItem = Get-Item $ExeZipOutput
+    $ExeSizeMB = [math]::Round($ExeZipItem.Length / 1048576, 2)
+}
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "   [SUCCESS] PORTABLE RELEASE READY FOR GITHUB!" -ForegroundColor Green
-Write-Host "   Package Folder : $TargetDir" -ForegroundColor White
-Write-Host "   Release ZIP    : $ZipOutput [$SizeInMB MB]" -ForegroundColor White
+Write-Host "   [SUCCESS] RELEASE PACKAGES READY FOR GITHUB RELEASES!" -ForegroundColor Green
+Write-Host "   1) Portable ZIP   : $ZipOutput [$PortableSizeMB MB]" -ForegroundColor White
+if (-not $SkipExe -and (Test-Path $ExeZipOutput)) {
+    Write-Host "   2) Standalone EXE : $ExeZipOutput [$ExeSizeMB MB]" -ForegroundColor White
+}
 Write-Host "======================================================================" -ForegroundColor Cyan

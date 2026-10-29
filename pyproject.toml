@@ -6,15 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "iphone-link"
 version = "1.0.0"
 authors = [{ name = "Kelvin Daniyar", email = "kelvindaniyar@users.noreply.github.com" }]
-description = "iPhone Link — Native iPhone Mirroring and Control for Windows 11"
+description = "iPhone Link - Native iPhone Mirroring and Control for Windows 11"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pymobiledevice3>=11.28",
     "pywebview>=5.0",
+    "pycaw>=20230407",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["handset*"]
-

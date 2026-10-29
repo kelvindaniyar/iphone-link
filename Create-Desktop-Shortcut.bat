@@ -1,16 +1,18 @@
 @echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 echo ======================================================================
-echo   iPhone Link — Creating Desktop and Start Menu Shortcuts
+echo   iPhone Link - Creating Desktop and Start Menu Shortcuts
 echo ======================================================================
 echo.
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell; " ^
   "$currDir = (Get-Location).Path; " ^
-  "$target = Join-Path $currDir 'iPhone Link.bat'; " ^
+  "$exeCandidate = Join-Path $currDir 'iPhone Link.exe'; " ^
+  "if (Test-Path $exeCandidate) { $target = $exeCandidate } else { $target = Join-Path $currDir 'iPhone Link.bat' }; " ^
   "$icon = Join-Path $currDir 'assets\iphone_link.ico'; " ^
   "if (-not (Test-Path $icon)) { $icon = Join-Path $currDir 'packaging\pane.ico' }; " ^
   "$desktop = [Environment]::GetFolderPath('Desktop'); " ^
@@ -20,17 +22,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$scDesk.TargetPath = $target; " ^
   "$scDesk.WorkingDirectory = $currDir; " ^
   "$scDesk.IconLocation = $icon; " ^
-  "$scDesk.Description = 'iPhone Link — Native iPhone Mirroring and Control for Windows 11'; " ^
+  "$scDesk.Description = 'iPhone Link - Native iPhone Mirroring and Control for Windows 11'; " ^
   "$scDesk.Save(); " ^
-  "Write-Host '[OK] Desktop Shortcut created:' $deskLnk -ForegroundColor Green; " ^
+  "Write-Host '[OK] Desktop Shortcut created:' $deskLnk '->' $target -ForegroundColor Green; " ^
   "$startLnk = Join-Path $startMenu 'iPhone Link.lnk'; " ^
   "$scStart = $ws.CreateShortcut($startLnk); " ^
   "$scStart.TargetPath = $target; " ^
   "$scStart.WorkingDirectory = $currDir; " ^
   "$scStart.IconLocation = $icon; " ^
-  "$scStart.Description = 'iPhone Link — Native iPhone Mirroring and Control for Windows 11'; " ^
+  "$scStart.Description = 'iPhone Link - Native iPhone Mirroring and Control for Windows 11'; " ^
   "$scStart.Save(); " ^
-  "Write-Host '[OK] Start Menu Shortcut created:' $startLnk -ForegroundColor Green;"
+  "Write-Host '[OK] Start Menu Shortcut created:' $startLnk '->' $target -ForegroundColor Green;"
 
 if %ERRORLEVEL% EQU 0 (
     echo.

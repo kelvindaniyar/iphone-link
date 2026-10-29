@@ -1,9 +1,10 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ======================================================================
-echo   IPHONE LINK — CLEAN UNINSTALLER & PRIVACY DATA WIPER
+echo   IPHONE LINK - CLEAN UNINSTALLER ^& PRIVACY DATA WIPER
 echo ======================================================================
 echo.
 echo PERHATIAN:
@@ -26,11 +27,12 @@ if /i not "%CONFIRM%"=="Y" (
 echo.
 echo [1/4] Menghentikan proses iPhone Link yang berjalan...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*handset*' -or $_.Path -like '*pane-iphone-mirror*' -or $_.Path -like '*iphone-link*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
+  "Get-Process -Name 'iPhone Link' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; " ^
+  "Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*iphone-link*' -or $_.Path -like '*iPhone-Link*' -or $_.Path -like '*pane-iphone-mirror*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
 
-echo [2/4] Menghapus Cache WebView2 / pywebview (PIN & localStorage)...
+echo [2/4] Menghapus Cache WebView2 / pywebview (PIN ^& localStorage)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$paths = @(Join-Path $env:APPDATA 'pywebview', Join-Path $env:LOCALAPPDATA 'pywebview'); " ^
+  "$paths = @(Join-Path $env:APPDATA 'pywebview', Join-Path $env:LOCALAPPDATA 'pywebview', Join-Path $HOME '.pane_webview_storage'); " ^
   "foreach ($p in $paths) { if (Test-Path $p) { Remove-Item -Path $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '  -> Terhapus:' $p -ForegroundColor Green } }"
 
 echo [3/4] Menghapus data riwayat lokal, cache OCR, dan pengaturan...
@@ -54,11 +56,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 echo.
 echo ======================================================================
-echo   [SUKSES] Seluruh PIN, Cache Privasi, dan Shortcut telah BERSIH 100%!
+echo   [SUKSES] Seluruh PIN, Cache Privasi, dan Shortcut telah BERSIH 100%%!
 echo ======================================================================
 echo.
 
-set /p DEL_FOLDER="Apakah Anda juga ingin menghapus seluruh file & folder aplikasi ini dari harddisk? (Y/N): "
+set /p DEL_FOLDER="Apakah Anda juga ingin menghapus seluruh file ^& folder aplikasi ini dari harddisk? (Y/N): "
 if /i "%DEL_FOLDER%"=="Y" (
     echo.
     echo Menghapus folder aplikasi dari harddisk...
