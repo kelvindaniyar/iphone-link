@@ -356,6 +356,22 @@ def _run_smoke_test() -> int:
         shutdown_backend_server()
 
 
+def _resolve_webview_storage_path() -> str:
+    """Return a per-folder isolated WebView2 storage path so fresh extracts never inherit old PINs."""
+    local_dir = get_app_root() / ".pane_webview_storage"
+    try:
+        local_dir.mkdir(parents=True, exist_ok=True)
+        return str(local_dir)
+    except OSError:
+        import hashlib
+        folder_id = hashlib.sha256(
+            os.path.normcase(str(get_app_root().resolve())).encode("utf-8")
+        ).hexdigest()[:12]
+        fallback = Path.home() / ".pane_webview_storage_instances" / folder_id
+        fallback.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+
+
 def main() -> None:
     if "--smoke-test" in sys.argv:
         raise SystemExit(_run_smoke_test())
@@ -398,8 +414,7 @@ def main() -> None:
     )
     api.set_window(window)
 
-    storage_path = str(Path.home() / ".pane_webview_storage")
-    os.makedirs(storage_path, exist_ok=True)
+    storage_path = _resolve_webview_storage_path()
     try:
         webview.start(
             debug=False,

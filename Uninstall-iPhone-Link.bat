@@ -32,7 +32,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 echo [2/4] Menghapus Cache WebView2 / pywebview (PIN ^& localStorage)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$paths = @(Join-Path $env:APPDATA 'pywebview', Join-Path $env:LOCALAPPDATA 'pywebview', Join-Path $HOME '.pane_webview_storage'); " ^
+  "$paths = @(Join-Path (Get-Location).Path '.pane_webview_storage', Join-Path $env:APPDATA 'pywebview', Join-Path $env:LOCALAPPDATA 'pywebview', Join-Path $HOME '.pane_webview_storage', Join-Path $HOME '.pane_webview_storage_instances'); " ^
   "foreach ($p in $paths) { if (Test-Path $p) { Remove-Item -Path $p -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '  -> Terhapus:' $p -ForegroundColor Green } }"
 
 echo [3/4] Menghapus data riwayat lokal, cache OCR, dan pengaturan...

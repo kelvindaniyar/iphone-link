@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import http.client
+import os
 import json
 import re
 import sys
@@ -93,6 +95,33 @@ def _resolve_ocr_script_path() -> str:
 
 ROOT = _resolve_web_root()
 SETTINGS_FILE = get_app_root() / "user_settings.json"
+
+
+def get_settings_file_path() -> Path:
+    return get_app_root() / "user_settings.json"
+
+
+def get_folder_instance_id(app_root: Path | None = None) -> str:
+    """Deterministic 12-char SHA-256 instance ID unique to this installation folder."""
+    target = (app_root or get_app_root()).resolve()
+    normalized = os.path.normcase(str(target))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+_IS_FRESH_EXTRACTED_FOLDER: bool = not (get_app_root() / "user_settings.json").is_file()
+
+
+def is_fresh_extracted_folder() -> bool:
+    settings_file = get_settings_file_path()
+    if not settings_file.is_file():
+        return True
+    try:
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("folderInstanceId") == get_folder_instance_id():
+            return False
+    except Exception:
+        pass
+    return True
 HOST = "127.0.0.1"
 PORT = 8765
 MIRROR_PREFIX = "/mirror"
@@ -368,22 +397,45 @@ def paste_to_iphone(text: str | None = None, force_pc: bool = False, paste_pc_cl
     return {"ok": ok, "method": "ios-shortcut", "reason": "pc-empty-fallback"}
 
 
-def load_user_settings() -> dict:
-    if SETTINGS_FILE.is_file():
+def load_user_settings(persist_instance: bool = False) -> dict:
+    global _IS_FRESH_EXTRACTED_FOLDER
+    settings_file = get_settings_file_path()
+    app_root_id = get_folder_instance_id()
+    merged = dict(DEFAULT_SETTINGS)
+    merged["crop"] = dict(DEFAULT_SETTINGS["crop"])
+    is_fresh = True
+
+    if settings_file.is_file():
         try:
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                merged = {**DEFAULT_SETTINGS, **data}
+                merged.update(data)
                 if isinstance(data.get("crop"), dict):
                     merged["crop"] = {**DEFAULT_SETTINGS["crop"], **data["crop"]}
-                return merged
+                if data.get("folderInstanceId") == app_root_id:
+                    is_fresh = False
         except Exception as e:
             print(f"load_user_settings error: {e}", flush=True)
-    return dict(DEFAULT_SETTINGS)
+
+    _IS_FRESH_EXTRACTED_FOLDER = is_fresh
+    merged["folderInstanceId"] = app_root_id
+    merged["isFreshFolder"] = is_fresh
+
+    if persist_instance and is_fresh:
+        to_save = {k: v for k, v in merged.items() if k != "isFreshFolder"}
+        try:
+            settings_file.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
+            _IS_FRESH_EXTRACTED_FOLDER = False
+        except Exception as e:
+            print(f"persist folderInstanceId error: {e}", flush=True)
+
+    return merged
 
 
 def save_user_settings(new_settings: dict) -> dict:
-    current = load_user_settings()
+    current = load_user_settings(persist_instance=False)
+    current.pop("isFreshFolder", None)
+    current["folderInstanceId"] = get_folder_instance_id()
     if not isinstance(new_settings, dict):
         return current
     for k, v in new_settings.items():
@@ -401,10 +453,10 @@ def save_user_settings(new_settings: dict) -> dict:
                 current["trackpadSpeed"] = 100
         elif k in ("crossPlatformShortcuts", "pastePcClipboard"):
             current[k] = bool(v)
-        elif k in current:
+        elif k in current and k not in ("folderInstanceId", "isFreshFolder"):
             current[k] = v
     try:
-        SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+        get_settings_file_path().write_text(json.dumps(current, indent=2), encoding="utf-8")
     except Exception as e:
         print(f"save_user_settings error: {e}", flush=True)
     return current
@@ -439,6 +491,8 @@ class Handler(BaseHTTPRequestHandler):
                     selected_udid = paired_list[0]
             payload["wifi"] = get_wifi_status(selected_udid)
             payload["audio"] = audio_manager.status()
+            payload["folderInstanceId"] = get_folder_instance_id()
+            payload["isFreshFolder"] = is_fresh_extracted_folder()
             self._json(payload)
             return
         if path.startswith("/api/wifi/probe"):
@@ -446,8 +500,8 @@ class Handler(BaseHTTPRequestHandler):
             target_udid = (query.get("udid") or [None])[0]
             self._json({"ok": True, "wifi": get_wifi_status(target_udid)})
             return
-        if path == "/api/settings":
-            self._json(load_user_settings())
+        if path in ("/api/settings", "/api/keyboard/settings"):
+            self._json(load_user_settings(persist_instance=True))
             return
         if path in ("/api/audio", "/api/audio/status"):
             self._json(audio_manager.status())

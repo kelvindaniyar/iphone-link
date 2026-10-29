@@ -38,6 +38,8 @@ $PrivatePatterns = @(
     "typed_history.json",
     "user_settings.json",
     "wifi_state.json",
+    ".pane_webview_storage",
+    "*.pairrecord",
     "scratch",
     "LAPORAN_*.md"
 )
@@ -207,6 +209,40 @@ if (-not $SkipExe) {
     & $VenvPy -c "import zipfile, pathlib, sys; src = pathlib.Path(sys.argv[1]); zpath = pathlib.Path(sys.argv[2]); zf = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED, compresslevel=6); [zf.write(f, str(f.relative_to(src.parent))) for f in src.rglob('*') if f.is_file()]; zf.close()" $ExeTargetDir $ExeZipOutput
     $ExeZipItem = Get-Item $ExeZipOutput
     $ExeSizeMB = [math]::Round($ExeZipItem.Length / 1048576, 2)
+}
+
+# Tahap 55: Zero-Secret Archive & Binary Audit + Legacy Global WebView2 Cache Cleanup
+$AuditPy = Join-Path $RootDir "venv\Scripts\python.exe"
+if (Test-Path $AuditPy) {
+    & $AuditPy -c "
+import zipfile, pathlib, sys
+forbidden = ('user_settings.json', 'typed_history.json', 'wifi_state.json', 'debug_metrics.json', '.pane_webview_storage', '.pairrecord')
+for zp_str in sys.argv[1:]:
+    zp = pathlib.Path(zp_str)
+    if not zp.is_file(): continue
+    with zipfile.ZipFile(zp, 'r') as zf:
+        for name in zf.namelist():
+            low = name.lower()
+            for f in forbidden:
+                if f in low:
+                    raise SystemExit(f'SECURITY FAIL: Forbidden artifact {name} found in {zp.name}')
+print('      [AUDIT OK] 0% private files or PIN artifacts inside release ZIP archives!')
+" $ZipOutput $ExeZipOutput
+    if ($LASTEXITCODE -ne 0) { throw "Release archive zero-secret audit failed!" }
+}
+
+$RunningGui = Get-Process -Name "iPhone Link" -ErrorAction SilentlyContinue
+if (-not $RunningGui) {
+    foreach ($legacyCache in @(
+        (Join-Path $HOME ".pane_webview_storage"),
+        (Join-Path $env:APPDATA "pywebview"),
+        (Join-Path $env:LOCALAPPDATA "pywebview")
+    )) {
+        if ($legacyCache -and (Test-Path $legacyCache)) {
+            Remove-Item -Path $legacyCache -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "      [CLEAN SLATE] Purged legacy global WebView2 storage: $legacyCache" -ForegroundColor Green
+        }
+    }
 }
 
 Write-Host "======================================================================" -ForegroundColor Cyan

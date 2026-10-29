@@ -66,11 +66,39 @@ try {
   currentCrop = { ...DEFAULT_CROP };
 }
 
+// Tahap 55: Fresh-Extract Clean Slate Guard (prevents old localStorage PIN bleed across folders)
+function applyCleanSlatePinGuard(settingsPayload) {
+  if (!settingsPayload) return;
+  const currentFolderInstanceId = String(settingsPayload.folderInstanceId || "");
+  const isFreshFolder = Boolean(settingsPayload.isFreshFolder);
+  const pinEl = document.querySelector("#input-unlock-pin");
+  try {
+    const savedInstanceId = localStorage.getItem("iphone_link_folder_instance_id") || "";
+    if (isFreshFolder || !currentFolderInstanceId || savedInstanceId !== currentFolderInstanceId) {
+      localStorage.removeItem("iphone_link_unlock_pin");
+      localStorage.removeItem("pane-unlock-pin");
+      if (pinEl) pinEl.value = "";
+      if (currentFolderInstanceId) {
+        localStorage.setItem("iphone_link_folder_instance_id", currentFolderInstanceId);
+      }
+    } else {
+      const savedPin =
+        localStorage.getItem("iphone_link_unlock_pin") ||
+        localStorage.getItem("pane-unlock-pin") ||
+        "";
+      if (pinEl) pinEl.value = savedPin;
+    }
+  } catch (_) {
+    if (pinEl) pinEl.value = "";
+  }
+}
+
 // Persistent Settings via /api/settings
 async function fetchUserSettings() {
   try {
     const res = await getJson("/api/settings");
     if (res) {
+      applyCleanSlatePinGuard(res);
       if (res.crop) {
         currentCrop = {
           top: Math.max(0, Math.min(120, parseInt(res.crop.top, 10) || 0)),
@@ -802,10 +830,13 @@ const btnTogglePinVisibility = document.querySelector("#btn-toggle-pin-visibilit
 const btnWipePrivacy = document.querySelector("#btn-wipe-privacy");
 let currentStealthActive = false;
 
-// Load stored PIN from localStorage (private to local PC browser only)
+// Tahap 55: Keep PIN strictly empty until applyCleanSlatePinGuard verifies folderInstanceId
+if (inputUnlockPin) inputUnlockPin.value = "";
 try {
-  const savedPin = localStorage.getItem("iphone_link_unlock_pin") || localStorage.getItem("pane-unlock-pin") || "";
-  if (inputUnlockPin) inputUnlockPin.value = savedPin;
+  if (!localStorage.getItem("iphone_link_folder_instance_id")) {
+    localStorage.removeItem("iphone_link_unlock_pin");
+    localStorage.removeItem("pane-unlock-pin");
+  }
 } catch (_) {}
 
 inputUnlockPin?.addEventListener("input", () => {
@@ -832,6 +863,7 @@ btnWipePrivacy?.addEventListener("click", async () => {
     try {
       localStorage.removeItem("iphone_link_unlock_pin");
       localStorage.removeItem("pane-unlock-pin");
+      localStorage.removeItem("iphone_link_folder_instance_id");
       sessionStorage.clear();
     } catch (_) {}
 
