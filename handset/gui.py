@@ -34,14 +34,16 @@ if not getattr(sys, "frozen", False):
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
 
-# 3. Tahap 56: Memory-optimized WebView2 arguments while keeping Hardware HEVC GPU acceleration
+# 3. Tahap 56–57: Memory-optimized + Zero-Audio-Interference WebView2 arguments (Hardware HEVC GPU active)
 WEBVIEW2_OPTIMIZED_ARGS = (
     "--enable-features=PlatformHEVCDecoderSupport "
+    "--mute-audio "
+    "--disable-audio-output "
     "--disable-background-networking "
     "--disable-component-update "
     "--disable-domain-reliability "
     "--disable-sync "
-    "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion "
+    "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,AudioServiceOutOfProcess "
     "--js-flags=--max-old-space-size=96"
 )
 os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = WEBVIEW2_OPTIMIZED_ARGS
@@ -56,14 +58,23 @@ _TRIM_LOCK = threading.Lock()
 _TRIMMER_STARTED = False
 
 
-def _trim_process_working_set() -> int:
+def _trim_process_working_set(skip_if_audio_active: bool = False) -> int:
     """Safely trim unused working set pages for Python + child WebView2 processes via Win32 API.
 
     Uses CreateToolhelp32Snapshot + psapi.EmptyWorkingSet (0 subprocesses, < 2ms overhead,
     100% safe for active streams because hot pages remain resident).
+    When skip_if_audio_active=True (periodic background timer), skips trimming while Bluetooth
+    A2DP Audio Sink is active to guarantee zero soft page-fault jitter during audio playback.
     """
     if sys.platform != "win32":
         return 0
+    if skip_if_audio_active:
+        try:
+            from handset.audio import audio_manager
+            if audio_manager.status().get("active"):
+                return 0
+        except Exception:
+            pass
     if not _TRIM_LOCK.acquire(blocking=False):
         return 0
     trimmed_count = 0
@@ -155,29 +166,29 @@ def _trim_process_working_set() -> int:
     return trimmed_count
 
 
-def schedule_working_set_trim(delay_sec: float = 0.25) -> None:
+def schedule_working_set_trim(delay_sec: float = 0.25, skip_if_audio_active: bool = False) -> None:
     """Trigger a non-blocking working set trim after delay_sec."""
     def _delayed():
         if delay_sec > 0:
             time.sleep(delay_sec)
-        _trim_process_working_set()
+        _trim_process_working_set(skip_if_audio_active=skip_if_audio_active)
 
     threading.Thread(target=_delayed, name="iphone-link-ram-trim", daemon=True).start()
 
 
 def _start_periodic_memory_trimmer(interval_sec: float = 45.0) -> None:
-    """Start single lightweight daemon thread: trims once at +5s after startup, then every 45s."""
+    """Start single lightweight daemon thread: trims once at +4s after startup, then every 45s (skipped when audio active)."""
     global _TRIMMER_STARTED
     if _TRIMMER_STARTED or sys.platform != "win32":
         return
     _TRIMMER_STARTED = True
 
     def _loop():
-        time.sleep(5.0)
-        _trim_process_working_set()
+        time.sleep(4.0)
+        _trim_process_working_set(skip_if_audio_active=False)
         while True:
             time.sleep(interval_sec)
-            _trim_process_working_set()
+            _trim_process_working_set(skip_if_audio_active=True)
 
     threading.Thread(target=_loop, name="iphone-link-periodic-trimmer", daemon=True).start()
 

@@ -1,12 +1,14 @@
 """Audio Sink Manager for iPhone -> PC Audio Routing via Windows 11 Bluetooth A2DP.
 
-Tahap 56 Zero-Stutter Bluetooth A2DP Upgrades:
-- Disables Windows 11 EcoQoS Power Throttling (ProcessPowerThrottling = 4) so background/minimized
-  execution never starves A2DP buffers or coarsens timer resolution.
-- Elevates process priority (HIGH_PRIORITY_CLASS during active audio, ABOVE_NORMAL_PRIORITY_CLASS baseline)
-  and requests 1ms multimedia timer resolution (winmm.timeBeginPeriod(1)) + MMCSS thread registration.
-- Zero-Enumeration Status Polling: status() returns instant in-memory cached state & cached volume
-  without re-running WinRT DeviceInformation.FindAllAsync or CoreAudio COM enumeration on status polls.
+Tahap 56–57 Zero-Stutter Bluetooth A2DP Architecture:
+- Runs the PowerShell WinRT AudioPlaybackConnection host explicitly in Multi-Threaded Apartment (-MTA)
+  with an active Win32 message pump (MsgWaitForMultipleObjectsEx + PeekMessageW) and async STDIN reader
+  ([Console]::In.ReadLineAsync()), eliminating STA COM message starvation during Reels/TikTok playback.
+- Pins $Global:ActiveAudioConn with [System.GC]::KeepAlive so .NET GC never collects or relocates the RCW.
+- Caches Bluetooth endpoint DeviceId (_cached_device_id) so subsequent connects call TryCreateFromId()
+  directly without scanning all radios via DeviceInformation::FindAllAsync.
+- Disables Windows 11 EcoQoS Power Throttling, sets High Priority (including audiodg.exe when permitted),
+  requests 1ms multimedia timer resolution, and registers MMCSS ("Pro Audio").
 """
 
 from __future__ import annotations
@@ -66,7 +68,6 @@ def disable_process_power_throttling() -> bool:
         kernel32.SetProcessInformation.restype = wintypes.BOOL
 
         hproc = kernel32.GetCurrentProcess()
-        # Disable both Execution Speed throttling (EcoQoS) and Timer Resolution throttling
         state = PROCESS_POWER_THROTTLING_STATE(
             Version=PROCESS_POWER_THROTTLING_CURRENT_VERSION,
             ControlMask=(
@@ -84,7 +85,6 @@ def disable_process_power_throttling() -> bool:
             )
         )
         if not ok:
-            # Fallback for older Windows 10 builds supporting only ExecutionSpeed mask (0x1)
             state_fallback = PROCESS_POWER_THROTTLING_STATE(
                 Version=PROCESS_POWER_THROTTLING_CURRENT_VERSION,
                 ControlMask=PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
@@ -175,6 +175,7 @@ class AudioManager:
         self._enabled = False
         self._proc: Optional[subprocess.Popen] = None
         self._device_name = "iPhone"
+        self._cached_device_id: str = ""
         self._connection_state = "Closed"
         self._lock = threading.Lock()
         self._monitor_thread: Optional[threading.Thread] = None
@@ -274,10 +275,9 @@ class AudioManager:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 self._enabled = True
-                is_active = True
                 return {
                     "enabled": True,
-                    "active": is_active,
+                    "active": True,
                     "device": self._device_name,
                     "state": self._connection_state,
                     "volume": self._cached_volume,
@@ -286,6 +286,12 @@ class AudioManager:
             ps_script = """
 try {
     [System.Diagnostics.Process]::GetCurrentProcess().PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High
+} catch {}
+
+try {
+    Get-Process -Name audiodg -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High } catch {}
+    }
 } catch {}
 
 try {
@@ -299,6 +305,20 @@ public static class WinAudioBoost {
         public uint ControlMask;
         public uint StateMask;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+    }
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", SetLastError=true)]
@@ -307,12 +327,58 @@ public static class WinAudioBoost {
     public static extern uint timeBeginPeriod(uint uPeriod);
     [DllImport("winmm.dll")]
     public static extern uint timeEndPeriod(uint uPeriod);
+    [DllImport("avrt.dll", CharSet=CharSet.Unicode)]
+    public static extern IntPtr AvSetMmThreadCharacteristicsW(string TaskName, out uint TaskIndex);
+    [DllImport("avrt.dll")]
+    public static extern bool AvRevertMmThreadCharacteristics(IntPtr AvrtHandle);
+    [DllImport("user32.dll")]
+    public static extern uint MsgWaitForMultipleObjectsEx(uint nCount, IntPtr pHandles, uint dwMilliseconds, uint dwWakeMask, uint dwFlags);
+    [DllImport("user32.dll")]
+    public static extern bool PeekMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+    [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+
+    private static IntPtr _mmcss = IntPtr.Zero;
+
     public static void Boost() {
         var st = new PROCESS_POWER_THROTTLING_STATE { Version = 1, ControlMask = 5, StateMask = 0 };
-        SetProcessInformation(GetCurrentProcess(), 4, ref st, Marshal.SizeOf(st));
+        if (!SetProcessInformation(GetCurrentProcess(), 4, ref st, Marshal.SizeOf(st))) {
+            var st2 = new PROCESS_POWER_THROTTLING_STATE { Version = 1, ControlMask = 1, StateMask = 0 };
+            SetProcessInformation(GetCurrentProcess(), 4, ref st2, Marshal.SizeOf(st2));
+        }
         timeBeginPeriod(1);
+        uint idx = 0;
+        _mmcss = AvSetMmThreadCharacteristicsW("Pro Audio", out idx);
+        if (_mmcss == IntPtr.Zero) {
+            _mmcss = AvSetMmThreadCharacteristicsW("Audio", out idx);
+        }
+        MSG initMsg;
+        PeekMessageW(out initMsg, IntPtr.Zero, 0, 0, 0x0000);
     }
+
+    public static void PumpWait(uint timeoutMs) {
+        MSG msg;
+        while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 0x0001)) {
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+        uint res = MsgWaitForMultipleObjectsEx(0, IntPtr.Zero, timeoutMs, 0x04FF, 0x0004);
+        if (res == 0xFFFFFFFF) {
+            System.Threading.Thread.Sleep((int)timeoutMs);
+        }
+        while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 0x0001)) {
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+    }
+
     public static void Unboost() {
+        if (_mmcss != IntPtr.Zero) {
+            AvRevertMmThreadCharacteristics(_mmcss);
+            _mmcss = IntPtr.Zero;
+        }
         timeEndPeriod(1);
     }
 }
@@ -324,43 +390,89 @@ Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Audio.AudioPlaybackConnection, Windows.Media.Audio, ContentType = WindowsRuntime]
 $null = [Windows.Devices.Enumeration.DeviceInformation, Windows.Devices.Enumeration, ContentType = WindowsRuntime]
 
-$selector = [Windows.Media.Audio.AudioPlaybackConnection]::GetDeviceSelector()
-$asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod } | Select-Object -First 1
-$asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Enumeration.DeviceInformationCollection])
-$op = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($selector)
-$task = $asTask.Invoke($null, @($op))
-$devices = $task.GetAwaiter().GetResult()
+$conn = $null
+$devId = $env:PANE_CACHED_AUDIO_DEVICE_ID
+$devName = if ($env:PANE_CACHED_AUDIO_DEVICE_NAME) { $env:PANE_CACHED_AUDIO_DEVICE_NAME } else { "iPhone" }
 
-if ($devices.Count -eq 0) {
-    Write-Output '{"status": "no_device", "message": "No Bluetooth Audio Sink device found"}'
-    $null = [Console]::In.ReadLine()
-} else {
-    $dev = $devices[0]
-    $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($dev.Id)
-    if ($conn -eq $null) {
-        Write-Output '{"status": "error", "message": "Failed to create AudioPlaybackConnection"}'
-        $null = [Console]::In.ReadLine()
+if (-not [string]::IsNullOrWhiteSpace($devId)) {
+    try {
+        $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($devId)
+    } catch {
+        $conn = $null
+    }
+}
+
+if ($conn -eq $null) {
+    $selector = [Windows.Media.Audio.AudioPlaybackConnection]::GetDeviceSelector()
+    $asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod } | Select-Object -First 1
+    $asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Enumeration.DeviceInformationCollection])
+    $op = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($selector)
+    $task = $asTask.Invoke($null, @($op))
+    $devices = $task.GetAwaiter().GetResult()
+
+    if ($devices.Count -gt 0) {
+        $dev = $devices[0]
+        $devId = $dev.Id
+        $devName = $dev.Name
+        $conn = [Windows.Media.Audio.AudioPlaybackConnection]::TryCreateFromId($devId)
     } else {
-        $conn.Start()
-        $openRes = $conn.Open()
-        Write-Output ("{`"status`": `"active`", `"device`": `"" + $dev.Name + "`", `"state`": `"" + $conn.State.ToString() + "`"}")
+        Write-Output (@{ status = "no_device"; message = "No Bluetooth Audio Sink device found" } | ConvertTo-Json -Compress)
+    }
+}
 
-        while ($true) {
-            $line = [Console]::In.ReadLine()
-            if ($line -eq "stop" -or $line -eq $null) {
+if ($conn -eq $null) {
+    if (-not [string]::IsNullOrWhiteSpace($devId)) {
+        Write-Output (@{ status = "error"; message = "Failed to create AudioPlaybackConnection" } | ConvertTo-Json -Compress)
+    }
+    $hasBoost = $null -ne ([System.Management.Automation.PSTypeName]'WinAudioBoost').Type
+    $readStop = [Console]::In.ReadLineAsync()
+    while (-not $readStop.IsCompleted) {
+        if ($hasBoost) { [WinAudioBoost]::PumpWait(250) } else { Start-Sleep -Milliseconds 250 }
+    }
+} else {
+    $Global:ActiveAudioConn = $conn
+    $Global:ActiveAudioConn.Start()
+    $openRes = $Global:ActiveAudioConn.Open()
+    [System.GC]::KeepAlive($Global:ActiveAudioConn)
+    Write-Output (@{
+        status = "active"
+        device = $devName
+        deviceId = $devId
+        state = $Global:ActiveAudioConn.State.ToString()
+        apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState().ToString()
+    } | ConvertTo-Json -Compress)
+
+    $hasBoost = $null -ne ([System.Management.Automation.PSTypeName]'WinAudioBoost').Type
+    $readTask = [Console]::In.ReadLineAsync()
+    while ($true) {
+        if ($readTask.IsCompleted) {
+            $line = $readTask.Result
+            if ($line -eq "stop" -or $null -eq $line) {
                 break
             }
+            $readTask = [Console]::In.ReadLineAsync()
         }
-        $conn.Dispose()
+        if ($hasBoost) { [WinAudioBoost]::PumpWait(200) } else { Start-Sleep -Milliseconds 200 }
+        [System.GC]::KeepAlive($Global:ActiveAudioConn)
     }
+    $Global:ActiveAudioConn.Dispose()
+    $Global:ActiveAudioConn = $null
 }
 try { [WinAudioBoost]::Unboost() } catch {}
 """
             try:
+                worker_env = dict(os.environ)
+                if self._cached_device_id:
+                    worker_env["PANE_CACHED_AUDIO_DEVICE_ID"] = self._cached_device_id
+                if self._device_name:
+                    worker_env["PANE_CACHED_AUDIO_DEVICE_NAME"] = self._device_name
+
                 self._proc = subprocess.Popen(
                     [
                         "powershell",
                         "-NoProfile",
+                        "-NonInteractive",
+                        "-MTA",
                         "-ExecutionPolicy",
                         "Bypass",
                         "-Command",
@@ -369,6 +481,7 @@ try { [WinAudioBoost]::Unboost() } catch {}
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=worker_env,
                     text=True,
                     bufsize=1,
                     **_WIN_NO_WINDOW_KWARGS,
@@ -382,10 +495,12 @@ try { [WinAudioBoost]::Unboost() } catch {}
                             line = self._proc.stdout.readline()
                             if line:
                                 data = json.loads(line.strip())
-                                if "device" in data:
-                                    self._device_name = data["device"]
-                                if "state" in data:
-                                    self._connection_state = data["state"]
+                                if data.get("device"):
+                                    self._device_name = str(data["device"])
+                                if data.get("deviceId"):
+                                    self._cached_device_id = str(data["deviceId"])
+                                if data.get("state"):
+                                    self._connection_state = str(data["state"])
                     except Exception:
                         pass
 

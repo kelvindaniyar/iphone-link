@@ -63,7 +63,7 @@ ID_AUDIO = 1005
 ID_CLEAR_CACHE = 1006
 ID_QUIT = 1009
 
-TRAY_TOOLTIP = "iPhone Link — Native iPhone Mirroring"
+TRAY_TOOLTIP = "iPhone Link - Native iPhone Mirroring"
 
 if sys.platform == "win32":
     LRESULT = ctypes.c_ssize_t
@@ -287,15 +287,15 @@ class SystemTrayIcon:
         audio_flag = MF_STRING | (MF_CHECKED if st.get("audio") else 0)
 
         return [
-            (ID_RESTORE, "📱 Show / Restore iPhone Link", MF_STRING),
-            (ID_HIDE, "➖ Hide to System Tray", MF_STRING),
+            (ID_RESTORE, "Show / Restore iPhone Link", MF_STRING),
+            (ID_HIDE, "Hide to System Tray", MF_STRING),
             (None, "", MF_SEPARATOR),
-            (ID_LANDSCAPE, "🔄 Toggle Landscape / Portrait (Alt+H)", landscape_flag),
-            (ID_STEALTH, "🌑 Toggle Stealth Dim Mode (Alt+D)", stealth_flag),
-            (ID_AUDIO, "🔊 Toggle PC Audio Sink", audio_flag),
-            (ID_CLEAR_CACHE, "🧹 Clear Copy Cache (Alt+R)", MF_STRING),
+            (ID_LANDSCAPE, "Landscape Mode (Alt+H)", landscape_flag),
+            (ID_STEALTH, "Stealth Dim Mode (Alt+D)", stealth_flag),
+            (ID_AUDIO, "Stream Audio to PC", audio_flag),
+            (ID_CLEAR_CACHE, "Clear Copy Cache (Alt+R)", MF_STRING),
             (None, "", MF_SEPARATOR),
-            (ID_QUIT, "❌ Quit iPhone Link", MF_STRING),
+            (ID_QUIT, "Quit iPhone Link", MF_STRING),
         ]
 
     def start(self, wait_ready: float = 2.0) -> bool:

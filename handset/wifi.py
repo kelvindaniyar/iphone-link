@@ -367,20 +367,56 @@ async def auto_enable_wireless_lockdown(udid: str) -> dict:
         await lockdown.close()
 
 
-def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
-    """Non-blocking trigger to verify and enable Wireless Lockdown in the background."""
-    if not udid or udid in _AUTO_ENABLED_UDIDS:
-        return
+_CLEAN_AUDIO_WIRELESS_DISABLED_UDIDS: set[str] = set()
 
-    _AUTO_ENABLED_UDIDS.add(udid)
 
-    def _worker():
+async def disable_wireless_lockdown_async(udid: Optional[str] = None) -> bool:
+    """Silently disable background Wireless Lockdown over USB so iPhone Wi-Fi/BT radio stays 100% clean for A2DP audio."""
+    from pymobiledevice3.lockdown import create_using_usbmux
+
+    lockdown = await create_using_usbmux(serial=udid, connection_type="USB", autopair=False)
+    try:
         try:
-            asyncio.run(auto_enable_wireless_lockdown(udid))
-        except Exception as exc:
-            logger.debug("Background auto_enable_wireless_lockdown failed for %s: %s", udid, exc)
+            enabled = await lockdown.get_enable_wifi_connections()
+        except Exception:
+            enabled = True
+        if enabled:
+            await lockdown.set_enable_wifi_connections(False)
+        target_udid = udid or getattr(lockdown, "udid", None)
+        if target_udid:
+            update_device_wifi_state(target_udid, enabled=False, last_seen_cable=True)
+        return True
+    except Exception as exc:
+        logger.debug("disable_wireless_lockdown_async skipped: %s", exc)
+        return False
+    finally:
+        try:
+            await lockdown.close()
+        except Exception:
+            pass
 
-    threading.Thread(target=_worker, name=f"handset-wifi-enable-{udid[:8]}", daemon=True).start()
+
+def disable_wireless_lockdown_for_clean_audio(udid: Optional[str] = None, force: bool = False) -> None:
+    """Non-blocking USB lockdown helper to silence background Wi-Fi lockdown chatter during Cable + Bluetooth A2DP."""
+    key = udid or "__any_usb__"
+    if not force and key in _CLEAN_AUDIO_WIRELESS_DISABLED_UDIDS:
+        return
+    _CLEAN_AUDIO_WIRELESS_DISABLED_UDIDS.add(key)
+
+    def _worker() -> None:
+        try:
+            asyncio.run(disable_wireless_lockdown_async(udid))
+        except Exception as exc:
+            logger.debug("disable_wireless_lockdown_for_clean_audio failed: %s", exc)
+
+    threading.Thread(target=_worker, name="handset-clean-bt-radio", daemon=True).start()
+
+
+def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
+    """Deprecated in Tahap 57: Automatic background Wireless Lockdown is intentionally disabled on USB plug-in
+    because EnableWifiConnections=True causes continuous 2.4GHz/5GHz lockdown chatter with AppleMobileDeviceService
+    that interferes with iPhone Bluetooth A2DP audio packets. Use explicit 'Set up Wi-Fi' (pair_for_wifi) instead."""
+    return
 
 
 # -----------------------------------------------------------------------------
@@ -398,6 +434,8 @@ def wifi_paired_udids() -> list[str]:
 
 def pair_for_wifi(udid: str) -> dict:
     """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link."""
+    _CLEAN_AUDIO_WIRELESS_DISABLED_UDIDS.discard(udid)
+    _CLEAN_AUDIO_WIRELESS_DISABLED_UDIDS.discard("__any_usb__")
 
     async def pair() -> None:
         from pymobiledevice3.exceptions import RemotePairingCompletedError

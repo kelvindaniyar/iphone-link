@@ -60,10 +60,10 @@ from handset.screen import (
     wipe_all_privacy_data,
 )
 from handset.wifi import (
+    disable_wireless_lockdown_for_clean_audio,
     get_wifi_status,
     pair_for_wifi,
     probe_wifi_device,
-    trigger_auto_enable_wireless_lockdown,
     wifi_paired_udids,
 )
 from handset.audio import audio_manager
@@ -463,6 +463,8 @@ def save_user_settings(new_settings: dict) -> dict:
 
 
 _CACHED_DEVICE_SNAPSHOT: dict | None = None
+_CACHED_RUNNING_DEVICES: list[dict] = []
+_CACHED_DEVICE_DETAIL: dict[str, dict] = {}
 _CACHED_WIFI_STATUS: dict | None = None
 _LAST_WIFI_PROBE_TS: float = 0.0
 
@@ -470,7 +472,7 @@ _LAST_WIFI_PROBE_TS: float = 0.0
 def _trigger_post_ocr_memory_trim() -> None:
     try:
         from handset.gui import schedule_working_set_trim
-        schedule_working_set_trim(0.4)
+        schedule_working_set_trim(0.4, skip_if_audio_active=True)
     except Exception:
         pass
 
@@ -488,26 +490,43 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_mirror("GET")
             return
         if path == "/api/status":
-            global _CACHED_DEVICE_SNAPSHOT, _CACHED_WIFI_STATUS, _LAST_WIFI_PROBE_TS
+            global _CACHED_DEVICE_SNAPSHOT, _CACHED_RUNNING_DEVICES, _CACHED_WIFI_STATUS, _LAST_WIFI_PROBE_TS
             scr = screen_status()
             aud = audio_manager.status()
             stream_or_audio_active = (scr.get("phase") == "running") or bool(aud.get("active"))
 
-            # Tahap 56 Zero-Stutter Radio Guard:
-            # Never run LAN/ARP/subnet Wi-Fi scans or sc query subprocesses while mirroring or A2DP audio is active!
-            if stream_or_audio_active and _CACHED_DEVICE_SNAPSHOT is not None:
-                payload = dict(_CACHED_DEVICE_SNAPSHOT)
+            # Tahap 56–57 Zero-Stutter Radio & USB Lockdown Guard:
+            # NEVER call snapshot() (usbmux.list_devices(), developer_mode lockdown, or sc query) while mirroring or A2DP audio is active!
+            if stream_or_audio_active:
+                if _CACHED_DEVICE_SNAPSHOT is not None:
+                    payload = dict(_CACHED_DEVICE_SNAPSHOT)
+                else:
+                    synth_devices = list(_CACHED_RUNNING_DEVICES)
+                    if not synth_devices and scr.get("udid"):
+                        synth_devices = [
+                            {
+                                "udid": scr["udid"],
+                                "connection": "Wi-Fi" if scr.get("transport") == "wifi" else "USB",
+                            }
+                        ]
+                    payload = {
+                        "library": {"ready": True, "version": "usbmux"},
+                        "driver": {"ready": True, "paths": [], "service": "RUNNING", "detail": ""},
+                        "devices": synth_devices,
+                        "developerMode": True,
+                        "error": None,
+                    }
             else:
                 payload = snapshot()
                 _CACHED_DEVICE_SNAPSHOT = dict(payload)
+                if payload.get("devices"):
+                    _CACHED_RUNNING_DEVICES = list(payload["devices"])
 
             payload["screen"] = scr
             devices = payload.get("devices") or []
             selected_udid = None
             for d in devices:
                 if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
-                    if not stream_or_audio_active:
-                        trigger_auto_enable_wireless_lockdown(d["udid"])
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break
@@ -615,6 +634,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/audio/toggle":
             enabled = payload.get("enabled") if "enabled" in payload else None
+            scr_now = screen_status()
+            if (enabled is True or (enabled is None and not audio_manager.status().get("enabled"))) and scr_now.get("transport") != "wifi":
+                disable_wireless_lockdown_for_clean_audio(scr_now.get("udid"))
             st = audio_manager.toggle(enabled)
             save_user_settings({"audioSinkEnabled": st.get("enabled", False)})
             self._json(st)
@@ -797,6 +819,8 @@ class Handler(BaseHTTPRequestHandler):
         transport = payload.get("transport")
         if transport not in {"usb", "wifi", "cable"}:
             transport = "cable"
+        if transport in {"usb", "cable"}:
+            disable_wireless_lockdown_for_clean_audio(udid)
         self._json(start_screen(udid, transport))
 
     def log_message(self, fmt: str, *args) -> None:
@@ -839,8 +863,19 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Failed to write debug_metrics.json: {e}", flush=True)
 
     def _device(self, udid: str) -> None:
+        scr = screen_status()
+        aud = audio_manager.status()
+        if (scr.get("phase") == "running") or bool(aud.get("active")):
+            if udid in _CACHED_DEVICE_DETAIL:
+                self._json(_CACHED_DEVICE_DETAIL[udid])
+                return
+            self._json({"udid": udid, "paired": True, "info": {"DeviceName": "iPhone"}})
+            return
         try:
-            self._json(read_handset(udid))
+            detail_payload = read_handset(udid)
+            if isinstance(detail_payload, dict) and detail_payload.get("paired"):
+                _CACHED_DEVICE_DETAIL[udid] = dict(detail_payload)
+            self._json(detail_payload)
         except MuxError as error:
             from handset.wifi import get_device_wifi_state, wifi_paired_udids
             cached = get_device_wifi_state(udid)

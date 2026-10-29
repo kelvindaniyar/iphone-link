@@ -22,7 +22,7 @@ const wifiState = document.querySelector("#wifi-state");
 const wifiPair = document.querySelector("#wifi-pair");
 const wifiScan = document.querySelector("#wifi-scan");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
-const MIRROR_PAGE = "/mirror.html?v=20261030_tahap56_tray_audio_ram";
+const MIRROR_PAGE = "/mirror.html?v=20261030_tahap57_mta_clean_tray";
 const MIRROR_API = "/mirror";
 let currentWifiState = {};
 
@@ -772,7 +772,25 @@ document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
 });
 
 let selectedUdid = null;
+let lastLoadedDeviceUdid = null;
 let screenTimer = 0;
+const RUNNING_STATUS_POLL_MS = 4000;
+let runningStatusPollTimer = 0;
+
+function syncRunningStatusPoll(isMirroring) {
+  if (isMirroring) {
+    if (!runningStatusPollTimer) {
+      runningStatusPollTimer = window.setInterval(() => {
+        if (!document.hidden) {
+          load();
+        }
+      }, RUNNING_STATUS_POLL_MS);
+    }
+  } else if (runningStatusPollTimer) {
+    window.clearInterval(runningStatusPollTimer);
+    runningStatusPollTimer = 0;
+  }
+}
 // Tahap 47: Kunci Mode Cable (USB) sebagai default connection mode yang 100% instan & stabil
 let transport = "usb";
 let wifiPaired = [];
@@ -1286,6 +1304,7 @@ function renderDevices(list) {
     item.textContent = "No iPhone detected.";
     devicesEl.append(item);
     selectedUdid = null;
+    lastLoadedDeviceUdid = null;
     return;
   }
   if (list.length === 1) selectedUdid = list[0].udid;
@@ -1312,7 +1331,10 @@ function renderDevices(list) {
     item.append(button);
     devicesEl.append(item);
   }
-  if (list.length === 1) openDevice(list[0].udid);
+  if (list.length === 1 && lastLoadedDeviceUdid !== list[0].udid) {
+    lastLoadedDeviceUdid = list[0].udid;
+    openDevice(list[0].udid);
+  }
 }
 
 async function openDevice(udid) {
@@ -1404,6 +1426,7 @@ function renderScreen(screen) {
     updateStealthDimUI(screen.stealth_dim);
   }
   const mirroring = screen.phase === "running";
+  syncRunningStatusPoll(mirroring);
   if (mirroring) {
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
@@ -1437,21 +1460,20 @@ function renderScreen(screen) {
     screenView.hidden = false;
     screenView.style.display = "block";
 
-    // Jangan me-reload iframe berulang-ulang pada setiap polling /status jika sudah memuat mirror.html
+    // Jangan me-reload iframe atau membanjiri postMessage pada setiap polling /status jika mirror.html sudah aktif
     const curSrc = screenView.getAttribute("src") || "";
-    if (!curSrc.startsWith("/mirror.html")) {
+    const mountingMirror = !curSrc.startsWith("/mirror.html");
+    if (mountingMirror) {
       screenView.src = MIRROR_PAGE;
+      setTimeout(() => {
+        syncSettingsToIframe();
+        screenView.contentWindow?.postMessage({ type: "resize" }, "*");
+      }, 50);
+      setTimeout(() => {
+        syncSettingsToIframe();
+        screenView.contentWindow?.postMessage({ type: "resize" }, "*");
+      }, 200);
     }
-
-    // Picu fitCanvas ulang dan sinkronkan tema/fit mode di dalam iframe setelah unhide
-    setTimeout(() => {
-      syncSettingsToIframe();
-      screenView.contentWindow?.postMessage({ type: "resize" }, "*");
-    }, 50);
-    setTimeout(() => {
-      syncSettingsToIframe();
-      screenView.contentWindow?.postMessage({ type: "resize" }, "*");
-    }, 200);
 
     // Kirim telemetri ukuran elemen DOM cukup 1x per sesi agar tidak memicu spike disk I/O
     if (!window._sentInitialAppMetrics) {
