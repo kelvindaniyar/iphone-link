@@ -2141,6 +2141,7 @@
         min-height: 0 !important;
         border-radius: 18px;
         flex-direction: column;
+        justify-content: flex-start !important;
         gap: 10px;
       }
       .stage-top-chip-bar {
@@ -2226,12 +2227,27 @@
         min-height: 0 !important;
       }
       .ipl-win.is-landscape .ipl-main-body {
-        min-height: 220px !important;
+        display: block !important;
+        min-height: 0 !important;
+        height: auto !important;
       }
       .ipl-display-col {
         width: 100% !important;
         max-width: 100% !important;
         flex: 0 0 auto !important;
+      }
+      .ipl-win.is-landscape .ipl-display-col {
+        display: flex !important;
+        flex-direction: column !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      .ipl-win.is-landscape .ipl-screen-viewport {
+        min-height: 210px !important;
+        height: auto !important;
+        box-sizing: border-box !important;
+        overflow: visible !important;
+        display: block !important;
       }
       .ios-fullbleed {
         padding: 7px 10px 9px !important;
@@ -2281,9 +2297,13 @@
         line-height: 1.25;
       }
       .rotated-270-pitch {
-        padding: 10px 10px 10px 22px !important;
-        min-height: 220px !important;
-        gap: 6px;
+        padding: 12px 10px 12px 22px !important;
+        min-height: 210px !important;
+        height: auto !important;
+        box-sizing: border-box !important;
+        overflow: visible !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
       }
       .di-vertical-left {
         left: 5px;
@@ -2304,8 +2324,12 @@
         font-size: 9px;
       }
       .ef-pitch-svg {
+        width: 100% !important;
+        aspect-ratio: 740 / 210;
         height: auto !important;
-        max-height: 155px;
+        min-height: 86px;
+        max-height: 150px;
+        flex-shrink: 0 !important;
         overflow: hidden !important;
       }
       .ef-stick {
@@ -4216,6 +4240,9 @@
         }
         if (peekBtn) {
           peekBtn.style.display = idx === 0 ? "inline-flex" : "none";
+          if (peekBtn.parentElement && peekBtn.parentElement.classList.contains("stage-top-chip-bar")) {
+            peekBtn.parentElement.style.display = idx === 0 ? "flex" : "none";
+          }
           peekBtn.classList.toggle("is-active", isStandbyNow);
           var peekLbl = document.getElementById("standbyPeekLabel");
           if (peekLbl) {
