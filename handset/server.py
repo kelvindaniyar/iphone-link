@@ -1,0 +1,1444 @@
+"""Local device window. Binds to loopback only."""
+
+from __future__ import annotations
+
+import hashlib
+import http.client
+import os
+import json
+import re
+import socket
+import sys
+import subprocess
+import time
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+_WIN_NO_WINDOW_KWARGS: dict = {}
+if sys.platform == "win32":
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _si.wShowWindow = 0  # SW_HIDE
+    _WIN_NO_WINDOW_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": _si,
+    }
+
+
+from handset.device import read_handset, snapshot
+from handset.mux import MuxError
+from handset.screen import (
+    _clean_ocr_line,
+    _is_garbage_ocr_line,
+    _is_generic_template_line,
+    _is_notes_folder_list_frame,
+    _score_gap_quality,
+    _strip_top_unselected_debris,
+    auto_correct_ocr_text,
+    clear_recent_long_ocr_chunks,
+    commit_and_reset_current_typed_line,
+    ensure_paragraph_formatting,
+    get_debug_typed_state,
+    has_overlapping_body_line,
+    lock_iphone_screen,
+    process_ocr_batch_results,
+    record_typed_char,
+    record_typed_text,
+    restart_screen,
+    screen_status,
+    send_button_direct,
+    send_keys_direct,
+    set_iphone_physical_brightness,
+    start_screen,
+    stitch_multiline_ocr_frames,
+    stop_screen,
+    toggle_onscreen_keyboard,
+    trigger_ios_shortcut,
+    type_text_to_iphone,
+    wake_and_unlock_iphone,
+    wipe_all_privacy_data,
+)
+from handset.wifi import (
+    ensure_wireless_lockdown_disabled_for_bluetooth,
+    get_wifi_status,
+    pair_for_wifi,
+    probe_wifi_device,
+    wifi_paired_udids,
+)
+from handset.audio import audio_manager
+
+from handset import get_app_root, get_bundle_root
+
+
+def _resolve_web_root() -> Path:
+    for cand in (
+        get_app_root() / "handset" / "web",
+        get_bundle_root() / "handset" / "web",
+        Path(__file__).resolve().parent / "web",
+    ):
+        if cand.is_dir():
+            return cand
+    return Path(__file__).resolve().parent / "web"
+
+
+def _resolve_ocr_script_path() -> str:
+    for cand in (
+        get_app_root() / "handset" / "ocr_extractor.ps1",
+        get_bundle_root() / "handset" / "ocr_extractor.ps1",
+        Path(__file__).resolve().parent / "ocr_extractor.ps1",
+    ):
+        if cand.is_file():
+            return str(cand)
+    return str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
+
+
+ROOT = _resolve_web_root()
+SETTINGS_FILE = get_app_root() / "user_settings.json"
+
+
+def get_settings_file_path() -> Path:
+    return get_app_root() / "user_settings.json"
+
+
+def get_folder_instance_id(app_root: Path | None = None) -> str:
+    """Deterministic 12-char SHA-256 instance ID unique to this installation folder."""
+    target = (app_root or get_app_root()).resolve()
+    normalized = os.path.normcase(str(target))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+_IS_FRESH_EXTRACTED_FOLDER: bool = not (get_app_root() / "user_settings.json").is_file()
+
+
+def is_fresh_extracted_folder() -> bool:
+    settings_file = get_settings_file_path()
+    if not settings_file.is_file():
+        return True
+    try:
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("folderInstanceId") == get_folder_instance_id():
+            return False
+    except Exception:
+        pass
+    return True
+HOST = "127.0.0.1"
+PORT = 8765
+MIRROR_PREFIX = "/mirror"
+STREAM_HOST = "127.0.0.1"
+STREAM_PORT = 8766
+_HOP_BY_HOP = frozenset(
+    {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"}
+)
+_CLIENT_GONE = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
+
+DEFAULT_SETTINGS = {
+    "crop": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+    "fitMode": "fill",
+    "theme": "dark",
+    "audioSinkEnabled": False,
+    "audioVolume": 100,
+    "trackpadSpeed": 100,
+    "crossPlatformShortcuts": True,
+    "pastePcClipboard": True,
+    "autoRotate": False,
+}
+
+def get_windows_clipboard_seq() -> int:
+    """Return the Windows clipboard sequence number (increments on every copy/cut)."""
+    try:
+        import ctypes
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return 0
+
+
+_ACTIVE_CLIPBOARD_SOURCE = "pc"  # "pc" or "iphone"
+_LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+
+
+def get_windows_clipboard_text() -> str | None:
+    """Read plain/unicode text from the Windows PC clipboard."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if not user32.OpenClipboard(0):
+            return None
+        try:
+            CF_UNICODETEXT = 13
+            h_clip = user32.GetClipboardData(CF_UNICODETEXT)
+            if not h_clip:
+                return None
+            p_text = kernel32.GlobalLock(h_clip)
+            if not p_text:
+                return None
+            try:
+                return ctypes.c_wchar_p(p_text).value
+            finally:
+                kernel32.GlobalUnlock(h_clip)
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:
+        print(f"get_windows_clipboard_text error: {e}", flush=True)
+        return None
+
+
+def set_windows_clipboard_text(text: str) -> bool:
+    """Write unicode text to the Windows PC clipboard safely in 64-bit."""
+    if not text:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = wintypes.BOOL
+        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        user32.SetClipboardData.restype = wintypes.HANDLE
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+
+        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = wintypes.LPVOID
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        kernel32.RtlMoveMemory.argtypes = [wintypes.LPVOID, wintypes.LPCVOID, ctypes.c_size_t]
+        kernel32.RtlMoveMemory.restype = None
+
+        opened = False
+        for attempt in range(5):
+            if user32.OpenClipboard(0):
+                opened = True
+                break
+            time.sleep(0.015)
+        if not opened:
+            return False
+        try:
+            if not user32.EmptyClipboard():
+                return False
+
+            encoded = text.encode("utf-16le") + b"\x00\x00"
+            GMEM_MOVEABLE = 0x0002
+            CF_UNICODETEXT = 13
+
+            h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
+            if not h_mem:
+                return False
+
+            p_mem = kernel32.GlobalLock(h_mem)
+            if not p_mem:
+                return False
+
+            try:
+                kernel32.RtlMoveMemory(p_mem, encoded, len(encoded))
+            finally:
+                kernel32.GlobalUnlock(h_mem)
+
+            if not user32.SetClipboardData(CF_UNICODETEXT, h_mem):
+                return False
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:
+        print(f"set_windows_clipboard_text error: {e}", flush=True)
+        return False
+
+
+def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> list[str]:
+    """Extract text from one or more iPhone frames in a single PowerShell process.
+    The last frame in frame_data_urls uses Highlight-Crop; earlier frames use Full-Viewport Content Crop.
+    Returns a list of extracted strings (one per input frame).
+    """
+    if not frame_data_urls:
+        return []
+    try:
+        import base64, tempfile, subprocess, os, json
+        valid_frames = []
+        tmp_files = []
+        project_root = get_app_root()
+
+        for idx, furl in enumerate(frame_data_urls):
+            if not furl:
+                continue
+            if furl.startswith("data:") and "," in furl:
+                header, b64data = furl.split(",", 1)
+                raw_bytes = base64.b64decode(b64data)
+                if len(raw_bytes) < 100:
+                    continue
+                suffix = ".png" if "image/png" in header else ".jpg"
+                tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                tmp.write(raw_bytes)
+                tmp.close()
+                tmp_files.append(tmp.name)
+                valid_frames.append((idx, tmp.name, raw_bytes))
+            elif os.path.isfile(furl):
+                abs_f = os.path.abspath(furl)
+                tmp_files.append(abs_f)
+                try:
+                    with open(abs_f, "rb") as rf:
+                        raw_bytes = rf.read()
+                    valid_frames.append((idx, abs_f, raw_bytes))
+                except Exception:
+                    pass
+
+        if not tmp_files:
+            return []
+
+        if save_debug and valid_frames:
+            try:
+                with open(project_root / "debug_ocr_raw.png", "wb") as f_raw:
+                    f_raw.write(valid_frames[-1][2])
+            except Exception:
+                pass
+
+        joined_paths = "|".join(tmp_files)
+        script_path = _resolve_ocr_script_path()
+        timeout_sec = 18.0
+
+        res = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, "-ImagePaths", joined_paths],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+            **_WIN_NO_WINDOW_KWARGS,
+        )
+
+        stdout_raw = res.stdout or ""
+        frame_chunks = stdout_raw.split("---FRAME_SPLIT---")
+        results = [chunk.strip() for chunk in frame_chunks if chunk.strip()]
+        return results
+    except Exception as e:
+        print(f"extract_text_batch error: {e}", flush=True)
+        return []
+    finally:
+        temp_dir = tempfile.gettempdir()
+        for tpath in tmp_files:
+            if temp_dir in tpath:
+                try:
+                    os.remove(tpath)
+                except Exception:
+                    pass
+
+
+def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str | None:
+    """Extract highlighted/selected text from iPhone screen frame using Windows 11 WinRT OCR."""
+    if not frame_data_url or "," not in frame_data_url:
+        return None
+    try:
+        results = extract_text_batch([frame_data_url], save_debug=save_debug)
+        final_text = process_ocr_batch_results(results)
+
+        if save_debug:
+            try:
+                import json
+                project_root = get_app_root()
+                active_line, buffer_tail = get_debug_typed_state()
+                result_info = {
+                    "raw_ocr_text": results[-1] if results else "",
+                    "batch_count": len(results),
+                    "corrected_text": final_text or "",
+                    "typed_active_line": active_line,
+                    "typed_buffer_tail": buffer_tail,
+                }
+                with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                    json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+            except Exception as err:
+                print(f"debug_ocr_result.json save error: {err}", flush=True)
+
+        return final_text if final_text else None
+    except Exception as e:
+        print(f"extract_text_from_frame error: {e}", flush=True)
+        return None
+
+
+def paste_to_iphone(text: str | None = None, force_pc: bool = False, paste_pc_client_setting: bool | None = None) -> dict:
+    """Smart paste: Direct HID Typing Injection for Windows PC text or native Cmd+V for internal iOS copy."""
+    global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
+    settings = load_user_settings()
+    paste_pc_enabled = settings.get("pastePcClipboard", True) if paste_pc_client_setting is None else bool(paste_pc_client_setting)
+
+    # Rule 1: Explicit PC paste request (e.g. from "Paste PC Text Now" button)
+    if force_pc:
+        pc_text = text if text is not None else get_windows_clipboard_text()
+        if pc_text:
+            _ACTIVE_CLIPBOARD_SOURCE = "pc"
+            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+            typed = type_text_to_iphone(pc_text)
+            return {"ok": True, "method": "typed", "length": typed}
+        return {"ok": False, "error": "Clipboard is empty"}
+
+    # Rule 2: If toggle "Ctrl+V Pastes PC Clipboard" is OFF -> MUST execute native iOS Cmd+V and NEVER type PC text
+    if not paste_pc_enabled:
+        ok = trigger_ios_shortcut("paste-ios")
+        return {"ok": ok, "method": "ios-shortcut", "reason": "toggle-off"}
+
+    # Rule 3: Check sequence number to see if user copied something NEW in Windows
+    current_seq = get_windows_clipboard_seq()
+    if current_seq != _LAST_WIN_CLIPBOARD_SEQ:
+        _ACTIVE_CLIPBOARD_SOURCE = "pc"
+        _LAST_WIN_CLIPBOARD_SEQ = current_seq
+
+    # Rule 4: If active source is iPhone (user just copied/cut in iPhone and did not copy new PC text)
+    if _ACTIVE_CLIPBOARD_SOURCE == "iphone":
+        ok = trigger_ios_shortcut("paste-ios")
+        return {"ok": ok, "method": "ios-shortcut", "reason": "iphone-source"}
+
+    # Rule 5: Active source is PC -> type PC clipboard text
+    pc_text = text if text is not None else get_windows_clipboard_text()
+    if pc_text:
+        typed = type_text_to_iphone(pc_text)
+        return {"ok": True, "method": "typed", "length": typed}
+
+    # Fallback to iOS paste if PC clipboard is empty
+    ok = trigger_ios_shortcut("paste-ios")
+    return {"ok": ok, "method": "ios-shortcut", "reason": "pc-empty-fallback"}
+
+
+def load_user_settings(persist_instance: bool = False) -> dict:
+    global _IS_FRESH_EXTRACTED_FOLDER
+    settings_file = get_settings_file_path()
+    app_root_id = get_folder_instance_id()
+    merged = dict(DEFAULT_SETTINGS)
+    merged["crop"] = dict(DEFAULT_SETTINGS["crop"])
+    is_fresh = True
+
+    if settings_file.is_file():
+        try:
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                merged.update(data)
+                if isinstance(data.get("crop"), dict):
+                    merged["crop"] = {**DEFAULT_SETTINGS["crop"], **data["crop"]}
+                if data.get("folderInstanceId") == app_root_id:
+                    is_fresh = False
+        except Exception as e:
+            print(f"load_user_settings error: {e}", flush=True)
+
+    _IS_FRESH_EXTRACTED_FOLDER = is_fresh
+    merged["folderInstanceId"] = app_root_id
+    merged["isFreshFolder"] = is_fresh
+
+    if persist_instance and is_fresh:
+        to_save = {k: v for k, v in merged.items() if k != "isFreshFolder"}
+        try:
+            settings_file.write_text(json.dumps(to_save, indent=2), encoding="utf-8")
+            _IS_FRESH_EXTRACTED_FOLDER = False
+        except Exception as e:
+            print(f"persist folderInstanceId error: {e}", flush=True)
+
+    return merged
+
+
+def save_user_settings(new_settings: dict) -> dict:
+    current = load_user_settings(persist_instance=False)
+    current.pop("isFreshFolder", None)
+    current["folderInstanceId"] = get_folder_instance_id()
+    if not isinstance(new_settings, dict):
+        return current
+    for k, v in new_settings.items():
+        if k == "crop" and isinstance(v, dict):
+            current["crop"] = {
+                "top": max(0, min(120, int(v.get("top", 0) or 0))),
+                "bottom": max(0, min(120, int(v.get("bottom", 0) or 0))),
+                "left": max(0, min(120, int(v.get("left", 0) or 0))),
+                "right": max(0, min(120, int(v.get("right", 0) or 0))),
+            }
+        elif k == "trackpadSpeed":
+            try:
+                current["trackpadSpeed"] = max(30, min(200, int(v or 100)))
+            except Exception:
+                current["trackpadSpeed"] = 100
+        elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate"):
+            current[k] = bool(v)
+        elif k in current and k not in ("folderInstanceId", "isFreshFolder"):
+            current[k] = v
+    try:
+        get_settings_file_path().write_text(json.dumps(current, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"save_user_settings error: {e}", flush=True)
+    return current
+
+
+_WALLPAPER_SIG_CACHE: dict[str, Any] = {"ts": 0.0, "path": None, "sig": ""}
+
+
+def _get_current_wallpaper_file_and_signature() -> tuple[Path | None, str]:
+    now = time.monotonic()
+    if (now - _WALLPAPER_SIG_CACHE["ts"]) < 0.4 and _WALLPAPER_SIG_CACHE["sig"]:
+        return _WALLPAPER_SIG_CACHE["path"], _WALLPAPER_SIG_CACHE["sig"]
+    """Tahap 95: Ultra-fast (0.03ms) Windows 11 wallpaper inode & registry signature.
+    NO full-file MD5 reads of multi-megabyte wallpaper files!
+    Inspects:
+    1. Win32 API SystemParametersInfoW(SPI_GETDESKWALLPAPER=0x0073) or HKCU\\Control Panel\\Desktop\\WallPaper
+    2. %APPDATA%\\Microsoft\\Windows\\Themes\\TranscodedWallpaper
+    Computes instant signature from (path, st_mtime_ns, st_size) with short 0.4s coalesce cache.
+    """
+    candidates: list[Path] = []
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        tw = Path(appdata) / "Microsoft" / "Windows" / "Themes" / "TranscodedWallpaper"
+        try:
+            if tw.is_file() and tw.stat().st_size > 1000:
+                candidates.append(tw)
+        except Exception:
+            pass
+
+    if sys.platform == "win32":
+        spi_path = None
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(512)
+            # SPI_GETDESKWALLPAPER = 0x0073
+            if ctypes.windll.user32.SystemParametersInfoW(0x0073, 512, buf, 0):
+                p = Path(buf.value)
+                if p.is_file() and p.stat().st_size > 1000:
+                    spi_path = p
+        except Exception:
+            pass
+
+        if not spi_path:
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop") as key:
+                    val, _ = winreg.QueryValueEx(key, "WallPaper")
+                    if val:
+                        p = Path(val)
+                        if p.is_file() and p.stat().st_size > 1000:
+                            spi_path = p
+            except Exception:
+                pass
+
+        if spi_path and spi_path not in candidates:
+            candidates.append(spi_path)
+
+    if not candidates:
+        _WALLPAPER_SIG_CACHE["ts"] = now
+        _WALLPAPER_SIG_CACHE["path"] = None
+        _WALLPAPER_SIG_CACHE["sig"] = ""
+        return None, ""
+
+    try:
+        candidate_stats = []
+        for c in candidates:
+            try:
+                st = c.stat()
+                candidate_stats.append((c, st))
+            except Exception:
+                pass
+
+        if not candidate_stats:
+            _WALLPAPER_SIG_CACHE["ts"] = now
+            _WALLPAPER_SIG_CACHE["path"] = None
+            _WALLPAPER_SIG_CACHE["sig"] = ""
+            return None, ""
+
+        best, best_st = max(candidate_stats, key=lambda pair: pair[1].st_mtime_ns)
+        import hashlib
+        sig_str = f"{best.as_posix()}:{best_st.st_mtime_ns}:{best_st.st_size}"
+        sig = hashlib.md5(sig_str.encode("utf-8")).hexdigest()[:16]
+        _WALLPAPER_SIG_CACHE["ts"] = now
+        _WALLPAPER_SIG_CACHE["path"] = best
+        _WALLPAPER_SIG_CACHE["sig"] = sig
+        return best, sig
+    except Exception:
+        _WALLPAPER_SIG_CACHE["ts"] = now
+        _WALLPAPER_SIG_CACHE["path"] = None
+        _WALLPAPER_SIG_CACHE["sig"] = ""
+        return None, ""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        if path == MIRROR_PREFIX or path.startswith(f"{MIRROR_PREFIX}/"):
+            self._proxy_mirror("GET")
+            return
+        if path == "/api/system/wallpaper":
+            self._system_wallpaper()
+            return
+        if path == "/api/system/wallpaper-sig":
+            _, wallpaper_sig = _get_current_wallpaper_file_and_signature()
+            self._json({"ok": True, "wallpaperSig": wallpaper_sig})
+            return
+        if path == "/api/status":
+            payload = snapshot()
+            payload["screen"] = screen_status()
+            devices = payload.get("devices") or []
+            selected_udid = None
+            for d in devices:
+                if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
+                    ensure_wireless_lockdown_disabled_for_bluetooth(d["udid"])
+                    if not selected_udid:
+                        selected_udid = d["udid"]
+                    break
+            if not selected_udid:
+                paired_list = wifi_paired_udids()
+                if paired_list:
+                    selected_udid = paired_list[0]
+            # Zero network / ARP / TCP scan on routine /api/status polls!
+            payload["wifi"] = get_wifi_status(selected_udid, probe_network=False)
+            payload["audio"] = audio_manager.status()
+            payload["folderInstanceId"] = get_folder_instance_id()
+            payload["isFreshFolder"] = is_fresh_extracted_folder()
+            _, wallpaper_sig = _get_current_wallpaper_file_and_signature()
+            payload["wallpaperSig"] = wallpaper_sig
+            self._json(payload)
+            return
+        if path == "/api/tray-state":
+            from handset.screen import _STEALTH_DIM_ACTIVE
+            self._json({
+                "ok": True,
+                "stealth": bool(_STEALTH_DIM_ACTIVE),
+                "audio": bool(audio_manager.is_active()),
+            })
+            return
+        if path.startswith("/api/wifi/probe"):
+            query = parse_qs(urlparse(self.path).query)
+            target_udid = (query.get("udid") or [None])[0]
+            self._json({"ok": True, "wifi": get_wifi_status(target_udid, probe_network=True)})
+            return
+        if path in ("/api/settings", "/api/keyboard/settings"):
+            self._json(load_user_settings(persist_instance=True))
+            return
+        if path in ("/api/audio", "/api/audio/status"):
+            self._json(audio_manager.status())
+            return
+        if path == "/api/screen":
+            self._json(screen_status())
+            return
+        if path in ("/api/screen/stop", "/mirror/stop"):
+            self._json(stop_screen())
+            return
+        if path == "/api/device/stealth":
+            from handset.screen import _STEALTH_DIM_ACTIVE
+            self._json({"ok": True, "stealth": _STEALTH_DIM_ACTIVE})
+            return
+        if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
+            clear_recent_long_ocr_chunks()
+            self._json({"ok": True, "action": "clear_chunks"})
+            return
+        if path == "/debug-metrics":
+            log_path = get_app_root() / "debug_metrics.json"
+            if log_path.is_file():
+                try:
+                    self._json(json.loads(log_path.read_text(encoding="utf-8")))
+                    return
+                except Exception:
+                    pass
+            self._json({"history": []})
+            return
+        if path.startswith("/api/devices/"):
+            udid = unquote(path.removeprefix("/api/devices/")).strip("/")
+            if not udid or "/" in udid:
+                self._json({"error": "Missing device id."}, status=400)
+                return
+            self._device(udid)
+            return
+        self._file(path)
+
+    def do_POST(self) -> None:
+        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
+        path = urlparse(self.path).path
+        if path == "/debug-metrics":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except Exception:
+                payload = {}
+            self._record_debug_metrics(payload)
+            self._json({"ok": True})
+            return
+        if path == MIRROR_PREFIX or path.startswith(f"{MIRROR_PREFIX}/"):
+            self._proxy_mirror("POST")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if path == "/api/settings":
+            saved = save_user_settings(payload)
+            self._json({"ok": True, "settings": saved})
+            return
+        if path == "/api/server/shutdown":
+            import threading
+            try:
+                from handset import screen as _scr
+                if getattr(_scr, "_STEALTH_DIM_ACTIVE", False):
+                    _scr.set_iphone_physical_brightness("restore", steps=4)
+                _scr.stop_screen()
+            except Exception:
+                pass
+            try:
+                audio_manager.shutdown()
+            except Exception:
+                pass
+            self._json({"ok": True, "shuttingDown": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
+        if path == "/api/audio/toggle":
+            enabled = payload.get("enabled") if "enabled" in payload else None
+            st = audio_manager.toggle(enabled)
+            save_user_settings({"audioSinkEnabled": st.get("enabled", False)})
+            self._json(st)
+            return
+        if path == "/api/audio/volume":
+            vol = payload.get("volume", 100)
+            st = audio_manager.set_volume(vol)
+            save_user_settings({"audioVolume": st.get("volume", 100)})
+            self._json(st)
+            return
+        if path == "/api/audio/pair":
+            self._json(audio_manager.open_bluetooth_settings())
+            return
+        if path == "/api/qr/scan":
+            frame_data_url = payload.get("frameDataUrl")
+            tail_frame_data_url = payload.get("tailFrameDataUrl")
+            pass_mode = payload.get("passMode", "")
+            frames = payload.get("frames")
+            if isinstance(frames, list):
+                if not frame_data_url and len(frames) >= 1:
+                    frame_data_url = frames[0]
+                if not tail_frame_data_url and len(frames) >= 2:
+                    tail_frame_data_url = frames[1]
+            frame_history = payload.get("frameHistory") or []
+            qr_text = None
+            source_tag = "qr_bridge"
+
+            # Tahap 98..111: Auto-Spotlight Multi-line URL Assembler & Grabber mode
+            if tail_frame_data_url and frame_data_url:
+                try:
+                    from handset.qr_bridge import (
+                        decode_qr_from_image,
+                        extract_visible_url_from_frame,
+                        extract_url_or_fragment_from_frame,
+                        stitch_url_head_and_tail,
+                        pick_best_extracted_url,
+                    )
+                    head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
+                    if head_qr:
+                        qr_text = head_qr
+                        source_tag = "qr_bridge"
+                    else:
+                        qr_text = extract_visible_url_from_frame(
+                            frame_data_url,
+                            tail_frame_data_url=tail_frame_data_url,
+                            frames=frames if isinstance(frames, list) else None,
+                        )
+                        if not qr_text:
+                            head_part = extract_url_or_fragment_from_frame(frame_data_url)
+                            tail_part = extract_url_or_fragment_from_frame(tail_frame_data_url)
+                            qr_text = stitch_url_head_and_tail(head_part, tail_part)
+                        if qr_text:
+                            source_tag = "spotlight_grabber"
+                except Exception as stitch_err:
+                    print(f"[/api/qr/scan] Spotlight Head+Tail error: {stitch_err}", flush=True)
+
+            elif frame_data_url:
+                try:
+                    from handset.qr_bridge import (
+                        decode_qr_from_image,
+                        extract_visible_url_from_frame,
+                        extract_url_or_fragment_from_frame,
+                    )
+                    # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
+                    qr_text = decode_qr_from_image(frame_data_url)
+                    if not qr_text and frame_history:
+                        for h_url in reversed(frame_history):
+                            if h_url:
+                                qr_text = decode_qr_from_image(h_url)
+                                if qr_text:
+                                    break
+                    # Priority 2: Direct Unhighlighted URL Scanner
+                    if not qr_text:
+                        qr_text = extract_url_or_fragment_from_frame(frame_data_url)
+                        if qr_text:
+                            source_tag = "url_scanner"
+                except Exception as qr_err:
+                    print(f"[/api/qr/scan] Error: {qr_err}", flush=True)
+
+            # Tahap 111: Completeness verification for Pass 1 clean paste
+            def _is_url_complete(u: Optional[str]) -> bool:
+                if not u:
+                    return False
+                m_ig = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)', u, re.IGNORECASE)
+                if m_ig:
+                    code = m_ig.group(1)
+                    return 11 <= len(code) <= 14 and ("?igsh=" in u or "&igsh=" in u)
+                if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_-]{11,}', u, re.IGNORECASE):
+                    return True
+                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,12}', u, re.IGNORECASE):
+                    return True
+                if any(k in u.lower() for k in ("tiktok.com", "youtu.be", "youtube.com", "x.com")):
+                    return True
+                return False
+
+            is_complete = _is_url_complete(qr_text)
+
+            if pass_mode == "clean_paste_only" and not is_complete:
+                # Pass 1 did not produce a complete link yet; request Pass 2 cursor shift
+                self._json({
+                    "ok": False,
+                    "action": "scan-qr",
+                    "extractedText": qr_text,
+                    "complete": False,
+                    "error": "Pass 1 incomplete, proceeding to Pass 2 cursor shift",
+                    "source": source_tag,
+                    "qrDetected": bool(qr_text),
+                })
+                return
+
+            if qr_text:
+                if set_windows_clipboard_text(qr_text):
+                    _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                    _ACTIVE_CLIPBOARD_SOURCE = "pc"
+                    print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                self._json({
+                    "ok": True,
+                    "action": "scan-qr",
+                    "extractedText": qr_text,
+                    "text": qr_text,
+                    "complete": True,
+                    "source": source_tag,
+                    "qrDetected": True,
+                    "length": len(qr_text),
+                })
+                return
+            self._json({
+                "ok": False,
+                "action": "scan-qr",
+                "extractedText": None,
+                "complete": False,
+                "error": "QR Code atau link belum tampil di layar iPhone",
+                "source": "qr_bridge",
+                "qrDetected": False,
+            })
+            return
+        if path == "/api/keyboard/shortcut":
+            commit_and_reset_current_typed_line()
+            action = str(payload.get("action", ""))
+            if action == "clear-copy-cache":
+                clear_recent_long_ocr_chunks()
+                self._json({"ok": True, "action": "clear-copy-cache"})
+                return
+
+            frame_data_url = payload.get("frameDataUrl")
+            frame_history = payload.get("frameHistory") or []
+            wait_result = bool(payload.get("waitResult", False))
+            skip_ocr = bool(payload.get("skipOcr", False))
+
+            if action == "scan-qr":
+                qr_text = None
+                source_tag = "qr_bridge"
+                tail_frame_data_url = payload.get("tailFrameDataUrl")
+                if tail_frame_data_url and frame_data_url:
+                    try:
+                        from handset.qr_bridge import (
+                            decode_qr_from_image,
+                            extract_visible_url_from_frame,
+                            extract_url_or_fragment_from_frame,
+                            stitch_url_head_and_tail,
+                            pick_best_extracted_url,
+                        )
+                        head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
+                        if head_qr:
+                            qr_text = head_qr
+                            source_tag = "qr_bridge"
+                        else:
+                            head_part = extract_visible_url_from_frame(frame_data_url) or extract_url_or_fragment_from_frame(frame_data_url)
+                            tail_part = extract_visible_url_from_frame(tail_frame_data_url) or extract_url_or_fragment_from_frame(tail_frame_data_url)
+                            final_url = stitch_url_head_and_tail(head_part, tail_part)
+                            if final_url:
+                                qr_text = final_url
+                                source_tag = "spotlight_grabber"
+                    except Exception as stitch_err:
+                        print(f"[Visual QR Bridge] Shortcut Spotlight Head+Tail error: {stitch_err}", flush=True)
+                elif frame_data_url:
+                    try:
+                        from handset.qr_bridge import (
+                            decode_qr_from_image,
+                            extract_visible_url_from_frame,
+                            extract_url_or_fragment_from_frame,
+                        )
+                        # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
+                        qr_text = decode_qr_from_image(frame_data_url)
+                        if not qr_text and frame_history:
+                            for h_url in reversed(frame_history):
+                                if h_url:
+                                    qr_text = decode_qr_from_image(h_url)
+                                    if qr_text:
+                                        break
+                        # Priority 2: Tahap 97 Smart Fallback - Direct Unhighlighted URL Scanner
+                        if not qr_text:
+                            qr_text = extract_url_or_fragment_from_frame(frame_data_url)
+                            if qr_text:
+                                source_tag = "url_scanner"
+                    except Exception as qr_err:
+                        print(f"[Visual QR Bridge] Shortcut scan error: {qr_err}", flush=True)
+
+                if qr_text:
+                    if set_windows_clipboard_text(qr_text):
+                        _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                        _ACTIVE_CLIPBOARD_SOURCE = "pc"
+                        print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                    self._json({
+                        "ok": True,
+                        "action": "scan-qr",
+                        "extractedText": qr_text,
+                        "text": qr_text,
+                        "source": source_tag,
+                        "qrDetected": True,
+                        "length": len(qr_text),
+                    })
+                    return
+                self._json({
+                    "ok": False,
+                    "action": "scan-qr",
+                    "extractedText": None,
+                    "error": "QR Code atau link belum tampil di layar iPhone",
+                    "source": "qr_bridge",
+                    "qrDetected": False,
+                })
+                return
+
+            # Trigger native iOS hotkey
+            ok = trigger_ios_shortcut(action)
+
+            if action in ("copy", "cut"):
+                _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+
+                if skip_ocr or not frame_data_url:
+                    self._json({"ok": ok, "action": action, "internal": True})
+                    return
+
+                # Tahap 96/97: Fast Visual QR Bridge check (< 20ms) before launching heavy OCR pipeline
+                try:
+                    from handset.qr_bridge import decode_qr_from_image, extract_visible_url_from_frame
+                    qr_text = decode_qr_from_image(frame_data_url)
+                    source_tag = "qr_bridge"
+                    if not qr_text and frame_history:
+                        for h_url in reversed(frame_history):
+                            if h_url:
+                                qr_text = decode_qr_from_image(h_url)
+                                if qr_text:
+                                    break
+                    # Fallback to direct visible URL scanner
+                    if not qr_text:
+                        qr_text = extract_visible_url_from_frame(frame_data_url)
+                        if qr_text:
+                            source_tag = "url_scanner"
+                    if qr_text:
+                        if set_windows_clipboard_text(qr_text):
+                            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                            _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                            print(f"[{source_tag}] Pre-OCR detected link ({len(qr_text)} chars): {qr_text}", flush=True)
+                        self._json({
+                            "ok": ok,
+                            "action": action,
+                            "text": qr_text,
+                            "extractedText": qr_text,
+                            "source": source_tag,
+                            "qrDetected": True,
+                            "autoClearedCache": False,
+                            "length": len(qr_text),
+                        })
+                        return
+                except Exception as qr_err:
+                    print(f"[Visual QR Bridge] Pre-OCR check error: {qr_err}", flush=True)
+
+                extracted_text = None
+                auto_cleared_cache = False
+
+                def _do_extract(frame_url: str, hist_urls: list[str]):
+                    try:
+                        recent_hist = [h for h in hist_urls if h and h != frame_url][:3] if hist_urls else []
+                        frames_to_batch = recent_hist + [frame_url]
+
+                        # Single-Pass Batch OCR: executes PowerShell with fast single-frame first (< 1.5s)!
+                        batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
+
+                        # Centralized OCR post-processing pipeline (Tahap 39/40)
+                        final_text, auto_cleared = process_ocr_batch_results(batch_texts, return_meta=True)
+
+                        # Save debug info
+                        try:
+                            import json
+                            project_root = get_app_root()
+                            active_line, buffer_tail = get_debug_typed_state()
+                            result_info = {
+                                "raw_ocr_text": batch_texts[-1] if batch_texts else "",
+                                "batch_count": len(batch_texts),
+                                "corrected_text": final_text or "",
+                                "auto_cleared_cache": auto_cleared,
+                                "typed_active_line": active_line,
+                                "typed_buffer_tail": buffer_tail,
+                            }
+                            with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                                json.dump(result_info, f_res, ensure_ascii=False, indent=2)
+                        except Exception as err:
+                            print(f"debug_ocr_result.json save error: {err}", flush=True)
+
+                        if not final_text and frame_url:
+                            try:
+                                from handset.qr_bridge import extract_visible_url_from_frame
+                                fallback_url = extract_visible_url_from_frame(frame_url)
+                                if fallback_url:
+                                    final_text = fallback_url
+                            except Exception:
+                                pass
+
+                        if final_text:
+                            if set_windows_clipboard_text(final_text):
+                                _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                                _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                                print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
+                        return final_text, auto_cleared
+                    except Exception as err:
+                        import traceback
+                        err_trace = traceback.format_exc()
+                        print(f"Async extract error: {err}\n{err_trace}", flush=True)
+                        try:
+                            project_root = get_app_root()
+                            with open(project_root / "debug_ocr_error.log", "w", encoding="utf-8") as f_err:
+                                f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
+                        except Exception:
+                            pass
+                        return None, False
+
+                if frame_data_url:
+                    if wait_result:
+                        res = _do_extract(frame_data_url, frame_history)
+                        if isinstance(res, tuple):
+                            extracted_text, auto_cleared_cache = res
+                        else:
+                            extracted_text = res
+                    else:
+                        import threading
+                        threading.Thread(target=_do_extract, args=(frame_data_url, frame_history), daemon=True).start()
+
+                self._json({
+                    "ok": ok,
+                    "action": action,
+                    "text": extracted_text,
+                    "autoClearedCache": auto_cleared_cache,
+                    "length": len(extracted_text) if extracted_text else 0,
+                })
+                return
+
+            self._json({"ok": ok, "action": action})
+            return
+        if path == "/api/keyboard/paste":
+            commit_and_reset_current_typed_line()
+            self._json(
+                paste_to_iphone(
+                    payload.get("text"),
+                    force_pc=bool(payload.get("force", False)),
+                    paste_pc_client_setting=payload.get("pastePcClipboard"),
+                )
+            )
+            return
+        if path == "/api/keyboard/toggle-onscreen":
+            ok = toggle_onscreen_keyboard()
+            self._json({"ok": ok})
+            return
+        if path == "/api/keyboard/typed":
+            text_val = payload.get("text")
+            key_val = payload.get("key")
+            if text_val:
+                record_typed_text(str(text_val))
+            elif key_val:
+                record_typed_char(str(key_val))
+            self._json({"ok": True})
+            return
+        if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
+            clear_recent_long_ocr_chunks()
+            self._json({"ok": True, "action": "clear_chunks"})
+            return
+
+        if path == "/api/device/wake-unlock":
+            passcode = str(payload.get("passcode") or "")
+            self._json(wake_and_unlock_iphone(passcode))
+            return
+        if path == "/api/device/lock":
+            self._json(lock_iphone_screen())
+            return
+        if path == "/api/device/stealth":
+            enabled = bool(payload.get("enabled", True))
+            restore_steps = int(payload.get("restoreSteps") or 4)
+            level = "min" if enabled else "restore"
+            steps = 16 if enabled else restore_steps
+            self._json(set_iphone_physical_brightness(level, steps=steps))
+            return
+        if path == "/api/device/wipe-privacy-data":
+            self._json(wipe_all_privacy_data())
+            return
+        if path in ("/api/device/spotlight-paste", "/api/device/spotlight-paste-tail"):
+            from handset.screen import spotlight_paste_clipboard_on_iphone
+            res = spotlight_paste_clipboard_on_iphone()
+            self._json(res)
+            return
+        if path == "/api/device/spotlight-move-head":
+            from handset.screen import spotlight_move_cursor_to_start_on_iphone
+            res = spotlight_move_cursor_to_start_on_iphone()
+            self._json(res)
+            return
+        if path == "/api/device/spotlight-close":
+            from handset.screen import spotlight_cleanup_and_close_on_iphone
+            res = spotlight_cleanup_and_close_on_iphone()
+            self._json(res)
+            return
+
+        udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
+        if path == "/api/screen/restart":
+            self._json(restart_screen(udid))
+            return
+        if path in ("/api/screen/stop", "/mirror/stop"):
+            self._json(stop_screen())
+            return
+        if path == "/api/wifi/pair":
+            if not udid:
+                self._json({"ok": False, "error": "Plug in the iPhone first."}, status=400)
+                return
+            self._json(pair_for_wifi(udid))
+            return
+        if path == "/api/wifi/scan":
+            from handset.wifi import discover_iphone_ip_on_lan
+            found_ip = discover_iphone_ip_on_lan(udid)
+            self._json({"ok": True, "ip": found_ip, "wifi": get_wifi_status(udid, probe_network=True)})
+            return
+        if path != "/api/screen":
+            self._json({"error": "Unknown action."}, status=404)
+            return
+        transport = payload.get("transport")
+        if transport not in {"usb", "wifi", "cable"}:
+            transport = "cable"
+        self._json(start_screen(udid, transport))
+
+    def log_message(self, fmt: str, *args) -> None:
+        return
+
+    def _record_debug_metrics(self, payload: dict) -> None:
+        payload["received_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        source = payload.get("source", "unknown")
+        print(f"\n==================== [DEBUG-METRICS: {source}] ====================", flush=True)
+        print(json.dumps(payload, indent=2), flush=True)
+        print("==================================================================\n", flush=True)
+        
+        log_path = get_app_root() / "debug_metrics.json"
+        data = {}
+        if log_path.is_file():
+            try:
+                data = json.loads(log_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        
+        data[f"latest_{source}"] = payload
+        if source == "mirror.js" and "frameCount" in payload:
+            data["latest_mirror_frame"] = payload
+        elif source == "mirror.js" and "event" in payload:
+            data[f"latest_mirror_{payload['event']}"] = payload
+        data["last_updated"] = payload["received_at"]
+        history = data.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(payload)
+        if len(history) > 60:
+            history = history[-60:]
+        data["history"] = history
+        
+        try:
+            log_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"Failed to write debug_metrics.json: {e}", flush=True)
+
+    def _device(self, udid: str) -> None:
+        try:
+            self._json(read_handset(udid))
+        except MuxError as error:
+            from handset.wifi import get_device_wifi_state, wifi_paired_udids
+            cached = get_device_wifi_state(udid)
+            if cached.get("wifi_enabled_on_device") or udid in wifi_paired_udids():
+                name = cached.get("device_name") or "iPhone"
+                self._json({
+                    "udid": udid,
+                    "paired": True,
+                    "info": {
+                        "DeviceName": name,
+                        "WiFiAddress": cached.get("mac_address"),
+                        "LastIP": cached.get("last_ip"),
+                    },
+                    "wifi": True,
+                })
+                return
+            self._json({"udid": udid, "paired": False, "error": str(error)}, status=409)
+
+    def _json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except _CLIENT_GONE:
+            pass
+
+    def _mirror_upstream_path(self) -> str:
+        path = unquote(urlparse(self.path).path)
+        upstream = path.removeprefix(MIRROR_PREFIX) or "/"
+        if not upstream.startswith("/"):
+            upstream = f"/{upstream}"
+        query = urlparse(self.path).query
+        return upstream + (f"?{query}" if query else "")
+
+    def _write_client(self, data: bytes) -> bool:
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+        except _CLIENT_GONE:
+            return False
+        return True
+
+    def _proxy_mirror_stream(self, method: str, target: str) -> None:
+        """Relay the live body de-chunked; this server speaks HTTP/1.0, so the
+        response is delimited by closing the connection."""
+        try:
+            if hasattr(self, "connection") and self.connection:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        conn = http.client.HTTPConnection(STREAM_HOST, STREAM_PORT, timeout=600)
+        started = False
+        self.close_connection = True
+        try:
+            conn.request(method, target, headers={"Connection": "close"})
+            try:
+                if conn.sock:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except Exception:
+                pass
+            response = conn.getresponse()
+            self.send_response(response.status)
+            for key, value in response.getheaders():
+                if key.lower() in _HOP_BY_HOP or key.lower() in {"transfer-encoding", "content-length"}:
+                    continue
+                self.send_header(key, value)
+            self.end_headers()
+            started = True
+            while True:
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                if not self._write_client(chunk):
+                    return
+        except (OSError, http.client.HTTPException) as error:
+            if not started:
+                self._json({"error": f"Screen stream is not running ({error})."}, status=503)
+        finally:
+            conn.close()
+
+    def _proxy_mirror(self, method: str) -> None:
+        target = self._mirror_upstream_path()
+        upstream_path = target.split("?", 1)[0]
+
+        # Reset active typing line on user screen interactions (touches/taps/drags)
+        if upstream_path == "/touch" and method in ("POST", "PUT"):
+            commit_and_reset_current_typed_line()
+
+        # Alias without .bin extension to prevent IDM / download managers from intercepting stream
+        if upstream_path in ("/live", "/live/"):
+            query = urlparse(self.path).query
+            upstream_target = "/stream.bin" + (f"?{query}" if query else "")
+            self._proxy_mirror_stream(method, upstream_target)
+            return
+
+        is_live_stream = method == "GET" and upstream_path.endswith(".bin")
+        if is_live_stream:
+            self._proxy_mirror_stream(method, target)
+            return
+
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length and method in {"POST", "PUT"} else None
+
+        headers: dict[str, str] = {}
+        for name in ("Content-Type", "Accept"):
+            value = self.headers.get(name)
+            if value:
+                headers[name] = value
+
+        conn = http.client.HTTPConnection(STREAM_HOST, STREAM_PORT, timeout=120)
+        started = False
+        try:
+            conn.request(method, target, body=body, headers=headers)
+            response = conn.getresponse()
+            payload = response.read()
+            self.send_response(response.status)
+            started = True
+            for key, value in response.getheaders():
+                if key.lower() in _HOP_BY_HOP:
+                    continue
+                self.send_header(key, value)
+            self.end_headers()
+            if payload:
+                self._write_client(payload)
+        except OSError as error:
+            if not started:
+                self._json({"error": f"Screen stream is not running ({error})."}, status=503)
+        finally:
+            conn.close()
+
+    def _system_wallpaper(self) -> None:
+        best_path, _ = _get_current_wallpaper_file_and_signature()
+        wallpaper_bytes = None
+        content_type = "image/jpeg"
+        if best_path and best_path.is_file():
+            try:
+                wallpaper_bytes = best_path.read_bytes()
+            except Exception as e:
+                print(f"Error reading wallpaper: {e}", flush=True)
+
+        if not wallpaper_bytes:
+            # Fallback 1x1 neutral dark grey JPEG
+            wallpaper_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.' \",#\x1c\x1c(7),01444\x1f'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9"
+
+        if wallpaper_bytes.startswith(b"\x89PNG"):
+            content_type = "image/png"
+        else:
+            content_type = "image/jpeg"
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(wallpaper_bytes)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        try:
+            self.wfile.write(wallpaper_bytes)
+        except _CLIENT_GONE:
+            pass
+
+    def _file(self, path: str) -> None:
+        relative = "index.html" if path in {"", "/"} else path.lstrip("/")
+        root = ROOT.resolve()
+        target = (root / relative).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            self._json({"error": "Not found."}, status=404)
+            return
+        if not target.is_file():
+            self._json({"error": "Not found."}, status=404)
+            return
+        kind = {
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "text/javascript; charset=utf-8",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".ico": "image/x-icon",
+        }.get(target.suffix, "application/octet-stream")
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except _CLIENT_GONE:
+            pass
+
+
+class SingleServer(ThreadingHTTPServer):
+    # On Windows, address reuse lets a second copy bind the same port and steal requests.
+    allow_reuse_address = False
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        return sock, addr
+
+
+def create_http_server(host: str = HOST, port: int = PORT) -> SingleServer:
+    """Create and configure the local ThreadingHTTPServer without blocking."""
+    server = SingleServer((host, port), Handler)
+    settings = load_user_settings()
+    if settings.get("audioSinkEnabled"):
+        import threading
+
+        def _restore_audio_async() -> None:
+            try:
+                audio_manager.enable()
+            except Exception:
+                pass
+
+        threading.Thread(target=_restore_audio_async, name="handset-audio-restore", daemon=True).start()
+    return server
+
+
+def serve(host: str = HOST, port: int = PORT) -> None:
+    """Run the local backend HTTP server forever (blocking)."""
+    server = create_http_server(host=host, port=port)
+    try:
+        if sys.stdout is not None:
+            print(f"Handset listening on http://{host}:{port}", flush=True)
+    except Exception:
+        pass
+    try:
+        server.serve_forever()
+    finally:
+        audio_manager.shutdown()
+
+
+def main() -> None:
+    host = os.environ.get("PANE_HOST", HOST)
+    port = int(os.environ.get("PANE_PORT", PORT))
+    argv = sys.argv[1:]
+    for idx, arg in enumerate(argv):
+        if arg == "--host" and idx + 1 < len(argv):
+            host = argv[idx + 1]
+        elif arg.startswith("--host="):
+            host = arg.split("=", 1)[1]
+        elif arg == "--port" and idx + 1 < len(argv):
+            try:
+                port = int(argv[idx + 1])
+            except ValueError:
+                pass
+        elif arg.startswith("--port="):
+            try:
+                port = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+    serve(host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()
+

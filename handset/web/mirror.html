@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iPhone Link — Screen Mirror</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="/mirror.css?v=20261101_tahap72_proportional_fullscreen_naked_island">
+</head>
+
+<body>
+  <div id="crop-wrapper">
+    <canvas id="c" tabindex="0" aria-label="iPhone touch surface"></canvas>
+  </div>
+  <p class="mirror-status" id="mirror-status" role="status">Connecting…</p>
+  <script>
+    window.__mirrorErrors = [];
+    window.onerror = function (msg, url, line, col, err) {
+      window.__mirrorErrors.push({ msg: String(msg), url: String(url), line: line, col: col, error: String(err) });
+    };
+  </script>
+  <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
+  <script src="/mirror.js?v=20261103_tahap90_youtube_ambient_pillarbox_and_asymmetric_lock"></script>
+</body>
+
+</html>

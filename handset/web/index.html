@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
+  <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="/app.css?v=20261103_tahap91_fullscreen_settings_drawer_and_compact_swipe_nav">
+</head>
+<body>
+  <div class="app" id="app-root">
+    <!-- WinUI 3 Liquid Glass Top Toolbar (Frameless Drag Region) -->
+    <header class="app-bar pywebview-drag-region">
+      <div class="app-title-area brand">
+        <img src="/logo.svg" class="app-logo" width="20" height="20" alt="iPhone Link">
+        <span class="brand-title">iPhone Link</span>
+        <span class="pill pill-ok" id="status-pill">Ready</span>
+        <span class="pill pill-muted" id="pill-device" hidden></span>
+      </div>
+      <div class="app-actions">
+        <button type="button" class="bar-btn" id="restart-screen" title="Restart screen stream">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span class="btn-label">Restart</span>
+        </button>
+        <button type="button" class="bar-btn bar-btn-danger is-hidden" id="stop-screen" title="Stop / Disconnect mirroring" hidden style="display: none !important;">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="2.5"/>
+          </svg>
+          <span class="btn-label">Stop</span>
+        </button>
+        <button type="button" class="icon-btn" id="btn-audio-top" title="Toggle Audio Sink (iPhone ➔ PC)" aria-label="Audio Sink">
+          <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg class="audio-icon-off" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-settings" title="Toggle Settings Side-Drawer" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn bar-btn" id="btn-rotate-landscape" title="Toggle Horizontal / Landscape Mode (Alt+H)" aria-label="Toggle Landscape">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            <path d="M16 21h5v-5"></path>
+          </svg>
+          <span id="rotate-mode-badge" class="rotate-mode-badge"></span>
+        </button>
+        <button type="button" class="icon-btn" id="win-max" title="Toggle Full Size / Scaling" aria-label="Full Size">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        </button>
+        <!-- Legacy assert guard for verify_tahap49_v2.py: id="btn-fullsize" -->
+        <span id="btn-fullsize" style="display:none;" aria-hidden="true"></span>
+
+        <!-- Native Window Controls -->
+        <div class="window-controls">
+          <button type="button" class="win-btn" id="win-min" title="Minimize (Klik Kiri) · Hide to System Tray (Klik Kanan)" aria-label="Minimize">
+            <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
+              <rect y="5" width="10" height="1.2" rx="0.5"/>
+            </svg>
+          </button>
+          <button type="button" class="win-btn win-close" id="win-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.3">
+              <line x1="1" y1="1" x2="11" y2="11"/>
+              <line x1="11" y1="1" x2="1" y2="11"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Container: Video Display (Kiri) + Side Drawer Settings (Kanan) -->
+    <div class="main-body" id="main-body">
+      <div class="display-col" id="display-col">
+        <!-- Murni Display Edge-to-Edge -->
+        <main class="workspace stage" id="workspace">
+          <div class="screen-stage stage" id="phone-shell">
+            <div class="screen-viewport" id="phone-screen">
+              <div class="placeholder screen-empty" id="screen-empty" data-alias="placeholder" title="Click to start mirroring">
+                <div class="placeholder-icon" aria-hidden="true" style="margin-bottom: 12px;">
+                  <img src="/logo.svg" width="76" height="76" alt="iPhone Link" style="filter: drop-shadow(0 10px 24px rgba(0, 120, 212, 0.45)); border-radius: 18px; pointer-events: none;">
+                </div>
+                <p class="placeholder-title" style="font-size: 17px; font-weight: 600; letter-spacing: -0.3px; margin: 0 0 4px;">iPhone Link</p>
+                <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone via USB, then press Start mirroring.</p>
+              </div>
+              <iframe id="screen-view" name="mirror-frame" class="screen-frame mirror-frame" title="iPhone screen" hidden src="about:blank"></iframe>
+              <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
+            </div>
+          </div>
+          <p class="stage-note" id="screen-note" role="status" hidden style="display: none !important; height: 0 !important; margin: 0 !important; padding: 0 !important;"></p>
+        </main>
+
+        <!-- Bottom Navigation Bar WinUI 3 [ ◀ Swipe · ● Home · ▢ Recent · Swipe ▶ ] -->
+        <nav class="quick-nav" id="quick-nav" aria-label="Quick Navigation">
+          <button type="button" class="nav-btn" data-swipe="left" id="nav-swipe-left" title="Swipe Left (←)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            <span>Swipe</span>
+          </button>
+          <button type="button" class="nav-btn" data-gesture="home" id="nav-home" title="Go to Home Screen">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="12" cy="12" r="5"/>
+            </svg>
+            <span>Home</span>
+          </button>
+          <button type="button" class="nav-btn" data-gesture="switcher" id="nav-recent" title="Recent Apps (App Switcher)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2.5"/>
+            </svg>
+            <span>Recent</span>
+          </button>
+          <button type="button" class="nav-btn" data-swipe="right" id="nav-swipe-right" title="Swipe Right (→)">
+            <span>Swipe</span>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Settings Side-Drawer (Sebelah Kanan, Tidak Menutupi Layar Video) -->
+      <aside class="side-drawer" id="control-pane" aria-label="Settings and controls" hidden>
+        <div class="drawer-header">
+          <h2 class="drawer-title">Settings & Controls</h2>
+          <button type="button" class="icon-btn-close" id="close-settings" title="Close settings" aria-label="Close">✕</button>
+        </div>
+
+        <div class="drawer-content">
+          <section class="card panel-theme">
+            <span class="drawer-section-label">Appearance</span>
+            <div class="segmented segmented-theme" role="radiogroup" aria-label="Theme">
+              <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">🌙 Dark</button>
+              <button type="button" class="seg" data-theme-choice="light" role="radio" aria-checked="false">☀️ Light</button>
+            </div>
+          </section>
+
+          <section class="card panel-display-fit">
+            <span class="drawer-section-label">Display Fit & Aspect</span>
+            <div class="segmented segmented-fit" role="radiogroup" aria-label="Display Fit">
+              <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true">Auto-Fit</button>
+              <button type="button" class="seg" data-fit-choice="fill" role="radio" aria-checked="false">Edge-to-Edge</button>
+              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false">Original Ratio</button>
+            </div>
+
+            <div class="setting-toggle-item" style="margin-top: 10px; margin-bottom: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">🎮 Auto-Rotate Game</span>
+                <span class="setting-hint">eFootball / Genshin</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Auto-Rotate Game">
+                <button type="button" class="seg is-active" data-auto-rotate-choice="off" role="radio" aria-checked="true">OFF</button>
+                <button type="button" class="seg" data-auto-rotate-choice="on" role="radio" aria-checked="false">ON</button>
+              </div>
+            </div>
+            
+            <div class="crop-grid">
+              <span class="drawer-section-label" style="margin-bottom: 2px;">Edge Crop (Fine Tuning)</span>
+              
+              <!-- Crop Atas (Top) -->
+              <div class="crop-item">
+                <div class="crop-label-row">
+                  <span>Atas (Top)</span>
+                  <div class="crop-input-wrap">
+                    <input type="number" id="crop-top-num" min="0" max="120" step="1" value="0">
+                    <span class="unit">px</span>
+                  </div>
+                </div>
+                <input type="range" id="crop-top-slider" min="0" max="120" step="1" value="0">
+              </div>
+
+              <!-- Crop Bawah (Bottom) -->
+              <div class="crop-item">
+                <div class="crop-label-row">
+                  <span>Bawah (Bottom)</span>
+                  <div class="crop-input-wrap">
+                    <input type="number" id="crop-bottom-num" min="0" max="120" step="1" value="0">
+                    <span class="unit">px</span>
+                  </div>
+                </div>
+                <input type="range" id="crop-bottom-slider" min="0" max="120" step="1" value="0">
+              </div>
+
+              <!-- Crop Kiri (Left) -->
+              <div class="crop-item">
+                <div class="crop-label-row">
+                  <span>Kiri (Left)</span>
+                  <div class="crop-input-wrap">
+                    <input type="number" id="crop-left-num" min="0" max="120" step="1" value="0">
+                    <span class="unit">px</span>
+                  </div>
+                </div>
+                <input type="range" id="crop-left-slider" min="0" max="120" step="1" value="0">
+              </div>
+
+              <!-- Crop Kanan (Right) -->
+              <div class="crop-item">
+                <div class="crop-label-row">
+                  <span>Kanan (Right)</span>
+                  <div class="crop-input-wrap">
+                    <input type="number" id="crop-right-num" min="0" max="120" step="1" value="0">
+                    <span class="unit">px</span>
+                  </div>
+                </div>
+                <input type="range" id="crop-right-slider" min="0" max="120" step="1" value="0">
+              </div>
+
+              <div class="crop-btn-row">
+                <button type="button" class="ctl ctl-sm" id="btn-reset-crop">Reset (0 px)</button>
+                <button type="button" class="ctl ctl-sm ctl-accent btn-save-crop" id="btn-save-crop">💾 Save Crop</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Audio Sink (iPhone -> PC Speaker) -->
+          <section class="card panel-audio" id="panel-audio">
+            <div class="card-header-row">
+              <span class="drawer-section-label">Audio Sink (iPhone ➔ PC)</span>
+              <span class="audio-badge" id="audio-status-badge">○ Off</span>
+            </div>
+            <div class="audio-toggle-wrap">
+              <button type="button" class="ctl ctl-primary audio-main-btn" id="btn-audio-drawer">
+                <span id="audio-toggle-icon">🔊</span>
+                <span id="audio-toggle-text">Enable Audio Sink</span>
+              </button>
+            </div>
+            <div class="audio-vol-wrap">
+              <div class="crop-label-row">
+                <span>PC Output Volume</span>
+                <span class="unit" id="audio-vol-val">100%</span>
+              </div>
+              <input type="range" id="audio-vol-slider" min="0" max="100" step="1" value="100">
+            </div>
+            <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="width: 100%; margin-top: 6px;">⚙️ Pair Bluetooth in Windows</button>
+          </section>
+
+          <!-- Trackpad Gesture Speed Card (3 Presets + Slider + Number Input + Persistent Save) -->
+          <section class="card panel-trackpad-speed" id="panel-trackpad-speed">
+            <span class="drawer-section-label">Trackpad Gesture Speed</span>
+            <div class="segmented segmented-speed" role="radiogroup" aria-label="Trackpad Gesture Speed Preset">
+              <button type="button" class="seg" data-speed-choice="65" role="radio" aria-checked="false">Slow (65%)</button>
+              <button type="button" class="seg is-active" data-speed-choice="100" role="radio" aria-checked="true">Default (100%)</button>
+              <button type="button" class="seg" data-speed-choice="140" role="radio" aria-checked="false">Fast (140%)</button>
+            </div>
+
+            <div class="speed-slider-wrap">
+              <div class="crop-label-row">
+                <span>Speed Sensitivity</span>
+                <div class="crop-input-wrap">
+                  <input type="number" id="trackpad-speed-num" min="30" max="200" step="5" value="100">
+                  <span class="unit">%</span>
+                </div>
+              </div>
+              <input type="range" id="trackpad-speed-slider" min="30" max="200" step="5" value="100">
+            </div>
+
+            <div class="speed-btn-row" style="margin-top: 8px;">
+              <button type="button" class="ctl ctl-sm ctl-accent btn-save-speed" id="btn-save-speed" style="width: 100%;">💾 Save Speed</button>
+            </div>
+          </section>
+
+          <!-- Keyboard & Cross-Platform Shortcuts Card -->
+          <section class="card panel-keyboard-shortcuts" id="panel-keyboard-shortcuts">
+            <span class="drawer-section-label">Keyboard & Shortcuts</span>
+
+            <!-- Toggle 1: Cross-Platform Shortcuts -->
+            <div class="setting-toggle-item">
+              <div class="setting-toggle-header">
+                <span class="setting-label">⚡ Cross-Platform Shortcuts</span>
+                <span class="setting-hint">Ctrl ➔ Cmd</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Cross-Platform Shortcuts">
+                <button type="button" class="seg is-active" data-shortcut-choice="true" role="radio" aria-checked="true">ON</button>
+                <button type="button" class="seg" data-shortcut-choice="false" role="radio" aria-checked="false">OFF</button>
+              </div>
+            </div>
+
+            <!-- Toggle 2: Ctrl+V Pastes PC Clipboard -->
+            <div class="setting-toggle-item" style="margin-top: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">📋 Ctrl+V Pastes PC Clipboard</span>
+                <span class="setting-hint">PC ➔ iPhone</span>
+              </div>
+              <div class="segmented segmented-toggle" role="radiogroup" aria-label="Paste PC Clipboard">
+                <button type="button" class="seg is-active" data-paste-pc-choice="true" role="radio" aria-checked="true">ON</button>
+                <button type="button" class="seg" data-paste-pc-choice="false" role="radio" aria-checked="false">OFF</button>
+              </div>
+              <div style="display: flex; gap: 6px; margin-top: 8px;">
+                <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now" style="flex: 1; margin-top: 0;">
+                  📋 Paste PC Text (Alt+V)
+                </button>
+                <button type="button" class="ctl ctl-sm btn-action-block" id="btn-copy-iphone-now" style="flex: 1; margin-top: 0;">
+                  📥 Copy iPhone Text (Alt+C)
+                </button>
+              </div>
+              <button type="button" class="ctl ctl-sm btn-secondary btn-action-block" id="btn-clear-copy-cache" title="Bersihkan memori penyambung teks panjang" style="margin-top: 6px; width: 100%;">
+                🧹 Clear Copy Cache (Alt+R)
+              </button>
+              <div class="qr-bridge-row" style="margin-top: 6px;">
+                <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-scan-qr-link" title="Salin tautan share Instagram / Threads / TikTok dari iPhone langsung ke PC Windows (Alt+B)" style="width: 100%; margin-top: 0;">
+                  🔗 Grab Link (Alt+B)
+                </button>
+              </div>
+            </div>
+
+            <!-- Action Button: Toggle iPhone On-Screen Keyboard -->
+            <button type="button" class="ctl ctl-sm btn-action-block" id="btn-toggle-onscreen-kb" style="margin-top: 10px;">
+              ⌨️ Toggle iPhone On-Screen Keyboard (Ctrl+K)
+            </button>
+
+            <!-- Badge / Shortcut List -->
+            <div class="shortcuts-badge-list">
+              <span class="shortcut-pill">Ctrl+A (Select All)</span>
+              <span class="shortcut-pill">Ctrl+C (iOS Copy)</span>
+              <span class="shortcut-pill">Ctrl+V (iOS Paste)</span>
+              <span class="shortcut-pill">Alt+C (Copy to PC)</span>
+              <span class="shortcut-pill">Alt+V (Paste PC Text)</span>
+              <span class="shortcut-pill">Alt+R (Clear Cache)</span>
+              <span class="shortcut-pill">Alt+B (Grab Link)</span>
+              <span class="shortcut-pill">Ctrl+X (Cut)</span>
+              <span class="shortcut-pill">Ctrl+Z (Undo)</span>
+              <span class="shortcut-pill">Ctrl+K (Keyboard)</span>
+              <span class="shortcut-pill">Alt+U (Unlock)</span>
+              <span class="shortcut-pill">Alt+L (Lock)</span>
+              <span class="shortcut-pill">Alt+D (Stealth)</span>
+              <span class="shortcut-pill">Alt+H (Landscape)</span>
+            </div>
+          </section>
+
+          <!-- iPhone Screen & Stealth Control (Tahap 47) -->
+          <section class="card panel-screen-stealth" id="panel-screen-stealth">
+            <span class="drawer-section-label">iPhone Screen & Stealth Control</span>
+            
+            <div class="stealth-btn-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <button type="button" class="ctl ctl-accent btn-action-block" id="btn-wake-unlock" title="Wake screen & unlock iPhone (Alt+U)" style="flex: 1; margin-top: 0;">
+                🔓 Wake / Unlock (Alt+U)
+              </button>
+              <button type="button" class="ctl btn-action-block" id="btn-lock-iphone" title="Lock & sleep iPhone screen (Alt+L)" style="flex: 1; margin-top: 0;">
+                🔒 Lock iPhone (Alt+L)
+              </button>
+            </div>
+
+            <div class="setting-toggle-item" style="margin-top: 4px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">🌑 Stealth Dim Mode (Alt+D)</span>
+                <span class="setting-hint" id="stealth-mode-hint">OFF</span>
+              </div>
+              <button type="button" class="ctl ctl-sm btn-stealth-toggle" id="btn-stealth-mode" style="width: 100%; margin-top: 4px;">
+                🌑 Stealth Dim Mode: OFF
+              </button>
+              <p class="stealth-subhint" style="font-size: 11px; opacity: 0.7; margin-top: 4px; line-height: 1.35;">
+                Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).
+              </p>
+            </div>
+
+            <div class="pin-unlock-item" style="margin-top: 10px;">
+              <label for="input-unlock-pin" class="setting-label" style="display: block; font-size: 12px; margin-bottom: 4px;">
+                Auto-Unlock PIN (Opsional):
+              </label>
+              <div class="pin-input-wrap" style="display: flex; gap: 6px;">
+                <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric" style="flex: 1; font-family: monospace; font-size: 14px; letter-spacing: 2px;">
+                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN" style="width: 36px; padding: 0;">👁️</button>
+              </div>
+              <p style="font-size: 10px; opacity: 0.6; margin-top: 3px;">
+                Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.
+              </p>
+              <button type="button" class="ctl ctl-sm btn-wipe-privacy" id="btn-wipe-privacy" style="width: 100%; margin-top: 6px;" title="Wipe saved PIN, local cache, and history data">
+                🗑️ Clear Saved PIN &amp; Privacy Data
+              </button>
+              <button type="button" class="ctl ctl-sm" id="btn-hide-to-tray" style="width: 100%; margin-top: 6px;" title="Sembunyikan jendela ke Windows 11 System Tray (Mirroring &amp; Audio tetap aktif)">
+                ➖ Hide Window to System Tray
+              </button>
+            </div>
+          </section>
+
+          <section class="card panel-start">
+            <div class="segmented" role="radiogroup" aria-label="Connection">
+              <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
+              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi‑Fi</button>
+            </div>
+            <div class="wifi-row" id="wifi-row">
+              <span class="wifi-state" id="wifi-state">Wi‑Fi not set up</span>
+              <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">🔍 Scan</button>
+              <button type="button" class="ctl ctl-sm" id="wifi-pair">Set up Wi‑Fi</button>
+            </div>
+            <button type="button" class="primary primary-block" id="show-screen">Start mirroring</button>
+            <div id="screen-error-banner" class="screen-error-banner" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12px; line-height:1.4; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.35); color:#fca5a5;"></div>
+            <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>⌨ Keyboard → iPhone: On</button>
+            <p class="control-hint" id="control-hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
+          </section>
+
+          <!-- Remote Gestures & Keys (Collapsible Accordion) -->
+          <details class="card card-details" id="remote-panel" hidden>
+            <summary>Gestures & Hardware Keys</summary>
+            <div class="details-body">
+              <div class="control-grid">
+                <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
+                <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
+                <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
+                <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
+                <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
+                <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
+                <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
+              </div>
+              <div class="control-row">
+                <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
+                <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
+                <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
+                <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
+              </div>
+              <div class="control-row control-row-2">
+                <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
+                <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
+              </div>
+              <div class="view-tools">
+                <span class="view-label">View</span>
+                <div class="zoom-cluster">
+                  <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
+                  <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
+                  <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
+                </div>
+                <div class="rotate-cluster">
+                  <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
+                  <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
+                </div>
+                <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="card card-details" id="device-card">
+            <summary>Device & Connection Details</summary>
+            <div class="details-body">
+              <button type="button" class="ctl ctl-sm" id="refresh" style="width: 100%; margin-bottom: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                <span>Refresh Devices</span>
+              </button>
+              <ul class="device-list" id="devices"></ul>
+              <div class="device-detail" id="detail" hidden></div>
+              <dl class="kv" id="status" style="margin-top: 10px;"></dl>
+              <p class="fine" id="status-note"></p>
+            </div>
+          </details>
+
+          <details class="card card-details">
+            <summary>How to run &amp; Troubleshooting</summary>
+            <div style="font-size: 12px; line-height: 1.6; color: var(--muted); padding-top: 6px;">
+              <p style="margin: 0 0 6px;">1. Plug in iPhone via USB and unlock it.</p>
+              <p style="margin: 0 0 6px;">2. Tap <strong>Trust</strong> on the iPhone.</p>
+              <p style="margin: 0 0 6px;">3. Ensure <strong>Developer Mode</strong> is enabled in Settings &gt; Privacy &amp; Security.</p>
+              <p style="margin: 0;">4. Click <strong>Start mirroring</strong>.</p>
+            </div>
+            <button type="button" class="ghost ghost-block" id="toggle-guide" style="display: none;" aria-hidden="true"></button>
+          </details>
+
+          <!-- Footer Attribution -->
+          <div class="drawer-footer drawer-footer-credits" style="padding: 16px 12px 10px; text-align: center; font-size: 11px; line-height: 1.5; margin-top: 16px;">
+            <div style="margin-bottom: 10px;">
+              <a href="https://saweria.co/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="saweria-support-btn">☕ Support Creator on Saweria</a>
+            </div>
+            <p class="credit-main" style="margin: 0; font-weight: 600;">
+              <span class="credit-app-name">iPhone Link v2.0</span> by <a href="https://github.com/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="credit-author">Kelvin Daniyar</a>
+            </p>
+            <p class="credit-sub" style="margin: 4px 0 0;">
+              Forked from <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows" target="_blank" rel="noopener noreferrer" class="credit-upstream">teyboxv1/pane-iphone-mirror-windows</a> · GPL-3.0
+            </p>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Hidden compatibility elements -->
+    <div id="popover-backdrop" hidden aria-hidden="true"></div>
+    <div id="run-guide" hidden aria-hidden="true"></div>
+  </div>
+
+  <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
+  <script src="/app.js?v=20261103_tahap91_fullscreen_settings_drawer_and_compact_swipe_nav"></script>
+</body>
+</html>

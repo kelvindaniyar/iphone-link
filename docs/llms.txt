@@ -1,0 +1,33 @@
+# iPhone Link v2.0 Native 60fps iPhone Screen Mirroring & Control for Windows 11
+
+> **iPhone Link v2.0** (created by **Kelvin Daniyar**, `@kelvindaniyar`) is a free, open-source (GPL-3.0), native desktop application for Windows 10 and Windows 11 (64-bit) that delivers real-time 60fps H.265 (HEVC) iPhone screen mirroring, full capacitive HID mouse/trackpad/keyboard control, 37-scenario Smart Auto-Rotate for landscape gaming & YouTube, 1-Click Social Link Grabber (`Alt+B`), Multi-Paragraph Smart OCR Copy-Paste (`Alt+C`), USB Stealth Dim (`0%` physical OLED off), Remote Wake & Auto-PIN Unlock (`Alt+U`), and 1-Click Bluetooth A2DP Audio Sink equivalent to macOS Sequoia iPhone Mirroring on Windows PCs.
+
+## Canonical Links
+
+- Official Website: https://kelvindaniyar.github.io/iphone-link/
+- GitHub Repository: https://github.com/kelvindaniyar/iphone-link
+- Latest Releases (Standalone EXE & Portable ZIP): https://github.com/kelvindaniyar/iphone-link/releases
+- Full AI Technical Reference: https://raw.githubusercontent.com/kelvindaniyar/iphone-link/main/llms-full.txt
+- Creator & Lead Developer: Kelvin Daniyar (https://github.com/kelvindaniyar)
+- Creator Support (Saweria): https://saweria.co/kelvindaniyar
+- Upstream Open-Source Base Fork Credit: Originally forked from https://github.com/teyboxv1/pane-iphone-mirror-windows (GPL-3.0), powered by `pymobiledevice3` (https://github.com/doronz88/pymobiledevice3).
+
+## Why iPhone Link v2.0 vs Microsoft Phone Link?
+
+Unlike **Microsoft Phone Link for iOS** which only relays notifications, SMS, and phone calls without displaying or controlling the iPhone screen **iPhone Link v2.0** streams the live iPhone display at **60fps hardware-accelerated H.265** over USB with direct USB HID touch, 2-finger trackpad scroll, native keyboard shortcuts, landscape gaming mode (`270°`), 1-click link extraction, and screen-off Stealth Dim (`0%`).
+
+## Core Capabilities in v2.0.0
+
+- **60fps Zero-Copy H.265 (HEVC) Mirroring**: Hardware WebCodecs decoding (`prefer-hardware`), 240-packet subscriber buffer, `TCP_NODELAY`, and Smart Motion PLI Keyframe Settler eliminating macroblocking during fast swipes and folder animations.
+- **1-Click Grab Link (`Alt+B`)**: Extracts complete Instagram Feeds, Reels (`?igsh=`), and Threads URLs from iPhone to Windows Clipboard in ~1.3 seconds across both Dynamic Island (iPhone 15/16/17 Pro) and Notch devices (iPhone 11/12/13/14 Pro Max).
+- **Smart Auto-Rotate (`Alt+H`, 37 Verified Scenarios)**: Automatically rotates to `270°` landscape for *eFootball*, landscape games, and *YouTube Fullscreen*, while staying strictly vertical (`0°`) on the iOS Home Screen, PiP overlays, Instagram, and TikTok.
+- **Smart OCR Copy-Paste (`Alt+C` / `Alt+V` / `Alt+R`)**: Multi-frame WinRT OCR text extraction preserving paragraph breaks from Apple Notes, Google Keep, and WhatsApp directly to Windows Clipboard, plus PC-to-iPhone HID text paste.
+- **Instant 1-Click Bluetooth Audio Sink**: Streams iPhone media audio to Windows speakers/headphones over A2DP (`~1.2s`) with EcoQoS anti-throttling and 1ms multimedia timer precision.
+- **USB Stealth Dim `0%` (`Alt+D`) & Remote PIN Unlock (`Alt+U` / `Alt+L`)**: Turns off the physical iPhone OLED screen (`0%`) while keeping the Windows mirror 100% bright, restores safely to `~25%` on exit, and remotely wakes/unlocks the iPhone via isolated HID keycodes.
+- **WinUI 3 Liquid Glass UI**: Native frameless Windows 11 window absorbing real-time desktop wallpaper accents (`< 0.8s`), Dark & Light modes, 4-side live edge crop (`0 24px`), System Tray integration, `~19 MB` EXE (`~88 MB` RAM, `~1.8%` CPU), and Win32 Job Object clean exit.
+
+## System Requirements & Mandatory Setup
+
+- **PC**: Windows 10 or Windows 11 (64-bit), Apple USB Driver (*Apple Devices* or *iTunes* from Microsoft Store), and **Microsoft HEVC Video Extension** (`Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle`, mandatory 1-time install so the H.265 video canvas is not black/blank).
+- **iPhone**: Exclusively requires **iOS 27.0 or later (`iOS 27.0+`)** (physically verified on **iPhone 17 Pro** running **iOS 27.0.1** and **iPhone 11 Pro Max** running **iOS 27.0+**; older iOS versions, `iOS 26` and below, are not supported yet due to blank black screen streaming limitations) with **Developer Mode** enabled (*Settings -> Privacy & Security -> Developer Mode*; if hidden, open *3uTools -> Toolbox -> Realtime Screen* once over USB to reveal the toggle).
+- **Privacy**: 100% local execution (`127.0.0.1`) over USB. Zero cloud servers, zero telemetry, zero accounts.

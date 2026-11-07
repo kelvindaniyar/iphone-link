@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+release/
+*.log
+.playwright-mcp/
+.venv/
+venv/
+.vscode/
+.idea/
+*.plist
+*.pairrecord
+pair_records/
+*.egg-info/
+scratch/
+.pane_webview_storage/
+*.zip
+
+# Debug, OCR Temporary artifacts & Personal state files
+debug_ocr_*
+debug_metrics.json
+typed_history.json
+user_settings.json
+wifi_state.json
+.audio_worker.pid
+
+# Development Reports & Packaging
+LAPORAN_PENGEMBANGAN/
+LAPORAN_*.md
+packaging/
+*.egg-info/
+
+
+self_test_result.json

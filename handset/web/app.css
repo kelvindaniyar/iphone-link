@@ -1,0 +1,2737 @@
+/* ======================================================================
+   Tahap 94: Compositor GPU Layer Isolation & Containment
+   Prevents 60fps video redraws on the left from repainting Side Drawer blurs
+   ====================================================================== */
+#phone-screen,
+#screen-view,
+#mirror-frame {
+  contain: layout style paint !important;
+  will-change: transform !important;
+  transform: translateZ(0) !important;
+  backface-visibility: hidden !important;
+}
+
+.side-drawer,
+#control-pane {
+  contain: layout style paint !important;
+  transform: translateZ(0) !important;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: transparent;
+  --bg-acrylic: rgba(16, 18, 24, 0.35);
+  --bg-flyout: rgba(20, 23, 30, 0.36);
+  --surface: rgba(255, 255, 255, 0.055);
+  --card: rgba(255, 255, 255, 0.055);
+  --panel: rgba(18, 21, 28, 0.32);
+  --display-width: 346px;
+  --surface-hover: rgba(255, 255, 255, 0.10);
+  --surface-active: rgba(255, 255, 255, 0.15);
+  --line: rgba(255, 255, 255, 0.10);
+  --border-acrylic: rgba(255, 255, 255, 0.15);
+  --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+  --text: #ffffff;
+  --text-secondary: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #0078d4;
+  --accent-hover: #1886d9;
+  --accent-active: #0067c0;
+  --accent-dim: rgba(0, 120, 212, 0.35);
+  --ok: #6ccb5f;
+  --warn: #fce100;
+  --bad: #ff99a4;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Segoe UI Mono', ui-monospace, monospace;
+}
+
+[data-theme="light"],
+.app[data-theme="light"] {
+  color-scheme: light;
+  --bg: transparent;
+  --bg-acrylic: rgba(242, 246, 252, 0.45);
+  --bg-flyout: rgba(240, 244, 252, 0.46);
+  --surface: rgba(255, 255, 255, 0.38);
+  --card: rgba(255, 255, 255, 0.38);
+  --panel: rgba(240, 245, 252, 0.38);
+  --display-width: 346px;
+  --surface-hover: rgba(255, 255, 255, 0.85);
+  --surface-active: rgba(255, 255, 255, 0.95);
+  --line: rgba(0, 0, 0, 0.08);
+  --border-acrylic: rgba(255, 255, 255, 0.90);
+  --shadow-acrylic: 0 8px 32px 0 rgba(0, 0, 0, 0.08);
+  --text: #0f172a;
+  --text-secondary: #334155;
+  --muted: #64748b;
+  --accent: #0078d4;
+  --accent-hover: #106ebe;
+  --accent-active: #005a9e;
+  --accent-dim: rgba(0, 120, 212, 0.15);
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+
+.app:not(.is-fullsize) {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+
+html {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font: 14px/1.4 var(--font);
+  color: var(--text);
+  background: var(--bg);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg);
+  transition: background 0.2s ease;
+}
+
+/* 1. WinUI 3 Liquid Glass Top Toolbar (~38px Frameless Drag Region) */
+.app-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 12px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  gap: 6px !important;
+  background: var(--bg-acrylic);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border-bottom: 1px solid var(--border-acrylic);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 8px 32px 0 rgba(0, 0, 0, 0.28);
+  z-index: 50;
+  flex-shrink: 0;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+[data-theme="light"] .app-bar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 4px 20px 0 rgba(0, 0, 0, 0.06);
+}
+
+.pywebview-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-title-area {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+#pill-device {
+  display: none !important;
+}
+
+.pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--surface);
+  border: 1px solid var(--border-acrylic);
+  color: var(--text-secondary);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.pill-ok { color: var(--ok); border-color: rgba(108, 203, 95, 0.35); }
+.pill-warn { color: var(--warn); border-color: rgba(252, 225, 0, 0.35); }
+.pill-bad { color: var(--bad); border-color: rgba(255, 153, 164, 0.35); }
+.pill-muted { color: var(--muted); }
+
+.app-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.bar-btn svg {
+  display: block;
+  opacity: 0.9;
+  transition: transform 0.25s ease;
+}
+
+.bar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.bar-btn:hover svg {
+  transform: rotate(60deg);
+}
+
+.bar-btn:active {
+  transform: scale(0.97);
+  background: var(--surface-active);
+}
+
+.bar-btn.bar-btn-danger {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+[data-theme="light"] .bar-btn.bar-btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.bar-btn.bar-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.38);
+  color: #ffffff;
+  border-color: rgba(248, 113, 113, 0.7);
+}
+
+.bar-btn.bar-btn-danger:hover svg {
+  transform: none;
+}
+
+.bar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.icon-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.icon-btn:active {
+  transform: scale(0.97);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#btn-audio-top.is-active {
+  color: #4ade80 !important;
+  background: rgba(74, 222, 128, 0.16);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+#btn-audio-top svg[hidden],
+#btn-audio-top svg.is-hidden {
+  display: none !important;
+}
+
+/* Native Window Controls */
+.window-controls {
+  display: flex;
+  align-items: center;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.win-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.win-btn.win-close:active {
+  background: #a82315;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  transition: background 0.15s, transform 0.1s;
+}
+
+/* 2. Main Horizontal Flex Container (Display Kiri + Drawer Kanan) */
+.main-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  width: 100%;
+  height: calc(100vh - 36px);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.display-col {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  width: var(--display-width, 346px) !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  position: relative !important;
+  background: transparent !important;
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+  justify-content: flex-start;
+  align-items: stretch;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.workspace,
+.stage,
+#phone-shell,
+.screen-stage,
+#phone-screen,
+.screen-viewport {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  flex: 1 1 auto !important;
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Tahap 71 & 73: Eliminasi Total Black Bar Bawah pada Mode Normal Auto-Fit (Terbatas di Window Normal < 1220px) */
+@media (max-width: 1219px) {
+  .app:not(.is-fullsize) .main-body,
+  .app:not(.is-fullsize) .display-col,
+  .app:not(.is-fullsize) .workspace,
+  .app:not(.is-fullsize) .stage,
+  .app:not(.is-fullsize) #phone-shell,
+  .app:not(.is-fullsize) #phone-screen,
+  .app:not(.is-fullsize) #screen-view,
+  .app:not(.is-fullsize) #mirror-frame {
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    flex: 1 1 auto !important;
+    aspect-ratio: unset !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+  }
+}
+
+/* Saat Side Drawer terbuka di jendela Portrait non-fullsize, kunci lebar kolom display pada lebar rasio aktif iPhone */
+.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
+.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col,
+.app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col {
+  width: var(--display-width, 346px) !important;
+  min-width: var(--display-width, 346px) !important;
+  max-width: var(--display-width, 346px) !important;
+  flex: 0 0 var(--display-width, 346px) !important;
+}
+
+
+iframe,
+#screen-view,
+#mirror-frame,
+.screen-frame {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  border: none !important;
+  display: block !important;
+  background: #000000 !important;
+}
+
+iframe[hidden],
+#screen-view[hidden],
+#mirror-frame[hidden],
+.screen-frame[hidden] {
+  display: none !important;
+}
+
+#screen-empty[hidden],
+.screen-empty[hidden],
+#placeholder[hidden],
+.placeholder[hidden],
+.screen-stage.live #screen-empty,
+.screen-stage.live .screen-empty,
+.screen-stage.live #placeholder,
+.screen-stage.live .placeholder,
+.workspace.is-live #screen-empty,
+.workspace.is-live .screen-empty,
+.workspace.is-live #placeholder,
+.workspace.is-live .placeholder {
+  display: none !important;
+}
+
+#screen-empty,
+.screen-empty,
+.placeholder {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 24px !important;
+  margin: 0 !important;
+  cursor: pointer;
+  z-index: 2;
+  transition: all 0.2s ease;
+}
+
+#screen-empty:not([hidden]),
+.screen-empty:not([hidden]),
+.placeholder:not([hidden]) {
+  display: flex !important;
+}
+
+#screen-empty[hidden],
+.screen-empty[hidden],
+.placeholder[hidden] {
+  display: none !important;
+}
+
+[data-theme="light"] .placeholder,
+[data-theme="light"] .screen-empty,
+[data-theme="light"] #screen-empty {
+  background: transparent !important;
+  color: #475569 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.placeholder:hover,
+.screen-empty:hover,
+#screen-empty:hover {
+  background: transparent !important;
+}
+
+[data-theme="light"] .placeholder:hover,
+[data-theme="light"] .screen-empty:hover,
+[data-theme="light"] #screen-empty:hover {
+  background: transparent !important;
+}
+
+
+[data-theme="light"] .placeholder-title {
+  color: #0f172a;
+}
+[data-theme="light"] .placeholder-icon {
+  color: rgba(0, 120, 212, 0.65);
+}
+
+.placeholder:hover,
+.screen-empty:hover,
+#screen-empty:hover {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.28), transparent 65%),
+    rgba(18, 18, 24, 0.55);
+}
+
+[data-theme="light"] .placeholder:hover,
+[data-theme="light"] .screen-empty:hover,
+[data-theme="light"] #screen-empty:hover {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.20), transparent 65%),
+    rgba(255, 255, 255, 0.62);
+}
+
+.placeholder-icon {
+  color: rgba(255, 255, 255, 0.35);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.placeholder:hover .placeholder-icon {
+  transform: scale(1.06);
+  color: var(--accent);
+}
+
+.placeholder-title {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.placeholder-hint {
+  margin: 0;
+  font-size: 12.5px;
+  max-width: 260px;
+  line-height: 1.45;
+}
+
+.fs-exit {
+  display: none;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(30, 30, 35, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.screen-viewport:fullscreen .fs-exit { display: block; }
+
+#screen-note,
+.stage-note,
+.display-col .note,
+.workspace > .note {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  visibility: hidden !important;
+}
+
+/* 4. Bottom Navigation CommandBar WinUI 3 (~44px) */
+.quick-nav {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  align-items: center !important;
+  gap: 4px !important;
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  background: var(--bg-acrylic);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border-top: 1px solid var(--border-acrylic);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 -4px 20px 0 rgba(0, 0, 0, 0.25);
+  margin: 0;
+  margin-top: auto;
+  padding: 0 8px !important;
+  user-select: none;
+  z-index: 20;
+  flex: 0 0 44px;
+  flex-shrink: 0;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+[data-theme="light"] .quick-nav {
+  border-top: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 -4px 20px rgba(0, 0, 0, 0.06);
+}
+
+.quick-nav .nav-btn {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-acrylic);
+  border-radius: 6px;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: 32px !important;
+  padding: 0 8px !important;
+  font-size: 12px !important;
+  font-weight: 500;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.quick-nav .nav-btn span {
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px !important;
+  line-height: 1;
+}
+
+.quick-nav .nav-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.quick-nav .nav-btn:active {
+  transform: scale(0.97);
+  background: var(--surface-active);
+}
+
+.quick-nav .nav-btn svg {
+  display: block;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.quick-nav .nav-btn:hover svg {
+  opacity: 1;
+}
+
+/* 5. Side Drawer Settings (Sebelah Kanan, Tidak Menutupi Layar Video) */
+.side-drawer {
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
+  height: 100%;
+  background: var(--bg-flyout);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border-left: 1px solid var(--border-acrylic);
+  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 30;
+  flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+}
+
+[data-theme="light"] .side-drawer {
+  border-left: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: -8px 0 32px 0 rgba(0, 0, 0, 0.06);
+}
+
+.side-drawer[hidden] {
+  display: none;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  height: 44px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.icon-btn-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.icon-btn-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.drawer-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-content::-webkit-scrollbar {
+  width: 5px;
+}
+.drawer-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+/* Primary Button (Windows 11 Blue Accent) */
+.primary {
+  padding: 9px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  background: #0078d4;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 120, 212, 0.35);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.primary:hover {
+  background: #1886d9;
+}
+
+.primary:active {
+  background: #0067c0;
+  transform: scale(0.98);
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.primary-block {
+  width: 100%;
+}
+
+.primary.is-disconnect,
+#show-screen.is-disconnect {
+  background: rgba(239, 68, 68, 0.28) !important;
+  border: 1px solid rgba(248, 113, 113, 0.45) !important;
+  color: #fee2e2 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.25) !important;
+}
+
+.primary.is-disconnect:hover,
+#show-screen.is-disconnect:hover {
+  background: rgba(239, 68, 68, 0.42) !important;
+  border-color: rgba(248, 113, 113, 0.75) !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.38) !important;
+}
+
+/* Light Mode Disconnect Button: Crisp dark red text on pastel red background */
+[data-theme="light"] .primary.is-disconnect,
+.app[data-theme="light"] .primary.is-disconnect,
+[data-theme="light"] #show-screen.is-disconnect,
+.app[data-theme="light"] #show-screen.is-disconnect {
+  background: rgba(239, 68, 68, 0.14) !important;
+  border: 1px solid rgba(220, 38, 38, 0.4) !important;
+  color: #b91c1c !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.15) !important;
+}
+
+[data-theme="light"] .primary.is-disconnect:hover,
+.app[data-theme="light"] .primary.is-disconnect:hover,
+[data-theme="light"] #show-screen.is-disconnect:hover,
+.app[data-theme="light"] #show-screen.is-disconnect:hover {
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: rgba(185, 28, 28, 0.6) !important;
+  color: #991b1b !important;
+}
+
+.ghost-block {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.ghost-block:hover { background: var(--surface-hover); }
+
+/* Appearance Theme Panel in Drawer */
+.panel-theme {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+/* Display Fit & Aspect Panel in Drawer */
+.panel-display-fit {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.crop-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.crop-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.crop-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.crop-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.crop-input-wrap input[type="number"] {
+  width: 52px;
+  height: 22px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.crop-input-wrap input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+.crop-input-wrap .unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.crop-item input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 3px 0 1px;
+  cursor: pointer;
+}
+
+.crop-item input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.crop-item input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.crop-btn-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.crop-btn-row .ctl {
+  flex: 1;
+  text-align: center;
+}
+
+.btn-save-crop {
+  background: #0078d4 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-save-crop:hover {
+  background: #1886d9 !important;
+}
+
+.btn-save-crop.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
+}
+
+/* Audio Sink Panel in Drawer */
+.panel-audio {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.audio-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border-acrylic);
+  transition: all 0.2s ease;
+}
+
+.audio-badge.active {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.45);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.25);
+}
+
+.audio-main-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+}
+
+.audio-main-btn.is-active {
+  background: rgba(239, 68, 68, 0.25) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(248, 113, 113, 0.5) !important;
+}
+
+.audio-main-btn.is-active:hover {
+  background: rgba(239, 68, 68, 0.4) !important;
+  color: #ffffff !important;
+}
+
+.audio-vol-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.audio-vol-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 3px 0 1px;
+  cursor: pointer;
+}
+
+.audio-vol-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="light"] .crop-item input[type="range"]::-webkit-slider-thumb {
+  border-color: #f8fafc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.drawer-section-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.segmented-theme,
+.segmented-fit,
+.segmented-speed,
+.segmented-toggle {
+  margin-bottom: 0 !important;
+}
+
+.segmented-speed {
+  grid-template-columns: 1fr 1fr 1fr !important;
+}
+
+/* Trackpad Gesture Speed Panel */
+.panel-trackpad-speed {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.speed-slider-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.speed-slider-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-active);
+  outline: none;
+  margin: 3px 0 1px;
+  cursor: pointer;
+}
+
+.speed-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.speed-slider-wrap input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.btn-save-speed {
+  background: #0078d4 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-save-speed:hover {
+  background: #1886d9 !important;
+}
+
+.btn-save-speed.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
+}
+
+/* Keyboard & Cross-Platform Shortcuts Panel */
+.panel-keyboard-shortcuts {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.setting-toggle-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setting-toggle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setting-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.setting-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.segmented-toggle {
+  grid-template-columns: 1fr 1fr !important;
+  margin-bottom: 4px !important;
+}
+
+.btn-action-block {
+  width: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px !important;
+  font-size: 11.5px !important;
+  font-weight: 500;
+  margin-top: 2px;
+  transition: all 0.15s ease;
+}
+
+.btn-action-block:active {
+  transform: scale(0.98);
+}
+
+.btn-action-block.is-saved {
+  background: #16a34a !important;
+  border-color: #22c55e !important;
+  color: #fff !important;
+}
+
+/* Tahap 96: Visual QR Bridge Row & Setup Guide Box */
+.qr-bridge-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.qr-setup-guide-box {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+[data-theme="light"] .qr-setup-guide-box {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #334155;
+}
+
+.qr-guide-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+
+.qr-guide-steps {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.qr-guide-steps b {
+  color: var(--text);
+}
+
+.shortcuts-badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.shortcut-pill {
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border-acrylic);
+  white-space: nowrap;
+}
+
+/* WinUI 3 Segmented Control (Radio Group) */
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.seg {
+  padding: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.seg.is-active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.wifi-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wifi-row .ctl-sm { padding: 5px 10px; }
+.wifi-state.ok { color: var(--ok); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-theme="light"] .card,
+[data-theme="light"] .card-details {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .segmented {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .seg.is-active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .seg {
+  color: #475569;
+}
+
+[data-theme="light"] .drawer-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .drawer-title {
+  color: #0f172a;
+}
+
+[data-theme="light"] .icon-btn-close {
+  color: #475569;
+}
+
+[data-theme="light"] .icon-btn-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #0f172a;
+}
+
+[data-theme="light"] .ctl-sm {
+  background: rgba(255, 255, 255, 0.85);
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .control-btn,
+[data-theme="light"] .key-btn {
+  background: rgba(255, 255, 255, 0.85);
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .control-btn:hover,
+[data-theme="light"] .key-btn:hover {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
+.panel-start {
+  padding: 12px;
+}
+
+.control-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* Accordion details (WinUI 3 Expander) */
+.card-details {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: background 0.15s ease;
+}
+
+.card-details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-details summary::after {
+  content: "▾";
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.card-details[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.card-details summary::-webkit-details-marker { display: none; }
+
+.card-details[open] summary {
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.control-row-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.ctl {
+  padding: 8px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ctl:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.ctl-accent {
+  background: rgba(0, 120, 212, 0.16);
+  border-color: rgba(0, 120, 212, 0.4);
+  color: #60cdff;
+}
+
+.ctl-accent:hover {
+  background: rgba(0, 120, 212, 0.28);
+}
+
+.ctl-sm {
+  padding: 6px 4px;
+  font-size: 11px;
+}
+
+.ctl-icon {
+  min-width: 36px;
+  padding: 6px;
+  font-size: 14px;
+}
+
+.ctl-full {
+  flex: 1 0 100%;
+  padding: 8px;
+}
+
+.view-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.view-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  flex: 1 0 100%;
+}
+
+.zoom-cluster,
+.rotate-cluster {
+  display: flex;
+  gap: 4px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.kv dt { color: var(--muted); margin: 0; }
+.kv dd { margin: 0; text-align: right; }
+.kv dd.ok { color: var(--ok); }
+.kv dd.warn { color: var(--warn); }
+
+.fine {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.device {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.device:hover { background: rgba(255, 255, 255, 0.08); }
+.device.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim); }
+
+.device-name { display: block; font-weight: 600; font-size: 13px; }
+.device-meta { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 0;
+}
+
+.device-detail h3 {
+  margin: 10px 0 6px;
+  font-size: 14px;
+}
+
+.device-detail .warn { color: var(--warn); font-size: 12px; }
+
+.kb-toggle.is-on {
+  color: var(--ok);
+  border-color: rgba(108, 203, 95, 0.35);
+}
+
+/* 6. Full Size / Responsive Scaling Mode */
+.app.is-fullsize {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.app.is-fullsize .app-bar {
+  position: relative !important;
+  height: 38px !important;
+  flex: 0 0 38px !important;
+  width: 100% !important;
+  z-index: 30 !important;
+}
+
+.app.is-fullsize .main-body {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100vw !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize .display-col {
+  flex: 1 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize:not(.drawer-open) .side-drawer,
+.app.is-fullsize:not(.drawer-open) #control-pane {
+  display: none !important;
+}
+
+.app.is-fullsize.drawer-open .side-drawer,
+.app.is-fullsize.drawer-open #control-pane {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 360px !important;
+  min-width: 360px !important;
+  max-width: 360px !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  flex: 0 0 360px !important;
+  overflow-y: auto !important;
+  z-index: 20 !important;
+}
+
+.app.is-fullsize .workspace,
+.app.is-fullsize .stage,
+.app.is-fullsize #phone-shell {
+  width: 100% !important;
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  min-height: calc(100vh - 82px) !important;
+  flex: 0 0 calc(100vh - 82px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize .quick-nav {
+  width: 100% !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  flex: 0 0 44px !important;
+  margin-top: 0 !important;
+}
+
+.app.is-fullsize:not(.is-landscape) #phone-screen {
+  height: calc(100vh - 84px) !important;
+  max-height: calc(100vh - 84px) !important;
+  min-height: calc(100vh - 84px) !important;
+  width: calc((100vh - 84px) * (346 / 750)) !important;
+  max-width: calc((100vh - 84px) * (346 / 750)) !important;
+  margin: auto !important;
+  flex: 0 0 auto !important;
+  position: relative !important;
+  border-radius: 0px !important;
+  overflow: hidden !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+  background: #000000 !important;
+}
+
+.app.is-fullsize.is-landscape #phone-screen {
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  min-height: 0 !important;
+  width: min(100vw, calc((100vh - 82px) * (840 / 386))) !important;
+  max-width: 100vw !important;
+  flex: 0 0 auto !important;
+  margin: 0 auto !important;
+  position: relative !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+  background: #000 !important;
+}
+
+.app.is-fullsize.is-landscape.drawer-open #phone-screen {
+  width: min(calc(100vw - 380px), calc((100vh - 84px) * (2656 / 1216))) !important;
+  height: auto !important;
+  max-height: calc(100vh - 84px) !important;
+  aspect-ratio: 2656 / 1216 !important;
+  margin: auto !important;
+}
+
+.app.is-fullsize #phone-screen #screen-view,
+.app.is-fullsize #phone-screen #mirror-frame,
+.app.is-fullsize #phone-screen iframe,
+.app.is-fullsize #phone-screen .screen-viewport {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  display: block !important;
+}
+
+.app.is-fullsize .quick-nav {
+  position: relative !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  flex: 0 0 44px !important;
+  width: 100% !important;
+  margin: 0 !important;
+  margin-top: auto !important;
+  z-index: 30 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* Tahap 47 - Stealth Dim Mode & Lock/Wake UI */
+.panel-screen-stealth {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+}
+
+.btn-stealth-toggle {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  font-weight: 600;
+}
+
+.btn-stealth-toggle.is-active {
+  background: rgba(147, 51, 234, 0.25) !important;
+  color: #d8b4fe !important;
+  border-color: rgba(192, 132, 252, 0.5) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2) !important;
+  font-weight: 600 !important;
+}
+
+.btn-stealth-toggle.is-active:hover {
+  background: rgba(147, 51, 234, 0.38) !important;
+  color: #f3e8ff !important;
+}
+
+/* Light Mode Stealth Toggle: Crisp dark purple text on pastel purple background */
+[data-theme="light"] .btn-stealth-toggle.is-active,
+.app[data-theme="light"] .btn-stealth-toggle.is-active {
+  background: rgba(147, 51, 234, 0.15) !important;
+  color: #5b21b6 !important;
+  border-color: rgba(147, 51, 234, 0.45) !important;
+  box-shadow: 0 2px 8px rgba(147, 51, 234, 0.15) !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="light"] .btn-stealth-toggle.is-active:hover,
+.app[data-theme="light"] .btn-stealth-toggle.is-active:hover {
+  background: rgba(147, 51, 234, 0.22) !important;
+  border-color: rgba(109, 40, 217, 0.65) !important;
+  color: #4c1d95 !important;
+}
+
+.stage-note.calm-standby {
+  color: #93c5fd !important;
+  background: rgba(59, 130, 246, 0.12) !important;
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.pin-input-wrap input {
+  background: var(--surface-active);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pin-input-wrap input:focus {
+  border-color: var(--accent);
+}
+
+/* ====================================================================== */
+/* Tahap 49 — Horizontal / Landscape Gaming & Viewing Mode */
+/* ====================================================================== */
+
+.icon-btn.active,
+.icon-btn.is-active {
+  background: rgba(0, 120, 212, 0.25) !important;
+  color: #38bdf8 !important;
+  border-color: rgba(56, 189, 248, 0.5) !important;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2) !important;
+}
+
+/* 1. Mode Landscape Standard Window */
+.app.is-landscape .display-col,
+.app.is-landscape:not(.drawer-open) .display-col {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.app.is-landscape.drawer-open .display-col,
+.app.is-landscape .main-body:has(.side-drawer:not([hidden])) .display-col,
+.app.is-landscape .main-body:has(.side-drawer.open) .display-col {
+  flex: 0 0 calc(100% - 360px) !important;
+  width: calc(100% - 360px) !important;
+  max-width: calc(100% - 360px) !important;
+  height: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.app.is-landscape.drawer-open .side-drawer,
+.app.is-landscape .main-body:has(.side-drawer:not([hidden])) .side-drawer,
+.app.is-landscape .main-body:has(.side-drawer.open) .side-drawer {
+  flex: 0 0 360px !important;
+  width: 360px !important;
+  max-width: 360px !important;
+  height: 100% !important;
+  overflow-y: auto !important;
+}
+
+.app.is-landscape .workspace,
+.app.is-landscape .stage,
+.app.is-landscape #phone-shell,
+.app.is-landscape .screen-stage,
+.app.is-landscape #phone-screen,
+.app.is-landscape .screen-viewport {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 36px) !important;
+  aspect-ratio: 19.5 / 9 !important;
+  flex: 1 1 auto !important;
+  margin: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.app.is-landscape iframe,
+.app.is-landscape #screen-view,
+.app.is-landscape #mirror-frame,
+.app.is-landscape .screen-frame {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: calc(100vh - 36px) !important;
+  aspect-ratio: 19.5 / 9 !important;
+}
+
+/* 2. Mode Landscape Full Screen / Maximize Monitor (Tahap 71) */
+.app.is-landscape.is-fullsize .workspace,
+.app.is-landscape.is-fullsize .stage {
+  width: 100vw !important;
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.app.is-landscape.is-fullsize #phone-shell,
+.app.is-landscape.is-fullsize .screen-stage,
+.app.is-landscape.is-fullsize #phone-screen {
+  width: min(100vw, calc((100vh - 82px) * (2656 / 1216))) !important;
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  min-height: 0 !important;
+  aspect-ratio: 2656 / 1216 !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  flex: 0 0 auto !important;
+}
+
+.app.is-landscape.is-fullsize .screen-viewport,
+.app.is-landscape.is-fullsize iframe,
+.app.is-landscape.is-fullsize #screen-view {
+  width: 100% !important;
+  height: 100% !important;
+  max-height: calc(100vh - 82px) !important;
+  aspect-ratio: 2656 / 1216 !important;
+}
+
+/* ====================================================================== */
+/* Tahap 49 V2 / 51: Responsive Compact Top Bar for Narrow Portrait Window */
+/* ====================================================================== */
+.brand,
+.app-title-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px !important;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.app-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  display: block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.brand-title {
+  color: var(--text) !important;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+[data-theme="light"] .brand-title {
+  color: #0f172a !important;
+}
+
+[data-theme="dark"] .brand-title {
+  color: #f8fafc !important;
+}
+
+.btn-label {
+  display: inline;
+  white-space: nowrap;
+}
+
+/* Saat window dalam mode Portrait sempit (default): sembunyikan brand-title & teks label Restart */
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .brand-title {
+  display: none !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen .btn-label {
+  display: none !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen {
+  padding: 0 4px !important;
+  width: 24px !important;
+  height: 24px !important;
+  justify-content: center !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar {
+  padding: 0 10px 0 12px !important;
+  gap: 4px !important;
+  overflow: hidden !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-title-area {
+  gap: 6px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .pill {
+  padding: 2px 6px !important;
+  font-size: 11px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen {
+  padding: 0 6px !important;
+  height: 24px !important;
+  font-size: 11px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-actions {
+  gap: 2px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .icon-btn {
+  width: 24px !important;
+  height: 24px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .window-controls {
+  margin-left: 1px !important;
+  flex-shrink: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .win-btn {
+  width: 24px !important;
+  height: 24px !important;
+  flex-shrink: 0 !important;
+}
+
+/* Fallback media query saat window sempit (<= 520px) */
+@media (max-width: 520px) {
+  .brand-title {
+    display: none !important;
+  }
+  #restart-screen .btn-label {
+    display: none !important;
+  }
+  #restart-screen {
+    padding: 0 4px !important;
+    width: 24px !important;
+    height: 24px !important;
+    justify-content: center !important;
+  }
+  .app-bar {
+    padding: 0 10px 0 12px !important;
+    gap: 4px !important;
+  }
+  .pill {
+    padding: 2px 6px !important;
+    font-size: 11px !important;
+  }
+  .icon-btn {
+    width: 24px !important;
+    height: 24px !important;
+    flex-shrink: 0 !important;
+  }
+  .win-btn {
+    width: 24px !important;
+    height: 24px !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+/* Ketika Side Drawer terbuka, mode Landscape, atau Full Screen: tampilkan kembali dengan lega */
+.app.drawer-open .brand-title,
+.app.is-landscape .brand-title,
+.app.is-fullsize .brand-title {
+  display: inline !important;
+}
+
+.app.drawer-open #restart-screen .btn-label,
+.app.is-landscape #restart-screen .btn-label,
+.app.is-fullsize #restart-screen .btn-label {
+  display: inline !important;
+}
+
+.app.drawer-open #restart-screen,
+.app.is-landscape #restart-screen,
+.app.is-fullsize #restart-screen {
+  width: auto !important;
+  padding: 0 6px !important;
+}
+
+/* ======================================================================
+   Tahap 52: Privacy PIN Wiper & Saweria Support Button
+   ====================================================================== */
+.btn-wipe-privacy {
+  border: 1px solid rgba(239, 68, 68, 0.45) !important;
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-wipe-privacy:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: rgba(239, 68, 68, 0.75) !important;
+  color: #fca5a5 !important;
+}
+
+.btn-wipe-privacy.wiped {
+  border-color: rgba(34, 197, 94, 0.6) !important;
+  color: #4ade80 !important;
+  background: rgba(34, 197, 94, 0.15) !important;
+}
+
+.saweria-support-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.25));
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 8px;
+  color: #f59e0b !important;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.saweria-support-btn:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.28), rgba(217, 119, 6, 0.4));
+  border-color: #f59e0b;
+  color: #fbbf24 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(245, 158, 11, 0.25);
+}
+
+/* ======================================================================
+   Tahap 52 V2: Drawer Footer Credits High-Contrast (Light & Dark Mode)
+   ====================================================================== */
+.drawer-footer-credits {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.drawer-footer-credits .credit-main {
+  color: var(--text-secondary);
+}
+
+.drawer-footer-credits .credit-app-name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.drawer-footer-credits .credit-author {
+  color: #38bdf8;
+  text-decoration: none;
+}
+
+.drawer-footer-credits .credit-author:hover {
+  text-decoration: underline;
+}
+
+.drawer-footer-credits .credit-sub {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.drawer-footer-credits .credit-upstream {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Explicit Light Mode Rules (Dark, crisp text on light background) */
+[data-theme="light"] .drawer-footer-credits,
+.app[data-theme="light"] .drawer-footer-credits {
+  border-top-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .drawer-footer-credits .credit-main,
+.app[data-theme="light"] .drawer-footer-credits .credit-main {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .drawer-footer-credits .credit-app-name,
+.app[data-theme="light"] .drawer-footer-credits .credit-app-name {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .drawer-footer-credits .credit-author,
+.app[data-theme="light"] .drawer-footer-credits .credit-author {
+  color: #0284c7 !important;
+}
+
+[data-theme="light"] .drawer-footer-credits .credit-sub,
+.app[data-theme="light"] .drawer-footer-credits .credit-sub {
+  color: #475569 !important;
+  opacity: 1 !important;
+}
+
+/* Explicit Dark Mode Rules (Bright text on dark background) */
+[data-theme="dark"] .drawer-footer-credits,
+:root:not([data-theme="light"]) .drawer-footer-credits {
+  border-top-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-theme="dark"] .drawer-footer-credits .credit-main,
+:root:not([data-theme="light"]) .drawer-footer-credits .credit-main {
+  color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .drawer-footer-credits .credit-app-name,
+:root:not([data-theme="light"]) .drawer-footer-credits .credit-app-name {
+  color: #f8fafc !important;
+}
+
+[data-theme="dark"] .drawer-footer-credits .credit-author,
+:root:not([data-theme="light"]) .drawer-footer-credits .credit-author {
+  color: #38bdf8 !important;
+}
+
+[data-theme="dark"] .drawer-footer-credits .credit-sub,
+:root:not([data-theme="light"]) .drawer-footer-credits .credit-sub {
+  color: #94a3b8 !important;
+}
+
+/* ======================================================================
+   TAHAP 68 — TRUE REAL-TIME DESKTOP PARALLAX BLUR & 3D LIQUID GLASS
+   ====================================================================== */
+
+:root {
+  --wallpaper-bg-image: url("/api/system/wallpaper");
+  --screen-w: 1920px;
+  --screen-h: 1080px;
+  --win-x: 0px;
+  --win-y: 0px;
+}
+
+html,
+body {
+  background: transparent !important;
+}
+
+.app {
+  position: relative !important;
+  background: rgba(14, 17, 24, 0.50) !important;
+  overflow: hidden !important;
+}
+
+[data-theme="light"] .app,
+.app[data-theme="light"] {
+  background: rgba(236, 242, 252, 0.48) !important;
+}
+
+.app::before {
+  content: "" !important;
+  display: block !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  will-change: transform !important;
+  contain: layout style !important;
+  transition: background-image 0.25s ease-in-out !important;
+  background-image: var(--wallpaper-bg-image) !important;
+  background-size: var(--screen-w, 100vw) var(--screen-h, 100vh) !important;
+  background-position: calc(-1 * var(--win-x, 0px)) calc(-1 * var(--win-y, 0px)) !important;
+  background-repeat: no-repeat !important;
+  filter: blur(22px) saturate(150%) !important;
+  opacity: 0.90 !important;
+}
+
+.main-body,
+.display-col,
+.workspace,
+.stage,
+#phone-shell {
+  background: transparent !important;
+  position: relative;
+  z-index: 1;
+}
+
+.app-bar,
+.quick-nav {
+  position: relative;
+  z-index: 1;
+  background: rgba(14, 16, 22, 0.28) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(20px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+}
+
+.side-drawer {
+  position: relative;
+  z-index: 1;
+  background: rgba(18, 20, 26, 0.25) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(24px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(165%) !important;
+}
+
+/* Light Mode Transparency & Frosted Ice Glass Refraction */
+[data-theme="light"] html,
+[data-theme="light"] body {
+  background: transparent !important;
+}
+
+[data-theme="light"] .app-bar,
+[data-theme="light"] .quick-nav {
+  background: rgba(245, 248, 255, 0.30) !important;
+  border-color: rgba(15, 23, 42, 0.10) !important;
+  backdrop-filter: blur(20px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+}
+
+[data-theme="light"] .side-drawer {
+  background: rgba(242, 246, 255, 0.28) !important;
+  border-left: 1px solid rgba(15, 23, 42, 0.10) !important;
+  backdrop-filter: blur(20px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+}
+
+[data-theme="light"] {
+  --text: #0f172a !important;
+  --text-secondary: #1e293b !important;
+  --muted: #475569 !important;
+}
+
+[data-theme="light"] .drawer-title,
+[data-theme="light"] .label,
+[data-theme="light"] .section-title,
+[data-theme="light"] .drawer-section-title,
+[data-theme="light"] .drawer-section-label,
+[data-theme="light"] .setting-label,
+[data-theme="light"] span {
+  color: #0f172a !important;
+}
+
+/* 2. Absolute Screen Stage Protection (Mirror Stream 100% Solid & Crisp) */
+.workspace.is-live #phone-screen,
+#phone-screen.live,
+#phone-screen canvas,
+#screen-view {
+  background: #000000 !important;
+  opacity: 1 !important;
+  position: relative;
+  z-index: 2;
+}
+
+#screen-view:not([hidden]) {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 2 !important;
+}
+
+#screen-empty[hidden] {
+  display: none !important;
+}
+
+#screen-empty {
+  background: transparent !important;
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 1;
+}
+
+/* 3. 3D Liquid Glass Cards (kotikotprojects/pyqt-liquidglass) */
+/* Tahap 94: Single-layer compositing - child cards use translucent fill without nested backdrop-filter */
+.side-drawer section,
+.side-drawer .card,
+.side-drawer .control-group,
+.side-drawer .settings-group,
+.side-drawer details,
+.side-drawer .crop-grid,
+.side-drawer .glass-card {
+  background: rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.20),
+    0 4px 16px 0 rgba(0, 0, 0, 0.20) !important;
+  padding: 12px 14px !important;
+  margin-bottom: 10px !important;
+  position: relative;
+  z-index: 1;
+}
+
+.card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.35),
+    inset 1px 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 8px 24px -6px rgba(0, 0, 0, 0.35) !important;
+  padding: 12px 14px !important;
+  margin-bottom: 10px !important;
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="light"] .side-drawer section,
+[data-theme="light"] .side-drawer .card,
+[data-theme="light"] .side-drawer .control-group,
+[data-theme="light"] .side-drawer .settings-group,
+[data-theme="light"] .side-drawer details,
+[data-theme="light"] .side-drawer .crop-grid,
+[data-theme="light"] .side-drawer .glass-card {
+  background: rgba(255, 255, 255, 0.38) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.60) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.70),
+    0 4px 16px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="light"] .card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.22) 100%) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.70),
+    0 8px 20px -6px rgba(15, 23, 42, 0.12) !important;
+}
+
+
+/* Tahap 69: Strict Stop Button Visibility Guard & Rotate Mode Badge */
+#stop-screen[hidden],
+#stop-screen.is-hidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+#btn-rotate-landscape {
+  width: auto !important;
+  min-width: 26px !important;
+  height: 24px !important;
+  padding: 0 6px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 3px !important;
+  flex-shrink: 0 !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+}
+
+.rotate-mode-badge,
+#rotate-mode-badge {
+  display: none;
+  font-size: 9.5px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: 0.02em !important;
+  padding: 1px 3px !important;
+  border-radius: 4px !important;
+  pointer-events: none !important;
+  background: rgba(0, 122, 255, 0.28);
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  text-transform: uppercase;
+}
+
+#btn-rotate-landscape:not(.is-auto-rotate-on) #rotate-mode-badge,
+#btn-rotate-landscape:not(.is-auto-rotate-on) .rotate-mode-badge {
+  display: none !important;
+}
+
+#btn-rotate-landscape.is-auto-rotate-on #rotate-mode-badge,
+#btn-rotate-landscape.is-auto-rotate-on .rotate-mode-badge {
+  display: inline-block !important;
+}
+
+[data-theme="light"] .rotate-mode-badge,
+[data-theme="light"] #rotate-mode-badge {
+  background: rgba(0, 102, 204, 0.18);
+  color: #0066cc;
+  border-color: rgba(0, 102, 204, 0.40);
+}
+
+/* Tahap 71: Media Query Pengaman Lebar Sempit (<= 500px) */
+@media (max-width: 500px) {
+  .app-bar {
+    padding: 0 6px !important;
+    gap: 3px !important;
+  }
+  .app-bar .brand-title,
+  #restart-screen .btn-label,
+  #stop-screen .btn-label {
+    display: none !important;
+  }
+  #stop-screen:not([hidden]):not(.is-hidden) {
+    padding: 0 6px !important;
+    min-width: 26px !important;
+  }
+  #status-pill,
+  #pill-connection {
+    max-width: 72px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    padding: 2px 6px !important;
+    font-size: 10.5px !important;
+  }
+}
+
+/* Tahap 80: Completely eliminate floating toast notifications for 100% clean display */
+.toast-notification,
+.rotate-toast,
+#rotate-toast,
+#toast-notification {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* === TAHAP 74: EXACT NON-CROPPED FULL-SIZE PORTRAIT & LANDSCAPE GEOMETRY === */
+.app.is-fullsize .app-bar .brand-title,
+.app.is-fullsize #restart-screen .btn-label,
+.app.is-fullsize #stop-screen .btn-label {
+  display: inline !important;
+}
+
+.app.is-fullsize:not(.drawer-open) .side-drawer {
+  display: none !important;
+}
+
+.app.is-fullsize.drawer-open .side-drawer {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 360px !important;
+  min-width: 360px !important;
+  max-width: 360px !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  flex: 0 0 360px !important;
+  overflow-y: auto !important;
+  z-index: 20 !important;
+}
+
+/* .main-body dan .display-col menampung .workspace + .quick-nav (44px), jadi tingginya WAJIB calc(100vh - 38px)! */
+.app.is-fullsize .main-body {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100vw !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize .display-col {
+  flex: 1 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  overflow: hidden !important;
+}
+
+/* .workspace, .stage, dan #phone-shell berada di atas .quick-nav (44px), jadi tingginya tepat calc(100vh - 82px)! */
+.app.is-fullsize .workspace,
+.app.is-fullsize .stage,
+.app.is-fullsize #phone-shell {
+  width: 100% !important;
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  min-height: calc(100vh - 82px) !important;
+  flex: 0 0 calc(100vh - 82px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize .quick-nav {
+  width: 100% !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
+  flex: 0 0 44px !important;
+  margin: 0 !important;
+  margin-top: 0 !important;
+  z-index: 20 !important;
+}
+
+/* Portrait Full Size: Pas 100% di dalam panggung calc(100vh - 82px) seperti Foto Tahap 70 tanpa memotong Dynamic Island! */
+.app.is-fullsize:not(.is-landscape) #phone-screen {
+  height: calc(100vh - 84px) !important;
+  max-height: calc(100vh - 84px) !important;
+  min-height: calc(100vh - 84px) !important;
+  width: calc((100vh - 84px) * (346 / 750)) !important;
+  max-width: calc((100vh - 84px) * (346 / 750)) !important;
+  min-width: 280px !important;
+  flex: 0 0 auto !important;
+  margin: auto !important;
+  position: relative !important;
+  border-radius: 0px !important;
+  overflow: hidden !important;
+  background: #000000 !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+
+/* Landscape Full Size: Proporsional Widescreen */
+.app.is-fullsize.is-landscape #phone-screen {
+  height: calc(100vh - 82px) !important;
+  max-height: calc(100vh - 82px) !important;
+  width: min(100vw, calc((100vh - 82px) * (840 / 386))) !important;
+  max-width: 100vw !important;
+  flex: 0 0 auto !important;
+  margin: auto !important;
+  position: relative !important;
+  border-radius: 0px !important;
+  overflow: hidden !important;
+  background: #000000 !important;
+}
+
+.app.is-fullsize.is-landscape.drawer-open #phone-screen {
+  width: min(calc(100vw - 380px), calc((100vh - 84px) * (2656 / 1216))) !important;
+  height: auto !important;
+  max-height: calc(100vh - 84px) !important;
+  aspect-ratio: 2656 / 1216 !important;
+  margin: auto !important;
+}
+
+.app.is-fullsize #phone-screen > #screen-view,
+.app.is-fullsize #phone-screen > iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border: none !important;
+  display: block !important;
+}
+
+/* Terapkan rumus identik pada @media (min-width: 1220px): */
+@media (min-width: 1220px) {
+  .app .app-bar .brand-title,
+  .app #restart-screen .btn-label,
+  .app #stop-screen .btn-label {
+    display: inline !important;
+  }
+  .app:not(.drawer-open) .side-drawer {
+    display: none !important;
+  }
+  .app.drawer-open .side-drawer {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 360px !important;
+    min-width: 360px !important;
+    max-width: 360px !important;
+    height: calc(100vh - 38px) !important;
+    max-height: calc(100vh - 38px) !important;
+    flex: 0 0 360px !important;
+    overflow-y: auto !important;
+    z-index: 20 !important;
+  }
+  .app .main-body {
+    display: flex !important;
+    flex-direction: row !important;
+    width: 100vw !important;
+    height: calc(100vh - 38px) !important;
+    max-height: calc(100vh - 38px) !important;
+    overflow: hidden !important;
+  }
+  .app .display-col {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: calc(100vh - 38px) !important;
+    max-height: calc(100vh - 38px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  .app .workspace,
+  .app .stage,
+  .app #phone-shell {
+    width: 100% !important;
+    height: calc(100vh - 82px) !important;
+    max-height: calc(100vh - 82px) !important;
+    min-height: calc(100vh - 82px) !important;
+    flex: 0 0 calc(100vh - 82px) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  .app .quick-nav {
+    width: 100% !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    flex: 0 0 44px !important;
+    margin: 0 !important;
+    margin-top: 0 !important;
+    z-index: 20 !important;
+  }
+  .app:not(.is-landscape) #phone-screen {
+    height: calc(100vh - 84px) !important;
+    max-height: calc(100vh - 84px) !important;
+    min-height: calc(100vh - 84px) !important;
+    width: calc((100vh - 84px) * (346 / 750)) !important;
+    max-width: calc((100vh - 84px) * (346 / 750)) !important;
+    min-width: 280px !important;
+    flex: 0 0 auto !important;
+    margin: auto !important;
+    position: relative !important;
+    border-radius: 0px !important;
+    overflow: hidden !important;
+    background: #000000 !important;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+  }
+  .app.is-landscape #phone-screen {
+    height: calc(100vh - 82px) !important;
+    max-height: calc(100vh - 82px) !important;
+    width: min(100vw, calc((100vh - 82px) * (840 / 386))) !important;
+    max-width: 100vw !important;
+    flex: 0 0 auto !important;
+    margin: auto !important;
+    position: relative !important;
+    border-radius: 0px !important;
+    overflow: hidden !important;
+    background: #000000 !important;
+  }
+  .app.is-landscape.drawer-open #phone-screen {
+    width: min(calc(100vw - 380px), calc((100vh - 84px) * (2656 / 1216))) !important;
+    height: auto !important;
+    max-height: calc(100vh - 84px) !important;
+    aspect-ratio: 2656 / 1216 !important;
+    margin: auto !important;
+  }
+}
