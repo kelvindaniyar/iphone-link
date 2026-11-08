@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap126">
+  <link rel="stylesheet" href="/app.css?v=tahap127">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -622,15 +622,25 @@
               <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi-Fi</button>
             </div>
             <div class="wifi-row" id="wifi-row">
-              <span class="wifi-state" id="wifi-state">Wi-Fi not set up</span>
-              <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">
-                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <span class="btn-label">Scan</span>
-              </button>
-              <button type="button" class="ctl ctl-sm" id="wifi-pair"><span class="btn-label">Set up Wi-Fi</span></button>
+              <span class="wifi-state wifi-status-text" id="wifi-state">Wi-Fi not set up</span>
+              <div class="wifi-actions" id="wifi-actions">
+                <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <span class="btn-label">Scan</span>
+                </button>
+                <button type="button" class="ctl ctl-sm" id="wifi-pair" title="Set up Wi-Fi over USB">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                    <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                  </svg>
+                  <span class="btn-label">Set up Wi-Fi</span>
+                </button>
+              </div>
             </div>
             <button type="button" class="primary primary-block" id="show-screen">
               <span class="btn-label">Start mirroring</span>
@@ -761,6 +771,6 @@
   </div>
 
   <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
-  <script src="/app.js?v=tahap126"></script>
+  <script src="/app.js?v=tahap127"></script>
 </body>
 </html>
