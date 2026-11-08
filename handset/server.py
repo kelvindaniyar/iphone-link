@@ -703,6 +703,7 @@ class Handler(BaseHTTPRequestHandler):
                 from handset import screen as _scr
                 if getattr(_scr, "_STEALTH_DIM_ACTIVE", False):
                     _scr.set_iphone_physical_brightness("restore", steps=4)
+                _scr.set_iphone_physical_speaker_mute(False)
                 _scr.stop_screen()
             except Exception:
                 pass

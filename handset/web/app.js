@@ -159,6 +159,7 @@ let currentAudioState = {
   enabled: true,
   active: false,
   streaming: false,
+  iphoneSpeakerMuted: false,
   volume: 100,
   muted: false,
   bufferPreset: "normal",
@@ -474,6 +475,8 @@ function renderAudio(audio) {
     if (mode === "pc") {
       if (isMuted) {
         badge.textContent = "🔇 Di PC ini · Muted (Alt+M)";
+      } else if (currentAudioState.iphoneSpeakerMuted) {
+        badge.textContent = `✓ USB Audio · Speaker iPhone Auto-Muted (~${shownMs} ms)`;
       } else {
         badge.textContent = `✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~${shownMs} ms)`;
       }

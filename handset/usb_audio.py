@@ -10,11 +10,12 @@ from __future__ import annotations
 import array
 import http.client
 import logging
+import math
 import socket
 import sys
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,28 @@ def normalize_buffer_preset(preset: Optional[str]) -> str:
     """Normalize Indonesian or English buffer preset names to ``'low'|'normal'|'high'``."""
     key = str(preset or "normal").strip().lower()
     return _PRESET_ALIASES.get(key, "normal")
+
+
+def compute_pcm_rms_dbfs(pcm: bytes, stride_frames: int = 8) -> float:
+    """Compute approximate RMS level in dBFS (-96.0 .. 0.0) on s16le stereo PCM without mutating samples."""
+    aligned = len(pcm) & ~3
+    if aligned < 4:
+        return -96.0
+    samples = array.array("h")
+    samples.frombytes(pcm[:aligned])
+    step = max(2, int(stride_frames) * CHANNELS)
+    sum_sq = 0.0
+    count = 0
+    for idx in range(0, len(samples), step):
+        val = samples[idx] / 32768.0
+        sum_sq += val * val
+        count += 1
+    if count <= 0 or sum_sq <= 0.0:
+        return -96.0
+    rms = math.sqrt(sum_sq / count)
+    if rms <= 1e-5:
+        return -96.0
+    return max(-96.0, min(0.0, 20.0 * math.log10(rms)))
 
 
 def scale_pcm_s16le(pcm: bytes, volume: int = 100, muted: bool = False) -> bytes:
@@ -395,9 +418,11 @@ class UsbCoreDeviceAudioEngine:
         preset: str = "normal",
         volume: int = 100,
         muted: bool = False,
+        on_stream_connected: Optional[Callable[[], None]] = None,
     ) -> None:
         self._lock = threading.RLock()
         self.audio_bin_url = audio_bin_url
+        self.on_stream_connected = on_stream_connected
         self.jitter = AdaptiveJitterBuffer(preset=preset, volume=volume, muted=muted)
         self.wasapi = WasapiAudioOutput(self.jitter)
         self._running = False
@@ -407,6 +432,8 @@ class UsbCoreDeviceAudioEngine:
         self._active_conn: Optional[http.client.HTTPConnection] = None
         self.last_error: Optional[str] = None
         self.bytes_received: int = 0
+        self._rms_dbfs: float = -96.0
+        self._pcm_packets: int = 0
 
     @property
     def is_running(self) -> bool:
@@ -415,6 +442,10 @@ class UsbCoreDeviceAudioEngine:
     @property
     def is_streaming(self) -> bool:
         return bool(self._running and self._streaming)
+
+    @property
+    def rms_dbfs(self) -> float:
+        return self._rms_dbfs if self._streaming else -96.0
 
     @property
     def delay_ms(self) -> float:
@@ -490,6 +521,8 @@ class UsbCoreDeviceAudioEngine:
 
         self.wasapi.stop()
         self.jitter.reset()
+        self._rms_dbfs = -96.0
+        self._pcm_packets = 0
 
         if release_coredevice and was_running:
             try:
@@ -498,6 +531,13 @@ class UsbCoreDeviceAudioEngine:
                 stop_coredevice_audio_stream(timeout=1.2)
             except Exception:
                 pass
+
+    @staticmethod
+    def _invoke_stream_connected(cb: Callable[[], None]) -> None:
+        try:
+            cb()
+        except Exception:
+            pass
 
     def _reader_loop(self) -> None:
         # Small initial grace period if ScreenStreamServer is finishing H.265 handshake
@@ -537,6 +577,14 @@ class UsbCoreDeviceAudioEngine:
                 self._streaming = True
                 self.last_error = None
                 backoff = 0.25
+                cb = self.on_stream_connected
+                if callable(cb):
+                    threading.Thread(
+                        target=self._invoke_stream_connected,
+                        args=(cb,),
+                        name="handset-usb-audio-connected",
+                        daemon=True,
+                    ).start()
                 buf = bytearray()
 
                 while not self._stop_evt.is_set():
@@ -555,6 +603,9 @@ class UsbCoreDeviceAudioEngine:
                             break
                         pcm = bytes(buf[4 : 4 + frame_len])
                         del buf[: 4 + frame_len]
+                        self._pcm_packets += 1
+                        if self._pcm_packets % 10 == 1:
+                            self._rms_dbfs = compute_pcm_rms_dbfs(pcm)
                         self.jitter.push(pcm)
             except Exception as exc:
                 if not self._stop_evt.is_set():

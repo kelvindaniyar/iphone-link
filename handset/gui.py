@@ -1349,13 +1349,13 @@ def shutdown_backend_server() -> None:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=1.2):
+            with urllib.request.urlopen(req, timeout=2.5):
                 pass
         except Exception:
             pass
 
         try:
-            proc.wait(timeout=1.5)
+            proc.wait(timeout=2.0)
         except Exception:
             try:
                 proc.terminate()

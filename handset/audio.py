@@ -343,6 +343,7 @@ class AudioManager:
             preset=self._buffer_preset,
             volume=self._volume,
             muted=self._muted,
+            on_stream_connected=self._on_usb_stream_connected,
         )
 
         # Legacy Bluetooth A2DP Sink fields
@@ -354,6 +355,26 @@ class AudioManager:
     @property
     def usb_engine(self) -> UsbCoreDeviceAudioEngine:
         return self._usb_engine
+
+    def _sync_iphone_physical_speaker(self, should_mute: bool) -> None:
+        """Auto-mute (USB PC mode) or auto-restore iPhone physical speaker safely without blocking UI."""
+        try:
+            from handset.screen import set_iphone_physical_speaker_mute
+
+            set_iphone_physical_speaker_mute(bool(should_mute))
+        except Exception:
+            pass
+
+    def _on_usb_stream_connected(self) -> None:
+        """Ensure iPhone physical speaker is muted as soon as live /audio.bin USB stream opens."""
+        with self._lock:
+            should_mute = (
+                self._audio_out == "pc"
+                and self._screen_phase == "running"
+                and self._usb_engine.is_streaming
+            )
+        if should_mute:
+            self._sync_iphone_physical_speaker(True)
 
     def apply_saved_settings(self, settings: Dict[str, Any]) -> None:
         """Initialize preferences from user_settings.json without blocking."""
@@ -381,7 +402,7 @@ class AudioManager:
             self._usb_engine.jitter.set_preset(self._buffer_preset)
 
     def on_screen_phase(self, phase: str, transport: str = "usb") -> None:
-        """Automatically start or stop USB WASAPI audio when mirroring session changes state."""
+        """Automatically start or stop USB WASAPI audio and iPhone physical speaker mute on session transitions."""
         norm_phase = str(phase or "idle").strip().lower()
         norm_transport = "wifi" if str(transport or "usb").strip().lower() == "wifi" else "usb"
 
@@ -392,8 +413,10 @@ class AudioManager:
 
         if norm_phase == "running" and mode == "pc":
             self._usb_engine.start(transport=norm_transport)
-        elif norm_phase != "running":
+            self._sync_iphone_physical_speaker(True)
+        else:
             self._usb_engine.stop(release_coredevice=False)
+            self._sync_iphone_physical_speaker(False)
 
     def is_active(self) -> bool:
         """Fast non-blocking check whether PC audio routing is enabled/active."""
@@ -437,6 +460,13 @@ class AudioManager:
                 state_label = "DeviceOnly"
 
             live_delay_ms = self._usb_engine.delay_ms if (mode == "pc" and usb_streaming) else (140.0 if (mode == "bluetooth" and bt_active) else 0.0)
+            iphone_speaker_muted = False
+            try:
+                from handset.screen import is_iphone_physical_speaker_muted
+
+                iphone_speaker_muted = is_iphone_physical_speaker_muted()
+            except Exception:
+                pass
 
             return {
                 "audioOut": mode,
@@ -449,6 +479,9 @@ class AudioManager:
                 "targetDelayMs": round(float(delay_ms), 1),
                 "underruns": int(self._usb_engine.jitter.underruns),
                 "wasapiDevice": self._usb_engine.wasapi.device_name,
+                "iphoneSpeakerMuted": iphone_speaker_muted,
+                "audioRouteTap": "pre_fader_coredevice",
+                "rmsDbfs": round(float(self._usb_engine.rms_dbfs), 1),
                 # Legacy keys for UI & tray backward compatibility
                 "enabled": enabled_flag,
                 "active": active_flag,
@@ -486,6 +519,12 @@ class AudioManager:
         # Sync live screen phase if available
         if force_stream is True:
             phase = "running"
+            with self._lock:
+                self._screen_phase = "running"
+        elif force_stream is False:
+            phase = "idle"
+            with self._lock:
+                self._screen_phase = "idle"
         elif force_stream is None:
             try:
                 from handset.screen import screen_status
@@ -502,19 +541,27 @@ class AudioManager:
         if target_mode == "device":
             self._usb_engine.stop(release_coredevice=True)
             self._disable_bt()
+            self._sync_iphone_physical_speaker(False)
         elif target_mode == "pc":
             self._disable_bt()
             if phase == "running":
                 self._usb_engine.start(transport=transport)
+                self._sync_iphone_physical_speaker(True)
+            else:
+                self._usb_engine.stop(release_coredevice=False)
+                self._sync_iphone_physical_speaker(False)
         elif target_mode == "bluetooth":
             self._usb_engine.stop(release_coredevice=True)
+            self._sync_iphone_physical_speaker(False)
             self._enable_bt()
         else:
             # Ensure USB engine matches current phase if already in 'pc' mode
             with self._lock:
                 cur_mode = self._audio_out
-            if cur_mode == "pc" and phase == "running" and not self._usb_engine.is_running:
-                self._usb_engine.start(transport=transport)
+            if cur_mode == "pc" and phase == "running":
+                if not self._usb_engine.is_running:
+                    self._usb_engine.start(transport=transport)
+                self._sync_iphone_physical_speaker(True)
 
         return self.status()
 
@@ -681,6 +728,7 @@ class AudioManager:
 
     def shutdown(self) -> None:
         self._usb_engine.stop(release_coredevice=False)
+        self._sync_iphone_physical_speaker(False)
         self._disable_bt()
 
     def stop(self) -> Dict[str, Any]:

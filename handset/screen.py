@@ -87,6 +87,14 @@ _LAST_USER_INPUT_TS = time.time()
 _IS_TOUCH_DRAGGING = False
 _HID_ACTION_LOCK = threading.Lock()
 
+# Tahap 124: Zero Double Audio (iPhone physical speaker mute / restore via Consumer HID 0x00EA / 0x00E9)
+_IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO = False
+_IPHONE_AUDIO_RESTORE_STEPS = 5  # ~31% (5 bar iOS dari 16 bar penuh)
+_SPEAKER_SEQ_LOCK = threading.Lock()
+_SPEAKER_OP_SEQ = 0
+_SPEAKER_TARGET_MUTE: bool | None = None
+_LAST_MUTE_DOWN_STEPS: int | None = None
+
 # Register extended HID buttons in pymobiledevice3 at import time
 try:
     from pymobiledevice3.remote.core_device.screen_stream import _NAMED_BUTTONS
@@ -96,10 +104,28 @@ try:
     _NAMED_BUTTONS["wake"] = (12, 0x0040, 0.05)
     _NAMED_BUTTONS["brightness-down"] = (12, 0x0070, 0.025)
     _NAMED_BUTTONS["brightness-up"] = (12, 0x006F, 0.025)
+    _NAMED_BUTTONS["volume-up"] = (12, 0x00E9, 0.025)
+    _NAMED_BUTTONS["volume-down"] = (12, 0x00EA, 0.025)
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
     _NAMED_BUTTONS.pop("keyboard-toggle", None)
 except Exception:
     pass
+
+
+def is_iphone_physical_speaker_muted() -> bool:
+    """Thread-safe check whether iPhone physical speaker was auto-muted for PC USB audio."""
+    with _SPEAKER_SEQ_LOCK:
+        return bool(_IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO)
+
+
+def _reset_speaker_mute_state() -> None:
+    """Reset in-memory speaker mute tracking cleanly without blocking or issuing HID calls."""
+    global _IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO, _SPEAKER_OP_SEQ, _SPEAKER_TARGET_MUTE, _LAST_MUTE_DOWN_STEPS
+    with _SPEAKER_SEQ_LOCK:
+        _SPEAKER_OP_SEQ += 1
+        _IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO = False
+        _SPEAKER_TARGET_MUTE = False
+        _LAST_MUTE_DOWN_STEPS = None
 
 
 def install_coredevice_aac_decoder() -> bool:
@@ -169,14 +195,23 @@ def screen_status() -> dict:
 
 
 def stop_screen() -> dict:
-    """Cleanly stop mirroring, terminate stream server, restore brightness if dimmed, and reset state."""
+    """Cleanly stop mirroring, terminate stream server, restore brightness & speaker volume, and reset state."""
     global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONALLY_LOCKED
+    try:
+        from handset.audio import audio_manager
+        audio_manager.usb_engine.stop(release_coredevice=False)
+    except Exception:
+        pass
     if _STEALTH_DIM_ACTIVE:
         try:
             set_iphone_physical_brightness("restore", steps=4)
         except Exception:
             pass
         _STEALTH_DIM_ACTIVE = False
+    try:
+        set_iphone_physical_speaker_mute(False)
+    except Exception:
+        pass
     _DEVICE_INTENTIONALLY_LOCKED = False
 
     with _LOCK:
@@ -301,6 +336,8 @@ async def _serve(udid: str, transport: str) -> None:
 
     # HID Consumer Control (0x0C): 0x00B8 (Eject) to toggle iOS virtual keyboard cleanly
     # (Do NOT use 0x029D AL Keyboard Layout as it acts as Globe key and switches to Emoji)
+    _NAMED_BUTTONS["volume-up"] = (12, 0x00E9, 0.025)
+    _NAMED_BUTTONS["volume-down"] = (12, 0x00EA, 0.025)
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
     _NAMED_BUTTONS.pop("keyboard-toggle", None)
 
@@ -451,6 +488,7 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
     finally:
         _CURRENT_TASK = None
         _ACTIVE_SERVER = None
+        _reset_speaker_mute_state()
         try:
             from .wifi import force_reset_userspace_tunnel
             await force_reset_userspace_tunnel()
@@ -848,12 +886,133 @@ def set_iphone_physical_brightness(level: str, steps: int = 4, force: bool = Fal
             return {"ok": True, "stealth": False, "level": "restore", "steps": actual_steps}
 
 
+def _send_single_volume_step(direction: str) -> bool:
+    """Send single HID Consumer Control volume step (Page 0x0C: 0x00EA Down / 0x00E9 Up)."""
+    if direction == "down":
+        return send_button_direct("volume-down")
+    return send_button_direct("volume-up")
+
+
+def set_iphone_physical_speaker_mute(
+    mute: bool,
+    restore_steps: int = _IPHONE_AUDIO_RESTORE_STEPS,
+    force: bool = False,
+) -> dict:
+    """Mute or restore iPhone physical speaker via Consumer HID (0x0C: 0x00EA / 0x00E9).
+
+    - ``mute=True``: sends 16 single ``volume-down`` steps (0% Silent) when ``_ACTIVE_SERVER``
+      is active, preventing Double Audio (PC WASAPI + iPhone speaker simultaneously).
+    - ``mute=False``: immediately marks speaker unmuted and sends ``restore_steps`` (default 5,
+      ~31%) single ``volume-up`` steps if ``_ACTIVE_SERVER`` is active.
+    - Strict idempotency guard: returns ``skipped=True, steps=0`` with 0 HID calls if the state
+      already matches ``mute`` (unless ``force=True``).
+    """
+    global _IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO, _SPEAKER_OP_SEQ, _SPEAKER_TARGET_MUTE, _LAST_MUTE_DOWN_STEPS
+
+    target_mute = bool(mute)
+    with _SPEAKER_SEQ_LOCK:
+        if force or _SPEAKER_TARGET_MUTE is not target_mute:
+            _SPEAKER_OP_SEQ += 1
+            _SPEAKER_TARGET_MUTE = target_mute
+        my_seq = _SPEAKER_OP_SEQ
+
+    record_user_input_activity()
+    with _HID_ACTION_LOCK:
+        with _SPEAKER_SEQ_LOCK:
+            superseded = (_SPEAKER_OP_SEQ != my_seq)
+            currently_muted = bool(_IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO)
+
+        if target_mute:
+            if currently_muted and not force:
+                return {"ok": True, "muted": True, "skipped": True, "steps": 0}
+            if superseded:
+                return {
+                    "ok": False,
+                    "muted": currently_muted,
+                    "skipped": True,
+                    "reason": "superseded",
+                    "steps": 0,
+                }
+            if _ACTIVE_SERVER is None:
+                with _SPEAKER_SEQ_LOCK:
+                    _SPEAKER_TARGET_MUTE = currently_muted
+                return {
+                    "ok": False,
+                    "muted": currently_muted,
+                    "reason": "no_active_server",
+                    "steps": 0,
+                }
+
+            sent = 0
+            for _ in range(16):
+                with _SPEAKER_SEQ_LOCK:
+                    if _SPEAKER_OP_SEQ != my_seq:
+                        break
+                if _ACTIVE_SERVER is None:
+                    break
+                _send_single_volume_step("down")
+                sent += 1
+                time.sleep(0.015)
+
+            if sent <= 0:
+                with _SPEAKER_SEQ_LOCK:
+                    _SPEAKER_TARGET_MUTE = currently_muted
+                return {
+                    "ok": False,
+                    "muted": currently_muted,
+                    "skipped": True,
+                    "reason": "cancelled",
+                    "steps": 0,
+                }
+
+            with _SPEAKER_SEQ_LOCK:
+                _IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO = True
+                _LAST_MUTE_DOWN_STEPS = sent if sent < 16 else None
+            return {"ok": True, "muted": True, "steps": sent}
+
+        # target_mute is False (Restore iPhone physical speaker)
+        if not currently_muted and not force:
+            return {"ok": True, "muted": False, "skipped": True, "steps": 0}
+
+        with _SPEAKER_SEQ_LOCK:
+            _IPHONE_SPEAKER_MUTED_FOR_PC_AUDIO = False
+            _SPEAKER_TARGET_MUTE = False
+            interrupted_down = _LAST_MUTE_DOWN_STEPS
+            _LAST_MUTE_DOWN_STEPS = None
+
+        raw_steps = _IPHONE_AUDIO_RESTORE_STEPS if restore_steps is None else int(restore_steps)
+        target_steps = max(0, min(16, raw_steps))
+        if interrupted_down is not None and interrupted_down > 0 and not force:
+            target_steps = min(target_steps, interrupted_down)
+
+        if _ACTIVE_SERVER is None:
+            return {
+                "ok": True,
+                "muted": False,
+                "reason": "no_active_server",
+                "steps": 0,
+            }
+
+        sent = 0
+        for _ in range(target_steps):
+            if _ACTIVE_SERVER is None:
+                break
+            _send_single_volume_step("up")
+            sent += 1
+            time.sleep(0.015)
+        return {"ok": True, "muted": False, "steps": sent}
+
+
 def lock_iphone_screen() -> dict:
-    """Lock and turn off iPhone physical screen. If stealth dim was active, restores brightness to ~25% first."""
+    """Lock and turn off iPhone physical screen. Restores brightness and physical speaker volume first."""
     global _DEVICE_INTENTIONALLY_LOCKED, _STEALTH_DIM_ACTIVE
     record_user_input_activity()
     if _STEALTH_DIM_ACTIVE:
         set_iphone_physical_brightness("restore", steps=4)
+    try:
+        set_iphone_physical_speaker_mute(False)
+    except Exception:
+        pass
     with _HID_ACTION_LOCK:
         send_button_direct("power")
         _DEVICE_INTENTIONALLY_LOCKED = True
