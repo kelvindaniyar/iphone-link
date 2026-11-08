@@ -2532,6 +2532,8 @@ window.analyzeFrameOrientation = analyzeFrameOrientation;
 
 function checkAutoRotateOrientation(sourceFrame, rawW, rawH) {
   if (!autoRotateGameEnabled) return;
+  // Tahap 125: heuristik Dynamic Island iPhone tidak berlaku di stream iPad (4:3 / 3:2)
+  if (typeof isEffectiveIpad === "function" && isEffectiveIpad(rawW, rawH)) return;
   const now = performance.now();
   if (now - _lastAutoRotateSampleTs < 1000) return;
   _lastAutoRotateSampleTs = now;
@@ -2622,22 +2624,23 @@ function setRotation(deg) {
   currentRotation = ((deg % 360) + 360) % 360;
   visualRotation = currentRotation;
   const isLandscape = (currentRotation === 90 || currentRotation === 270);
+  const isRotated = isLandscape;
   _autoRotatedToLandscape = isLandscape;
 
+  // Tahap 125: gunakan dimensi mentah stream (bukan min/max) agar iPad native landscape benar
+  let rawW = _lastRawW;
+  let rawH = _lastRawH;
   if (lastFrame) {
-    const rawW = (lastFrame.codedWidth && lastFrame.codedHeight > lastFrame.displayHeight)
+    rawW = (lastFrame.codedWidth && lastFrame.codedHeight > lastFrame.displayHeight)
       ? lastFrame.codedWidth
-      : (lastFrame.displayWidth || lastFrame.width || 1216);
-    const rawH = (lastFrame.codedHeight && lastFrame.codedHeight > lastFrame.displayHeight)
+      : (lastFrame.displayWidth || lastFrame.width || _lastRawW);
+    rawH = (lastFrame.codedHeight && lastFrame.codedHeight > lastFrame.displayHeight)
       ? lastFrame.codedHeight
-      : (lastFrame.displayHeight || lastFrame.height || 2656);
-    if (isLandscape) {
-      canvas.width = Math.max(rawW, rawH);
-      canvas.height = Math.min(rawW, rawH);
-    } else {
-      canvas.width = Math.min(rawW, rawH);
-      canvas.height = Math.max(rawW, rawH);
-    }
+      : (lastFrame.displayHeight || lastFrame.height || _lastRawH);
+  }
+  if (rawW > 0 && rawH > 0) {
+    canvas.width = isRotated ? rawH : rawW;
+    canvas.height = isRotated ? rawW : rawH;
   }
 
   fitCanvas();
@@ -2648,6 +2651,9 @@ function setRotation(deg) {
         type: "rotation-changed",
         rotation: currentRotation,
         isLandscape: isLandscape,
+        rawW: rawW,
+        rawH: rawH,
+        isStreamLandscape: rawW > rawH,
       }, "*");
     }
   } catch (_) {}
@@ -2665,11 +2671,44 @@ function toggleLandscapeMode() {
   }
 }
 window.setRotation = setRotation;
+// touchCoords adalah deklarasi fungsi global (window.touchCoords) untuk pengujian langsung
 window.toggleLandscapeMode = toggleLandscapeMode;
 window.setFitMode = function(m) {
   fitMode = (m === "contain" || m === "fill") ? m : "autofit";
   try { localStorage.setItem("pane-fit-mode", fitMode); } catch (_) {}
   fitCanvas();
+};
+
+// Tahap 125: Mode iPad (4:3 / 3:2) - deteksi efektif dari profil, family backend, atau rasio stream
+let _deviceProfile = "auto";
+let _deviceFamily = "iphone";
+let _lastRawW = 1216;
+let _lastRawH = 2656;
+let _lastNotifiedRawW = 0;
+let _lastNotifiedRawH = 0;
+let _lastNotifiedIpad = null;
+
+function isEffectiveIpad(rawW, rawH) {
+  if (_deviceProfile === "ipad") return true;
+  if (_deviceProfile === "iphone") return false;
+  if (_deviceFamily === "ipad") return true;
+  const w = Number(rawW) || 0;
+  const h = Number(rawH) || 0;
+  if (!w || !h) return false;
+  const maxDim = Math.max(w, h);
+  const ratio = maxDim / Math.min(w, h);
+  return ratio >= 1.15 && ratio <= 1.62 && maxDim >= 1000;
+}
+window.isEffectiveIpad = isEffectiveIpad;
+window.getMirrorDeviceState = function () {
+  return {
+    deviceProfile: _deviceProfile,
+    deviceFamily: _deviceFamily,
+    rawW: _lastRawW,
+    rawH: _lastRawH,
+    isIpad: isEffectiveIpad(_lastRawW, _lastRawH),
+    rotation: currentRotation,
+  };
 };
 
 let fitMode = localStorage.getItem("pane-fit-mode") || "autofit";
@@ -2828,9 +2867,27 @@ function setZoom(value) {
 }
 
 function touchCoords(e) {
-  const rect = cachedCanvasRect || canvas.getBoundingClientRect();
-  const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-  const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / (rect.height || 1)));
+  const rect = canvas.getBoundingClientRect() || cachedCanvasRect;
+  let boxL = rect.left, boxT = rect.top;
+  let boxW = rect.width || 1, boxH = rect.height || 1;
+
+  // Tahap 125: mode contain (object-fit) menyisakan letterbox/pillarbox, petakan ke sub-rect gambar sebenarnya
+  if (fitMode === "contain" && canvas.width > 0 && canvas.height > 0) {
+    const boxAspect = boxW / boxH;
+    const canvasAspect = canvas.width / canvas.height;
+    if (boxAspect > canvasAspect) {
+      const paintedW = boxH * canvasAspect;
+      boxL += (boxW - paintedW) / 2;
+      boxW = paintedW;
+    } else if (boxAspect < canvasAspect) {
+      const paintedH = boxW / canvasAspect;
+      boxT += (boxH - paintedH) / 2;
+      boxH = paintedH;
+    }
+  }
+
+  const nx = Math.max(0, Math.min(1, (e.clientX - boxL) / (boxW || 1)));
+  const ny = Math.max(0, Math.min(1, (e.clientY - boxT) / (boxH || 1)));
 
   let iosX = nx;
   let iosY = ny;
@@ -3239,6 +3296,24 @@ window.addEventListener("message", (e) => {
     document.body?.setAttribute("data-theme", d.theme);
     return;
   }
+  if (d.type === "set-device-profile") {
+    const p = String(d.profile || "auto").toLowerCase();
+    _deviceProfile = (p === "iphone" || p === "ipad") ? p : "auto";
+    if (d.deviceFamily) _deviceFamily = (String(d.deviceFamily).toLowerCase() === "ipad") ? "ipad" : "iphone";
+    _lastNotifiedIpad = null;
+    if (lastFrame) {
+      try { drawFrame(lastFrame); } catch (_) {}
+    }
+    return;
+  }
+  if (d.type === "set-device-family") {
+    _deviceFamily = (String(d.family || d.deviceFamily || "").toLowerCase() === "ipad") ? "ipad" : "iphone";
+    _lastNotifiedIpad = null;
+    if (lastFrame) {
+      try { drawFrame(lastFrame); } catch (_) {}
+    }
+    return;
+  }
   if (d.type === "set-fit-mode") {
     fitMode = (d.mode === "contain" || d.mode === "fill") ? d.mode : "autofit";
     try { localStorage.setItem("pane-fit-mode", fitMode); } catch (_) {}
@@ -3563,6 +3638,10 @@ function drawFrame(f) {
       ? sourceFrame.codedHeight
       : (sourceFrame.displayHeight || sourceFrame.codedHeight || sourceFrame.height || 2656);
 
+    _lastRawW = rawW;
+    _lastRawH = rawH;
+    const effectiveIpad = isEffectiveIpad(rawW, rawH);
+
     const sideways = Math.abs(currentRotation % 180) === 90;
     const viewW = sideways ? rawH : rawW;
     const viewH = sideways ? rawW : rawH;
@@ -3578,8 +3657,23 @@ function drawFrame(f) {
       hasRenderedFirstFrame = true;
       setStatus("");
       try {
-        window.parent.postMessage({ type: "video-dimensions", width: rawW, height: rawH }, "*");
         window.parent.postMessage({ type: "mirror-ready" }, "*");
+      } catch (_) {}
+    }
+
+    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || effectiveIpad !== _lastNotifiedIpad) {
+      _lastNotifiedRawW = rawW;
+      _lastNotifiedRawH = rawH;
+      _lastNotifiedIpad = effectiveIpad;
+      try {
+        window.parent.postMessage({
+          type: "video-dimensions",
+          width: rawW,
+          height: rawH,
+          isIpad: effectiveIpad,
+          deviceFamily: _deviceFamily,
+          isStreamLandscape: rawW > rawH,
+        }, "*");
       } catch (_) {}
     }
 
@@ -3592,10 +3686,12 @@ function drawFrame(f) {
     const scaleW = rawW / 1216;
 
     // Tahap 74: Set nativeTrimTop = 0 & nativeTrimLeft = 0 agar 0px terpotong di atas Dynamic Island & jam status bar
+    // Tahap 125: stream iPad (4:3 / 3:2) TIDAK memakai trim padding iPhone (0/0/0/0)
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain");
     const nativeTrimTop = 0;
-    const nativeTrimBot = (fitMode === "contain") ? 0 : Math.round(58 * scaleH);
+    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
     const nativeTrimLeft = 0;
-    const nativeTrimRight = (fitMode === "contain") ? 0 : Math.round(14 * scaleW);
+    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);
 
     // Translate manual UI crop sliders (relative to user view) to sourceFrame axes
     const pxScale = Math.max(3, Math.round(rawW / 346));

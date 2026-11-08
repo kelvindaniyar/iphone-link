@@ -37,6 +37,7 @@ INFO_KEYS = (
     "DeviceName",
     "DeviceClass",
     "ProductType",
+    "ProductName",
     "ProductVersion",
     "BuildVersion",
     "HardwareModel",
@@ -58,6 +59,52 @@ _HANDSET_METADATA_CACHE: dict[str, dict] = {}
 _DEVELOPER_MODE_CACHE: dict[str, bool | None] = {}
 _DEV_MODE_RETRY_AFTER: dict[str, float] = {}
 _DRIVER_STATUS_CACHE: tuple[float, float, dict] | None = None
+
+
+def classify_device_family(
+    info: dict | None = None,
+    *,
+    product_type: str | None = None,
+    product_name: str | None = None,
+    device_class: str | None = None,
+    device_name: str | None = None,
+) -> str:
+    """Classify Apple device family ('ipad' vs 'iphone') from Lockdown metadata."""
+    candidates: list[str] = []
+    if isinstance(info, dict):
+        for key in ("DeviceClass", "ProductType", "ProductName", "DeviceName"):
+            val = info.get(key)
+            if val is not None:
+                candidates.append(str(val))
+    for val in (device_class, product_type, product_name, device_name):
+        if val is not None:
+            candidates.append(str(val))
+
+    for raw in candidates:
+        low = raw.strip().lower()
+        if "ipad" in low:
+            return "ipad"
+    return "iphone"
+
+
+def _enrich_devices_metadata(devices: list[dict]) -> list[dict]:
+    """Attach cached deviceFamily ('ipad' | 'iphone') and identity fields without USB I/O."""
+    with _DEVICE_CACHE_LOCK:
+        for dev in devices:
+            udid = str(dev.get("udid") or "")
+            cached = _HANDSET_METADATA_CACHE.get(udid) if udid else None
+            info = cached.get("info") if isinstance(cached, dict) and isinstance(cached.get("info"), dict) else {}
+            dev["deviceFamily"] = classify_device_family(info)
+            if info:
+                if info.get("DeviceClass") is not None:
+                    dev["deviceClass"] = info.get("DeviceClass")
+                if info.get("ProductType") is not None:
+                    dev["productType"] = info.get("ProductType")
+                if info.get("ProductName") is not None:
+                    dev["productName"] = info.get("ProductName")
+                if info.get("DeviceName") is not None:
+                    dev["deviceName"] = info.get("DeviceName")
+    return devices
 
 
 def get_cached_device_names() -> list[str]:
@@ -147,6 +194,7 @@ def snapshot() -> dict:
     _prune_disconnected_udids(active_udids, usb_udids)
 
     developer_mode = developer_mode_enabled(devices[0]["udid"]) if len(devices) == 1 else None
+    _enrich_devices_metadata(devices)
     return {
         "library": {"ready": True, "version": "usbmux"},
         "driver": driver,
@@ -167,10 +215,12 @@ def read_handset(udid: str) -> dict:
     with _DEVICE_CACHE_LOCK:
         cached = _HANDSET_METADATA_CACHE.get(udid)
         if cached and cached.get("paired") is True and cached.get("info"):
+            info_copy = dict(cached["info"])
             return {
                 "udid": udid,
                 "paired": True,
-                "info": dict(cached["info"]),
+                "deviceFamily": classify_device_family(info_copy),
+                "info": info_copy,
             }
 
     with open_lockdown(int(match["deviceId"])) as sock:
@@ -179,10 +229,21 @@ def read_handset(udid: str) -> dict:
             raise MuxError("The phone did not answer as a lockdown service.")
         result = lockdown_request(sock, "GetValue")
     if result.get("Error"):
-        return {"udid": udid, "paired": False, "info": {}, "error": _lockdown_error(str(result["Error"]))}
+        return {
+            "udid": udid,
+            "paired": False,
+            "deviceFamily": "iphone",
+            "info": {},
+            "error": _lockdown_error(str(result["Error"])),
+        }
     values = result.get("Value") if isinstance(result.get("Value"), dict) else {}
     info = {key: values.get(key) for key in INFO_KEYS if key in values}
-    payload = {"udid": udid, "paired": True, "info": info}
+    payload = {
+        "udid": udid,
+        "paired": True,
+        "deviceFamily": classify_device_family(info),
+        "info": info,
+    }
     with _DEVICE_CACHE_LOCK:
         _HANDSET_METADATA_CACHE[udid] = {"udid": udid, "paired": True, "info": dict(info)}
     return payload

@@ -87,7 +87,7 @@ if (screenEmpty) {
 // ======================================================================
 // Tahap 70: Global State Variables (Declared Top-Level to Eliminate TDZ)
 // ======================================================================
-const MIRROR_PAGE = "/mirror.html?v=20261101_tahap70_hotfix_anti_tdz";
+const MIRROR_PAGE = "/mirror.html?v=20261109_tahap125_ipad_resize_fluent";
 const MIRROR_API = "/mirror";
 
 let isLandscapeMode = false;
@@ -95,6 +95,50 @@ window.isLandscapeMode = false;
 let isDrawerOpen = false;
 let isFullSize = false;
 window.isFullSize = false;
+
+// Tahap 125: Mode iPad, profil perangkat & ukuran jendela kustom
+let currentDeviceProfile = "auto";
+let detectedDeviceFamily = "iphone";
+let detectedStreamIsIpad = false;
+let detectedStreamIsLandscape = false;
+let customWindowSize = null;
+let resizeDragActive = false;
+const DRAWER_WIDTH_PX = 360;
+
+function isIpadStreamRatio(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (!w || !h) return false;
+  const ratio = Math.max(w, h) / Math.min(w, h);
+  return ratio >= 1.15 && ratio <= 1.62 && Math.max(w, h) >= 1000;
+}
+
+function isEffectiveIpadMode() {
+  if (currentDeviceProfile === "ipad") return true;
+  if (currentDeviceProfile === "iphone") return false;
+  return detectedDeviceFamily === "ipad" || detectedStreamIsIpad;
+}
+
+function getEffectiveVisualLandscape() {
+  if (isEffectiveIpadMode()) {
+    return Boolean(detectedStreamIsLandscape) !== Boolean(isLandscapeMode);
+  }
+  return Boolean(isLandscapeMode);
+}
+
+function computeDisplayWidthCss() {
+  if (customWindowSize && customWindowSize.width) return `${Math.round(customWindowSize.width)}px`;
+  const land = getEffectiveVisualLandscape();
+  if (isEffectiveIpadMode()) return land ? "760px" : "540px";
+  return land ? "840px" : "346px";
+}
+
+function updateDisplayWidthCss() {
+  const displayWidth = computeDisplayWidthCss();
+  document.documentElement.style.setProperty("--display-width", displayWidth);
+  appRoot?.style.setProperty("--display-width", displayWidth);
+  return displayWidth;
+}
 
 let lastDeviceAspect = null;
 let lastDeviceDimensions = null;
@@ -203,7 +247,9 @@ function toggleSettings(open) {
   }
 
   try {
-    const isLand = Boolean(window.isLandscapeMode || (typeof isLandscapeMode !== "undefined" && isLandscapeMode) || appRoot?.classList.contains("is-landscape"));
+    const isLand = isEffectiveIpadMode()
+      ? getEffectiveVisualLandscape()
+      : Boolean(window.isLandscapeMode || (typeof isLandscapeMode !== "undefined" && isLandscapeMode) || appRoot?.classList.contains("is-landscape"));
     if (window.pywebview?.api?.set_orientation) {
       window.pywebview.api.set_orientation(isLand, shouldOpen);
     } else if (window.pywebview?.api?.set_drawer) {
@@ -322,6 +368,12 @@ async function fetchUserSettings() {
         localStorage.setItem("pane-crop-edges", JSON.stringify(currentCrop));
         applyCrop(currentCrop, true);
       } catch (_) { }
+    }
+    if (res.customWindowSize && res.customWindowSize.width) {
+      try { applyCustomWindowSize(res.customWindowSize, { persist: false }); } catch (_) { }
+    }
+    if (res.deviceProfile) {
+      try { applyDeviceProfile(res.deviceProfile, { persist: false, syncNative: false }); } catch (_) { }
     }
     if (res.fitMode) {
       try { applyFitMode(res.fitMode); } catch (_) { }
@@ -527,7 +579,7 @@ function renderAudio(audio) {
       textDrawer.textContent = isMuted ? "Muted" : "Alt+M";
     }
     if (iconDrawer) {
-      iconDrawer.textContent = isMuted ? "🔇" : "🔊";
+      setIconPairToggle(iconDrawer, !isMuted);
     }
   }
 
@@ -1291,6 +1343,7 @@ function syncSettingsToIframe() {
   applyTrackpadSpeed(currentTrackpadSpeed, true);
   applyKeyboardSettings(currentKeyboardSettings, true);
   syncLipSyncToIframe();
+  try { syncDeviceProfileToIframe(); } catch (_) { }
 }
 
 
@@ -1383,7 +1436,7 @@ function initPinControls() {
     if (!inputUnlockPin) return;
     const isPass = inputUnlockPin.type === "password";
     inputUnlockPin.type = isPass ? "text" : "password";
-    btnTogglePinVisibility.textContent = isPass ? "🔒" : "👁️";
+    setIconPairToggle(btnTogglePinVisibility, isPass);
   });
 
   // Tahap 52: Clean Wipe PIN & Privacy Data
@@ -1707,6 +1760,13 @@ window.applyFullsizeState = applyFullsizeState;
 function syncFullsizeClassFromViewport() {
   // Lebar maksimum jendela normal adalah 1200px (Landscape + Drawer).
   // Maka setiap lebar >= 1220px atau >= availWidth - 60 pasti merupakan Full Size / Maximized!
+  // Tahap 125: ukuran kustom (drag resize) & mode iPad hanya masuk Full Size lewat toggle eksplisit
+  if (customWindowSize || isEffectiveIpadMode() || resizeDragActive) {
+    if (!isFullSize && !document.fullscreenElement && appRoot?.classList.contains("is-fullsize")) {
+      return applyFullsizeState(false, false);
+    }
+    return isFullSize;
+  }
   const availW = (window.screen && window.screen.availWidth) ? window.screen.availWidth : 1920;
   if (window.innerWidth >= 1220 || window.innerWidth >= (availW - 60)) {
     return applyFullsizeState(true, true);
@@ -1750,7 +1810,7 @@ async function toggleFullSize(targetFull) {
     }
 
     if (!targetState) {
-      const displayWidth = isLandscapeMode ? "840px" : "346px";
+      const displayWidth = computeDisplayWidthCss();
       document.documentElement.style.setProperty("--display-width", displayWidth);
       appRoot?.style.setProperty("--display-width", displayWidth);
       const iframe = document.getElementById("screen-view");
@@ -1854,6 +1914,12 @@ async function load() {
     currentWifiState = state.wifi || {};
     usbConnected = (state.devices || []).length > 0;
     renderStatus(state);
+    try {
+      if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
+        applyDeviceProfile(state.deviceProfile, { persist: false, syncNative: false });
+      }
+      if (state.deviceFamily) applyDetectedDeviceFamily(state.deviceFamily);
+    } catch (_) { }
     renderDevices(state.devices || []);
     renderWifi();
     renderScreen(state.screen);
@@ -2014,6 +2080,7 @@ async function openDevice(udid, force = false) {
     if (device && device.paired) {
       _cachedDeviceDetails.set(udid, device);
     }
+    try { if (device && device.deviceFamily) applyDetectedDeviceFamily(device.deviceFamily); } catch (_) { }
     renderDetail(device);
     if (device.info?.DeviceName) {
       pillDevice.hidden = false;
@@ -2571,9 +2638,17 @@ function wireRemoteControls() {
 
 // Tahap 69: Atomic Synchronization for Canvas Rotation & Window Dimensions
 function setLandscapeOrientation(targetLandscape, source = "manual") {
+  const prevVisualLandscape = Boolean(appRoot?.classList.contains("is-landscape"));
   isLandscapeMode = Boolean(targetLandscape);
   window.isLandscapeMode = isLandscapeMode;
-  appRoot?.classList.toggle("is-landscape", isLandscapeMode);
+  const visualLandscape = getEffectiveVisualLandscape();
+  appRoot?.classList.toggle("is-landscape", visualLandscape);
+  if (visualLandscape !== prevVisualLandscape && customWindowSize) {
+    // Orientasi berubah: ukuran kustom dibuang (backend ikut reset ke dimensi kanonis)
+    customWindowSize = null;
+    applyCustomSizeClass();
+    postJson("/api/settings", { customWindowSize: null }).catch(() => { });
+  }
   const btnRot = document.querySelector("#btn-rotate-landscape");
   btnRot?.classList.toggle("active", isLandscapeMode);
 
@@ -2584,13 +2659,13 @@ function setLandscapeOrientation(targetLandscape, source = "manual") {
     appRoot?.classList.add("is-fullsize");
   }
 
-  const displayWidth = isLandscapeMode ? "840px" : "346px";
+  const displayWidth = computeDisplayWidthCss();
   document.documentElement.style.setProperty("--display-width", displayWidth);
   appRoot?.style.setProperty("--display-width", displayWidth);
 
   const isDrawerOpen = !controlPane?.hidden && (controlPane?.classList.contains("open") || appRoot?.classList.contains("drawer-open"));
   if (window.pywebview?.api?.set_orientation) {
-    window.pywebview.api.set_orientation(isLandscapeMode, isDrawerOpen);
+    window.pywebview.api.set_orientation(visualLandscape, isDrawerOpen);
   } else if (window.pywebview?.api?.set_drawer) {
     window.pywebview.api.set_drawer(isDrawerOpen);
   }
@@ -2629,9 +2704,25 @@ function toggleLandscapeMode() {
 }
 window.toggleLandscapeMode = toggleLandscapeMode;
 
-function handleDeviceDimensions(width, height) {
+function handleDeviceDimensions(width, height, meta) {
   if (!width || !height) return;
   lastDeviceDimensions = { width, height };
+
+  // Tahap 125: deteksi stream iPad (4:3 / 3:2) & orientasi native stream
+  const prevIpad = isEffectiveIpadMode();
+  const prevVisualLand = getEffectiveVisualLandscape();
+  detectedStreamIsLandscape = width > height;
+  detectedStreamIsIpad = isIpadStreamRatio(width, height);
+  const nowIpad = isEffectiveIpadMode();
+  const nowVisualLand = getEffectiveVisualLandscape();
+  if (nowIpad || prevIpad) {
+    applyDeviceModeClasses();
+    if (nowIpad !== prevIpad || nowVisualLand !== prevVisualLand) {
+      syncNativeGeometry(nowIpad);
+    }
+    if (nowIpad) return;
+  }
+
   if (isLandscapeMode || isFullSize || (appRoot && appRoot.classList.contains("is-fullsize")) || appRoot?.classList.contains("is-landscape")) return;
   const aspect = width / height;
   if (aspect < 0.35 || aspect > 2.5) return;
@@ -2657,9 +2748,12 @@ function handleDeviceDimensions(width, height) {
 
 window.addEventListener("message", (e) => {
   if (e.data && e.data.type === "video-dimensions") {
-    handleDeviceDimensions(e.data.width, e.data.height);
+    handleDeviceDimensions(e.data.width, e.data.height, e.data);
   }
   if (e.data && e.data.type === "rotation-changed") {
+    if (typeof e.data.isStreamLandscape === "boolean") {
+      detectedStreamIsLandscape = e.data.isStreamLandscape;
+    }
     const isLand = Boolean(e.data.isLandscape);
     if (isLand !== isLandscapeMode) {
       setLandscapeOrientation(isLand, e.data.source || "sync");
@@ -2686,7 +2780,7 @@ window.addEventListener("resize", () => {
     syncFullsizeClassFromViewport();
   }
 
-  const displayWidth = isLandscapeMode ? "840px" : "346px";
+  const displayWidth = computeDisplayWidthCss();
   document.documentElement.style.setProperty("--display-width", displayWidth);
   appRoot?.style.setProperty("--display-width", displayWidth);
 });
@@ -2784,9 +2878,310 @@ window.addEventListener("focus", () => {
 });
 
 // ======================================================================
+// Tahap 125 Pilar 3: Fluent UI System Icons (SVG) + Label Helpers
+// ======================================================================
+const PICTOGRAPH_RE = /[\u{1F000}-\u{1FAFF}\u{2300}-\u{23FF}\u{2460}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}\u{FFFD}]/gu;
+
+function stripPictographs(text) {
+  return String(text ?? "").replace(PICTOGRAPH_RE, "").replace(/^\s+/, "");
+}
+window.stripPictographs = stripPictographs;
+
+function setButtonLabel(el, text) {
+  if (!el) return;
+  const label = el.querySelector(".btn-label");
+  const clean = stripPictographs(text);
+  if (label) {
+    label.textContent = clean;
+  } else {
+    el.textContent = clean;
+  }
+}
+function getButtonLabel(el) {
+  if (!el) return "";
+  const label = el.querySelector(".btn-label");
+  return label ? label.textContent : el.textContent;
+}
+function setIconPairToggle(container, isOn) {
+  if (!container) return;
+  container.querySelectorAll(".svg-state-on").forEach((n) => { n.hidden = !isOn; });
+  container.querySelectorAll(".svg-state-off").forEach((n) => { n.hidden = Boolean(isOn); });
+}
+window.setButtonLabel = setButtonLabel;
+window.getButtonLabel = getButtonLabel;
+window.setIconPairToggle = setIconPairToggle;
+
+// Semua kode lama yang menulis el.textContent = "emoji teks" tidak lagi menghapus SVG:
+// elemen ber-.btn-label menulis ke label saja (emoji dibuang), node teks lain dibersihkan observer.
+function installLabelAwareTextContent(root) {
+  if (!root) return;
+  root.querySelectorAll("button, a, .audio-badge").forEach((el) => {
+    if (el.__labelAware || !el.querySelector(".btn-label")) return;
+    el.__labelAware = true;
+    Object.defineProperty(el, "textContent", {
+      configurable: true,
+      get() { return getButtonLabel(el); },
+      set(v) { setButtonLabel(el, v); },
+    });
+  });
+}
+
+function sanitizeTextNodes(root) {
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const batch = [];
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    if (n.nodeValue && PICTOGRAPH_RE.test(n.nodeValue)) batch.push(n);
+    PICTOGRAPH_RE.lastIndex = 0;
+  }
+  batch.forEach((n) => {
+    const cleaned = stripPictographs(n.nodeValue);
+    if (cleaned !== n.nodeValue) n.nodeValue = cleaned;
+  });
+}
+
+function initFluentIconGuard() {
+  if (!controlPane) return;
+  installLabelAwareTextContent(controlPane);
+  sanitizeTextNodes(controlPane);
+  const obs = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === "characterData") {
+        const n = m.target;
+        if (n.nodeValue && (PICTOGRAPH_RE.lastIndex = 0, PICTOGRAPH_RE.test(n.nodeValue))) {
+          PICTOGRAPH_RE.lastIndex = 0;
+          const cleaned = stripPictographs(n.nodeValue);
+          if (cleaned !== n.nodeValue) n.nodeValue = cleaned;
+        }
+        PICTOGRAPH_RE.lastIndex = 0;
+      } else if (m.type === "childList") {
+        m.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const cleaned = stripPictographs(node.nodeValue);
+            if (cleaned !== node.nodeValue) node.nodeValue = cleaned;
+          } else if (node.nodeType === Node.ELEMENT_NODE) {
+            sanitizeTextNodes(node);
+          }
+        });
+      }
+    }
+  });
+  obs.observe(controlPane, { subtree: true, childList: true, characterData: true });
+  window.__fluentIconObserver = obs;
+}
+window.initFluentIconGuard = initFluentIconGuard;
+
+// ======================================================================
+// Tahap 125 Pilar 1 & 2: Mode iPad, Profil Perangkat & Resize 8 Arah
+// ======================================================================
+function applyCustomSizeClass() {
+  appRoot?.classList.toggle("has-custom-size", Boolean(customWindowSize));
+}
+
+function notifyMirrorResize() {
+  const iframe = document.getElementById("screen-view");
+  [0, 60, 150].forEach((ms) => {
+    setTimeout(() => {
+      try {
+        iframe?.contentWindow?.dispatchEvent(new Event("resize"));
+        iframe?.contentWindow?.postMessage({ type: "resize" }, "*");
+      } catch (_) { }
+    }, ms);
+  });
+}
+
+function syncDeviceProfileToIframe() {
+  try {
+    screenView?.contentWindow?.postMessage({
+      type: "set-device-profile",
+      profile: currentDeviceProfile,
+      deviceFamily: detectedDeviceFamily,
+    }, "*");
+  } catch (_) { }
+}
+
+function updateDeviceProfileUI() {
+  document.querySelectorAll("#segmented-device-profile [data-device-profile]").forEach((btn) => {
+    const active = btn.dataset.deviceProfile === currentDeviceProfile;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+  const hint = document.querySelector("#device-profile-hint");
+  if (hint) {
+    const ipad = isEffectiveIpadMode();
+    if (currentDeviceProfile === "auto") hint.textContent = ipad ? "Auto (iPad 4:3)" : "Auto (iPhone)";
+    else hint.textContent = currentDeviceProfile === "ipad" ? "iPad 4:3" : "iPhone";
+  }
+}
+
+function applyDeviceModeClasses() {
+  const ipad = isEffectiveIpadMode();
+  appRoot?.classList.toggle("is-ipad", ipad);
+  appRoot?.classList.toggle("is-landscape", getEffectiveVisualLandscape());
+  applyCustomSizeClass();
+  updateDisplayWidthCss();
+  updateDeviceProfileUI();
+  notifyMirrorResize();
+}
+
+function currentDrawerOpen() {
+  return Boolean(!controlPane?.hidden && (controlPane?.classList.contains("open") || appRoot?.classList.contains("drawer-open")));
+}
+
+function syncNativeGeometry(ipad) {
+  const api = window.pywebview?.api;
+  if (!api || isFullSize) return;
+  try {
+    if (currentDeviceProfile === "auto" && api.set_device_family) {
+      api.set_device_family(ipad ? "ipad" : "iphone", false);
+    }
+    if (api.set_orientation) {
+      api.set_orientation(getEffectiveVisualLandscape(), currentDrawerOpen());
+    }
+  } catch (_) { }
+}
+
+function applyDetectedDeviceFamily(family) {
+  const fam = String(family || "").toLowerCase() === "ipad" ? "ipad" : "iphone";
+  if (fam === detectedDeviceFamily) return;
+  const prevIpad = isEffectiveIpadMode();
+  detectedDeviceFamily = fam;
+  applyDeviceModeClasses();
+  syncDeviceProfileToIframe();
+  if (isEffectiveIpadMode() !== prevIpad) syncNativeGeometry(isEffectiveIpadMode());
+}
+window.applyDetectedDeviceFamily = applyDetectedDeviceFamily;
+
+function applyDeviceProfile(profile, opts = {}) {
+  const persist = opts.persist !== false;
+  const syncNative = opts.syncNative !== false;
+  const p = ["auto", "iphone", "ipad"].includes(String(profile)) ? String(profile) : "auto";
+  currentDeviceProfile = p;
+  if (syncNative && customWindowSize) {
+    customWindowSize = null;
+    if (persist) postJson("/api/settings", { customWindowSize: null }).catch(() => { });
+  }
+  applyDeviceModeClasses();
+  syncDeviceProfileToIframe();
+  if (syncNative) {
+    const api = window.pywebview?.api;
+    try {
+      if (api?.set_device_profile) {
+        Promise.resolve(api.set_device_profile(p, detectedDeviceFamily, true)).then(() => {
+          if (api.set_orientation && !isFullSize) api.set_orientation(getEffectiveVisualLandscape(), currentDrawerOpen());
+        }).catch(() => { });
+      }
+    } catch (_) { }
+  }
+  if (persist) {
+    postJson("/api/settings/device-profile", { deviceProfile: p }).catch(() => { });
+  }
+  return p;
+}
+window.applyDeviceProfile = applyDeviceProfile;
+
+function applyCustomWindowSize(size, opts = {}) {
+  if (size && Number(size.width) >= 336 && Number(size.height) >= 420) {
+    customWindowSize = { width: Math.round(size.width), height: Math.round(size.height) };
+  } else {
+    customWindowSize = null;
+  }
+  applyCustomSizeClass();
+  updateDisplayWidthCss();
+  notifyMirrorResize();
+  if (opts.persist !== false) {
+    postJson("/api/settings", { customWindowSize }).catch(() => { });
+  }
+}
+window.applyCustomWindowSize = applyCustomWindowSize;
+
+async function resetWindowSize() {
+  customWindowSize = null;
+  applyCustomSizeClass();
+  updateDisplayWidthCss();
+  postJson("/api/settings", { customWindowSize: null }).catch(() => { });
+  try {
+    await window.pywebview?.api?.reset_window_size?.();
+  } catch (_) { }
+  notifyMirrorResize();
+}
+window.resetWindowSize = resetWindowSize;
+
+function initDeviceProfileAndResizeControls() {
+  document.querySelectorAll("#segmented-device-profile [data-device-profile]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.__profileUserTouched = true;
+      applyDeviceProfile(btn.dataset.deviceProfile, { persist: true, syncNative: true });
+    });
+  });
+  document.querySelector("#btn-reset-window-size")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    resetWindowSize();
+  });
+
+  const handles = document.querySelectorAll(".win-resize-handle");
+  let drag = null;
+  handles.forEach((handle) => {
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (isFullSize || appRoot?.classList.contains("is-fullsize")) return;
+      const api = window.pywebview?.api;
+      if (!api?.begin_resize_drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const edge = handle.dataset.resizeEdge;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { }
+      resizeDragActive = true;
+      drag = { edge, handle, pointerId: e.pointerId, latest: null, raf: 0, busy: false };
+      drag.ready = Promise.resolve(api.begin_resize_drag(edge, e.screenX, e.screenY)).catch(() => { });
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      drag.latest = { x: e.screenX, y: e.screenY };
+      if (drag.raf) return;
+      drag.raf = requestAnimationFrame(async () => {
+        drag.raf = 0;
+        if (!drag || drag.busy || !drag.latest) return;
+        drag.busy = true;
+        const pt = drag.latest;
+        try {
+          await drag.ready;
+          await window.pywebview?.api?.update_resize_drag?.(pt.x, pt.y);
+        } catch (_) { }
+        if (drag) drag.busy = false;
+      });
+    });
+    const finish = async (e) => {
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      const d = drag;
+      drag = null;
+      if (d.raf) cancelAnimationFrame(d.raf);
+      try { d.handle.releasePointerCapture(e.pointerId); } catch (_) { }
+      let res = null;
+      try {
+        await d.ready;
+        if (d.latest) await window.pywebview?.api?.update_resize_drag?.(d.latest.x, d.latest.y);
+        res = await window.pywebview?.api?.end_resize_drag?.();
+      } catch (_) { }
+      resizeDragActive = false;
+      const cw = res && res.customWindowSize;
+      const drawer = currentDrawerOpen();
+      const winW = cw ? cw.width : Math.round(window.innerWidth);
+      const winH = cw ? cw.height : Math.round(window.innerHeight);
+      applyCustomWindowSize({ width: winW - (drawer ? DRAWER_WIDTH_PX : 0), height: winH }, { persist: true });
+    };
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  });
+}
+
+// ======================================================================
 // Tahap 70: Orderly Bootstrap Sequence at Bottom of File (Anti-TDZ 100%)
 // ======================================================================
 function bootstrapApp() {
+  try { initFluentIconGuard(); } catch (e) { console.error("initFluentIconGuard error:", e); }
   try { setupEarlyControls(); } catch (e) { console.error("setupEarlyControls error:", e); }
   try { initWindowAndBarControls(); } catch (e) { console.error("initWindowAndBarControls error:", e); }
   try { bindFullsizeControls(); syncFullsizeClassFromViewport(); } catch (e) { console.error("bindFullsizeControls error:", e); }
@@ -2798,6 +3193,7 @@ function bootstrapApp() {
   try { initCropControls(); } catch (e) { console.error("initCropControls error:", e); }
   try { initTrackpadSpeedControls(); } catch (e) { console.error("initTrackpadSpeedControls error:", e); }
   try { initKeyboardSettingsControls(); } catch (e) { console.error("initKeyboardSettingsControls error:", e); }
+  try { initDeviceProfileAndResizeControls(); } catch (e) { console.error("initDeviceProfileAndResizeControls error:", e); }
   try { initAudioControls(); } catch (e) { console.error("initAudioControls error:", e); }
   try { bindDisplayFitAndAutoRotateControls(); } catch (e) { console.error("bindDisplayFitAndAutoRotateControls error:", e); }
   try { applyTheme(currentTheme); } catch (e) { console.error("applyTheme error:", e); }

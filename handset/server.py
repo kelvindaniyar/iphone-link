@@ -27,7 +27,7 @@ if sys.platform == "win32":
     }
 
 
-from handset.device import read_handset, snapshot
+from handset.device import classify_device_family, read_handset, snapshot
 from handset.mux import MuxError
 from handset.screen import (
     _clean_ocr_line,
@@ -147,6 +147,8 @@ DEFAULT_SETTINGS = {
     "crossPlatformShortcuts": True,
     "pastePcClipboard": True,
     "autoRotate": False,
+    "deviceProfile": "auto",
+    "customWindowSize": None,
 }
 
 def get_windows_clipboard_seq() -> int:
@@ -409,6 +411,29 @@ def paste_to_iphone(text: str | None = None, force_pc: bool = False, paste_pc_cl
     return {"ok": ok, "method": "ios-shortcut", "reason": "pc-empty-fallback"}
 
 
+def _normalize_device_profile(value: Any) -> str:
+    val = str(value or "auto").strip().lower()
+    if val in ("iphone", "ipad", "auto"):
+        return val
+    return "auto"
+
+
+def _normalize_custom_window_size(value: Any) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        w = int(round(float(value.get("width", 0))))
+        h = int(round(float(value.get("height", 0))))
+    except Exception:
+        return None
+    if w < 336 or h < 420:
+        return None
+    return {
+        "width": max(336, min(4096, w)),
+        "height": max(420, min(2560, h)),
+    }
+
+
 def load_user_settings(persist_instance: bool = False) -> dict:
     global _IS_FRESH_EXTRACTED_FOLDER
     settings_file = get_settings_file_path()
@@ -429,6 +454,8 @@ def load_user_settings(persist_instance: bool = False) -> dict:
         except Exception as e:
             print(f"load_user_settings error: {e}", flush=True)
 
+    merged["deviceProfile"] = _normalize_device_profile(merged.get("deviceProfile"))
+    merged["customWindowSize"] = _normalize_custom_window_size(merged.get("customWindowSize"))
     _IS_FRESH_EXTRACTED_FOLDER = is_fresh
     merged["folderInstanceId"] = app_root_id
     merged["isFreshFolder"] = is_fresh
@@ -474,6 +501,10 @@ def save_user_settings(new_settings: dict) -> dict:
         elif k == "audioBufferPreset":
             from handset.usb_audio import normalize_buffer_preset
             current["audioBufferPreset"] = normalize_buffer_preset(str(v or "normal"))
+        elif k == "deviceProfile":
+            current["deviceProfile"] = _normalize_device_profile(v)
+        elif k == "customWindowSize":
+            current["customWindowSize"] = _normalize_custom_window_size(v)
         elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate", "lipSync", "audioMuted"):
             current[k] = bool(v)
         elif k in current and k not in ("folderInstanceId", "isFreshFolder"):
@@ -614,6 +645,13 @@ class Handler(BaseHTTPRequestHandler):
             payload["isFreshFolder"] = is_fresh_extracted_folder()
             _, wallpaper_sig = _get_current_wallpaper_file_and_signature()
             payload["wallpaperSig"] = wallpaper_sig
+            payload["deviceFamily"] = next(
+                (d.get("deviceFamily") for d in devices if isinstance(d, dict) and d.get("deviceFamily")),
+                "iphone",
+            )
+            payload["deviceProfile"] = _normalize_device_profile(
+                load_user_settings(persist_instance=False).get("deviceProfile")
+            )
             self._json(payload)
             return
         if path == "/api/tray-state":
@@ -696,6 +734,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings":
             saved = save_user_settings(payload)
             self._json({"ok": True, "settings": saved})
+            return
+        if path == "/api/settings/device-profile":
+            raw_prof = payload.get("deviceProfile") if "deviceProfile" in payload else payload.get("profile")
+            prof = _normalize_device_profile(raw_prof)
+            saved = save_user_settings({"deviceProfile": prof})
+            self._json({"ok": True, "deviceProfile": prof, "settings": saved})
             return
         if path == "/api/server/shutdown":
             import threading
@@ -1230,14 +1274,21 @@ class Handler(BaseHTTPRequestHandler):
             cached = get_device_wifi_state(udid)
             if cached.get("wifi_enabled_on_device") or udid in wifi_paired_udids():
                 name = cached.get("device_name") or "iPhone"
+                product_type = cached.get("product_type") or ""
+                family = classify_device_family(product_type=product_type, device_name=name)
+                info_obj = {
+                    "DeviceName": name,
+                    "DeviceClass": "iPad" if family == "ipad" else "iPhone",
+                    "WiFiAddress": cached.get("mac_address"),
+                    "LastIP": cached.get("last_ip"),
+                }
+                if product_type:
+                    info_obj["ProductType"] = product_type
                 self._json({
                     "udid": udid,
                     "paired": True,
-                    "info": {
-                        "DeviceName": name,
-                        "WiFiAddress": cached.get("mac_address"),
-                        "LastIP": cached.get("last_ip"),
-                    },
+                    "deviceFamily": family,
+                    "info": info_obj,
                     "wifi": True,
                 })
                 return

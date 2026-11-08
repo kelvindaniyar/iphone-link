@@ -1963,40 +1963,40 @@ iframe[hidden],
 }
 
 /* Saat window dalam mode Portrait sempit (default): sembunyikan brand-title & teks label Restart */
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .brand-title {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .brand-title {
   display: none !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen .btn-label {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #restart-screen .btn-label {
   display: none !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #restart-screen {
   padding: 0 4px !important;
   width: 24px !important;
   height: 24px !important;
   justify-content: center !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-bar {
   padding: 0 10px 0 12px !important;
   gap: 4px !important;
   overflow: hidden !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-title-area {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-title-area {
   gap: 6px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .pill {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .pill {
   padding: 2px 6px !important;
   font-size: 11px !important;
   flex-shrink: 0 !important;
   white-space: nowrap !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #stop-screen {
   padding: 0 6px !important;
   height: 24px !important;
   font-size: 11px !important;
@@ -2004,23 +2004,23 @@ iframe[hidden],
   white-space: nowrap !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-actions {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-actions {
   gap: 2px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .icon-btn {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .icon-btn {
   width: 24px !important;
   height: 24px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .window-controls {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .window-controls {
   margin-left: 1px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .win-btn {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .win-btn {
   width: 24px !important;
   height: 24px !important;
   flex-shrink: 0 !important;
@@ -2063,18 +2063,24 @@ iframe[hidden],
 /* Ketika Side Drawer terbuka, mode Landscape, atau Full Screen: tampilkan kembali dengan lega */
 .app.drawer-open .brand-title,
 .app.is-landscape .brand-title,
+.app.is-ipad .brand-title,
+.app.has-custom-size .brand-title,
 .app.is-fullsize .brand-title {
   display: inline !important;
 }
 
 .app.drawer-open #restart-screen .btn-label,
 .app.is-landscape #restart-screen .btn-label,
+.app.is-ipad #restart-screen .btn-label,
+.app.has-custom-size #restart-screen .btn-label,
 .app.is-fullsize #restart-screen .btn-label {
   display: inline !important;
 }
 
 .app.drawer-open #restart-screen,
 .app.is-landscape #restart-screen,
+.app.is-ipad #restart-screen,
+.app.has-custom-size #restart-screen,
 .app.is-fullsize #restart-screen {
   width: auto !important;
   padding: 0 6px !important;
@@ -2331,6 +2337,22 @@ body {
 [data-theme="light"] .setting-label,
 [data-theme="light"] span {
   color: #0f172a !important;
+}
+
+/* Tahap 125: label tombol (Fluent icon + .btn-label) mewarisi warna tombol di Light Mode */
+[data-theme="light"] button .btn-label,
+.app[data-theme="light"] button .btn-label,
+[data-theme="light"] a .btn-label,
+.app[data-theme="light"] a .btn-label,
+[data-theme="light"] .audio-badge .btn-label,
+.app[data-theme="light"] .audio-badge .btn-label,
+[data-theme="light"] .btn-stealth-toggle.is-active .btn-label,
+.app[data-theme="light"] .btn-stealth-toggle.is-active .btn-label,
+[data-theme="light"] .primary .btn-label,
+.app[data-theme="light"] .primary .btn-label,
+[data-theme="light"] .saweria-support-btn .btn-label,
+.app[data-theme="light"] .saweria-support-btn .btn-label {
+  color: inherit !important;
 }
 
 /* 2. Absolute Screen Stage Protection (Mirror Stream 100% Solid & Crisp) */
@@ -2652,15 +2674,15 @@ body {
 
 /* Terapkan rumus identik pada @media (min-width: 1220px): */
 @media (min-width: 1220px) {
-  .app .app-bar .brand-title,
-  .app #restart-screen .btn-label,
-  .app #stop-screen .btn-label {
+  .app:not(.has-custom-size):not(.is-ipad) .app-bar .brand-title,
+  .app:not(.has-custom-size):not(.is-ipad) #restart-screen .btn-label,
+  .app:not(.has-custom-size):not(.is-ipad) #stop-screen .btn-label {
     display: inline !important;
   }
-  .app:not(.drawer-open) .side-drawer {
+  .app:not(.has-custom-size):not(.is-ipad):not(.drawer-open) .side-drawer {
     display: none !important;
   }
-  .app.drawer-open .side-drawer {
+  .app:not(.has-custom-size):not(.is-ipad).drawer-open .side-drawer {
     display: flex !important;
     flex-direction: column !important;
     width: 360px !important;
@@ -2672,7 +2694,7 @@ body {
     overflow-y: auto !important;
     z-index: 20 !important;
   }
-  .app .main-body {
+  .app:not(.has-custom-size):not(.is-ipad) .main-body {
     display: flex !important;
     flex-direction: row !important;
     width: 100vw !important;
@@ -2680,7 +2702,7 @@ body {
     max-height: calc(100vh - 38px) !important;
     overflow: hidden !important;
   }
-  .app .display-col {
+  .app:not(.has-custom-size):not(.is-ipad) .display-col {
     flex: 1 1 auto !important;
     width: auto !important;
     min-width: 0 !important;
@@ -2696,9 +2718,9 @@ body {
     padding: 0 !important;
     overflow: hidden !important;
   }
-  .app .workspace,
-  .app .stage,
-  .app #phone-shell {
+  .app:not(.has-custom-size):not(.is-ipad) .workspace,
+  .app:not(.has-custom-size):not(.is-ipad) .stage,
+  .app:not(.has-custom-size):not(.is-ipad) #phone-shell {
     width: 100% !important;
     height: calc(100vh - 82px) !important;
     max-height: calc(100vh - 82px) !important;
@@ -2712,7 +2734,7 @@ body {
     padding: 0 !important;
     overflow: hidden !important;
   }
-  .app .quick-nav {
+  .app:not(.has-custom-size):not(.is-ipad) .quick-nav {
     width: 100% !important;
     height: 44px !important;
     min-height: 44px !important;
@@ -2722,7 +2744,7 @@ body {
     margin-top: 0 !important;
     z-index: 20 !important;
   }
-  .app:not(.is-landscape) #phone-screen {
+  .app:not(.has-custom-size):not(.is-ipad):not(.is-landscape) #phone-screen {
     height: calc(100vh - 84px) !important;
     max-height: calc(100vh - 84px) !important;
     min-height: calc(100vh - 84px) !important;
@@ -2737,7 +2759,7 @@ body {
     background: #000000 !important;
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
   }
-  .app.is-landscape #phone-screen {
+  .app:not(.has-custom-size):not(.is-ipad).is-landscape #phone-screen {
     height: calc(100vh - 82px) !important;
     max-height: calc(100vh - 82px) !important;
     width: min(100vw, calc((100vh - 82px) * (840 / 386))) !important;
@@ -2749,11 +2771,198 @@ body {
     overflow: hidden !important;
     background: #000000 !important;
   }
-  .app.is-landscape.drawer-open #phone-screen {
+  .app:not(.has-custom-size):not(.is-ipad).is-landscape.drawer-open #phone-screen {
     width: min(calc(100vw - 380px), calc((100vh - 84px) * (2656 / 1216))) !important;
     height: auto !important;
     max-height: calc(100vh - 84px) !important;
     aspect-ratio: 2656 / 1216 !important;
     margin: auto !important;
   }
+}
+
+/* ======================================================================
+   Tahap 125: Fluent UI System Icons (SVG) di Side Drawer
+   ====================================================================== */
+.fluent-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  stroke: currentColor;
+  pointer-events: none;
+}
+
+.btn-label {
+  pointer-events: none;
+}
+
+.setting-label,
+.seg,
+.ctl,
+.ctl-sm,
+.audio-badge,
+.icon-btn-close,
+.saweria-support-btn,
+.ghost-block,
+.btn-action-block {
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-label,
+.ctl,
+.ctl-sm,
+.audio-badge,
+.icon-btn-close,
+.saweria-support-btn,
+.ghost-block,
+.btn-action-block {
+  display: inline-flex;
+}
+
+.ctl.btn-action-block,
+.ctl-sm.btn-action-block,
+.ghost-block,
+.btn-action-block {
+  justify-content: center;
+}
+
+.seg {
+  display: inline-flex;
+  justify-content: center;
+}
+
+.svg-state-on[hidden],
+.svg-state-off[hidden] {
+  display: none !important;
+}
+
+.segmented-device-profile {
+  grid-template-columns: 1fr 1fr 1.2fr !important;
+  margin-bottom: 0 !important;
+}
+
+.window-size-row .btn-action-block {
+  width: 100%;
+}
+
+/* ======================================================================
+   Tahap 125: Native 8-Direction Resize Handles (Frameless Window)
+   ====================================================================== */
+.win-resize-handle {
+  position: fixed;
+  z-index: 9999;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+  touch-action: none;
+  background: transparent;
+}
+
+.win-resize-n { top: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.win-resize-s { bottom: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.win-resize-w { left: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.win-resize-e { right: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.win-resize-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.win-resize-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.win-resize-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.win-resize-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+
+.app.is-fullsize ~ .win-resize-handle,
+body:has(.app.is-fullsize) .win-resize-handle {
+  display: none !important;
+}
+
+/* ======================================================================
+   Tahap 125: Mode iPad (4:3 / 3:4) & Ukuran Kustom (Windowed)
+   ====================================================================== */
+.app.is-ipad:not(.is-fullsize) .workspace,
+.app.is-ipad:not(.is-fullsize) .stage,
+.app.is-ipad:not(.is-fullsize) #phone-shell,
+.app.is-ipad:not(.is-fullsize) .screen-stage,
+.app.is-ipad:not(.is-fullsize) #phone-screen,
+.app.is-ipad:not(.is-fullsize) .screen-viewport,
+.app.is-ipad:not(.is-fullsize) iframe,
+.app.is-ipad:not(.is-fullsize) #screen-view,
+.app.is-ipad:not(.is-fullsize) #mirror-frame,
+.app.is-ipad:not(.is-fullsize) .screen-frame,
+.app.has-custom-size:not(.is-fullsize) .workspace,
+.app.has-custom-size:not(.is-fullsize) .stage,
+.app.has-custom-size:not(.is-fullsize) #phone-shell,
+.app.has-custom-size:not(.is-fullsize) .screen-stage,
+.app.has-custom-size:not(.is-fullsize) #phone-screen,
+.app.has-custom-size:not(.is-fullsize) .screen-viewport,
+.app.has-custom-size:not(.is-fullsize) iframe,
+.app.has-custom-size:not(.is-fullsize) #screen-view,
+.app.has-custom-size:not(.is-fullsize) #mirror-frame,
+.app.has-custom-size:not(.is-fullsize) .screen-frame {
+  aspect-ratio: unset !important;
+  max-height: none !important;
+}
+
+.app.is-ipad:not(.is-fullsize) .main-body,
+.app.has-custom-size:not(.is-fullsize) .main-body {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: calc(100vh - 38px);
+}
+
+.app.is-ipad:not(.is-fullsize) .display-col,
+.app.has-custom-size:not(.is-fullsize) .display-col {
+  flex: 1 1 auto !important;
+  height: 100% !important;
+}
+
+.app.has-custom-size:not(.is-fullsize).drawer-open .display-col,
+.app.is-ipad:not(.is-fullsize).drawer-open .display-col {
+  flex: 1 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+
+.app.has-custom-size:not(.is-fullsize).drawer-open .side-drawer,
+.app.is-ipad:not(.is-fullsize).drawer-open .side-drawer {
+  flex: 0 0 360px !important;
+  width: 360px !important;
+  min-width: 360px !important;
+  max-width: 360px !important;
+  height: 100% !important;
+  overflow-y: auto !important;
+}
+
+/* iPad Full Screen: kanvas 3:4 (Portrait) atau 4:3 (Landscape) di tengah */
+.app.is-ipad.is-fullsize:not(.is-landscape) #phone-screen,
+.app.is-ipad.is-fullsize:not(.is-landscape).drawer-open #phone-screen {
+  height: calc(100vh - 84px) !important;
+  max-height: calc(100vh - 84px) !important;
+  min-height: 0 !important;
+  width: auto !important;
+  aspect-ratio: 3 / 4 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  margin: auto !important;
+  flex: 0 0 auto !important;
+}
+
+.app.is-ipad.is-fullsize.is-landscape #phone-screen,
+.app.is-ipad.is-fullsize.is-landscape.drawer-open #phone-screen {
+  width: min(100%, calc((100vh - 84px) * (4 / 3))) !important;
+  height: auto !important;
+  max-height: calc(100vh - 84px) !important;
+  max-width: 100% !important;
+  min-height: 0 !important;
+  aspect-ratio: 4 / 3 !important;
+  margin: auto !important;
+  flex: 0 0 auto !important;
+}
+
+.app.is-ipad.is-fullsize #phone-screen #screen-view,
+.app.is-ipad.is-fullsize #phone-screen iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  aspect-ratio: unset !important;
 }

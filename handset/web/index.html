@@ -6,10 +6,19 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261103_tahap91_fullscreen_settings_drawer_and_compact_swipe_nav">
+  <link rel="stylesheet" href="/app.css?v=20261109_tahap125_ipad_resize_fluent">
 </head>
 <body>
   <div class="app" id="app-root">
+    <!-- 8-Direction Native Frameless Window Resize Handles (Tahap 125) -->
+    <div class="win-resize-handle win-resize-n" data-resize-edge="n" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-s" data-resize-edge="s" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-w" data-resize-edge="w" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-e" data-resize-edge="e" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-nw" data-resize-edge="nw" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-ne" data-resize-edge="ne" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-sw" data-resize-edge="sw" aria-hidden="true"></div>
+    <div class="win-resize-handle win-resize-se" data-resize-edge="se" aria-hidden="true"></div>
     <!-- WinUI 3 Liquid Glass Top Toolbar (Frameless Drag Region) -->
     <header class="app-bar pywebview-drag-region">
       <div class="app-title-area brand">
@@ -141,29 +150,78 @@
       <aside class="side-drawer" id="control-pane" aria-label="Settings and controls" hidden>
         <div class="drawer-header">
           <h2 class="drawer-title">Settings & Controls</h2>
-          <button type="button" class="icon-btn-close" id="close-settings" title="Close settings" aria-label="Close">✕</button>
+          <button type="button" class="icon-btn-close" id="close-settings" title="Close settings" aria-label="Close">
+            <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
         </div>
 
         <div class="drawer-content">
           <section class="card panel-theme">
             <span class="drawer-section-label">Appearance</span>
             <div class="segmented segmented-theme" role="radiogroup" aria-label="Theme">
-              <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">🌙 Dark</button>
-              <button type="button" class="seg" data-theme-choice="light" role="radio" aria-checked="false">☀️ Light</button>
+              <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span class="btn-label">Dark</span>
+              </button>
+              <button type="button" class="seg" data-theme-choice="light" role="radio" aria-checked="false">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                </svg>
+                <span class="btn-label">Light</span>
+              </button>
             </div>
           </section>
 
           <section class="card panel-display-fit">
             <span class="drawer-section-label">Display Fit & Aspect</span>
             <div class="segmented segmented-fit" role="radiogroup" aria-label="Display Fit">
-              <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true">Auto-Fit</button>
-              <button type="button" class="seg" data-fit-choice="fill" role="radio" aria-checked="false">Edge-to-Edge</button>
-              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false">Original Ratio</button>
+              <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true"><span class="btn-label">Auto-Fit</span></button>
+              <button type="button" class="seg" data-fit-choice="fill" role="radio" aria-checked="false"><span class="btn-label">Edge-to-Edge</span></button>
+              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false"><span class="btn-label">Original Ratio</span></button>
+            </div>
+
+            <div class="setting-toggle-item" style="margin-top: 8px; margin-bottom: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="12" height="16" rx="2"></rect>
+                    <rect x="13" y="8" width="8" height="12" rx="1.5"></rect>
+                  </svg>
+                  <span class="btn-label">Perangkat (Aspect)</span>
+                </span>
+                <span class="setting-hint" id="device-profile-hint">Auto (iPhone)</span>
+              </div>
+              <div class="segmented segmented-device-profile" id="segmented-device-profile" role="radiogroup" aria-label="Device Profile Aspect">
+                <button type="button" class="seg is-active" data-device-profile="auto" role="radio" aria-checked="true"><span class="btn-label">Auto</span></button>
+                <button type="button" class="seg" data-device-profile="iphone" role="radio" aria-checked="false"><span class="btn-label">iPhone</span></button>
+                <button type="button" class="seg" data-device-profile="ipad" role="radio" aria-checked="false"><span class="btn-label">iPad (4:3)</span></button>
+              </div>
+            </div>
+
+            <div class="window-size-row" style="margin-top: 6px; margin-bottom: 8px;">
+              <button type="button" class="ctl ctl-sm btn-action-block" id="btn-reset-window-size" title="Kembalikan ukuran jendela ke rasio default 1:1 perangkat aktif">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+                </svg>
+                <span class="btn-label">Reset Ukuran Default (1:1)</span>
+              </button>
             </div>
 
             <div class="setting-toggle-item" style="margin-top: 10px; margin-bottom: 8px;">
               <div class="setting-toggle-header">
-                <span class="setting-label">🎮 Auto-Rotate Game</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2" y="6" width="20" height="12" rx="4"></rect>
+                    <path d="M6 12h4M8 10v4M15 11h.01M18 13h.01"></path>
+                  </svg>
+                  <span class="btn-label">Auto-Rotate Game</span>
+                </span>
                 <span class="setting-hint">eFootball / Genshin</span>
               </div>
               <div class="segmented segmented-toggle" role="radiogroup" aria-label="Auto-Rotate Game">
@@ -224,8 +282,15 @@
               </div>
 
               <div class="crop-btn-row">
-                <button type="button" class="ctl ctl-sm" id="btn-reset-crop">Reset (0 px)</button>
-                <button type="button" class="ctl ctl-sm ctl-accent btn-save-crop" id="btn-save-crop">💾 Save Crop</button>
+                <button type="button" class="ctl ctl-sm" id="btn-reset-crop"><span class="btn-label">Reset (0 px)</span></button>
+                <button type="button" class="ctl ctl-sm ctl-accent btn-save-crop" id="btn-save-crop">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                  </svg>
+                  <span class="btn-label">Save Crop</span>
+                </button>
               </div>
             </div>
           </section>
@@ -233,13 +298,31 @@
           <!-- Zero-Bluetooth USB Audio Pipe (Tahap 123: CoreDevice AAC-ELD + WASAPI + Jitter Buffer) -->
           <section class="card panel-audio" id="panel-audio">
             <div class="card-header-row">
-              <span class="drawer-section-label">Audio (iPhone ➔ PC)</span>
-              <span class="audio-badge active" id="audio-status-badge">✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~40 ms)</span>
+              <span class="drawer-section-label">Audio (iPhone -&gt; PC)</span>
+              <span class="audio-badge active" id="audio-status-badge">
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span class="btn-label">Zero-Bluetooth USB Audio (48 kHz WASAPI · ~40 ms)</span>
+              </span>
             </div>
 
             <div class="segmented segmented-audio-out" id="segmented-audio-out" role="radiogroup" aria-label="Audio Output Target">
-              <button type="button" class="seg is-active" data-audio-out="pc" id="btn-audio-out-pc" role="radio" aria-checked="true">💻 Di PC ini (USB)</button>
-              <button type="button" class="seg" data-audio-out="device" id="btn-audio-out-device" role="radio" aria-checked="false">📱 Hanya perangkat</button>
+              <button type="button" class="seg is-active" data-audio-out="pc" id="btn-audio-out-pc" role="radio" aria-checked="true">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                  <line x1="8" y1="21" x2="16" y2="21"></line>
+                  <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                <span class="btn-label">Di PC ini (USB)</span>
+              </button>
+              <button type="button" class="seg" data-audio-out="device" id="btn-audio-out-device" role="radio" aria-checked="false">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="6" y="2" width="12" height="20" rx="2"></rect>
+                  <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                </svg>
+                <span class="btn-label">Hanya perangkat</span>
+              </button>
             </div>
 
             <div class="audio-vol-wrap" style="margin-top: 8px;">
@@ -248,7 +331,17 @@
                 <div style="display: inline-flex; align-items: center; gap: 6px;">
                   <span class="unit" id="audio-vol-val">100%</span>
                   <button type="button" class="ctl ctl-sm audio-mute-inline-btn" id="btn-audio-drawer" title="Mute / Unmute PC Audio (Alt+M)">
-                    <span id="audio-toggle-icon">🔊</span>
+                    <span id="audio-toggle-icon">
+                      <svg class="fluent-icon svg-state-on" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                      </svg>
+                      <svg class="fluent-icon svg-state-off" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                        <line x1="23" y1="9" x2="17" y2="15"></line>
+                        <line x1="17" y1="9" x2="23" y2="15"></line>
+                      </svg>
+                    </span>
                     <span id="audio-toggle-text">Alt+M</span>
                   </button>
                 </div>
@@ -258,7 +351,12 @@
 
             <div class="setting-toggle-item" style="margin-top: 8px;">
               <div class="setting-toggle-header">
-                <span class="setting-label">⚡ Buffer Audio</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                  <span class="btn-label">Buffer Audio</span>
+                </span>
                 <span class="setting-hint" id="audio-buffer-hint">Normal · ~40 ms</span>
               </div>
               <div class="segmented segmented-audio-buffer" id="segmented-audio-buffer" role="radiogroup" aria-label="Buffer Audio Preset">
@@ -270,7 +368,13 @@
 
             <div class="setting-toggle-item" style="margin-top: 8px;">
               <div class="setting-toggle-header">
-                <span class="setting-label">🎬 Lip Sync</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                    <path d="M7 4v16M17 4v16M2 12h20"></path>
+                  </svg>
+                  <span class="btn-label">Lip Sync</span>
+                </span>
                 <span class="setting-hint" id="lip-sync-hint">ON</span>
               </div>
               <div class="segmented segmented-toggle" id="segmented-lip-sync" role="radiogroup" aria-label="Lip Sync">
@@ -282,8 +386,19 @@
             <details class="audio-bt-fallback" style="margin-top: 8px;">
               <summary style="font-size: 11px; color: var(--muted); cursor: pointer; user-select: none;">Opsi Fallback Bluetooth A2DP</summary>
               <div style="display: flex; gap: 6px; margin-top: 6px;">
-                <button type="button" class="ctl ctl-sm" id="btn-audio-out-bt" data-audio-out="bluetooth" style="flex: 1;">🔵 Gunakan Bluetooth</button>
-                <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="flex: 1;">⚙️ Pair BT</button>
+                <button type="button" class="ctl ctl-sm" id="btn-audio-out-bt" data-audio-out="bluetooth" style="flex: 1;">
+                  <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"></polyline>
+                  </svg>
+                  <span class="btn-label">Gunakan Bluetooth</span>
+                </button>
+                <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="flex: 1;">
+                  <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                  </svg>
+                  <span class="btn-label">Pair BT</span>
+                </button>
               </div>
             </details>
           </section>
@@ -309,7 +424,14 @@
             </div>
 
             <div class="speed-btn-row" style="margin-top: 8px;">
-              <button type="button" class="ctl ctl-sm ctl-accent btn-save-speed" id="btn-save-speed" style="width: 100%;">💾 Save Speed</button>
+              <button type="button" class="ctl ctl-sm ctl-accent btn-save-speed" id="btn-save-speed" style="width: 100%;">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                <span class="btn-label">Save Speed</span>
+              </button>
             </div>
           </section>
 
@@ -320,8 +442,13 @@
             <!-- Toggle 1: Cross-Platform Shortcuts -->
             <div class="setting-toggle-item">
               <div class="setting-toggle-header">
-                <span class="setting-label">⚡ Cross-Platform Shortcuts</span>
-                <span class="setting-hint">Ctrl ➔ Cmd</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                  <span class="btn-label">Cross-Platform Shortcuts</span>
+                </span>
+                <span class="setting-hint">Ctrl -&gt; Cmd</span>
               </div>
               <div class="segmented segmented-toggle" role="radiogroup" aria-label="Cross-Platform Shortcuts">
                 <button type="button" class="seg is-active" data-shortcut-choice="true" role="radio" aria-checked="true">ON</button>
@@ -332,8 +459,14 @@
             <!-- Toggle 2: Ctrl+V Pastes PC Clipboard -->
             <div class="setting-toggle-item" style="margin-top: 8px;">
               <div class="setting-toggle-header">
-                <span class="setting-label">📋 Ctrl+V Pastes PC Clipboard</span>
-                <span class="setting-hint">PC ➔ iPhone</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                  </svg>
+                  <span class="btn-label">Ctrl+V Pastes PC Clipboard</span>
+                </span>
+                <span class="setting-hint">PC -&gt; iPhone</span>
               </div>
               <div class="segmented segmented-toggle" role="radiogroup" aria-label="Paste PC Clipboard">
                 <button type="button" class="seg is-active" data-paste-pc-choice="true" role="radio" aria-checked="true">ON</button>
@@ -341,25 +474,46 @@
               </div>
               <div style="display: flex; gap: 6px; margin-top: 8px;">
                 <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now" style="flex: 1; margin-top: 0;">
-                  📋 Paste PC Text (Alt+V)
+                  <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                    <path d="M12 11v6M9 14l3 3 3-3"></path>
+                  </svg>
+                  <span class="btn-label">Paste PC Text (Alt+V)</span>
                 </button>
                 <button type="button" class="ctl ctl-sm btn-action-block" id="btn-copy-iphone-now" style="flex: 1; margin-top: 0;">
-                  📥 Copy iPhone Text (Alt+C)
+                  <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  <span class="btn-label">Copy iPhone Text (Alt+C)</span>
                 </button>
               </div>
               <button type="button" class="ctl ctl-sm btn-secondary btn-action-block" id="btn-clear-copy-cache" title="Bersihkan memori penyambung teks panjang" style="margin-top: 6px; width: 100%;">
-                🧹 Clear Copy Cache (Alt+R)
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8l10-10c.8-.8 2-.8 2.8 0l5.7 5.7c.8.8.8 2 0 2.8L13 20"></path>
+                </svg>
+                <span class="btn-label">Clear Copy Cache (Alt+R)</span>
               </button>
               <div class="qr-bridge-row" style="margin-top: 6px;">
                 <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-scan-qr-link" title="Salin tautan share Instagram / Threads / TikTok dari iPhone langsung ke PC Windows (Alt+B)" style="width: 100%; margin-top: 0;">
-                  🔗 Grab Link (Alt+B)
+                  <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                  </svg>
+                  <span class="btn-label">Grab Link (Alt+B)</span>
                 </button>
               </div>
             </div>
 
             <!-- Action Button: Toggle iPhone On-Screen Keyboard -->
             <button type="button" class="ctl ctl-sm btn-action-block" id="btn-toggle-onscreen-kb" style="margin-top: 10px;">
-              ⌨️ Toggle iPhone On-Screen Keyboard (Ctrl+K)
+              <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8"></path>
+              </svg>
+              <span class="btn-label">Toggle iPhone On-Screen Keyboard (Ctrl+K)</span>
             </button>
 
             <!-- Badge / Shortcut List -->
@@ -388,20 +542,37 @@
             
             <div class="stealth-btn-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
               <button type="button" class="ctl ctl-accent btn-action-block" id="btn-wake-unlock" title="Wake screen & unlock iPhone (Alt+U)" style="flex: 1; margin-top: 0;">
-                🔓 Wake / Unlock (Alt+U)
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                </svg>
+                <span class="btn-label">Wake / Unlock (Alt+U)</span>
               </button>
               <button type="button" class="ctl btn-action-block" id="btn-lock-iphone" title="Lock & sleep iPhone screen (Alt+L)" style="flex: 1; margin-top: 0;">
-                🔒 Lock iPhone (Alt+L)
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span class="btn-label">Lock iPhone (Alt+L)</span>
               </button>
             </div>
 
             <div class="setting-toggle-item" style="margin-top: 4px;">
               <div class="setting-toggle-header">
-                <span class="setting-label">🌑 Stealth Dim Mode (Alt+D)</span>
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M12 3v18"></path>
+                  </svg>
+                  <span class="btn-label">Stealth Dim Mode (Alt+D)</span>
+                </span>
                 <span class="setting-hint" id="stealth-mode-hint">OFF</span>
               </div>
               <button type="button" class="ctl ctl-sm btn-stealth-toggle" id="btn-stealth-mode" style="width: 100%; margin-top: 4px;">
-                🌑 Stealth Dim Mode: OFF
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span class="btn-label">Stealth Dim Mode: OFF</span>
               </button>
               <p class="stealth-subhint" style="font-size: 11px; opacity: 0.7; margin-top: 4px; line-height: 1.35;">
                 Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).
@@ -414,16 +585,33 @@
               </label>
               <div class="pin-input-wrap" style="display: flex; gap: 6px;">
                 <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric" style="flex: 1; font-family: monospace; font-size: 14px; letter-spacing: 2px;">
-                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN" style="width: 36px; padding: 0;">👁️</button>
+                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN" style="width: 36px; padding: 0;">
+                  <svg class="fluent-icon svg-state-off" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                  <svg class="fluent-icon svg-state-on" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                  </svg>
+                </button>
               </div>
               <p style="font-size: 10px; opacity: 0.6; margin-top: 3px;">
                 Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.
               </p>
               <button type="button" class="ctl ctl-sm btn-wipe-privacy" id="btn-wipe-privacy" style="width: 100%; margin-top: 6px;" title="Wipe saved PIN, local cache, and history data">
-                🗑️ Clear Saved PIN &amp; Privacy Data
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                  <path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                </svg>
+                <span class="btn-label">Clear Saved PIN &amp; Privacy Data</span>
               </button>
               <button type="button" class="ctl ctl-sm" id="btn-hide-to-tray" style="width: 100%; margin-top: 6px;" title="Sembunyikan jendela ke Windows 11 System Tray (Mirroring &amp; Audio tetap aktif)">
-                ➖ Hide Window to System Tray
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"></path>
+                </svg>
+                <span class="btn-label">Hide Window to System Tray</span>
               </button>
             </div>
           </section>
@@ -431,16 +619,30 @@
           <section class="card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
-              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi‑Fi</button>
+              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi-Fi</button>
             </div>
             <div class="wifi-row" id="wifi-row">
-              <span class="wifi-state" id="wifi-state">Wi‑Fi not set up</span>
-              <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">🔍 Scan</button>
-              <button type="button" class="ctl ctl-sm" id="wifi-pair">Set up Wi‑Fi</button>
+              <span class="wifi-state" id="wifi-state">Wi-Fi not set up</span>
+              <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">
+                <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <span class="btn-label">Scan</span>
+              </button>
+              <button type="button" class="ctl ctl-sm" id="wifi-pair"><span class="btn-label">Set up Wi-Fi</span></button>
             </div>
-            <button type="button" class="primary primary-block" id="show-screen">Start mirroring</button>
+            <button type="button" class="primary primary-block" id="show-screen">
+              <span class="btn-label">Start mirroring</span>
+            </button>
             <div id="screen-error-banner" class="screen-error-banner" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12px; line-height:1.4; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.35); color:#fca5a5;"></div>
-            <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>⌨ Keyboard → iPhone: On</button>
+            <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>
+              <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8"></path>
+              </svg>
+              <span class="btn-label">Keyboard -&gt; iPhone: On</span>
+            </button>
             <p class="control-hint" id="control-hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
           </section>
 
@@ -449,13 +651,13 @@
             <summary>Gestures & Hardware Keys</summary>
             <div class="details-body">
               <div class="control-grid">
-                <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)">◀ Back</button>
-                <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen">Home</button>
-                <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps">App switcher</button>
-                <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left">Notifications</button>
-                <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right">Control Center</button>
-                <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge">← Swipe</button>
-                <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge">Swipe →</button>
+                <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)"><span class="btn-label">Back</span></button>
+                <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen"><span class="btn-label">Home</span></button>
+                <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps"><span class="btn-label">App switcher</span></button>
+                <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left"><span class="btn-label">Notifications</span></button>
+                <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right"><span class="btn-label">Control Center</span></button>
+                <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge"><span class="btn-label">Swipe Left</span></button>
+                <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge"><span class="btn-label">Swipe Right</span></button>
               </div>
               <div class="control-row">
                 <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
@@ -465,20 +667,38 @@
               </div>
               <div class="control-row control-row-2">
                 <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
-                <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol −</button>
+                <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol -</button>
               </div>
               <div class="view-tools">
                 <span class="view-label">View</span>
                 <div class="zoom-cluster">
-                  <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">−</button>
+                  <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">-</button>
                   <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
                   <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
                 </div>
                 <div class="rotate-cluster">
-                  <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise">↺</button>
-                  <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise">↻</button>
+                  <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise" aria-label="Rotate counter-clockwise">
+                    <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="1 4 1 10 7 10"></polyline>
+                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                    </svg>
+                  </button>
+                  <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise" aria-label="Rotate clockwise">
+                    <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                  </button>
                 </div>
-                <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">⛶ Full screen</button>
+                <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <polyline points="9 21 3 21 3 15"></polyline>
+                    <line x1="21" y1="3" x2="14" y2="10"></line>
+                    <line x1="3" y1="21" x2="10" y2="14"></line>
+                  </svg>
+                  <span class="btn-label">Full screen</span>
+                </button>
               </div>
             </div>
           </details>
@@ -487,10 +707,10 @@
             <summary>Device & Connection Details</summary>
             <div class="details-body">
               <button type="button" class="ctl ctl-sm" id="refresh" style="width: 100%; margin-bottom: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="fluent-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                 </svg>
-                <span>Refresh Devices</span>
+                <span class="btn-label">Refresh Devices</span>
               </button>
               <ul class="device-list" id="devices"></ul>
               <div class="device-detail" id="detail" hidden></div>
@@ -513,7 +733,16 @@
           <!-- Footer Attribution -->
           <div class="drawer-footer drawer-footer-credits" style="padding: 16px 12px 10px; text-align: center; font-size: 11px; line-height: 1.5; margin-top: 16px;">
             <div style="margin-bottom: 10px;">
-              <a href="https://saweria.co/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="saweria-support-btn">☕ Support Creator on Saweria</a>
+              <a href="https://saweria.co/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="saweria-support-btn">
+                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+                  <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+                  <line x1="6" y1="1" x2="6" y2="4"></line>
+                  <line x1="10" y1="1" x2="10" y2="4"></line>
+                  <line x1="14" y1="1" x2="14" y2="4"></line>
+                </svg>
+                <span class="btn-label">Support Creator on Saweria</span>
+              </a>
             </div>
             <p class="credit-main" style="margin: 0; font-weight: 600;">
               <span class="credit-app-name">iPhone Link v2.0</span> by <a href="https://github.com/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="credit-author">Kelvin Daniyar</a>
@@ -532,6 +761,6 @@
   </div>
 
   <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
-  <script src="/app.js?v=20261103_tahap91_fullscreen_settings_drawer_and_compact_swipe_nav"></script>
+  <script src="/app.js?v=20261109_tahap125_ipad_resize_fluent"></script>
 </body>
 </html>

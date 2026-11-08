@@ -360,6 +360,17 @@ def _reapply_dwm_rounded_corners(hwnd: int | None, is_fullscreen: bool = False) 
 class WindowApi:
     """JS-accessible API exposed under window.pywebview.api."""
 
+    _RESIZE_EDGE_TO_HT = {
+        "w": 10,   # HTLEFT
+        "e": 11,   # HTRIGHT
+        "n": 12,   # HTTOP
+        "nw": 13,  # HTTOPLEFT
+        "ne": 14,  # HTTOPRIGHT
+        "s": 15,   # HTBOTTOM
+        "sw": 16,  # HTBOTTOMLEFT
+        "se": 17,  # HTBOTTOMRIGHT
+    }
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8765):
         self._window = None
         self._host = host
@@ -374,6 +385,168 @@ class WindowApi:
         self._saved_window_pos: tuple[int, int] | None = None
         self._saved_portrait_phys_size: tuple[int, int] | None = None
         self._saved_landscape_phys_size: tuple[int, int] | None = None
+        self._device_profile = "auto"
+        self._device_family = "iphone"
+        self._custom_window_size: tuple[int, int] | None = None
+        self._resize_lock = threading.Lock()
+        self._resize_state: dict[str, object] | None = None
+
+    def _is_ipad_mode(self) -> bool:
+        prof = str(getattr(self, "_device_profile", "auto") or "auto").lower()
+        if prof == "ipad":
+            return True
+        if prof == "iphone":
+            return False
+        return str(getattr(self, "_device_family", "iphone") or "iphone").lower() == "ipad"
+
+    def _min_logical_size(self) -> tuple[int, int]:
+        min_w = 420 if self._is_ipad_mode() else 336
+        if getattr(self, "_drawer_open", False):
+            min_w = max(min_w, 696)
+        return (min_w, 420)
+
+    def _default_logical_size(
+        self,
+        landscape: bool | None = None,
+        drawer_open: bool | None = None,
+    ) -> tuple[int, int]:
+        is_land = bool(self._is_landscape if landscape is None else landscape)
+        is_drawer = bool(self._drawer_open if drawer_open is None else drawer_open)
+        if self._is_ipad_mode():
+            if is_land:
+                return (1120 if is_drawer else 760, 652)
+            return (900 if is_drawer else 540, 802)
+        if is_land:
+            return (1200 if is_drawer else 840, 468)
+        dw = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346)) or 346
+        return ((dw + 360) if is_drawer else dw, 832)
+
+    def _get_work_area(self, hwnd: int | None = None) -> tuple[int, int, int, int]:
+        if sys.platform != "win32":
+            return (0, 0, 1920, 1080)
+        user32 = getattr(ctypes.windll, "user32", None)
+        target_hwnd = hwnd or self._get_hwnd()
+        if user32 and target_hwnd and hasattr(user32, "MonitorFromWindow") and hasattr(user32, "GetMonitorInfoW"):
+            try:
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD),
+                    ]
+                hmon = user32.MonitorFromWindow(wintypes.HWND(target_hwnd), 2)
+                if hmon:
+                    mi = MONITORINFO()
+                    mi.cbSize = ctypes.sizeof(MONITORINFO)
+                    if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                        wr = mi.rcWork
+                        w = int(wr.right - wr.left)
+                        h = int(wr.bottom - wr.top)
+                        if w > 200 and h > 200:
+                            return (int(wr.left), int(wr.top), w, h)
+            except Exception:
+                pass
+        if user32:
+            wr = wintypes.RECT()
+            if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(wr), 0):
+                return (int(wr.left), int(wr.top), int(wr.right - wr.left), int(wr.bottom - wr.top))
+            return (0, 0, int(user32.GetSystemMetrics(0) or 1920), int(user32.GetSystemMetrics(1) or 1080))
+        return (0, 0, 1920, 1080)
+
+    def _clamp_phys_rect(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        hwnd: int | None = None,
+        anchor_right: int | None = None,
+        anchor_bottom: int | None = None,
+    ) -> tuple[int, int, int, int]:
+        scale = self._get_window_dpi_scale(hwnd)
+        work_left, work_top, work_w, work_h = self._get_work_area(hwnd)
+        min_lw, min_lh = self._min_logical_size()
+        min_pw = min(work_w, max(100, int(round(min_lw * scale))))
+        min_ph = min(work_h, max(100, int(round(min_lh * scale))))
+
+        cw = max(min_pw, min(work_w, int(round(w))))
+        ch = max(min_ph, min(work_h, int(round(h))))
+
+        nx = (anchor_right - cw) if anchor_right is not None else int(round(x))
+        ny = (anchor_bottom - ch) if anchor_bottom is not None else int(round(y))
+
+        work_right = work_left + work_w
+        work_bottom = work_top + work_h
+        if nx < work_left:
+            nx = work_left
+            if anchor_right is not None:
+                cw = min(cw, max(min_pw, anchor_right - work_left))
+        if ny < work_top:
+            ny = work_top
+            if anchor_bottom is not None:
+                ch = min(ch, max(min_ph, anchor_bottom - work_top))
+        if nx + cw > work_right:
+            nx = max(work_left, work_right - cw)
+        if ny + ch > work_bottom:
+            ny = max(work_top, work_bottom - ch)
+        return (int(nx), int(ny), int(cw), int(ch))
+
+    def _apply_logical_window_size(self, target_w: int, target_h: int) -> tuple[int, int]:
+        min_lw, min_lh = self._min_logical_size()
+        hwnd = self._get_hwnd()
+        scale = self._get_window_dpi_scale(hwnd)
+        work_left, work_top, work_w, work_h = self._get_work_area(hwnd)
+        max_lw = max(min_lw, int(work_w / scale)) if scale > 0 else 4096
+        max_lh = max(min_lh, int(work_h / scale)) if scale > 0 else 2560
+
+        lw = max(min_lw, min(max_lw, int(round(target_w))))
+        lh = max(min_lh, min(max_lh, int(round(target_h))))
+
+        if self._window is None:
+            return (lw, lh)
+
+        user32 = getattr(ctypes.windll, "user32", None)
+        if hwnd and user32:
+            rect = wintypes.RECT()
+            if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+                phys_w = int(round(lw * scale))
+                phys_h = int(round(lh * scale))
+                cur_x, cur_y = int(rect.left), int(rect.top)
+                if cur_x <= 5 and cur_y <= 5:
+                    saved = getattr(self, "_saved_window_pos", None)
+                    if saved and (saved[0] > 15 or saved[1] > 15):
+                        cur_x, cur_y = int(saved[0]), int(saved[1])
+                    else:
+                        cur_x = work_left + max(24, (work_w - phys_w) // 2)
+                        cur_y = work_top + max(24, (work_h - phys_h) // 2)
+                nx, ny, cw, ch = self._clamp_phys_rect(cur_x, cur_y, phys_w, phys_h, hwnd=hwnd)
+                try:
+                    self._window.resize(lw, lh)
+                except Exception:
+                    pass
+                user32.SetWindowPos(
+                    wintypes.HWND(hwnd),
+                    0,
+                    nx,
+                    ny,
+                    cw,
+                    ch,
+                    0x0004 | 0x0020 | 0x0040,
+                )
+                try:
+                    self._window.move(nx, ny)
+                except Exception:
+                    pass
+                self._schedule_reapply_corners()
+                return (lw, lh)
+
+        try:
+            self._window.resize(lw, lh)
+        except Exception:
+            pass
+        self._schedule_reapply_corners()
+        return (lw, lh)
 
     def _get_window_dpi_scale(self, hwnd: int | None = None) -> float:
         """Tahap 76: Accurately query per-monitor or system DPI scaling factor (e.g. 1.25x or 1.5x)."""
@@ -686,7 +859,12 @@ class WindowApi:
                     cur_h = rect.bottom - rect.top
                     if cur_w < (work_w - 80) and (rect.left > 15 or rect.top > 15):
                         self._saved_window_pos = (int(rect.left), int(rect.top))
-                    if not getattr(self, "_is_landscape", False) and not getattr(self, "_drawer_open", False):
+                    if (
+                        not self._is_ipad_mode()
+                        and not getattr(self, "_custom_window_size", None)
+                        and not getattr(self, "_is_landscape", False)
+                        and not getattr(self, "_drawer_open", False)
+                    ):
                         if 300 <= cur_w <= 650 and cur_h >= int(cur_w * 2.15):
                             self._saved_portrait_phys_size = (int(cur_w), int(cur_h))
 
@@ -730,7 +908,15 @@ class WindowApi:
                     user32.SetWindowLongW(wh, -16, style & ~0x01000000)
                 user32.ShowWindow(wh, 9)  # SW_RESTORE
 
-            if getattr(self, "_is_landscape", False):
+            has_custom = bool(getattr(self, "_custom_window_size", None))
+            is_ipad = self._is_ipad_mode()
+            if has_custom:
+                logical_w, logical_h = self._custom_window_size
+                base_w = logical_w
+            elif is_ipad:
+                logical_w, logical_h = self._default_logical_size()
+                base_w = 760 if getattr(self, "_is_landscape", False) else 540
+            elif getattr(self, "_is_landscape", False):
                 logical_w = 1200 if self._drawer_open else 840
                 logical_h = 468
                 base_w = 840
@@ -751,9 +937,9 @@ class WindowApi:
             if hwnd and user32:
                 has_after = bool(user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(after_rect)))
 
-            if getattr(self, "_is_landscape", False):
-                phys_w = int(round(logical_w * dpi_scale))
-                phys_h = int(round(logical_h * dpi_scale))
+            if has_custom or is_ipad or getattr(self, "_is_landscape", False):
+                phys_w = min(int(work_w - 8), int(round(logical_w * dpi_scale)))
+                phys_h = min(int(work_h - 8), int(round(logical_h * dpi_scale)))
             else:
                 if not self._drawer_open and getattr(self, "_saved_portrait_phys_size", None):
                     saved_pw, saved_ph = self._saved_portrait_phys_size
@@ -798,7 +984,14 @@ class WindowApi:
             # Verification watchdog timer at 0.06s to recheck physical aspect ratio
             def _verify_restore():
                 try:
-                    if hwnd and user32 and not getattr(self, "_is_fullscreen", False) and not getattr(self, "_is_landscape", False):
+                    if (
+                        hwnd
+                        and user32
+                        and not self._is_ipad_mode()
+                        and not getattr(self, "_custom_window_size", None)
+                        and not getattr(self, "_is_fullscreen", False)
+                        and not getattr(self, "_is_landscape", False)
+                    ):
                         vr = wintypes.RECT()
                         if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(vr)):
                             vw = vr.right - vr.left
@@ -822,11 +1015,270 @@ class WindowApi:
                 "height": int(phys_h),
             }
 
+    def set_device_family(self, family: str | None = None, should_resize: bool = True):
+        """Update detected USB/Wi-Fi device family ('ipad' | 'iphone') for auto aspect switching."""
+        fam = str(family or "iphone").strip().lower()
+        self._device_family = "ipad" if fam == "ipad" else "iphone"
+        if (
+            should_resize
+            and self._window is not None
+            and not getattr(self, "_is_fullscreen", False)
+            and not getattr(self, "_custom_window_size", None)
+            and getattr(self, "_device_profile", "auto") == "auto"
+        ):
+            tw, th = self._default_logical_size()
+            tw, th = self._apply_logical_window_size(tw, th)
+            return {"ok": True, "deviceFamily": self._device_family, "isIpadMode": self._is_ipad_mode(), "width": tw, "height": th}
+        return {"ok": True, "deviceFamily": self._device_family, "isIpadMode": self._is_ipad_mode()}
+
+    def set_device_profile(self, profile: str = "auto", device_family: str | None = None, should_resize: bool = True):
+        """Switch aspect profile ('auto' | 'iphone' | 'ipad') cleanly while updating native window geometry."""
+        prof = str(profile or "auto").strip().lower()
+        if prof not in ("auto", "iphone", "ipad"):
+            prof = "auto"
+        self._device_profile = prof
+        if device_family is not None:
+            self._device_family = "ipad" if str(device_family).strip().lower() == "ipad" else "iphone"
+
+        if should_resize:
+            self._custom_window_size = None
+            if not getattr(self, "_is_fullscreen", False) and self._window is not None:
+                tw, th = self._default_logical_size()
+                tw, th = self._apply_logical_window_size(tw, th)
+                return {
+                    "ok": True,
+                    "deviceProfile": self._device_profile,
+                    "deviceFamily": self._device_family,
+                    "isIpadMode": self._is_ipad_mode(),
+                    "width": tw,
+                    "height": th,
+                }
+        return {
+            "ok": True,
+            "deviceProfile": self._device_profile,
+            "deviceFamily": self._device_family,
+            "isIpadMode": self._is_ipad_mode(),
+        }
+
+    def apply_custom_size(self, width: float, height: float):
+        """Apply explicit custom logical window size with safety min-bounds and monitor work-area clamping."""
+        if getattr(self, "_is_fullscreen", False):
+            return {"ok": False, "skipped": "fullscreen"}
+        try:
+            req_w = int(round(float(width)))
+            req_h = int(round(float(height)))
+        except Exception:
+            return {"ok": False, "error": "invalid_dimensions"}
+        lw, lh = self._apply_logical_window_size(req_w, req_h)
+        self._custom_window_size = (lw, lh)
+        return {
+            "ok": True,
+            "width": lw,
+            "height": lh,
+            "customWindowSize": {"width": lw, "height": lh},
+        }
+
+    def reset_window_size(self):
+        """Reset custom resize override back to canonical iPhone (346x832 / 840x468) or iPad (540x802 / 760x652) dimensions."""
+        self._custom_window_size = None
+        self._saved_portrait_phys_size = None
+        self._saved_landscape_phys_size = None
+        tw, th = self._default_logical_size()
+        if not getattr(self, "_is_fullscreen", False) and self._window is not None:
+            tw, th = self._apply_logical_window_size(tw, th)
+        return {
+            "ok": True,
+            "width": tw,
+            "height": th,
+            "customWindowSize": None,
+            "isIpadMode": self._is_ipad_mode(),
+        }
+
+    def begin_resize_drag(self, edge: str, screen_x: float | None = None, screen_y: float | None = None):
+        """Begin interactive 8-direction frameless resize drag using HTLEFT..HTBOTTOMRIGHT mapping."""
+        edge_key = str(edge or "").strip().lower()
+        ht_code = self._RESIZE_EDGE_TO_HT.get(edge_key)
+        if not ht_code:
+            return {"ok": False, "error": "invalid_edge"}
+        if getattr(self, "_is_fullscreen", False):
+            return {"ok": False, "skipped": "fullscreen", "edge": edge_key, "htCode": ht_code}
+
+        hwnd = self._get_hwnd()
+        user32 = getattr(ctypes.windll, "user32", None)
+        dpi = self._get_window_dpi_scale(hwnd)
+
+        orig_rect = None
+        if hwnd and user32:
+            r = wintypes.RECT()
+            if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r)):
+                orig_rect = (int(r.left), int(r.top), int(r.right), int(r.bottom))
+        if orig_rect is None:
+            wx = int(getattr(self._window, "x", 100) or 100)
+            wy = int(getattr(self._window, "y", 100) or 100)
+            cur_w, cur_h = self._custom_window_size or self._default_logical_size()
+            pw, ph = int(round(cur_w * dpi)), int(round(cur_h * dpi))
+            orig_rect = (wx, wy, wx + pw, wy + ph)
+
+        start_css_x = None
+        start_css_y = None
+        start_phys_x = None
+        start_phys_y = None
+        if screen_x is not None and screen_y is not None:
+            start_css_x = float(screen_x)
+            start_css_y = float(screen_y)
+            start_phys_x = int(round(start_css_x * dpi))
+            start_phys_y = int(round(start_css_y * dpi))
+        elif sys.platform == "win32" and user32:
+            pt = wintypes.POINT()
+            if user32.GetCursorPos(ctypes.byref(pt)):
+                start_phys_x = int(pt.x)
+                start_phys_y = int(pt.y)
+                start_css_x = start_phys_x / dpi
+                start_css_y = start_phys_y / dpi
+
+        with self._resize_lock:
+            self._resize_state = {
+                "edge": edge_key,
+                "htCode": ht_code,
+                "hwnd": hwnd,
+                "dpi": dpi,
+                "origRect": orig_rect,
+                "startCss": (start_css_x, start_css_y),
+                "startPhys": (start_phys_x, start_phys_y),
+            }
+
+        return {"ok": True, "edge": edge_key, "htCode": ht_code}
+
+    def update_resize_drag(self, screen_x: float | None = None, screen_y: float | None = None):
+        """Update active 8-direction resize bounds in real time with DPI and work-area clamping."""
+        with self._resize_lock:
+            state = dict(self._resize_state) if self._resize_state else None
+        if not state or getattr(self, "_is_fullscreen", False):
+            return {"ok": False, "skipped": "no_active_drag"}
+
+        edge = state["edge"]
+        hwnd = state.get("hwnd") or self._get_hwnd()
+        dpi = float(state.get("dpi") or self._get_window_dpi_scale(hwnd) or 1.0)
+        left, top, right, bottom = state["origRect"]
+        orig_w = max(1, right - left)
+        orig_h = max(1, bottom - top)
+
+        user32 = getattr(ctypes.windll, "user32", None)
+        if screen_x is not None and screen_y is not None and state["startCss"][0] is not None:
+            dx = int(round((float(screen_x) - float(state["startCss"][0])) * dpi))
+            dy = int(round((float(screen_y) - float(state["startCss"][1])) * dpi))
+        elif sys.platform == "win32" and user32 and state["startPhys"][0] is not None:
+            pt = wintypes.POINT()
+            if not user32.GetCursorPos(ctypes.byref(pt)):
+                return {"ok": False, "error": "cursor_unavailable"}
+            dx = int(pt.x) - int(state["startPhys"][0])
+            dy = int(pt.y) - int(state["startPhys"][1])
+        else:
+            return {"ok": False, "error": "coordinates_missing"}
+
+        new_w = orig_w
+        new_h = orig_h
+        anchor_right = None
+        anchor_bottom = None
+
+        if "e" in edge:
+            new_w = orig_w + dx
+        elif "w" in edge:
+            new_w = orig_w - dx
+            anchor_right = right
+
+        if "s" in edge:
+            new_h = orig_h + dy
+        elif "n" in edge:
+            new_h = orig_h - dy
+            anchor_bottom = bottom
+
+        nx, ny, cw, ch = self._clamp_phys_rect(
+            left,
+            top,
+            new_w,
+            new_h,
+            hwnd=hwnd,
+            anchor_right=anchor_right,
+            anchor_bottom=anchor_bottom,
+        )
+
+        if hwnd and user32:
+            user32.SetWindowPos(
+                wintypes.HWND(hwnd),
+                0,
+                nx,
+                ny,
+                cw,
+                ch,
+                0x0004 | 0x0010,  # SWP_NOZORDER | SWP_NOACTIVATE
+            )
+
+        lw = max(self._min_logical_size()[0], int(round(cw / dpi)))
+        lh = max(self._min_logical_size()[1], int(round(ch / dpi)))
+        self._custom_window_size = (lw, lh)
+        return {
+            "ok": True,
+            "edge": edge,
+            "width": lw,
+            "height": lh,
+            "phys": {"x": nx, "y": ny, "width": cw, "height": ch},
+        }
+
+    def end_resize_drag(self):
+        """Finish active 8-direction resize drag, synchronize WinForms bounds, and re-apply rounded corners."""
+        with self._resize_lock:
+            state = self._resize_state
+            self._resize_state = None
+        if not state:
+            cw = self._custom_window_size
+            return {
+                "ok": True,
+                "customWindowSize": {"width": cw[0], "height": cw[1]} if cw else None,
+            }
+        hwnd = state.get("hwnd") or self._get_hwnd()
+        dpi = float(state.get("dpi") or self._get_window_dpi_scale(hwnd) or 1.0)
+        user32 = getattr(ctypes.windll, "user32", None)
+        if hwnd and user32:
+            r = wintypes.RECT()
+            if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r)):
+                pw = int(r.right - r.left)
+                ph = int(r.bottom - r.top)
+                lw = max(self._min_logical_size()[0], int(round(pw / dpi)))
+                lh = max(self._min_logical_size()[1], int(round(ph / dpi)))
+                self._custom_window_size = (lw, lh)
+                if r.left > 15 or r.top > 15:
+                    self._saved_window_pos = (int(r.left), int(r.top))
+                if self._window is not None:
+                    try:
+                        self._window.resize(lw, lh)
+                        user32.SetWindowPos(
+                            wintypes.HWND(hwnd),
+                            0,
+                            int(r.left),
+                            int(r.top),
+                            pw,
+                            ph,
+                            0x0004 | 0x0020 | 0x0040,
+                        )
+                    except Exception:
+                        pass
+        self._schedule_reapply_corners()
+        cw = self._custom_window_size
+        return {
+            "ok": True,
+            "width": cw[0] if cw else None,
+            "height": cw[1] if cw else None,
+            "customWindowSize": {"width": cw[0], "height": cw[1]} if cw else None,
+        }
+
     def set_orientation(self, landscape: bool, drawer_open: bool = None):
-        """Ubah ukuran jendela ke dimensi Landscape / Horizontal atau Portrait (Tahap 67 & 71 & 75)."""
+        """Ubah ukuran jendela ke dimensi Landscape / Horizontal atau Portrait (Tahap 67, 71, 75 & 125)."""
         if not self._window:
             return
         try:
+            prev_land = bool(self._is_landscape)
+            prev_drawer = bool(self._drawer_open)
             self._is_landscape = bool(landscape)
             if drawer_open is not None:
                 self._drawer_open = bool(drawer_open)
@@ -835,39 +1287,30 @@ class WindowApi:
             if getattr(self, "_is_fullscreen", False):
                 return {"ok": True, "landscape": self._is_landscape, "fullscreen": True, "skipped_resize": True}
 
-            if self._is_landscape:
-                target_w = 1200 if self._drawer_open else 840
-                target_h = 468
-            else:
-                dw = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346))
-                target_w = (dw + 360) if self._drawer_open else dw
-                target_h = 832
+            if self._custom_window_size is not None and self._is_landscape == prev_land:
+                cw, ch = self._custom_window_size
+                if self._drawer_open != prev_drawer:
+                    cw = cw + (360 if self._drawer_open else -360)
+                target_w, target_h = self._apply_logical_window_size(cw, ch)
+                self._custom_window_size = (target_w, target_h)
+                return {"ok": True, "landscape": self._is_landscape, "width": target_w, "height": target_h, "custom": True}
 
+            if self._is_landscape != prev_land and self._custom_window_size is not None:
+                self._custom_window_size = None
+
+            target_w, target_h = self._default_logical_size()
+            target_w, target_h = self._apply_logical_window_size(target_w, target_h)
+
+            # Cache portrait physical size when portrait and drawer closed (iPhone mode)
             hwnd = self._get_hwnd()
             user32 = getattr(ctypes.windll, "user32", None)
-            if hwnd and user32:
-                rect = wintypes.RECT()
-                if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
-                    if rect.left <= 5 and rect.top <= 5:
-                        saved = getattr(self, "_saved_window_pos", None)
-                        if saved and (saved[0] > 15 or saved[1] > 15):
-                            nx, ny = int(saved[0]), int(saved[1])
-                        else:
-                            sw = user32.GetSystemMetrics(0)
-                            sh = user32.GetSystemMetrics(1)
-                            nx = max(24, (sw - target_w) // 2)
-                            ny = max(24, (sh - target_h) // 2)
-                        user32.SetWindowPos(wintypes.HWND(hwnd), 0, nx, ny, target_w, target_h, 0x0004 | 0x0020 | 0x0040)
-                        try:
-                            self._window.move(nx, ny)
-                        except Exception:
-                            pass
-
-            self._window.resize(target_w, target_h)
-            self._schedule_reapply_corners()
-
-            # Cache portrait physical size when portrait and drawer closed
-            if not self._is_landscape and not self._drawer_open and not getattr(self, "_is_fullscreen", False):
+            if (
+                not self._is_ipad_mode()
+                and not self._custom_window_size
+                and not self._is_landscape
+                and not self._drawer_open
+                and not getattr(self, "_is_fullscreen", False)
+            ):
                 if hwnd and user32:
                     rect = wintypes.RECT()
                     if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
@@ -876,48 +1319,35 @@ class WindowApi:
                         if 300 <= cur_w <= 650 and cur_h >= int(cur_w * 2.15):
                             self._saved_portrait_phys_size = (int(cur_w), int(cur_h))
 
-            return {"ok": True, "landscape": self._is_landscape, "width": target_w, "height": target_h}
+            return {"ok": True, "landscape": self._is_landscape, "width": target_w, "height": target_h, "isIpadMode": self._is_ipad_mode()}
         except Exception as e:
             print("set_orientation error:", e)
 
     def sync_device_aspect(self, display_width: int, drawer_open: bool = False):
-        """Tahap 66, 67, 71 & 75: Abaikan aspect sync jika sedang mode Landscape atau Full Screen."""
+        """Tahap 66, 67, 71, 75 & 125: Sinkronkan rasio perangkat (skip saat fullscreen, landscape, atau custom resize)."""
         if not self._window:
             return
         if getattr(self, "_is_fullscreen", False) or getattr(self, "_is_landscape", False):
             return {"ok": True, "skipped": "fullscreen_or_landscape"}
+        if getattr(self, "_custom_window_size", None) is not None:
+            return {"ok": True, "skipped": "custom_window_size"}
         try:
             self._drawer_open = bool(drawer_open)
+            if self._is_ipad_mode():
+                target_w, target_h = self._default_logical_size()
+                target_w, target_h = self._apply_logical_window_size(target_w, target_h)
+                return {"ok": True, "width": target_w, "height": target_h, "isIpadMode": True}
+
             dw = max(336, min(600, int(display_width)))
             self._ideal_display_width = dw
             self._current_display_width = dw
             target_w = dw + (360 if self._drawer_open else 0)
             target_h = 832
-
-            hwnd = self._get_hwnd()
-            user32 = getattr(ctypes.windll, "user32", None)
-            if hwnd and user32:
-                rect = wintypes.RECT()
-                if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
-                    if rect.left <= 5 and rect.top <= 5:
-                        saved = getattr(self, "_saved_window_pos", None)
-                        if saved and (saved[0] > 15 or saved[1] > 15):
-                            nx, ny = int(saved[0]), int(saved[1])
-                        else:
-                            sw = user32.GetSystemMetrics(0)
-                            sh = user32.GetSystemMetrics(1)
-                            nx = max(24, (sw - target_w) // 2)
-                            ny = max(24, (sh - target_h) // 2)
-                        user32.SetWindowPos(wintypes.HWND(hwnd), 0, nx, ny, target_w, target_h, 0x0004 | 0x0020 | 0x0040)
-                        try:
-                            self._window.move(nx, ny)
-                        except Exception:
-                            pass
-
-            self._window.resize(target_w, target_h)
-            self._schedule_reapply_corners()
+            target_w, target_h = self._apply_logical_window_size(target_w, target_h)
 
             # Cache portrait physical size when portrait and drawer closed
+            hwnd = self._get_hwnd()
+            user32 = getattr(ctypes.windll, "user32", None)
             if not self._is_landscape and not self._drawer_open and not getattr(self, "_is_fullscreen", False):
                 if hwnd and user32:
                     rect = wintypes.RECT()
@@ -933,18 +1363,25 @@ class WindowApi:
             return {"ok": False, "error": str(e)}
 
     def set_drawer(self, is_open: bool):
-        """Tahap 67, 71, 75 & 91: Buka/tutup Side Drawer tanpa merusak mode Landscape atau Full Screen."""
+        """Tahap 67, 71, 75, 91 & 125: Buka/tutup Side Drawer tanpa merusak Landscape, Full Screen, iPad, atau Custom Size."""
+        prev_open = bool(self._drawer_open)
         self._drawer_open = bool(is_open)
         if getattr(self, "_is_fullscreen", False):
             return {"ok": True, "fullscreen": True, "drawer": self._drawer_open, "drawer_open": self._drawer_open}
-        if getattr(self, "_is_landscape", False):
-            return self.set_orientation(True, self._drawer_open)
+        if getattr(self, "_custom_window_size", None) is not None:
+            cw, ch = self._custom_window_size
+            if self._drawer_open != prev_open:
+                cw = cw + (360 if self._drawer_open else -360)
+            target_w, target_h = self._apply_logical_window_size(cw, ch)
+            self._custom_window_size = (target_w, target_h)
+            return {"ok": True, "drawer_open": self._drawer_open, "width": target_w, "height": target_h, "custom": True}
+        if getattr(self, "_is_landscape", False) or self._is_ipad_mode():
+            return self.set_orientation(self._is_landscape, self._drawer_open)
+
         dw = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346))
         target_w = (dw + 360) if self._drawer_open else dw
         target_h = 832
-        if self._window:
-            self._window.resize(target_w, target_h)
-        self._schedule_reapply_corners()
+        target_w, target_h = self._apply_logical_window_size(target_w, target_h)
 
         # Cache portrait physical size when drawer closed
         if not self._drawer_open and not self._is_landscape:
@@ -4927,7 +5364,7 @@ def _run_ui_self_test() -> int:
                                                             const pills = Array.from(document.querySelectorAll(".shortcut-pill")).map(p => p.textContent.trim());
                                                             const hasAltB = pills.includes("Alt+B (Grab Link)");
                                                             const hasNoAltG = !pills.some(p => p.includes("Alt+G"));
-                                                            const isBtnCorrect = (btnScanText === "🔗 Grab Link (Alt+B)");
+                                                            const isBtnCorrect = (btnScanText === "Grab Link (Alt+B)");  // Tahap 125: label Fluent SVG tanpa emoji
                                                             const isGuideRemoved = (btnGuide === null && guideBox === null);
                                                             return {
                                                                 btnScanText: btnScanText,
@@ -6109,12 +6546,28 @@ def main() -> None:
     tray.start(wait_ready=1.5)
     _ACTIVE_TRAY_ICON = tray
 
+    init_w, init_h = 346, 832
+    try:
+        from handset.server import load_user_settings as _load_boot_settings
+        _boot_cfg = _load_boot_settings(persist_instance=False)
+        _boot_prof = str(_boot_cfg.get("deviceProfile") or "auto").lower()
+        api._device_profile = _boot_prof if _boot_prof in ("auto", "iphone", "ipad") else "auto"
+        _boot_cws = _boot_cfg.get("customWindowSize")
+        if isinstance(_boot_cws, dict) and int(_boot_cws.get("width", 0)) >= 336 and int(_boot_cws.get("height", 0)) >= 420:
+            init_w = int(_boot_cws["width"])
+            init_h = int(_boot_cws["height"])
+            api._custom_window_size = (init_w, init_h)
+        elif api._is_ipad_mode():
+            init_w, init_h = 540, 802
+    except Exception:
+        pass
+
     window = webview.create_window(
         title="iPhone Link",
         url=f"http://{host}:{port}/?t={int(time.time())}",
         js_api=api,
-        width=346,
-        height=832,
+        width=init_w,
+        height=init_h,
         frameless=True,
         easy_drag=False,
         min_size=(336, 420),
