@@ -2001,14 +2001,14 @@ iframe[hidden],
 }
 
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .pill {
-  padding: 2px 6px !important;
-  font-size: 10.5px !important;
+  padding: 2px 5px !important;
+  font-size: 10px !important;
   flex-shrink: 0 !important;
   white-space: nowrap !important;
 }
 
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #status-pill {
-  max-width: 64px !important;
+  max-width: 58px !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
@@ -2034,13 +2034,17 @@ iframe[hidden],
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-rotate-landscape {
   width: auto !important;
   min-width: 24px !important;
-  max-width: 48px !important;
+  max-width: none !important;
   height: 24px !important;
   min-height: 24px !important;
   padding: 0 4px !important;
-  gap: 2px !important;
+  gap: 3px !important;
   margin: 0 !important;
+  flex: 0 0 auto !important;
   flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   box-sizing: border-box !important;
 }
 
@@ -2099,9 +2103,9 @@ iframe[hidden],
   }
   .app:not(.drawer-open) .pill,
   .app:not(.drawer-open) #status-pill {
-    padding: 2px 6px !important;
-    font-size: 10.5px !important;
-    max-width: 64px !important;
+    padding: 2px 5px !important;
+    font-size: 10px !important;
+    max-width: 58px !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
   }
@@ -2121,11 +2125,15 @@ iframe[hidden],
   .app:not(.drawer-open) #btn-rotate-landscape {
     width: auto !important;
     min-width: 24px !important;
-    max-width: 48px !important;
+    max-width: none !important;
     height: 24px !important;
     padding: 0 4px !important;
-    gap: 2px !important;
+    gap: 3px !important;
+    flex: 0 0 auto !important;
     flex-shrink: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     box-sizing: border-box !important;
   }
   .app:not(.drawer-open) #rotate-mode-badge {
@@ -2173,6 +2181,49 @@ iframe[hidden],
 .app.is-landscape #status-pill,
 .app.is-fullsize #status-pill {
   max-width: none !important;
+}
+
+/* ======================================================================
+   Tahap 129: Consistent 1:1 Rotate Icon SVG Size & Anti-Shrink Enforcement
+   Guarantees that #btn-rotate-landscape svg is 15x15px in both closed (346px)
+   and open (706px) drawer states, matching the settings gear icon perfectly.
+   ====================================================================== */
+#btn-rotate-landscape svg,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-rotate-landscape svg,
+.app.drawer-open #btn-rotate-landscape svg,
+.app.is-landscape #btn-rotate-landscape svg,
+.app.is-fullsize #btn-rotate-landscape svg {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  max-width: 15px !important;
+  max-height: 15px !important;
+  flex: 0 0 15px !important;
+  flex-shrink: 0 !important;
+  display: block !important;
+}
+
+@media (max-width: 520px) {
+  #btn-rotate-landscape svg,
+  .app:not(.drawer-open) #btn-rotate-landscape svg {
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    min-height: 15px !important;
+    max-width: 15px !important;
+    max-height: 15px !important;
+    flex: 0 0 15px !important;
+    flex-shrink: 0 !important;
+    display: block !important;
+  }
+}
+
+.app-bar svg,
+.app-bar .icon-btn svg,
+.app-bar .bar-btn svg,
+.app-bar .win-btn svg {
+  flex-shrink: 0 !important;
 }
 
 /* ======================================================================
@@ -3455,12 +3506,12 @@ body[data-theme="light"],
 .app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #status-pill,
 @media (max-width: 520px) {
   .app:not(.drawer-open) #status-pill {
-    max-width: 64px !important;
+    max-width: 58px !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     white-space: nowrap !important;
-    padding: 2px 6px !important;
-    font-size: 10.5px !important;
+    padding: 2px 5px !important;
+    font-size: 10px !important;
     line-height: 1.2 !important;
     flex-shrink: 0 !important;
   }
@@ -3510,16 +3561,17 @@ body[data-theme="light"],
   .app:not(.drawer-open) #btn-rotate-landscape {
     width: auto !important;
     min-width: 24px !important;
-    max-width: 48px !important;
+    max-width: none !important;
     height: 24px !important;
     min-height: 24px !important;
     padding: 0 4px !important;
     margin: 0 !important;
-    gap: 2px !important;
+    gap: 3px !important;
     border-radius: 6px !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
+    flex: 0 0 auto !important;
     flex-shrink: 0 !important;
     box-sizing: border-box !important;
   }
@@ -3587,4 +3639,47 @@ body[data-theme="light"],
 .app.is-landscape #status-pill,
 .app.is-fullsize #status-pill {
   max-width: none !important;
+}
+
+/* ======================================================================
+   Tahap 129: Consistent 1:1 Rotate Icon SVG Size & Anti-Shrink Enforcement
+   Guarantees that #btn-rotate-landscape svg is 15x15px in both closed (346px)
+   and open (706px) drawer states, matching the settings gear icon perfectly.
+   ====================================================================== */
+#btn-rotate-landscape svg,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-rotate-landscape svg,
+.app.drawer-open #btn-rotate-landscape svg,
+.app.is-landscape #btn-rotate-landscape svg,
+.app.is-fullsize #btn-rotate-landscape svg {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  max-width: 15px !important;
+  max-height: 15px !important;
+  flex: 0 0 15px !important;
+  flex-shrink: 0 !important;
+  display: block !important;
+}
+
+@media (max-width: 520px) {
+  #btn-rotate-landscape svg,
+  .app:not(.drawer-open) #btn-rotate-landscape svg {
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    min-height: 15px !important;
+    max-width: 15px !important;
+    max-height: 15px !important;
+    flex: 0 0 15px !important;
+    flex-shrink: 0 !important;
+    display: block !important;
+  }
+}
+
+.app-bar svg,
+.app-bar .icon-btn svg,
+.app-bar .bar-btn svg,
+.app-bar .win-btn svg {
+  flex-shrink: 0 !important;
 }
