@@ -102,6 +102,55 @@ except Exception:
     pass
 
 
+def install_coredevice_aac_decoder() -> bool:
+    """Monkey-patch pymobiledevice3 CoreDevice screen_stream to use Windows zlaac.dll AAC-ELD decoder."""
+    try:
+        from handset.aac import AacEldDecoder, find_zlaac_dll
+        from pymobiledevice3.remote.core_device import aac_eld, screen_stream
+
+        find_zlaac_dll()
+        aac_eld.AACELDDecoder = AacEldDecoder
+        screen_stream.AACELDDecoder = AacEldDecoder
+        screen_stream.ScreenStreamServer._missing_audio_deps = staticmethod(lambda: [])
+        return True
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("CoreDevice zlaac AAC-ELD decoder patch skipped: %s", exc)
+        return False
+
+
+# Install CoreDevice AAC-ELD decoder patch at module load time
+install_coredevice_aac_decoder()
+
+
+def stop_coredevice_audio_stream(timeout: float = 1.5) -> bool:
+    """Tear down active CoreDevice audio session so iOS immediately restores audio to iPhone speaker."""
+    global _ACTIVE_SERVER, _CURRENT_LOOP
+    server = _ACTIVE_SERVER
+    loop = _CURRENT_LOOP
+    if server is None or loop is None or not loop.is_running():
+        return False
+    stop_fn = getattr(server, "_stop_audio_stream", None)
+    if not callable(stop_fn):
+        return False
+
+    async def _do_stop() -> bool:
+        lock = getattr(server, "_audio_lock", None)
+        if lock is not None:
+            async with lock:
+                await stop_fn()
+        else:
+            await stop_fn()
+        return True
+
+    try:
+        fut = asyncio.run_coroutine_threadsafe(_do_stop(), loop)
+        return bool(fut.result(timeout=timeout))
+    except Exception:
+        return False
+
+
 def record_user_input_activity(is_drag: bool = False) -> None:
     """Track user interaction timestamps to safeguard OCR drag selection and safe idle keep-awake."""
     global _LAST_USER_INPUT_TS, _IS_TOUCH_DRAGGING
@@ -138,6 +187,11 @@ def stop_screen() -> dict:
                 pass
         _ACTIVE_SERVER = None
         _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
+    try:
+        from handset.audio import notify_screen_phase_changed
+        notify_screen_phase_changed("idle", "cable")
+    except Exception:
+        pass
     try:
         from .wifi import sync_force_reset_userspace_tunnel
         sync_force_reset_userspace_tunnel()
@@ -359,6 +413,9 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
 
         ScreenStreamServer._serve_connection = _bounded_serve_connection
 
+    # Tahap 123: Ensure zlaac.dll CoreDevice AAC-ELD decoder patch is active for /audio.bin
+    install_coredevice_aac_decoder()
+
     server = ScreenStreamServer(
         rsd,
         bind="127.0.0.1",
@@ -367,8 +424,8 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
     )
 
     async def _eager_video_only() -> None:
-        # Windows cannot decode AAC-ELD; skip eager audio so logs stay clean and
-        # the display tunnel still comes up for /codec and /stream.bin.
+        # Start video immediately so H.265 handshake is never delayed;
+        # /audio.bin opens CoreDevice audio lazily via zlaac.dll when requested.
         try:
             await server._ensure_fresh_stream(force=False)
         except Exception as error:
@@ -3022,9 +3079,22 @@ def _only_udid(usb: list[str] | None = None, wifi: list[str] | None = None, tran
 
 
 def _set(**values) -> dict:
+    prev_phase = None
+    new_phase = None
+    transport = "cable"
     with _LOCK:
+        prev_phase = _STATE.get("phase")
         _STATE.update(values)
-        return dict(_STATE)
+        new_phase = _STATE.get("phase")
+        transport = _STATE.get("transport") or "cable"
+        snapshot = dict(_STATE)
+    if new_phase != prev_phase:
+        try:
+            from handset.audio import notify_screen_phase_changed
+            notify_screen_phase_changed(str(new_phase or "idle"), str(transport))
+        except Exception:
+            pass
+    return snapshot
 
 
 def _plain(error: Exception) -> str:

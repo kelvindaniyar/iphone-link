@@ -137,8 +137,12 @@ DEFAULT_SETTINGS = {
     "crop": {"top": 0, "bottom": 0, "left": 0, "right": 0},
     "fitMode": "fill",
     "theme": "dark",
+    "audioOut": "pc",
     "audioSinkEnabled": False,
     "audioVolume": 100,
+    "audioMuted": False,
+    "audioBufferPreset": "normal",
+    "lipSync": True,
     "trackpadSpeed": 100,
     "crossPlatformShortcuts": True,
     "pastePcClipboard": True,
@@ -459,7 +463,18 @@ def save_user_settings(new_settings: dict) -> dict:
                 current["trackpadSpeed"] = max(30, min(200, int(v or 100)))
             except Exception:
                 current["trackpadSpeed"] = 100
-        elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate"):
+        elif k == "audioVolume":
+            try:
+                current["audioVolume"] = max(0, min(100, int(v if v is not None else 100)))
+            except Exception:
+                current["audioVolume"] = 100
+        elif k == "audioOut":
+            from handset.audio import normalize_audio_out
+            current["audioOut"] = normalize_audio_out(str(v or "pc"))
+        elif k == "audioBufferPreset":
+            from handset.usb_audio import normalize_buffer_preset
+            current["audioBufferPreset"] = normalize_buffer_preset(str(v or "normal"))
+        elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate", "lipSync", "audioMuted"):
             current[k] = bool(v)
         elif k in current and k not in ("folderInstanceId", "isFreshFolder"):
             current[k] = v
@@ -698,10 +713,40 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "shuttingDown": True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
+        if path in ("/api/audio", "/api/audio/config"):
+            st = audio_manager.configure(
+                audio_out=payload.get("audioOut") if "audioOut" in payload else payload.get("mode"),
+                volume=payload.get("volume") if "volume" in payload else payload.get("audioVolume"),
+                muted=payload.get("muted") if "muted" in payload else payload.get("audioMuted"),
+                buffer_preset=payload.get("bufferPreset") if "bufferPreset" in payload else payload.get("audioBufferPreset"),
+                lip_sync=payload.get("lipSync") if "lipSync" in payload else None,
+                force_stream=payload.get("forceStream") if "forceStream" in payload else None,
+            )
+            save_user_settings({
+                "audioOut": st.get("audioOut", "pc"),
+                "audioSinkEnabled": st.get("audioOut") == "bluetooth",
+                "audioVolume": st.get("volume", 100),
+                "audioMuted": st.get("muted", False),
+                "audioBufferPreset": st.get("bufferPreset", "normal"),
+                "lipSync": st.get("lipSync", True),
+            })
+            self._json(st)
+            return
+        if path == "/api/audio/mute":
+            if "muted" in payload and payload.get("muted") is not None:
+                st = audio_manager.set_muted(bool(payload.get("muted")))
+            else:
+                st = audio_manager.toggle_mute()
+            save_user_settings({"audioMuted": st.get("muted", False)})
+            self._json(st)
+            return
         if path == "/api/audio/toggle":
             enabled = payload.get("enabled") if "enabled" in payload else None
             st = audio_manager.toggle(enabled)
-            save_user_settings({"audioSinkEnabled": st.get("enabled", False)})
+            save_user_settings({
+                "audioOut": st.get("audioOut", "pc"),
+                "audioSinkEnabled": st.get("audioOut") == "bluetooth",
+            })
             self._json(st)
             return
         if path == "/api/audio/volume":
@@ -1390,12 +1435,13 @@ def create_http_server(host: str = HOST, port: int = PORT) -> SingleServer:
     """Create and configure the local ThreadingHTTPServer without blocking."""
     server = SingleServer((host, port), Handler)
     settings = load_user_settings()
-    if settings.get("audioSinkEnabled"):
+    audio_manager.apply_saved_settings(settings)
+    if settings.get("audioOut") == "bluetooth":
         import threading
 
         def _restore_audio_async() -> None:
             try:
-                audio_manager.enable()
+                audio_manager._enable_bt()
             except Exception:
                 pass
 

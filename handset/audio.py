@@ -1,18 +1,9 @@
-"""Audio Sink Manager for iPhone -> PC Audio Routing via Windows 11 Bluetooth A2DP.
-
-Tahap 59 Architecture (Zero-Stutter STA WinForms Message Pump + Single-iPhone Endpoint Filter):
-- Runs PowerShell in explicit STA mode (`-Sta`) with a real Win32/COM Message Pump
-  (`[System.Windows.Forms.Application]::Run($ctx)`) on the main STA thread that owns
-  `Windows.Media.Audio.AudioPlaybackConnection` — never blocking the STA thread with
-  `[Console]::In.ReadLine()`, so COM/WinRT callbacks from `audiodg.exe` & `bthserv` are
-  dispatched with 0ms delay and 0.0% CPU.
-- Strictly filters `DeviceInformation::FindAllAsync` to prioritize the user's iPhone
-  (matching known iPhone `DeviceName`, `"iPhone"`/`"Apple"`, or Apple Inc. Bluetooth SIG
-  Vendor ID `VID&0001004c`), immediately `break`s as soon as 1 iPhone endpoint opens
-  (`State -eq 'Opened'`), and immediately `.Dispose()`s any un-opened candidate to prevent
-  Windows Bluetooth 1.28s Page Scan loops.
-- Pre-Start Orphan Audio Cleanup guarantees duplicate `AudioPlaybackConnection` workers
-  can never coexist in the background.
+"""Unified Audio Routing Manager for iPhone Link v3.0:
+1. Primary (Default): Zero-Bluetooth USB Cable Audio Pipe (CoreDevice AAC-ELD -> zlaac.dll ->
+   AdaptiveJitterBuffer -> PortAudio Windows WASAPI Shared Mode @ 48 kHz Stereo s16le).
+2. Device-Only Mode ('device' / 'Hanya perangkat'): Immediately closes /audio.bin and
+   tears down the CoreDevice audio session so sound plays on the physical iPhone speaker.
+3. Optional Legacy Fallback ('bluetooth'): Windows 11 Bluetooth A2DP Sink via STA WinForms pump.
 """
 
 from __future__ import annotations
@@ -26,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from handset import get_app_root
+from handset.usb_audio import UsbCoreDeviceAudioEngine, normalize_buffer_preset
 
 _WIN_NO_WINDOW_KWARGS: dict = {}
 if sys.platform == "win32":
@@ -39,13 +31,34 @@ if sys.platform == "win32":
 
 AUDIO_WORKER_MARKER = "iPhoneLink-AudioPlaybackWorker"
 
+_AUDIO_OUT_ALIASES = {
+    "pc": "pc",
+    "usb": "pc",
+    "this_pc": "pc",
+    "di pc ini": "pc",
+    "di pc ini (usb)": "pc",
+    "device": "device",
+    "phone": "device",
+    "iphone": "device",
+    "hanya perangkat": "device",
+    "perangkat": "device",
+    "bluetooth": "bluetooth",
+    "bt": "bluetooth",
+}
+
+
+def normalize_audio_out(mode: Optional[str]) -> str:
+    """Normalize output mode strings to ``'pc' | 'device' | 'bluetooth'``."""
+    key = str(mode or "pc").strip().lower()
+    return _AUDIO_OUT_ALIASES.get(key, "pc")
+
 
 def _audio_pid_file() -> Path:
     return get_app_root() / ".audio_worker.pid"
 
 
 def _resolve_preferred_iphone_name() -> str:
-    """Resolve user's known iPhone DeviceName (e.g. 'UWE UH' or 'Kelvin’s iPhone') from RAM cache or wifi_state.json."""
+    """Resolve user's known iPhone DeviceName from RAM cache or wifi_state.json."""
     try:
         from handset.device import get_cached_device_names
 
@@ -76,7 +89,6 @@ def cleanup_orphan_audio_workers(exclude_pid: Optional[int] = None) -> int:
     killed = 0
     my_pid = os.getpid()
 
-    # 1. Fast PID-file cleanup if previous session left a tracked worker PID
     pid_file = _audio_pid_file()
     if pid_file.is_file():
         try:
@@ -96,7 +108,6 @@ def cleanup_orphan_audio_workers(exclude_pid: Optional[int] = None) -> int:
         except Exception:
             pass
 
-    # 2. Sweep any stray powershell.exe holding AudioPlaybackConnection or orphan python running audio.py
     ps_cleanup = f"""
 $myPid = {my_pid}
 $exPid = {int(exclude_pid or 0)}
@@ -130,10 +141,7 @@ Write-Output $killed
     return killed
 
 
-# PowerShell STA Host Script:
-# 1. Strict Single-iPhone Endpoint Filter (prioritizes known DeviceName, "iPhone"/"Apple", & Apple BT VID 0x004C)
-# 2. Immediately `break`s on first `Opened` connection & `.Dispose()`s any failed candidate (0% BT Page Scan!)
-# 3. Pumps COM/WinRT STA messages on the main STA thread via `[System.Windows.Forms.Application]::Run($ctx)`
+# Legacy Bluetooth A2DP Sink STA Host Script (retained as optional 'bluetooth' fallback)
 AUDIO_POWERSHELL_STA_HOST = r"""
 # iPhoneLink-AudioPlaybackWorker
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -177,7 +185,6 @@ foreach ($d in $devices) {
         $score = 90
         $isApple = $true
     } elseif ($devId -match '(?i)(VID&0001004c|VID_05AC|VID&000205ac)') {
-        # Apple Inc. Official Bluetooth SIG Company Identifier (0x004C)
         $score = 85
         $isApple = $true
     } elseif ($d.IsEnabled) {
@@ -196,7 +203,6 @@ foreach ($d in $devices) {
     }
 }
 
-# Never touch non-Apple Bluetooth speakers/headsets/phones when an iPhone candidate is paired!
 $targets = if ($appleCandidates.Count -gt 0) {
     $appleCandidates | Sort-Object -Property Score -Descending
 } else {
@@ -223,7 +229,6 @@ foreach ($item in $targets) {
         try {
             $conn.Start()
             if ($attempt -eq 1) {
-                # Brief burst delay to allow iPhone BT radio to respond to page request
                 Start-Sleep -Milliseconds 120
             }
             $openOp = $conn.OpenAsync()
@@ -236,11 +241,8 @@ foreach ($item in $targets) {
         if ($stateStr -eq 'Opened') {
             $Global:ActiveAudioConn = $conn
             $openedDevice = $cand
-            # CRITICAL: Break immediately after 1 iPhone A2DP connection opens!
-            # Never call .Start() or .OpenAsync() on any other Bluetooth endpoint!
             break
         } else {
-            # Immediately dispose un-opened candidate to prevent lingering handles
             try { $conn.Dispose() } catch {}
             $conn = $null
             if ($attempt -lt 5) {
@@ -265,12 +267,10 @@ $initPayload = @{
 } | ConvertTo-Json -Compress
 Write-Output $initPayload
 
-# Create WinForms STA marshaler + ApplicationContext on the main STA thread owning $Global:ActiveAudioConn
 $ctx = New-Object System.Windows.Forms.ApplicationContext
 $marshaler = New-Object System.Windows.Forms.Control
 $null = $marshaler.Handle
 
-# Auto-reconnect timer in STA pump: resilient connection monitor
 $reconnectTimer = New-Object System.Windows.Forms.Timer
 $reconnectTimer.Interval = 2500
 $reconnectTimer.add_Tick({
@@ -284,7 +284,6 @@ $reconnectTimer.add_Tick({
 })
 $reconnectTimer.Start()
 
-# Lightweight background thread waits for stdin "stop"/EOF without blocking the main STA COM message pump!
 $bgPs = [powershell]::Create().AddScript({
     param($m, $c)
     try {
@@ -306,7 +305,6 @@ $bgPs = [powershell]::Create().AddScript({
 }).AddArgument($marshaler).AddArgument($ctx)
 $null = $bgPs.BeginInvoke()
 
-# Pump native Win32/COM messages (GetMessage/DispatchMessage/CoWaitForMultipleHandles) at 0.0% CPU!
 [System.Windows.Forms.Application]::Run($ctx)
 
 try {
@@ -328,76 +326,244 @@ exit 0
 
 
 class AudioManager:
-    """Manages Windows 11 AudioPlaybackConnection (A2DP Sink) and Master Volume."""
+    """Manages Zero-Bluetooth USB WASAPI Audio Pipe, Device-Only Switch, & Bluetooth Fallback."""
 
-    def __init__(self):
-        self._enabled = False
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._audio_out: str = "pc"  # Default: 'pc' (Di PC ini via USB)
+        self._volume: int = 100
+        self._muted: bool = False
+        self._buffer_preset: str = "normal"
+        self._lip_sync: bool = True
+
+        self._screen_phase: str = "idle"
+        self._screen_transport: str = "usb"
+
+        self._usb_engine = UsbCoreDeviceAudioEngine(
+            preset=self._buffer_preset,
+            volume=self._volume,
+            muted=self._muted,
+        )
+
+        # Legacy Bluetooth A2DP Sink fields
+        self._bt_enabled = False
         self._proc: Optional[subprocess.Popen] = None
         self._device_name = "iPhone"
         self._connection_state = "Closed"
-        self._lock = threading.RLock()
-        self._cached_volume: Optional[int] = None
+
+    @property
+    def usb_engine(self) -> UsbCoreDeviceAudioEngine:
+        return self._usb_engine
+
+    def apply_saved_settings(self, settings: Dict[str, Any]) -> None:
+        """Initialize preferences from user_settings.json without blocking."""
+        if not isinstance(settings, dict):
+            return
+        with self._lock:
+            if "audioOut" in settings and settings["audioOut"]:
+                self._audio_out = normalize_audio_out(settings.get("audioOut"))
+            elif settings.get("audioSinkEnabled") is True:
+                self._audio_out = "bluetooth"
+            if "audioVolume" in settings and settings["audioVolume"] is not None:
+                try:
+                    self._volume = max(0, min(100, int(settings["audioVolume"])))
+                except Exception:
+                    self._volume = 100
+            if "audioMuted" in settings:
+                self._muted = bool(settings.get("audioMuted"))
+            if "audioBufferPreset" in settings and settings["audioBufferPreset"]:
+                self._buffer_preset = normalize_buffer_preset(settings.get("audioBufferPreset"))
+            if "lipSync" in settings:
+                self._lip_sync = bool(settings.get("lipSync"))
+
+            self._usb_engine.jitter.set_volume(self._volume)
+            self._usb_engine.jitter.set_muted(self._muted)
+            self._usb_engine.jitter.set_preset(self._buffer_preset)
+
+    def on_screen_phase(self, phase: str, transport: str = "usb") -> None:
+        """Automatically start or stop USB WASAPI audio when mirroring session changes state."""
+        norm_phase = str(phase or "idle").strip().lower()
+        norm_transport = "wifi" if str(transport or "usb").strip().lower() == "wifi" else "usb"
+
+        with self._lock:
+            self._screen_phase = norm_phase
+            self._screen_transport = norm_transport
+            mode = self._audio_out
+
+        if norm_phase == "running" and mode == "pc":
+            self._usb_engine.start(transport=norm_transport)
+        elif norm_phase != "running":
+            self._usb_engine.stop(release_coredevice=False)
 
     def is_active(self) -> bool:
-        """Fast non-blocking check whether the A2DP audio worker process is alive."""
-        proc = self._proc
-        return bool(self._enabled and proc is not None and proc.poll() is None)
+        """Fast non-blocking check whether PC audio routing is enabled/active."""
+        with self._lock:
+            if self._audio_out == "pc":
+                return True
+            if self._audio_out == "bluetooth":
+                proc = self._proc
+                return bool(self._bt_enabled and proc is not None and proc.poll() is None)
+            return False
 
     def status(self, refresh_volume: bool = False) -> Dict[str, Any]:
         with self._lock:
-            if self._proc is not None:
-                if self._proc.poll() is not None:
-                    self._proc = None
-                    self._enabled = False
-                    self._connection_state = "Closed"
+            if self._proc is not None and self._proc.poll() is not None:
+                self._proc = None
+                self._bt_enabled = False
+                self._connection_state = "Closed"
 
-            is_active = self._enabled and (self._proc is not None)
-            if self._cached_volume is None or refresh_volume:
-                self._cached_volume = self.get_volume()
+            mode = self._audio_out
+            bt_active = bool(self._bt_enabled and self._proc is not None)
+            usb_streaming = bool(mode == "pc" and self._usb_engine.is_streaming)
+            usb_running = bool(mode == "pc" and self._usb_engine.is_running)
+
+            if mode == "pc":
+                delay_ms = self._usb_engine.delay_ms if usb_streaming else self._usb_engine.estimated_preset_delay_ms
+                enabled_flag = True
+                active_flag = usb_streaming or usb_running
+                dev_label = self._usb_engine.wasapi.device_name or "Windows WASAPI (48 kHz)"
+                state_label = "Streaming" if usb_streaming else ("Ready" if self._screen_phase != "running" else "Connecting")
+            elif mode == "bluetooth":
+                delay_ms = 140.0 if bt_active else 0.0
+                enabled_flag = bt_active
+                active_flag = bt_active
+                dev_label = self._device_name
+                state_label = self._connection_state if bt_active else "Off"
+            else:
+                delay_ms = 0.0
+                enabled_flag = False
+                active_flag = False
+                dev_label = "iPhone Speaker"
+                state_label = "DeviceOnly"
+
+            live_delay_ms = self._usb_engine.delay_ms if (mode == "pc" and usb_streaming) else (140.0 if (mode == "bluetooth" and bt_active) else 0.0)
 
             return {
-                "enabled": self._enabled,
-                "active": is_active,
-                "device": self._device_name,
-                "state": self._connection_state if is_active else "Off",
-                "volume": self._cached_volume,
+                "audioOut": mode,
+                "volume": self._volume,
+                "muted": self._muted,
+                "bufferPreset": self._buffer_preset,
+                "lipSync": self._lip_sync,
+                "streaming": bool(usb_streaming or bt_active),
+                "delayMs": round(float(live_delay_ms), 1),
+                "targetDelayMs": round(float(delay_ms), 1),
+                "underruns": int(self._usb_engine.jitter.underruns),
+                "wasapiDevice": self._usb_engine.wasapi.device_name,
+                # Legacy keys for UI & tray backward compatibility
+                "enabled": enabled_flag,
+                "active": active_flag,
+                "device": dev_label,
+                "state": state_label,
             }
 
-    def get_volume(self) -> int:
-        try:
-            import ctypes
-            ctypes.windll.ole32.CoInitialize(None)
+    def configure(
+        self,
+        *,
+        audio_out: Optional[str] = None,
+        volume: Optional[int] = None,
+        muted: Optional[bool] = None,
+        buffer_preset: Optional[str] = None,
+        lip_sync: Optional[bool] = None,
+        force_stream: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Update one or more audio parameters atomically and enforce routing immediately."""
+        target_mode: Optional[str] = None
+        with self._lock:
+            if volume is not None:
+                self._volume = self._usb_engine.jitter.set_volume(int(volume))
+            if muted is not None:
+                self._muted = self._usb_engine.jitter.set_muted(bool(muted))
+            if buffer_preset is not None:
+                self._buffer_preset = self._usb_engine.jitter.set_preset(str(buffer_preset))
+            if lip_sync is not None:
+                self._lip_sync = bool(lip_sync)
+            if audio_out is not None:
+                target_mode = normalize_audio_out(audio_out)
+                self._audio_out = target_mode
+            phase = self._screen_phase
+            transport = self._screen_transport
+
+        # Sync live screen phase if available
+        if force_stream is True:
+            phase = "running"
+        elif force_stream is None:
             try:
-                from pycaw.pycaw import AudioUtilities
-                dev = AudioUtilities.GetSpeakers()
-                if dev and hasattr(dev, "EndpointVolume"):
-                    vol = round(dev.EndpointVolume.GetMasterVolumeLevelScalar() * 100)
-                    self._cached_volume = vol
-                    return vol
-            finally:
-                ctypes.windll.ole32.CoUninitialize()
-        except Exception:
-            pass
-        return self._cached_volume if self._cached_volume is not None else 100
+                from handset.screen import screen_status
+
+                scr = screen_status()
+                phase = str(scr.get("phase") or phase)
+                transport = "wifi" if str(scr.get("transport") or transport).lower() == "wifi" else "usb"
+                with self._lock:
+                    self._screen_phase = phase
+                    self._screen_transport = transport
+            except Exception:
+                pass
+
+        if target_mode == "device":
+            self._usb_engine.stop(release_coredevice=True)
+            self._disable_bt()
+        elif target_mode == "pc":
+            self._disable_bt()
+            if phase == "running":
+                self._usb_engine.start(transport=transport)
+        elif target_mode == "bluetooth":
+            self._usb_engine.stop(release_coredevice=True)
+            self._enable_bt()
+        else:
+            # Ensure USB engine matches current phase if already in 'pc' mode
+            with self._lock:
+                cur_mode = self._audio_out
+            if cur_mode == "pc" and phase == "running" and not self._usb_engine.is_running:
+                self._usb_engine.start(transport=transport)
+
+        return self.status()
+
+    def set_audio_out(self, mode: str, *, force_stream: Optional[bool] = None) -> Dict[str, Any]:
+        return self.configure(audio_out=mode, force_stream=force_stream)
+
+    def set_buffer_preset(self, preset: str) -> Dict[str, Any]:
+        return self.configure(buffer_preset=preset)
+
+    def set_lip_sync(self, enabled: bool) -> Dict[str, Any]:
+        return self.configure(lip_sync=bool(enabled))
+
+    def set_muted(self, muted: bool) -> Dict[str, Any]:
+        return self.configure(muted=bool(muted))
+
+    def toggle_mute(self) -> Dict[str, Any]:
+        with self._lock:
+            next_muted = not self._muted
+        return self.configure(muted=next_muted)
+
+    def get_volume(self) -> int:
+        with self._lock:
+            return self._volume
 
     def set_volume(self, level_percent: int) -> Dict[str, Any]:
         vol = max(0, min(100, int(level_percent)))
-        scalar = vol / 100.0
-        self._cached_volume = vol
-        try:
-            import ctypes
-            ctypes.windll.ole32.CoInitialize(None)
+        with self._lock:
+            self._volume = self._usb_engine.jitter.set_volume(vol)
+            mode = self._audio_out
+
+        if mode == "bluetooth" and sys.platform == "win32":
+            scalar = vol / 100.0
             try:
-                from pycaw.pycaw import AudioUtilities
-                dev = AudioUtilities.GetSpeakers()
-                if dev and hasattr(dev, "EndpointVolume"):
-                    dev.EndpointVolume.SetMasterVolumeLevelScalar(scalar, None)
-                    return {"ok": True, "volume": vol}
-            finally:
-                ctypes.windll.ole32.CoUninitialize()
-        except Exception as e:
-            return {"ok": False, "volume": vol, "error": str(e)}
-        return {"ok": True, "volume": vol}
+                import ctypes
+
+                ctypes.windll.ole32.CoInitialize(None)
+                try:
+                    from pycaw.pycaw import AudioUtilities
+
+                    dev = AudioUtilities.GetSpeakers()
+                    if dev and hasattr(dev, "EndpointVolume"):
+                        dev.EndpointVolume.SetMasterVolumeLevelScalar(scalar, None)
+                finally:
+                    ctypes.windll.ole32.CoUninitialize()
+            except Exception:
+                pass
+        st = self.status()
+        st["ok"] = True
+        return st
 
     def open_bluetooth_settings(self) -> Dict[str, Any]:
         try:
@@ -406,13 +572,12 @@ class AudioManager:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def enable(self) -> Dict[str, Any]:
+    def _enable_bt(self) -> Dict[str, Any]:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
-                self._enabled = True
+                self._bt_enabled = True
                 return self.status()
 
-            # Pre-Start Orphan Audio Cleanup: ensure zero duplicate AudioPlaybackConnection sessions exist
             cleanup_orphan_audio_workers()
 
             child_env = dict(os.environ)
@@ -439,7 +604,7 @@ class AudioManager:
                     bufsize=1,
                     **_WIN_NO_WINDOW_KWARGS,
                 )
-                self._enabled = True
+                self._bt_enabled = True
                 try:
                     _audio_pid_file().write_text(str(self._proc.pid), encoding="utf-8")
                 except Exception:
@@ -447,7 +612,7 @@ class AudioManager:
 
                 init_status = {"status": "unknown"}
 
-                def read_init():
+                def read_init() -> None:
                     try:
                         if self._proc and self._proc.stdout:
                             line = self._proc.stdout.readline()
@@ -466,7 +631,7 @@ class AudioManager:
                 t.join(timeout=6.5)
 
                 if init_status.get("status") in ("no_device", "not_connected", "error") or self._connection_state != "Opened":
-                    self._enabled = False
+                    self._bt_enabled = False
                     self._connection_state = "Closed"
                     try:
                         if self._proc is not None:
@@ -478,17 +643,15 @@ class AudioManager:
                         _audio_pid_file().unlink(missing_ok=True)
                     except Exception:
                         pass
-
             except Exception as e:
-                print(f"AudioManager enable failed: {e}", flush=True)
+                print(f"AudioManager Bluetooth enable failed: {e}", flush=True)
                 self._proc = None
-                self._enabled = False
-
+                self._bt_enabled = False
         return self.status()
 
-    def disable(self) -> Dict[str, Any]:
+    def _disable_bt(self) -> None:
         with self._lock:
-            self._enabled = False
+            self._bt_enabled = False
             proc = self._proc
             self._proc = None
             self._connection_state = "Off"
@@ -504,31 +667,41 @@ class AudioManager:
                     proc.terminate()
                 except Exception:
                     pass
+            try:
+                _audio_pid_file().unlink(missing_ok=True)
+            except Exception:
+                pass
+            cleanup_orphan_audio_workers()
 
-        try:
-            _audio_pid_file().unlink(missing_ok=True)
-        except Exception:
-            pass
-        cleanup_orphan_audio_workers()
-        return self.status()
+    def enable(self) -> Dict[str, Any]:
+        return self.configure(audio_out="pc")
+
+    def disable(self) -> Dict[str, Any]:
+        return self.configure(audio_out="device")
 
     def shutdown(self) -> None:
-        self.disable()
+        self._usb_engine.stop(release_coredevice=False)
+        self._disable_bt()
 
     def stop(self) -> Dict[str, Any]:
         return self.disable()
 
     def toggle(self, enable: Optional[bool] = None) -> Dict[str, Any]:
-        if enable is None:
-            should_enable = not self._enabled
-        else:
-            should_enable = bool(enable)
-
-        if should_enable:
-            return self.enable()
-        else:
-            return self.disable()
+        with self._lock:
+            currently_pc = self._audio_out in ("pc", "bluetooth")
+        should_enable = (not currently_pc) if enable is None else bool(enable)
+        return self.configure(audio_out="pc" if should_enable else "device")
 
 
 # Global Singleton instance
 audio_manager = AudioManager()
+
+
+def notify_screen_phase_changed(phase: str, transport: str = "usb") -> None:
+    """Non-blocking hook invoked by handset.screen whenever mirroring phase transitions."""
+    threading.Thread(
+        target=audio_manager.on_screen_phase,
+        args=(phase, transport),
+        name="handset-audio-phase",
+        daemon=True,
+    ).start()

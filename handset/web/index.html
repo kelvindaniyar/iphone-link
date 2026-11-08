@@ -33,7 +33,7 @@
           </svg>
           <span class="btn-label">Stop</span>
         </button>
-        <button type="button" class="icon-btn" id="btn-audio-top" title="Toggle Audio Sink (iPhone ➔ PC)" aria-label="Audio Sink">
+        <button type="button" class="icon-btn is-active" id="btn-audio-top" title="Mute / Unmute PC Audio (Alt+M)" aria-label="PC Audio Mute Toggle">
           <svg class="audio-icon-on" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
@@ -230,26 +230,62 @@
             </div>
           </section>
 
-          <!-- Audio Sink (iPhone -> PC Speaker) -->
+          <!-- Zero-Bluetooth USB Audio Pipe (Tahap 123: CoreDevice AAC-ELD + WASAPI + Jitter Buffer) -->
           <section class="card panel-audio" id="panel-audio">
             <div class="card-header-row">
-              <span class="drawer-section-label">Audio Sink (iPhone ➔ PC)</span>
-              <span class="audio-badge" id="audio-status-badge">○ Off</span>
+              <span class="drawer-section-label">Audio (iPhone ➔ PC)</span>
+              <span class="audio-badge active" id="audio-status-badge">✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~40 ms)</span>
             </div>
-            <div class="audio-toggle-wrap">
-              <button type="button" class="ctl ctl-primary audio-main-btn" id="btn-audio-drawer">
-                <span id="audio-toggle-icon">🔊</span>
-                <span id="audio-toggle-text">Enable Audio Sink</span>
-              </button>
+
+            <div class="segmented segmented-audio-out" id="segmented-audio-out" role="radiogroup" aria-label="Audio Output Target">
+              <button type="button" class="seg is-active" data-audio-out="pc" id="btn-audio-out-pc" role="radio" aria-checked="true">💻 Di PC ini (USB)</button>
+              <button type="button" class="seg" data-audio-out="device" id="btn-audio-out-device" role="radio" aria-checked="false">📱 Hanya perangkat</button>
             </div>
-            <div class="audio-vol-wrap">
+
+            <div class="audio-vol-wrap" style="margin-top: 8px;">
               <div class="crop-label-row">
-                <span>PC Output Volume</span>
-                <span class="unit" id="audio-vol-val">100%</span>
+                <span>Volume PC</span>
+                <div style="display: inline-flex; align-items: center; gap: 6px;">
+                  <span class="unit" id="audio-vol-val">100%</span>
+                  <button type="button" class="ctl ctl-sm audio-mute-inline-btn" id="btn-audio-drawer" title="Mute / Unmute PC Audio (Alt+M)">
+                    <span id="audio-toggle-icon">🔊</span>
+                    <span id="audio-toggle-text">Alt+M</span>
+                  </button>
+                </div>
               </div>
               <input type="range" id="audio-vol-slider" min="0" max="100" step="1" value="100">
             </div>
-            <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="width: 100%; margin-top: 6px;">⚙️ Pair Bluetooth in Windows</button>
+
+            <div class="setting-toggle-item" style="margin-top: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">⚡ Buffer Audio</span>
+                <span class="setting-hint" id="audio-buffer-hint">Normal · ~40 ms</span>
+              </div>
+              <div class="segmented segmented-audio-buffer" id="segmented-audio-buffer" role="radiogroup" aria-label="Buffer Audio Preset">
+                <button type="button" class="seg" data-audio-buffer="low" role="radio" aria-checked="false">Rendah</button>
+                <button type="button" class="seg is-active" data-audio-buffer="normal" role="radio" aria-checked="true">Normal</button>
+                <button type="button" class="seg" data-audio-buffer="high" role="radio" aria-checked="false">Tinggi</button>
+              </div>
+            </div>
+
+            <div class="setting-toggle-item" style="margin-top: 8px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">🎬 Lip Sync</span>
+                <span class="setting-hint" id="lip-sync-hint">ON</span>
+              </div>
+              <div class="segmented segmented-toggle" id="segmented-lip-sync" role="radiogroup" aria-label="Lip Sync">
+                <button type="button" class="seg" data-lip-sync="false" role="radio" aria-checked="false">OFF</button>
+                <button type="button" class="seg is-active" data-lip-sync="true" role="radio" aria-checked="true">ON</button>
+              </div>
+            </div>
+
+            <details class="audio-bt-fallback" style="margin-top: 8px;">
+              <summary style="font-size: 11px; color: var(--muted); cursor: pointer; user-select: none;">Opsi Fallback Bluetooth A2DP</summary>
+              <div style="display: flex; gap: 6px; margin-top: 6px;">
+                <button type="button" class="ctl ctl-sm" id="btn-audio-out-bt" data-audio-out="bluetooth" style="flex: 1;">🔵 Gunakan Bluetooth</button>
+                <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="flex: 1;">⚙️ Pair BT</button>
+              </div>
+            </details>
           </section>
 
           <!-- Trackpad Gesture Speed Card (3 Presets + Slider + Number Input + Persistent Save) -->
@@ -342,6 +378,7 @@
               <span class="shortcut-pill">Alt+L (Lock)</span>
               <span class="shortcut-pill">Alt+D (Stealth)</span>
               <span class="shortcut-pill">Alt+H (Landscape)</span>
+              <span class="shortcut-pill">Alt+M (Mute)</span>
             </div>
           </section>
 

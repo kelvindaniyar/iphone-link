@@ -154,7 +154,19 @@ let usbConnected = false;
 let currentStealthActive = false;
 let currentWallpaperSig = null;
 let currentWifiState = {};
-let currentAudioState = { enabled: false, volume: 100 };
+let currentAudioState = {
+  audioOut: "pc",
+  enabled: true,
+  active: false,
+  streaming: false,
+  volume: 100,
+  muted: false,
+  bufferPreset: "normal",
+  lipSync: true,
+  delayMs: 0,
+  targetDelayMs: 40,
+  underruns: 0,
+};
 const _cachedDeviceDetails = new Map();
 
 
@@ -336,12 +348,21 @@ async function fetchUserSettings() {
         );
       } catch (_) { }
     }
-    if (res.audioVolume !== undefined) {
+    if (
+      res.audioVolume !== undefined ||
+      res.audioOut !== undefined ||
+      res.audioBufferPreset !== undefined ||
+      res.lipSync !== undefined ||
+      res.audioMuted !== undefined
+    ) {
       try {
-        const volSlider = document.querySelector("#audio-vol-slider");
-        const volVal = document.querySelector("#audio-vol-val");
-        if (volSlider) volSlider.value = String(res.audioVolume);
-        if (volVal) volVal.textContent = `${res.audioVolume}%`;
+        renderAudio({
+          audioOut: res.audioOut || currentAudioState.audioOut || "pc",
+          volume: res.audioVolume !== undefined ? res.audioVolume : currentAudioState.volume,
+          muted: res.audioMuted !== undefined ? Boolean(res.audioMuted) : currentAudioState.muted,
+          bufferPreset: res.audioBufferPreset || currentAudioState.bufferPreset || "normal",
+          lipSync: res.lipSync !== undefined ? Boolean(res.lipSync) : currentAudioState.lipSync,
+        });
       } catch (_) { }
     }
   } catch (err) {
@@ -389,46 +410,121 @@ async function saveUserSettings() {
   }
 }
 
-// Audio Sink UI & Management
+// Zero-Bluetooth USB Audio Pipe UI, Presets, Lip Sync & Alt+M Mute (Tahap 123)
+
+function syncLipSyncToIframe() {
+  try {
+    const mode = currentAudioState.audioOut || "pc";
+    const activeDelay =
+      mode === "pc" && !currentAudioState.muted
+        ? Number(currentAudioState.delayMs || currentAudioState.targetDelayMs || 0)
+        : mode === "bluetooth" && currentAudioState.streaming
+          ? Number(currentAudioState.delayMs || 140)
+          : 0;
+    screenView?.contentWindow?.postMessage(
+      {
+        type: "set-lip-sync",
+        lipSync: Boolean(currentAudioState.lipSync && mode !== "device"),
+        delayMs: activeDelay,
+      },
+      "*"
+    );
+  } catch (_) { }
+}
 
 function renderAudio(audio) {
   if (!audio) return;
   currentAudioState = { ...currentAudioState, ...audio };
 
-  const isEnabled = Boolean(currentAudioState.enabled || currentAudioState.active);
+  const mode = currentAudioState.audioOut || (currentAudioState.enabled ? "pc" : "device");
+  const isPcMode = mode === "pc" || mode === "bluetooth";
+  const isMuted = Boolean(currentAudioState.muted);
+  const isAudibleOnPc = isPcMode && !isMuted && Number(currentAudioState.volume ?? 100) > 0;
+  const preset = currentAudioState.bufferPreset || "normal";
+  const lipSync = currentAudioState.lipSync !== false;
+  const shownMs = Math.round(
+    Number(
+      currentAudioState.streaming && currentAudioState.delayMs > 0
+        ? currentAudioState.delayMs
+        : currentAudioState.targetDelayMs || (preset === "low" ? 30 : preset === "high" ? 100 : 50)
+    )
+  );
+
   const btnTop = document.querySelector("#btn-audio-top");
   const iconOn = btnTop?.querySelector(".audio-icon-on");
   const iconOff = btnTop?.querySelector(".audio-icon-off");
   if (btnTop) {
-    btnTop.classList.toggle("is-active", isEnabled);
+    btnTop.classList.toggle("is-active", isAudibleOnPc);
+    btnTop.title = isMuted
+      ? "PC Audio Muted — Klik atau tekan Alt+M untuk Unmute"
+      : mode === "device"
+        ? "Output: Hanya perangkat (iPhone) — Klik untuk alihkan ke PC"
+        : `Zero-Bluetooth USB Audio Aktif (~${shownMs} ms) — Klik / Alt+M untuk Mute`;
     if (iconOn && iconOff) {
-      iconOn.hidden = !isEnabled;
-      iconOff.hidden = isEnabled;
-      iconOn.style.display = isEnabled ? "block" : "none";
-      iconOff.style.display = isEnabled ? "none" : "block";
+      iconOn.hidden = !isAudibleOnPc;
+      iconOff.hidden = isAudibleOnPc;
+      iconOn.style.display = isAudibleOnPc ? "block" : "none";
+      iconOff.style.display = isAudibleOnPc ? "none" : "block";
     }
   }
 
   const badge = document.querySelector("#audio-status-badge");
   if (badge) {
-    badge.classList.toggle("active", isEnabled);
-    if (isEnabled) {
-      badge.textContent = `● Active (${currentAudioState.device || "PC"})`;
+    badge.classList.toggle("active", mode === "pc" && !isMuted);
+    if (mode === "pc") {
+      if (isMuted) {
+        badge.textContent = "🔇 Di PC ini · Muted (Alt+M)";
+      } else {
+        badge.textContent = `✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~${shownMs} ms)`;
+      }
+    } else if (mode === "bluetooth") {
+      badge.textContent = currentAudioState.streaming
+        ? `🔵 Bluetooth A2DP (${currentAudioState.device || "iPhone"})`
+        : "○ Bluetooth A2DP (Disconnected)";
     } else {
-      badge.textContent = "○ Off / Muted";
+      badge.textContent = "📱 Hanya perangkat (Speaker iPhone)";
     }
+  }
+
+  document.querySelectorAll("[data-audio-out]").forEach((btn) => {
+    const active = btn.dataset.audioOut === mode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+
+  document.querySelectorAll("[data-audio-buffer]").forEach((btn) => {
+    const active = btn.dataset.audioBuffer === preset;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+
+  const bufHint = document.querySelector("#audio-buffer-hint");
+  if (bufHint) {
+    const labelMap = { low: "Rendah", normal: "Normal", high: "Tinggi" };
+    bufHint.textContent = `${labelMap[preset] || "Normal"} · ~${shownMs} ms`;
+  }
+
+  document.querySelectorAll("[data-lip-sync]").forEach((btn) => {
+    const active = (btn.dataset.lipSync === "true") === lipSync;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+  const lipHint = document.querySelector("#lip-sync-hint");
+  if (lipHint) {
+    lipHint.textContent = lipSync ? "ON" : "OFF";
   }
 
   const btnDrawer = document.querySelector("#btn-audio-drawer");
   const textDrawer = document.querySelector("#audio-toggle-text");
   const iconDrawer = document.querySelector("#audio-toggle-icon");
   if (btnDrawer) {
-    btnDrawer.classList.toggle("is-active", isEnabled);
+    btnDrawer.classList.toggle("is-muted", isMuted);
+    btnDrawer.classList.toggle("is-active", isMuted);
     if (textDrawer) {
-      textDrawer.textContent = isEnabled ? "Disable Audio Sink (Active)" : "Enable Audio Sink";
+      textDrawer.textContent = isMuted ? "Muted" : "Alt+M";
     }
     if (iconDrawer) {
-      iconDrawer.textContent = isEnabled ? "🔇" : "🔊";
+      iconDrawer.textContent = isMuted ? "🔇" : "🔊";
     }
   }
 
@@ -438,29 +534,68 @@ function renderAudio(audio) {
     volSlider.value = String(currentAudioState.volume);
   }
   if (volVal && currentAudioState.volume !== undefined) {
-    volVal.textContent = `${currentAudioState.volume}%`;
+    volVal.textContent = isMuted ? `Muted (${currentAudioState.volume}%)` : `${currentAudioState.volume}%`;
+  }
+
+  syncLipSyncToIframe();
+}
+
+async function updateAudioConfig(patch) {
+  try {
+    const res = await postJson("/api/audio", patch || {});
+    if (res) renderAudio(res);
+    return res;
+  } catch (err) {
+    console.warn("updateAudioConfig error:", err);
+    return null;
   }
 }
 
+let _lastMuteToggleTs = 0;
+async function triggerToggleAudioMute(explicitMuted = null) {
+  const now = Date.now();
+  if (explicitMuted === null && now - _lastMuteToggleTs < 200) return;
+  _lastMuteToggleTs = now;
+  try {
+    const payload = explicitMuted !== null ? { muted: Boolean(explicitMuted) } : {};
+    const res = await postJson("/api/audio/mute", payload);
+    if (res) renderAudio(res);
+  } catch (err) {
+    console.warn("triggerToggleAudioMute error:", err);
+  }
+}
+window.triggerToggleAudioMute = triggerToggleAudioMute;
+
 async function toggleAudio(forcedState) {
   try {
-    const shouldEnable = forcedState !== undefined ? forcedState : !currentAudioState.enabled;
-    const res = await postJson("/api/audio/toggle", { enabled: shouldEnable });
-    renderAudio(res);
+    if (forcedState !== undefined) {
+      const res = await postJson("/api/audio", { audioOut: forcedState ? "pc" : "device" });
+      renderAudio(res);
+      return;
+    }
+    if (currentAudioState.audioOut === "device") {
+      const res = await postJson("/api/audio", { audioOut: "pc", muted: false });
+      renderAudio(res);
+    } else {
+      await triggerToggleAudioMute();
+    }
   } catch (err) {
     console.warn("toggleAudio error:", err);
   }
 }
-window.trayToggleAudio = () => toggleAudio();
+window.trayToggleAudio = () => {
+  const nextOut = currentAudioState.audioOut === "device" ? "pc" : "device";
+  return updateAudioConfig({ audioOut: nextOut });
+};
 
 async function setAudioVolume(vol) {
   try {
-    const res = await postJson("/api/audio/volume", { volume: parseInt(vol, 10) || 100 });
-    if (res && res.volume !== undefined) {
-      currentAudioState.volume = res.volume;
-      const volVal = document.querySelector("#audio-vol-val");
-      if (volVal) volVal.textContent = `${res.volume}%`;
-    }
+    const parsed = Math.max(0, Math.min(100, parseInt(vol, 10) || 0));
+    const res = await postJson("/api/audio", {
+      volume: parsed,
+      muted: parsed === 0 ? true : false,
+    });
+    if (res) renderAudio(res);
   } catch (err) {
     console.warn("setAudioVolume error:", err);
   }
@@ -468,7 +603,31 @@ async function setAudioVolume(vol) {
 
 function initAudioControls() {
   document.querySelector("#btn-audio-top")?.addEventListener("click", () => toggleAudio());
-  document.querySelector("#btn-audio-drawer")?.addEventListener("click", () => toggleAudio());
+  document.querySelector("#btn-audio-drawer")?.addEventListener("click", () => triggerToggleAudioMute());
+
+  document.querySelectorAll("[data-audio-out]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const targetOut = btn.dataset.audioOut || "pc";
+      updateAudioConfig({ audioOut: targetOut });
+    });
+  });
+
+  document.querySelectorAll("[data-audio-buffer]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const preset = btn.dataset.audioBuffer || "normal";
+      updateAudioConfig({ bufferPreset: preset });
+    });
+  });
+
+  document.querySelectorAll("[data-lip-sync]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const enabled = btn.dataset.lipSync === "true";
+      updateAudioConfig({ lipSync: enabled });
+    });
+  });
 
   const volSlider = document.querySelector("#audio-vol-slider");
   const volVal = document.querySelector("#audio-vol-val");
@@ -484,6 +643,24 @@ function initAudioControls() {
       await postJson("/api/audio/pair", {});
     } catch (_) { }
   });
+
+  // Global parent-window Alt+M listener (works even when mirror iframe is not focused)
+  if (!window._altMMuteBound) {
+    window._altMMuteBound = true;
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        const tag = e.target?.tagName || "";
+        if (e.target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+        if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyM" || e.key === "m" || e.key === "M")) {
+          e.preventDefault();
+          e.stopPropagation();
+          triggerToggleAudioMute();
+        }
+      },
+      true
+    );
+  }
 }
 
 function syncThemeToIframe() {
@@ -1110,6 +1287,7 @@ function syncSettingsToIframe() {
   applyCrop(currentCrop, true);
   applyTrackpadSpeed(currentTrackpadSpeed, true);
   applyKeyboardSettings(currentKeyboardSettings, true);
+  syncLipSyncToIframe();
 }
 
 

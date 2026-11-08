@@ -4123,6 +4123,11 @@ async function run(generation) {
             displayH: frame.displayHeight,
           });
         }
+        frameCount += 1;
+        if (_lipSyncEnabled && _lipSyncDelayMs > 15 && frameCount > 2) {
+          _enqueueLipSyncFrame(frame);
+          return;
+        }
         if (pendingFrame) {
           try {
             pendingFrame.close();
@@ -4133,7 +4138,6 @@ async function run(generation) {
           rafScheduled = true;
           requestAnimationFrame(drawPending);
         }
-        frameCount += 1;
       },
       error: (err) => {
         postDebugLog("decoder_error", {
@@ -4318,6 +4322,12 @@ window.addEventListener("message", (e) => {
         } catch (_) {}
       }, 50);
     }
+  } else if (e.data.type === "set-lip-sync") {
+    _lipSyncEnabled = Boolean(e.data.lipSync);
+    _lipSyncDelayMs = Math.max(0, Math.min(250, Number(e.data.delayMs) || 0));
+    if (!_lipSyncEnabled || _lipSyncDelayMs <= 15) {
+      _flushAllLipSyncFramesNow();
+    }
   } else if (e.data.type === "refresh-stream") {
     if (streamActive && hasRenderedFirstFrame) {
       setStatus("");
@@ -4329,6 +4339,118 @@ window.addEventListener("message", (e) => {
       beginRun();
     }
   }
+});
+
+// Tahap 123: Pooled-Canvas Video-Audio Lip Sync Queue (0% WebCodecs surface starvation)
+let _lipSyncEnabled = true;
+let _lipSyncDelayMs = 0;
+const _lipSyncQueue = [];
+const _lipSyncCanvasPool = [];
+let _lipSyncTimer = 0;
+
+function _recycleLipSyncCanvas(cv) {
+  if (cv && _lipSyncCanvasPool.length < 14) {
+    _lipSyncCanvasPool.push(cv);
+  }
+}
+
+function _drainLipSyncQueue() {
+  _lipSyncTimer = 0;
+  if (!_lipSyncQueue.length) return;
+  const now = performance.now();
+  let chosen = null;
+  while (_lipSyncQueue.length > 0 && _lipSyncQueue[0].dueAt <= now + 1.5) {
+    const item = _lipSyncQueue.shift();
+    if (chosen) {
+      try { chosen.close(); } catch (_) {}
+    }
+    chosen = item.canvas;
+  }
+  if (chosen) {
+    if (pendingFrame) {
+      try { pendingFrame.close(); } catch (_) {}
+    }
+    pendingFrame = chosen;
+    if (!rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(drawPending);
+    }
+  }
+  if (_lipSyncQueue.length > 0 && !_lipSyncTimer) {
+    const waitMs = Math.max(2, Math.round(_lipSyncQueue[0].dueAt - performance.now()));
+    _lipSyncTimer = setTimeout(_drainLipSyncQueue, waitMs);
+  }
+}
+
+function _flushAllLipSyncFramesNow() {
+  if (_lipSyncTimer) {
+    clearTimeout(_lipSyncTimer);
+    _lipSyncTimer = 0;
+  }
+  if (!_lipSyncQueue.length) return;
+  let last = null;
+  while (_lipSyncQueue.length > 0) {
+    const item = _lipSyncQueue.shift();
+    if (last) {
+      try { last.close(); } catch (_) {}
+    }
+    last = item.canvas;
+  }
+  if (last) {
+    if (pendingFrame) {
+      try { pendingFrame.close(); } catch (_) {}
+    }
+    pendingFrame = last;
+    if (!rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(drawPending);
+    }
+  }
+}
+
+function _enqueueLipSyncFrame(frame) {
+  try {
+    const cw = frame.codedWidth || frame.displayWidth || 1179;
+    const ch = frame.codedHeight || frame.displayHeight || 2556;
+    const dw = frame.displayWidth || cw;
+    const dh = frame.displayHeight || ch;
+    const cv = _lipSyncCanvasPool.pop() || document.createElement("canvas");
+    if (cv.width !== cw) cv.width = cw;
+    if (cv.height !== ch) cv.height = ch;
+    const cctx = cv.getContext("2d", { alpha: false });
+    cctx.drawImage(frame, 0, 0, cw, ch);
+    cv.codedWidth = cw;
+    cv.codedHeight = ch;
+    cv.displayWidth = dw;
+    cv.displayHeight = dh;
+    cv.close = () => _recycleLipSyncCanvas(cv);
+    try { frame.close(); } catch (_) {}
+
+    const holdMs = Math.max(0, Math.min(180, _lipSyncDelayMs - 8));
+    while (_lipSyncQueue.length >= 12) {
+      const dropped = _lipSyncQueue.shift();
+      try { dropped.canvas.close(); } catch (_) {}
+    }
+    _lipSyncQueue.push({ canvas: cv, dueAt: performance.now() + holdMs });
+    if (!_lipSyncTimer) {
+      _lipSyncTimer = setTimeout(_drainLipSyncQueue, Math.max(2, Math.round(holdMs)));
+    }
+  } catch (_) {
+    if (pendingFrame) {
+      try { pendingFrame.close(); } catch (_) {}
+    }
+    pendingFrame = frame;
+    if (!rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(drawPending);
+    }
+  }
+}
+
+window._getLipSyncState = () => ({
+  enabled: _lipSyncEnabled,
+  delayMs: _lipSyncDelayMs,
+  queued: _lipSyncQueue.length,
 });
 
 // Tahap 70: Emit mirror-ready on load

@@ -454,6 +454,21 @@
               }
               return;
             }
+
+            // Alt + M: Quick Mute / Unmute PC Audio (Tahap 123)
+            if (e.code === "KeyM" || e.key === "m" || e.key === "M") {
+              e.preventDefault();
+              e.stopPropagation();
+              ignoreKeyUpUntil = Date.now() + 350;
+              pressed.clear();
+              flush();
+              if (typeof window.top?.triggerToggleAudioMute === "function") {
+                window.top.triggerToggleAudioMute();
+              } else if (typeof window.triggerToggleAudioMute === "function") {
+                window.triggerToggleAudioMute();
+              }
+              return;
+            }
           }
         }
 
@@ -521,5 +536,6 @@
     toggleStealthDim: () => (window.top?.triggerToggleStealthDim || window.triggerToggleStealthDim)?.(),
     scanQrLink: () => (window.top?.triggerScanQrLinkWithFeedback || window.triggerScanQrLinkWithFeedback)?.(),
     grabLink: () => (window.top?.triggerScanQrLinkWithFeedback || window.triggerScanQrLinkWithFeedback)?.(),
+    toggleAudioMute: () => (window.top?.triggerToggleAudioMute || window.triggerToggleAudioMute)?.(),
   };
 })();
