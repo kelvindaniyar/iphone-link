@@ -2687,6 +2687,8 @@ let _lastRawH = 2656;
 let _lastNotifiedRawW = 0;
 let _lastNotifiedRawH = 0;
 let _lastNotifiedIpad = null;
+let _currentCodec = "";
+window._isAirPlayStream = false;
 
 function isEffectiveIpad(rawW, rawH) {
   if (_deviceProfile === "ipad") return true;
@@ -3449,12 +3451,21 @@ async function fetchCodecWithRetry() {
           height: info.height || 2556,
         };
       }
-      if (!info.codec || !info.description) {
+      if (!info.codec || (!info.description && !info.is_airplay)) {
         lastErr = "waiting for video parameters";
         continue;
       }
-      const description = Uint8Array.from(atob(info.description), (c) => c.charCodeAt(0));
-      return { codec: info.codec.trim(), description, isImageStream: false };
+      const description = info.description
+        ? Uint8Array.from(atob(info.description), (c) => c.charCodeAt(0))
+        : null;
+      return {
+        codec: info.codec.trim(),
+        description,
+        isImageStream: false,
+        width: info.width,
+        height: info.height,
+        isAirplay: Boolean(info.is_airplay),
+      };
     } catch (err) {
       lastErr = err.message || String(err);
     }
@@ -3687,7 +3698,9 @@ function drawFrame(f) {
 
     // Tahap 74: Set nativeTrimTop = 0 & nativeTrimLeft = 0 agar 0px terpotong di atas Dynamic Island & jam status bar
     // Tahap 125: stream iPad (4:3 / 3:2) TIDAK memakai trim padding iPhone (0/0/0/0)
-    const disableNativeTrim = effectiveIpad || (fitMode === "contain");
+    // Tahap 130: stream AirPlay Wi-Fi (H.264 / avc1) TIDAK memakai padding trim makroblok H.265 (0/0/0/0)
+    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
     const nativeTrimTop = 0;
     const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
     const nativeTrimLeft = 0;
@@ -4177,14 +4190,17 @@ async function run(generation) {
   }
 
   const { codec, description } = codecInfo;
+  _currentCodec = codec;
+  if (codecInfo.isAirplay) {
+    window._isAirPlayStream = true;
+  }
 
   const spsDims = parseHevcSpsDimensions(description);
-  const streamWidth = spsDims?.width || 1216;
-  const streamHeight = spsDims?.height || 2656;
+  const streamWidth = spsDims?.width || codecInfo.width || 1080;
+  const streamHeight = spsDims?.height || codecInfo.height || 1920;
 
   const decoderConfig = {
     codec,
-    description,
     codedWidth: streamWidth,
     codedHeight: streamHeight,
     displayAspectWidth: streamWidth,
@@ -4192,7 +4208,10 @@ async function run(generation) {
     hardwareAcceleration: "prefer-hardware",
     optimizeForLatency: true,
   };
-  const support = await VideoDecoder.isConfigSupported({ codec, description });
+  if (description && description.byteLength > 0) {
+    decoderConfig.description = description;
+  }
+  const support = await VideoDecoder.isConfigSupported(decoderConfig);
   postDebugLog("codec_check", {
     codec,
     supported: support.supported,

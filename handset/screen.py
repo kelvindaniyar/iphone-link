@@ -265,33 +265,19 @@ def start_screen(udid: str | None, transport: str = "cable") -> dict:
     wifi = wifi_paired_udids()
     if transport in ("auto", "cable"):
         transport = "usb"
-    chosen = (udid or "").strip() or _only_udid(usb, wifi, transport)
-    if not chosen:
-        if transport == "wifi":
-            return _set(phase="idle", udid=None, url=None, error="Set up Wi-Fi once with the cable plugged in.")
-        return _set(phase="idle", udid=None, url=None, error="Connect the iPhone first.")
 
-    if transport == "usb" and chosen not in usb:
-        return _set(phase="error", udid=chosen, url=None, error="The iPhone is not on the cable. Plug it in or choose Wi-Fi.")
     if transport == "wifi":
-        probe = probe_wifi_device(chosen)
-        if not probe.get("paired") and not probe.get("wifi_enabled"):
-            return _set(
-                phase="error",
-                udid=chosen,
-                url=None,
-                error="Mode Wi-Fi belum di-setup. Colokkan kabel USB satu kali dan klik 'Set up Wi-Fi'.",
-            )
-        if probe.get("reachable"):
-            ip_label = f" ({probe.get('ip')})" if probe.get("ip") else ""
-            note = f"Menghubungkan ke iPhone via Wi-Fi{ip_label}… Pastikan iPhone tidak terkunci."
-        else:
-            note = "Mencari iPhone di jaringan Wi-Fi lokal… Pastikan layar iPhone menyala (unlocked) dan di Wi-Fi yang sama."
+        chosen = (udid or "").strip() or _only_udid(usb, wifi, transport) or (wifi[0] if wifi else "airplay")
+        note = "📡 Wi-Fi AirPlay Receiver Aktif — Buka Control Center di iPhone/iPad > Ketuk 'Pencerminan Layar' (Screen Mirroring) > Pilih 'iPhone Link'"
     else:
+        chosen = (udid or "").strip() or _only_udid(usb, wifi, transport)
+        if not chosen:
+            return _set(phase="idle", udid=None, url=None, error="Connect the iPhone first.")
+        if chosen not in usb:
+            return _set(phase="error", udid=chosen, url=None, error="The iPhone is not on the cable. Plug it in or choose Wi-Fi.")
+        if developer_mode_enabled(chosen) is False:
+            return _set(phase="error", udid=chosen, url=None, error=DEVELOPER_MODE_MESSAGE)
         note = None
-
-    if transport == "usb" and developer_mode_enabled(chosen) is False:
-        return _set(phase="error", udid=chosen, url=None, error=DEVELOPER_MODE_MESSAGE)
 
     with _LOCK:
         if _STATE["phase"] in {"starting", "running"} and _STATE["udid"] == chosen:
@@ -326,7 +312,86 @@ def _open_tunnel(udid: str, transport: str):
     return PreferredRsdTunnel(serial=udid, autopair=True)
 
 
+async def _serve_airplay(udid: str) -> None:
+    """Run native AirPlay screen mirroring & audio receiver over Wi-Fi."""
+    from handset.airplay import AirPlayMirrorServer
+
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
+    _CURRENT_LOOP = asyncio.get_running_loop()
+    _CURRENT_TASK = asyncio.current_task()
+
+    def on_airplay_state(state: str, detail: str | None = None) -> None:
+        if state == "connected":
+            _set(
+                phase="waiting_airplay",
+                udid=udid,
+                url=VIEW_URL,
+                error=None,
+                note=f"Terkoneksi ke {detail or 'iPhone'}. Memulai stream video...",
+                transport="wifi",
+            )
+        elif state == "streaming":
+            _set(
+                phase="running",
+                udid=udid,
+                url=VIEW_URL,
+                error=None,
+                note=None,
+                transport="wifi",
+            )
+            try:
+                from handset.audio import notify_screen_phase_changed
+                notify_screen_phase_changed("running", "wifi")
+            except Exception:
+                pass
+        elif state == "stopped":
+            _set(
+                phase="idle",
+                udid=None,
+                url=None,
+                error=None,
+                note="AirPlay disconnected.",
+                transport="wifi",
+            )
+            try:
+                from handset.audio import notify_screen_phase_changed
+                notify_screen_phase_changed("idle", "wifi")
+            except Exception:
+                pass
+
+    server = AirPlayMirrorServer(name="iPhone Link", on_state=on_airplay_state)
+    _ACTIVE_SERVER = server
+
+    _set(
+        phase="waiting_airplay",
+        udid=udid,
+        url=VIEW_URL,
+        error=None,
+        note="📡 Wi-Fi AirPlay Receiver Aktif — Buka Control Center di iPhone/iPad > Ketuk 'Pencerminan Layar' (Screen Mirroring) > Pilih 'iPhone Link'",
+        transport="wifi",
+    )
+    try:
+        from handset.audio import notify_screen_phase_changed
+        notify_screen_phase_changed("waiting_airplay", "wifi")
+    except Exception:
+        pass
+
+    try:
+        await server.serve()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _CURRENT_TASK = None
+        _ACTIVE_SERVER = None
+        with contextlib.suppress(Exception):
+            await server.close()
+
+
 async def _serve(udid: str, transport: str) -> None:
+    if transport == "wifi":
+        await _serve_airplay(udid)
+        return
+
     from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
     from .wifi import force_reset_userspace_tunnel

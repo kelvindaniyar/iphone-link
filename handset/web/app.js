@@ -1964,6 +1964,8 @@ function renderPills(state) {
   const overWifi = transport === "wifi";
   if (state.screen?.intentionally_locked) {
     setPill(pillConnection, "Standby · Locked", "ok");
+  } else if (state.screen?.phase === "waiting_airplay") {
+    setPill(pillConnection, "AirPlay Ready", "ok");
   } else if (state.screen?.phase === "running") {
     setPill(pillConnection, state.screen.transport === "wifi" ? "Mirroring · Wi‑Fi" : "Mirroring", "ok");
   } else if (overWifi && wifi.reachable) {
@@ -2182,7 +2184,7 @@ function renderScreen(screen) {
   if (typeof screen.stealth_dim === "boolean") {
     updateStealthDimUI(screen.stealth_dim);
   }
-  const mirroring = screen.phase === "running";
+  const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
   if (mirroring) {
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
@@ -2191,8 +2193,13 @@ function renderScreen(screen) {
     restartScreen.disabled = false;
     kbToggle.hidden = false;
     if (screenNote) {
-      screenNote.textContent = "";
-      screenNote.hidden = true;
+      if (screen.phase === "waiting_airplay" && screen.note) {
+        screenNote.textContent = screen.note;
+        screenNote.hidden = false;
+      } else {
+        screenNote.textContent = "";
+        screenNote.hidden = true;
+      }
     }
     if (screen.intentionally_locked && screenErrorBanner) {
       screenErrorBanner.style.display = "none";
@@ -2342,7 +2349,7 @@ function watchScreen() {
     try {
       const screen = await getJson("/api/screen");
       renderScreen(screen);
-      if (screen.phase !== "starting") {
+      if (screen.phase !== "starting" && screen.phase !== "waiting_airplay") {
         window.clearInterval(screenTimer);
         const lastErr = screen.error;
         await load();
