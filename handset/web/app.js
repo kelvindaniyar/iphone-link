@@ -2732,6 +2732,10 @@ function handleDeviceDimensions(width, height, meta) {
     // 838 window height - 36px Top Bar - 44px Quick Nav = 756px calibrated stage height (Tahap 69: Zero Black Bar)
     const stageH = 756;
     const idealW = Math.max(336, Math.min(500, Math.round(stageH * aspect)));
+    const curDisplayW = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--display-width") || "346", 10) || 346;
+    if (Math.abs(idealW - curDisplayW) <= 4) {
+      return;
+    }
     const displayWidth = `${idealW}px`;
     document.documentElement.style.setProperty("--display-width", displayWidth);
     appRoot?.style.setProperty("--display-width", displayWidth);
@@ -3068,9 +3072,7 @@ function applyDeviceProfile(profile, opts = {}) {
     const api = window.pywebview?.api;
     try {
       if (api?.set_device_profile) {
-        Promise.resolve(api.set_device_profile(p, detectedDeviceFamily, true)).then(() => {
-          if (api.set_orientation && !isFullSize) api.set_orientation(getEffectiveVisualLandscape(), currentDrawerOpen());
-        }).catch(() => { });
+        Promise.resolve(api.set_device_profile(p, detectedDeviceFamily, true)).catch(() => { });
       }
     } catch (_) { }
   }

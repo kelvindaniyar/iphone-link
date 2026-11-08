@@ -492,16 +492,64 @@ class WindowApi:
             ny = max(work_top, work_bottom - ch)
         return (int(nx), int(ny), int(cw), int(ch))
 
-    def _apply_logical_window_size(self, target_w: int, target_h: int) -> tuple[int, int]:
+    def _rescue_offscreen_window(self):
+        """Tahap 125 V2: Auto-rescue window jika koordinat tersimpan atau drag menyebabkan jendela keluar layar."""
+        try:
+            hwnd = self._get_hwnd()
+            user32 = getattr(ctypes.windll, "user32", None)
+            if not hwnd or not user32:
+                return
+            work_left, work_top, work_w, work_h = self._get_work_area(hwnd)
+            work_right = work_left + work_w
+            work_bottom = work_top + work_h
+            scale = self._get_window_dpi_scale(hwnd)
+            rect = wintypes.RECT()
+            if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+                cur_x, cur_y = int(rect.left), int(rect.top)
+                cur_w = int(rect.right - rect.left)
+                cur_h = int(rect.bottom - rect.top)
+                is_offscreen = (
+                    cur_x < (work_left - 10)
+                    or cur_x > (work_right - 100)
+                    or cur_y < (work_top - 10)
+                    or cur_y > (work_bottom - 80)
+                    or cur_w < 100
+                    or cur_h < 100
+                )
+                if is_offscreen:
+                    tw, th = self._default_logical_size(self._is_landscape, self._drawer_open)
+                    phys_w = min(int(round(tw * scale)), work_w - 16)
+                    phys_h = min(int(round(th * scale)), work_h - 16)
+                    center_x = work_left + max(0, (work_w - phys_w) // 2)
+                    center_y = work_top + max(0, (work_h - phys_h) // 2)
+                    user32.SetWindowPos(wintypes.HWND(hwnd), 0, center_x, center_y, phys_w, phys_h, 0x0004 | 0x0010)
+                    self._custom_window_size = None
+                    try:
+                        from handset.server import save_user_settings
+                        save_user_settings({"customWindowSize": None})
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _resize_window_keep_pos(self, logical_w: int, logical_h: int) -> tuple[int, int]:
+        """Tahap 125 V2: Mengubah ukuran jendela dengan SWP_NOMOVE (0x0002) agar posisi (X, Y) 100% tidak lompat."""
         min_lw, min_lh = self._min_logical_size()
         hwnd = self._get_hwnd()
         scale = self._get_window_dpi_scale(hwnd)
         work_left, work_top, work_w, work_h = self._get_work_area(hwnd)
-        max_lw = max(min_lw, int(work_w / scale)) if scale > 0 else 4096
-        max_lh = max(min_lh, int(work_h / scale)) if scale > 0 else 2560
+        work_right = work_left + work_w
+        work_bottom = work_top + work_h
 
-        lw = max(min_lw, min(max_lw, int(round(target_w))))
-        lh = max(min_lh, min(max_lh, int(round(target_h))))
+        max_lw = max(min_lw, int((work_w - 16) / scale)) if scale > 0 else 4096
+        max_lh = max(min_lh, int((work_h - 16) / scale)) if scale > 0 else 2560
+        lw = max(min_lw, min(max_lw, int(round(logical_w))))
+        lh = max(min_lh, min(max_lh, int(round(logical_h))))
+
+        phys_w = int(round(lw * scale))
+        phys_h = int(round(lh * scale))
+        phys_w = min(phys_w, max(100, work_w - 16))
+        phys_h = min(phys_h, max(100, work_h - 16))
 
         if self._window is None:
             return (lw, lh)
@@ -510,43 +558,40 @@ class WindowApi:
         if hwnd and user32:
             rect = wintypes.RECT()
             if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
-                phys_w = int(round(lw * scale))
-                phys_h = int(round(lh * scale))
                 cur_x, cur_y = int(rect.left), int(rect.top)
-                if cur_x <= 5 and cur_y <= 5:
-                    saved = getattr(self, "_saved_window_pos", None)
-                    if saved and (saved[0] > 15 or saved[1] > 15):
-                        cur_x, cur_y = int(saved[0]), int(saved[1])
-                    else:
-                        cur_x = work_left + max(24, (work_w - phys_w) // 2)
-                        cur_y = work_top + max(24, (work_h - phys_h) // 2)
-                nx, ny, cw, ch = self._clamp_phys_rect(cur_x, cur_y, phys_w, phys_h, hwnd=hwnd)
-                try:
-                    self._window.resize(lw, lh)
-                except Exception:
-                    pass
-                user32.SetWindowPos(
-                    wintypes.HWND(hwnd),
-                    0,
-                    nx,
-                    ny,
-                    cw,
-                    ch,
-                    0x0004 | 0x0020 | 0x0040,
-                )
-                try:
-                    self._window.move(nx, ny)
-                except Exception:
-                    pass
+                # ATURAN UTAMA POSISI:
+                # Jika cur_x dan cur_y masih berada di dalam batas aman monitor
+                if (work_left <= cur_x <= (work_right - phys_w)) and (work_top <= cur_y <= (work_bottom - 80)):
+                    user32.SetWindowPos(
+                        wintypes.HWND(hwnd),
+                        0,
+                        0,
+                        0,
+                        phys_w,
+                        phys_h,
+                        0x0002 | 0x0004 | 0x0010,  # SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+                    )
+                else:
+                    # Tarik masuk secara halus ke dalam area kerja monitor
+                    safe_x = max(work_left + 8, min(cur_x, work_right - phys_w - 8))
+                    safe_y = max(work_top + 8, min(cur_y, work_bottom - phys_h - 8))
+                    user32.SetWindowPos(
+                        wintypes.HWND(hwnd),
+                        0,
+                        int(safe_x),
+                        int(safe_y),
+                        phys_w,
+                        phys_h,
+                        0x0004 | 0x0010,  # SWP_NOZORDER | SWP_NOACTIVATE
+                    )
                 self._schedule_reapply_corners()
                 return (lw, lh)
 
-        try:
-            self._window.resize(lw, lh)
-        except Exception:
-            pass
         self._schedule_reapply_corners()
         return (lw, lh)
+
+    def _apply_logical_window_size(self, target_w: int, target_h: int) -> tuple[int, int]:
+        return self._resize_window_keep_pos(target_w, target_h)
 
     def _get_window_dpi_scale(self, hwnd: int | None = None) -> float:
         """Tahap 76: Accurately query per-monitor or system DPI scaling factor (e.g. 1.25x or 1.5x)."""
@@ -592,6 +637,10 @@ class WindowApi:
 
     def set_window(self, window):
         self._window = window
+        try:
+            threading.Timer(0.3, self._rescue_offscreen_window).start()
+        except Exception:
+            pass
 
     def _get_hwnd(self):
         try:
@@ -976,10 +1025,7 @@ class WindowApi:
                 )
                 _reapply_dwm_rounded_corners(hwnd, False)
 
-            try:
-                self._window.move(int(restore_x), int(restore_y))
-            except Exception:
-                pass
+            # Posisi jendela fisik telah dipulihkan secara presisi oleh SetWindowPos (anti DPI double-scaling)
 
             # Verification watchdog timer at 0.06s to recheck physical aspect ratio
             def _verify_restore():
@@ -1079,13 +1125,40 @@ class WindowApi:
         }
 
     def reset_window_size(self):
-        """Reset custom resize override back to canonical iPhone (346x832 / 840x468) or iPad (540x802 / 760x652) dimensions."""
+        """Tahap 125 V2: Reset custom resize override back to canonical iPhone/iPad dimensions and rescue if offscreen."""
         self._custom_window_size = None
         self._saved_portrait_phys_size = None
         self._saved_landscape_phys_size = None
-        tw, th = self._default_logical_size()
+        try:
+            from handset.server import save_user_settings
+            save_user_settings({"customWindowSize": None})
+        except Exception:
+            pass
+        tw, th = self._default_logical_size(self._is_landscape, self._drawer_open)
         if not getattr(self, "_is_fullscreen", False) and self._window is not None:
-            tw, th = self._apply_logical_window_size(tw, th)
+            hwnd = self._get_hwnd()
+            user32 = getattr(ctypes.windll, "user32", None)
+            scale = self._get_window_dpi_scale(hwnd)
+            work_left, work_top, work_w, work_h = self._get_work_area(hwnd)
+            work_right = work_left + work_w
+            work_bottom = work_top + work_h
+            phys_w = min(int(round(tw * scale)), work_w - 16)
+            phys_h = min(int(round(th * scale)), work_h - 16)
+            if hwnd and user32:
+                rect = wintypes.RECT()
+                needs_center = True
+                if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+                    cur_x, cur_y = int(rect.left), int(rect.top)
+                    if (work_left <= cur_x <= (work_right - phys_w)) and (work_top <= cur_y <= (work_bottom - 80)):
+                        needs_center = False
+                if needs_center:
+                    center_x = work_left + max(0, (work_w - phys_w) // 2)
+                    center_y = work_top + max(0, (work_h - phys_h) // 2)
+                    user32.SetWindowPos(wintypes.HWND(hwnd), 0, center_x, center_y, phys_w, phys_h, 0x0004 | 0x0010)
+                else:
+                    self._resize_window_keep_pos(tw, th)
+            else:
+                self._resize_window_keep_pos(tw, th)
         return {
             "ok": True,
             "width": tw,
@@ -1339,6 +1412,9 @@ class WindowApi:
                 return {"ok": True, "width": target_w, "height": target_h, "isIpadMode": True}
 
             dw = max(336, min(600, int(display_width)))
+            cur_dw = getattr(self, "_current_display_width", 346) or 346
+            if abs(dw - cur_dw) <= 4:
+                return {"ok": True, "skipped": "near_current_display_width", "width": cur_dw}
             self._ideal_display_width = dw
             self._current_display_width = dw
             target_w = dw + (360 if self._drawer_open else 0)
@@ -1363,38 +1439,20 @@ class WindowApi:
             return {"ok": False, "error": str(e)}
 
     def set_drawer(self, is_open: bool):
-        """Tahap 67, 71, 75, 91 & 125: Buka/tutup Side Drawer tanpa merusak Landscape, Full Screen, iPad, atau Custom Size."""
+        """Tahap 67, 71, 75, 91, 125 & 125 V2: Buka/tutup Side Drawer tanpa merusak Landscape, Full Screen, iPad, atau Custom Size."""
         prev_open = bool(self._drawer_open)
         self._drawer_open = bool(is_open)
         if getattr(self, "_is_fullscreen", False):
             return {"ok": True, "fullscreen": True, "drawer": self._drawer_open, "drawer_open": self._drawer_open}
-        if getattr(self, "_custom_window_size", None) is not None:
+
+        if self._custom_window_size is not None:
             cw, ch = self._custom_window_size
-            if self._drawer_open != prev_open:
-                cw = cw + (360 if self._drawer_open else -360)
-            target_w, target_h = self._apply_logical_window_size(cw, ch)
-            self._custom_window_size = (target_w, target_h)
-            return {"ok": True, "drawer_open": self._drawer_open, "width": target_w, "height": target_h, "custom": True}
-        if getattr(self, "_is_landscape", False) or self._is_ipad_mode():
-            return self.set_orientation(self._is_landscape, self._drawer_open)
+            target_w = cw + (360 if self._drawer_open else 0)
+            target_h = ch
+        else:
+            target_w, target_h = self._default_logical_size(self._is_landscape, self._drawer_open)
 
-        dw = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346))
-        target_w = (dw + 360) if self._drawer_open else dw
-        target_h = 832
-        target_w, target_h = self._apply_logical_window_size(target_w, target_h)
-
-        # Cache portrait physical size when drawer closed
-        if not self._drawer_open and not self._is_landscape:
-            hwnd = self._get_hwnd()
-            user32 = getattr(ctypes.windll, "user32", None)
-            if hwnd and user32:
-                rect = wintypes.RECT()
-                if user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
-                    cur_w = rect.right - rect.left
-                    cur_h = rect.bottom - rect.top
-                    if 300 <= cur_w <= 650 and cur_h >= int(cur_w * 2.15):
-                        self._saved_portrait_phys_size = (int(cur_w), int(cur_h))
-
+        target_w, target_h = self._resize_window_keep_pos(target_w, target_h)
         return {"ok": True, "drawer_open": self._drawer_open, "width": target_w, "height": target_h}
 
     def get_window_rect(self):
