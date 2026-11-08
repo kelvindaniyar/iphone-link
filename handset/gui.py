@@ -330,6 +330,14 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
     except Exception:
         pass
 
+    # Tahap 131: Release any orphan processes holding AirPlay RTSP (7100) or HTTP (8766)
+    try:
+        from handset.airplay import release_port_if_held_by_other_process
+        release_port_if_held_by_other_process(7100)
+        release_port_if_held_by_other_process(8766)
+    except Exception:
+        pass
+
 
 def _reapply_dwm_rounded_corners(hwnd: int | None, is_fullscreen: bool = False) -> None:
     """Tahap 71 & 75: Re-apply Windows 11 DWM rounded corner preference (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2)."""

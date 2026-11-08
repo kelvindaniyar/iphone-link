@@ -4,9 +4,10 @@ Implements native Apple AirPlay protocol (UxPlay / shairplay architecture):
   - mDNS advertisement: Zeroconf (_airplay._tcp + _raop._tcp) + direct unicast
   - RTSP server on port 7100: /info, /pair-setup, /pair-verify, /fp-setup, SETUP, RECORD, TEARDOWN
   - FairPlay fp-setup stages 1 & 2 + AES session key decryption via native playfair.dll
-  - TCP Video stream: 128-byte headers, AES-128-CTR decryption, AVCC NAL framing @ 60 FPS
+  - TCP Video stream: 128-byte headers, stateful AES-128-CTR decryption, AVCC -> Annex-B framing @ 60 FPS
   - UDP Audio stream: RTP AAC-ELD 44.1 kHz stereo, AES-128-CBC decryption, zlaac.dll decoding to 48 kHz PCM
   - Local HTTP Server on 127.0.0.1:8766 compatible with mirror.js and UsbCoreDeviceAudioEngine
+  - Anti-Errno 10048 singleton receiver architecture + orphan port killer
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ import plistlib
 import secrets
 import socket
 import struct
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -63,6 +66,57 @@ REPLY_MESSAGES = (
 FP_HEADER = bytes.fromhex("46504c590301040000000014")
 
 _PLAYFAIR_DLL: Optional[ctypes.CDLL] = None
+
+
+def release_port_if_held_by_other_process(port: int) -> bool:
+    """Tahap 131: Kill any orphan process holding `port` if its PID is not the current process."""
+    my_pid = os.getpid()
+    freed = False
+    try:
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+        cmd = ["netstat", "-ano", "-p", "tcp"]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+            timeout=5,
+        )
+        pids_to_kill: Set[int] = set()
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if f":{port} " in line and "LISTENING" in line:
+                parts = line.split()
+                if len(parts) >= 5:
+                    with contextlib.suppress(ValueError):
+                        pid = int(parts[-1])
+                        if pid > 0 and pid != my_pid:
+                            pids_to_kill.add(pid)
+
+        for pid in pids_to_kill:
+            logger.warning("Releasing port %d by terminating orphan PID %d", port, pid)
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+                timeout=5,
+            )
+            freed = True
+
+        if freed:
+            time.sleep(0.15)
+    except Exception as e:
+        logger.debug("Port release check for port %d note: %s", port, e)
+    return freed
 
 
 def _load_playfair() -> ctypes.CDLL:
@@ -344,10 +398,29 @@ class AirPlayMirrorServer:
         self.client_name: Optional[str] = None
         self.codec_string: str = "avc1.640028"
         self.sps_pps_config: bytes = b""
+        self._sps: bytes = b""
+        self._pps: bytes = b""
+        self._sps_annexb: bytes = b""
+        self._pps_annexb: bytes = b""
+        self._first_frame_sent: bool = False
+        self._codec_ready = asyncio.Event()
+
         self.width: int = 1080
         self.height: int = 1920
         self.is_streaming: bool = False
         self._last_good_au_t: float = 0.0
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def broadcast_video_chunk(self, chunk: bytes) -> None:
+        """Thread-safe broadcast of an Annex-B framed chunk to all HTTP video subscribers."""
+        for q in list(self._video_subscribers):
+            try:
+                if self._loop and self._loop.is_running():
+                    self._loop.call_soon_threadsafe(q.put_nowait, chunk)
+                else:
+                    q.put_nowait(chunk)
+            except Exception:
+                pass
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -449,7 +522,6 @@ class AirPlayMirrorServer:
             if last_ip:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                # Simple DNS-SD PTR response for _airplay._tcp.local
                 pkt = b"\x00\x00\x84\x00\x00\x00\x00\x01\x00\x00\x00\x00\x08_airplay\x04_tcp\x05local\x00\x00\x0c\x00\x01\x00\x00\x11\x94"
                 sock.sendto(pkt, (last_ip, 5353))
                 sock.close()
@@ -530,12 +602,18 @@ class AirPlayMirrorServer:
             return ok, octet, self._pk
 
         if method == "POST" and url == "/pair-verify":
-            return ok, octet, self._pair_verify(conn, body)
+            res = self._pair_verify(conn, body)
+            if self.on_state:
+                self.on_state("connected", self.client_name)
+            return ok, octet, res
 
         if method == "POST" and url == "/fp-setup":
             if len(body) == 16:
                 return ok, octet, conn.fairplay.setup(body)
-            return ok, octet, conn.fairplay.handshake(body)
+            res = conn.fairplay.handshake(body)
+            if self.on_state:
+                self.on_state("connected", self.client_name)
+            return ok, octet, res
 
         if method == "OPTIONS":
             return ok, {"Public": "SETUP, RECORD, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER"}, b""
@@ -550,6 +628,8 @@ class AirPlayMirrorServer:
             return ok, {}, b""
 
         if method == "RECORD":
+            if self.on_state:
+                self.on_state("connected", self.client_name)
             return ok, {"Audio-Latency": "11025", "Audio-Jack-Status": "connected; type=analog"}, b""
 
         if method == "TEARDOWN":
@@ -631,12 +711,21 @@ class AirPlayMirrorServer:
         req = plistlib.loads(body) if body else {}
         res: Dict[str, Any] = {}
 
-        if isinstance(req, dict) and "ekey" in req and "eiv" in req:
-            aeskey = conn.fairplay.decrypt(bytes(req["ekey"]))
+        # Derivasi master session key (ekey + ecdh_secret)
+        ekey = req.get("ekey")
+        if not ekey and isinstance(req.get("streams"), list):
+            for s in req["streams"]:
+                if s.get("ekey"):
+                    ekey = s["ekey"]
+                    break
+
+        if ekey:
+            aeskey = conn.fairplay.decrypt(bytes(ekey))
             if conn.ecdh_secret:
                 aeskey = _sha512_16(aeskey, conn.ecdh_secret)
             conn.aeskey = aeskey
-            conn.aesiv = bytes(req["eiv"])
+            if "eiv" in req:
+                conn.aesiv = bytes(req["eiv"])
 
         self.client_name = req.get("name") or req.get("model") or "iPhone/iPad"
         logger.info("AirPlay client connected: %s", self.client_name)
@@ -669,11 +758,14 @@ class AirPlayMirrorServer:
         return plistlib.dumps(res, fmt=plistlib.FMT_BINARY)
 
     async def _start_video_stream(self, conn: _RtspConn, stream_id: int) -> int:
-        key = _sha512_16(f"AirPlayStreamKey{stream_id}".encode(), conn.aeskey)
-        iv = _sha512_16(f"AirPlayStreamIV{stream_id}".encode(), conn.aeskey)
+        key = _sha512_16(f"AirPlayStreamKey{stream_id}".encode("ascii"), conn.aeskey)
+        iv = _sha512_16(f"AirPlayStreamIV{stream_id}".encode("ascii"), conn.aeskey)
 
         if self._mirror_server is not None:
-            self._mirror_server.close()
+            with contextlib.suppress(Exception):
+                self._mirror_server.close()
+                await self._mirror_server.wait_closed()
+            self._mirror_server = None
 
         async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             peer = writer.get_extra_info("peername")
@@ -687,42 +779,157 @@ class AirPlayMirrorServer:
                 with contextlib.suppress(Exception):
                     writer.close()
 
-        self._mirror_server = await asyncio.start_server(handle, "0.0.0.0", 0)
+        self._mirror_server = await asyncio.start_server(handle, "0.0.0.0", 0, reuse_address=True)
         port = self._mirror_server.sockets[0].getsockname()[1]
         logger.info("AirPlay video receiver listening on port %d", port)
         return port
 
+    @staticmethod
+    def _extract_sps_pps(data: bytes) -> Tuple[bytes, bytes, str]:
+        """Extract SPS, PPS, and AVC codec string from AVCDecoderConfigurationRecord or NAL stream."""
+        sps = b""
+        pps = b""
+        codec_str = "avc1.640028"
+
+        # Check if AVCDecoderConfigurationRecord (starts with 0x01)
+        if len(data) >= 7 and data[0] == 1:
+            try:
+                profile_idc = data[1]
+                profile_compat = data[2]
+                level_idc = data[3]
+                codec_str = f"avc1.{profile_idc:02x}{profile_compat:02x}{level_idc:02x}"
+                num_sps = data[5] & 0x1F
+                pos = 6
+                for _ in range(num_sps):
+                    if pos + 2 > len(data):
+                        break
+                    sps_len = int.from_bytes(data[pos : pos + 2], "big")
+                    pos += 2
+                    if pos + sps_len > len(data):
+                        break
+                    if not sps:
+                        sps = data[pos : pos + sps_len]
+                    pos += sps_len
+                if pos < len(data):
+                    num_pps = data[pos]
+                    pos += 1
+                    for _ in range(num_pps):
+                        if pos + 2 > len(data):
+                            break
+                        pps_len = int.from_bytes(data[pos : pos + 2], "big")
+                        pos += 2
+                        if pos + pps_len > len(data):
+                            break
+                        if not pps:
+                            pps = data[pos : pos + pps_len]
+                        pos += pps_len
+                return sps, pps, codec_str
+            except Exception:
+                pass
+
+        # Check if Annex-B format (00 00 00 01)
+        if b"\x00\x00\x00\x01" in data:
+            parts = data.split(b"\x00\x00\x00\x01")
+            for p in parts:
+                if not p:
+                    continue
+                nal_type = p[0] & 0x1F
+                if nal_type == 7 and not sps:
+                    sps = p
+                    if len(p) >= 4:
+                        codec_str = f"avc1.{p[1:4].hex()}"
+                elif nal_type == 8 and not pps:
+                    pps = p
+
+        # Check if AVCC format (4-byte length prefixes)
+        if not sps:
+            pos = 0
+            n = len(data)
+            while pos + 4 < n:
+                sz = int.from_bytes(data[pos : pos + 4], "big")
+                if sz <= 0 or pos + 4 + sz > n:
+                    break
+                nal = data[pos + 4 : pos + 4 + sz]
+                nal_type = nal[0] & 0x1F
+                if nal_type == 7 and not sps:
+                    sps = nal
+                    if len(nal) >= 4:
+                        codec_str = f"avc1.{nal[1:4].hex()}"
+                elif nal_type == 8 and not pps:
+                    pps = nal
+                pos += 4 + sz
+
+        return sps, pps, codec_str
+
     async def _video_stream_loop(self, reader: asyncio.StreamReader, cipher: _VideoDecryptor) -> None:
+        """Process 128-byte AirPlay video TCP header and payload stream."""
         while not self._stopped:
             header = await reader.readexactly(128)
-            payload_size = struct.unpack_from("<I", header, 0)[0]
-            kind = struct.unpack_from("<H", header, 12)[0]
+            payload_size = int.from_bytes(header[0:4], "little")
+            payload_type = int.from_bytes(header[4:6], "little")
 
             payload = await reader.readexactly(payload_size) if payload_size > 0 else b""
 
-            if kind == 1 and payload:  # Codec configuration (avcC / SPS / PPS)
-                w = int(struct.unpack_from("<f", header, 56)[0])
-                h = int(struct.unpack_from("<f", header, 60)[0])
+            if payload_type == 1 and payload:  # Codec configuration (avcC / SPS / PPS) — NOT ENCRYPTED
+                w, h = 0.0, 0.0
+                with contextlib.suppress(Exception):
+                    w, h = struct.unpack_from("<ff", header, 56)
+                if w <= 0 or h <= 0:
+                    with contextlib.suppress(Exception):
+                        w, h = struct.unpack_from("<ff", header, 40)
                 if w > 0 and h > 0:
-                    self.width = w
-                    self.height = h
+                    self.width = int(w)
+                    self.height = int(h)
 
+                sps, pps, codec_str = self._extract_sps_pps(payload)
+                if sps:
+                    self._sps = sps
+                    self._sps_annexb = b"\x00\x00\x00\x01" + sps
+                if pps:
+                    self._pps = pps
+                    self._pps_annexb = b"\x00\x00\x00\x01" + pps
                 self.sps_pps_config = bytes(payload)
-                if len(payload) >= 4:
-                    self.codec_string = f"avc1.{payload[1:4].hex()}"
-                else:
-                    self.codec_string = "avc1.640028"
+                self.codec_string = codec_str
+                self._codec_ready.set()
+                logger.info("AirPlay video parameters: %dx%d codec=%s (sps=%d B, pps=%d B)", self.width, self.height, self.codec_string, len(sps), len(pps))
+                if self.on_state:
+                    self.on_state("connected", self.client_name)
 
-                logger.info("AirPlay video parameters: %dx%d codec=%s", self.width, self.height, self.codec_string)
-
-            elif kind == 0 and payload:  # Encrypted video access unit
+            elif payload_type == 0 and payload:  # Encrypted video access unit
                 decrypted = cipher.decrypt(payload)
                 if decrypted is None:
                     continue
 
-                is_key = is_keyframe(decrypted, hevc=False)
-                type_byte = b"\x00" if is_key else b"\x01"
-                chunk = (len(decrypted) + 1).to_bytes(4, "big") + type_byte + decrypted
+                pos = 0
+                n = len(decrypted)
+                annexb_parts: List[bytes] = []
+                has_idr = False
+
+                while pos + 4 <= n:
+                    sz = int.from_bytes(decrypted[pos : pos + 4], "big")
+                    if sz <= 0 or pos + 4 + sz > n:
+                        break
+                    nal = decrypted[pos + 4 : pos + 4 + sz]
+                    nal_type = nal[0] & 0x1F
+                    if nal_type in (5, 7):
+                        has_idr = True
+                    annexb_parts.append(b"\x00\x00\x00\x01" + nal)
+                    pos += 4 + sz
+
+                if not annexb_parts:
+                    continue
+
+                # Prepend SPS + PPS Annex-B to IDR frames or initial frame to ensure instant keyframe decoding
+                if (has_idr or not self._first_frame_sent) and self._sps_annexb and self._pps_annexb:
+                    first_nal_type = annexb_parts[0][4] & 0x1F if len(annexb_parts[0]) > 4 else 0
+                    if first_nal_type != 7:
+                        annexb_parts.insert(0, self._pps_annexb)
+                        annexb_parts.insert(0, self._sps_annexb)
+                    self._first_frame_sent = True
+
+                annexb_frame = b"".join(annexb_parts)
+                type_byte = b"\x00" if (has_idr or not self.is_streaming) else b"\x01"
+                chunk = struct.pack(">I", len(annexb_frame) + 1) + type_byte + annexb_frame
 
                 if not self.is_streaming:
                     self.is_streaming = True
@@ -731,7 +938,6 @@ class AirPlayMirrorServer:
                         self.on_state("streaming", None)
 
                 self._last_good_au_t = time.monotonic()
-                # Broadcast to HTTP viewers
                 for q in list(self._video_subscribers):
                     if q.full():
                         with contextlib.suppress(Exception):
@@ -780,6 +986,12 @@ class AirPlayMirrorServer:
         logger.info("AirPlay audio receiver listening on UDP %d (ctrl: %d)", aport, cport)
         return aport, cport
 
+    def reset_stream_state(self) -> None:
+        """Reset video and audio stream state without shutting down main RTSP / HTTP server."""
+        self._close_streams()
+        self.is_streaming = False
+        self._first_frame_sent = False
+
     def _close_streams(self) -> None:
         self.is_streaming = False
         if self._mirror_server is not None:
@@ -827,6 +1039,7 @@ class AirPlayMirrorServer:
                 await reader.readexactly(content_length)
 
             if method == "POST" and path in ("/touch", "/button", "/key", "/restart", "/pli"):
+                self._first_frame_sent = False
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"ok\":true}\r\n"
                 writer.write(resp)
                 await writer.drain()
@@ -834,6 +1047,11 @@ class AirPlayMirrorServer:
                 return
 
             if path == "/codec":
+                # Wait briefly if SPS/PPS is still arriving
+                if not self.sps_pps_config:
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(self._codec_ready.wait(), timeout=2.5)
+
                 desc_b64 = base64.b64encode(self.sps_pps_config).decode("ascii") if self.sps_pps_config else ""
                 payload = json.dumps({
                     "codec": self.codec_string,
@@ -893,10 +1111,21 @@ class AirPlayMirrorServer:
                 writer.close()
 
     async def serve(self) -> None:
-        """Run the RTSP, mDNS, and HTTP servers until cancelled."""
+        """Run the RTSP, mDNS, and HTTP servers until cancelled with singleton socket reuse."""
         self._stopped = False
-        self._rtsp_server = await asyncio.start_server(self._handle_rtsp, "0.0.0.0", self.airplay_port)
-        self._http_server = await asyncio.start_server(self._handle_http, "127.0.0.1", self.http_port)
+        self._loop = asyncio.get_running_loop()
+        release_port_if_held_by_other_process(self.airplay_port)
+        release_port_if_held_by_other_process(self.http_port)
+
+        # Reuse existing server sockets if already bound and listening
+        if self._rtsp_server is None or not self._rtsp_server.is_serving():
+            self._rtsp_server = await asyncio.start_server(
+                self._handle_rtsp, "0.0.0.0", self.airplay_port, reuse_address=True
+            )
+        if self._http_server is None or not self._http_server.is_serving():
+            self._http_server = await asyncio.start_server(
+                self._handle_http, "127.0.0.1", self.http_port, reuse_address=True
+            )
 
         logger.info(
             "AirPlayMirrorServer ready: RTSP on port %d, HTTP API on port %d",
@@ -907,7 +1136,7 @@ class AirPlayMirrorServer:
         try:
             await self._advertise()
             while not self._stopped:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             pass
         finally:
@@ -934,3 +1163,53 @@ class AirPlayMirrorServer:
             task.cancel()
         self._tasks.clear()
         logger.info("AirPlayMirrorServer closed cleanly.")
+
+    def stop_and_release_ports(self) -> None:
+        """Synchronously close RTSP, HTTP and mDNS servers and release all listening ports."""
+        self._stopped = True
+        if self._loop and self._loop.is_running():
+            try:
+                fut = asyncio.run_coroutine_threadsafe(self.close(), self._loop)
+                fut.result(timeout=2.0)
+            except Exception:
+                pass
+        else:
+            if self._rtsp_server is not None:
+                with contextlib.suppress(Exception):
+                    self._rtsp_server.close()
+                self._rtsp_server = None
+            if self._http_server is not None:
+                with contextlib.suppress(Exception):
+                    self._http_server.close()
+                self._http_server = None
+
+
+_GLOBAL_AIRPLAY_SERVER: Optional[AirPlayMirrorServer] = None
+_GLOBAL_AIRPLAY_LOCK = threading.Lock()
+
+
+def get_global_airplay_server() -> Optional[AirPlayMirrorServer]:
+    global _GLOBAL_AIRPLAY_SERVER
+    return _GLOBAL_AIRPLAY_SERVER
+
+
+def get_or_create_airplay_server(
+    name: str = "iPhone Link",
+    airplay_port: int = AIRPLAY_PORT,
+    http_port: int = AIRPLAY_HTTP_PORT,
+    on_state: Optional[Callable[[str, Optional[str]], None]] = None,
+) -> AirPlayMirrorServer:
+    """Return the global AirPlayMirrorServer singleton, creating it if needed."""
+    global _GLOBAL_AIRPLAY_SERVER
+    with _GLOBAL_AIRPLAY_LOCK:
+        if _GLOBAL_AIRPLAY_SERVER is None or _GLOBAL_AIRPLAY_SERVER._stopped:
+            _GLOBAL_AIRPLAY_SERVER = AirPlayMirrorServer(
+                name=name,
+                airplay_port=airplay_port,
+                http_port=http_port,
+                on_state=on_state,
+            )
+        else:
+            if on_state is not None:
+                _GLOBAL_AIRPLAY_SERVER.on_state = on_state
+        return _GLOBAL_AIRPLAY_SERVER

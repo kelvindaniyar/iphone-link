@@ -3666,6 +3666,7 @@ function drawFrame(f) {
 
     if (!hasRenderedFirstFrame) {
       hasRenderedFirstFrame = true;
+      window.hasRenderedFirstFrame = true;
       setStatus("");
       try {
         window.parent.postMessage({ type: "mirror-ready" }, "*");
@@ -4061,6 +4062,7 @@ function drawPending() {
     drawFrame(f);
     if (!hasRenderedFirstFrame) {
       hasRenderedFirstFrame = true;
+      window.hasRenderedFirstFrame = true;
       setStatus("");
       fitCanvas();
       setTimeout(fitCanvas, 50);
@@ -4199,6 +4201,7 @@ async function run(generation) {
   const streamWidth = spsDims?.width || codecInfo.width || 1080;
   const streamHeight = spsDims?.height || codecInfo.height || 1920;
 
+  const isH264 = codec.startsWith("avc1") || Boolean(codecInfo.isAirplay);
   const decoderConfig = {
     codec,
     codedWidth: streamWidth,
@@ -4208,10 +4211,16 @@ async function run(generation) {
     hardwareAcceleration: "prefer-hardware",
     optimizeForLatency: true,
   };
-  if (description && description.byteLength > 0) {
+  // Tahap 131: For H.264 Annex-B stream with in-band SPS/PPS, NEVER include description.
+  // In Chromium WebView2, passing description for Annex-B stream causes 100% decoding failure.
+  if (description && description.byteLength > 0 && !isH264) {
     decoderConfig.description = description;
   }
-  const support = await VideoDecoder.isConfigSupported(decoderConfig);
+  let support = await VideoDecoder.isConfigSupported(decoderConfig);
+  if (!support.supported && decoderConfig.hardwareAcceleration !== "no-preference") {
+    decoderConfig.hardwareAcceleration = "no-preference";
+    support = await VideoDecoder.isConfigSupported(decoderConfig);
+  }
   postDebugLog("codec_check", {
     codec,
     supported: support.supported,
@@ -4239,6 +4248,7 @@ async function run(generation) {
           });
         }
         frameCount += 1;
+        window._videoFrameCount = frameCount;
         if (_lipSyncEnabled && _lipSyncDelayMs > 15 && frameCount > 2) {
           _enqueueLipSyncFrame(frame);
           return;
@@ -4252,6 +4262,11 @@ async function run(generation) {
         if (!rafScheduled) {
           rafScheduled = true;
           requestAnimationFrame(drawPending);
+          setTimeout(() => {
+            if (rafScheduled && pendingFrame) {
+              drawPending();
+            }
+          }, 35);
         }
       },
       error: (err) => {
@@ -4330,6 +4345,46 @@ async function run(generation) {
         const data = buf.slice(5, 4 + len);
         buf = buf.subarray(4 + len);
 
+        let isKey = (type === 0 || type === 2);
+        if (isH264) {
+          // Tahap 131: Scan start codes 00 00 01 / 00 00 00 01 to accurately detect H.264 SPS (7) or IDR (5)
+          for (let i = 0; i < data.length - 4; i++) {
+            if (data[i] === 0 && data[i + 1] === 0) {
+              let nalPos = -1;
+              if (data[i + 2] === 1) {
+                nalPos = i + 3;
+              } else if (data[i + 2] === 0 && data[i + 3] === 1) {
+                nalPos = i + 4;
+              }
+              if (nalPos !== -1 && nalPos < data.length) {
+                const nalType = data[nalPos] & 0x1F;
+                if (nalType === 5 || nalType === 7) {
+                  isKey = true;
+                  break;
+                }
+              }
+            }
+          }
+        } else {
+          // H.265 (HEVC) keyframe detection
+          if (!isKey && data.length > 4) {
+            for (let i = 0; i < data.length - 4; i++) {
+              if (data[i] === 0 && data[i + 1] === 0) {
+                let nalPos = -1;
+                if (data[i + 2] === 1) nalPos = i + 3;
+                else if (data[i + 2] === 0 && data[i + 3] === 1) nalPos = i + 4;
+                if (nalPos !== -1 && nalPos < data.length) {
+                  const nalType = (data[nalPos] >> 1) & 0x3F;
+                  if ((nalType >= 16 && nalType <= 21) || nalType === 32 || nalType === 33 || nalType === 34) {
+                    isKey = true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
         if (type === 2) {
           try {
             decoder.close();
@@ -4338,7 +4393,7 @@ async function run(generation) {
           decoder.configure(decoderConfig);
           needsResync = false;
           gotKey = true;
-        } else if (type === 0) {
+        } else if (isKey) {
           gotKey = true;
           if (needsResync) {
             try {
@@ -4362,7 +4417,7 @@ async function run(generation) {
         try {
           decoder.decode(
             new EncodedVideoChunk({
-              type: type === 0 || type === 2 ? "key" : "delta",
+              type: isKey ? "key" : "delta",
               timestamp,
               data,
             }),
