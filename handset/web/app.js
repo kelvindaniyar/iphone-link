@@ -250,10 +250,27 @@ function toggleSettings(open) {
     const isLand = isEffectiveIpadMode()
       ? getEffectiveVisualLandscape()
       : Boolean(window.isLandscapeMode || (typeof isLandscapeMode !== "undefined" && isLandscapeMode) || appRoot?.classList.contains("is-landscape"));
-    if (window.pywebview?.api?.set_orientation) {
-      window.pywebview.api.set_orientation(isLand, shouldOpen);
+    if (shouldOpen) {
+      void controlPane.offsetHeight;
+      const runOpenDrawer = () => {
+        if (!window.isDrawerOpen) return;
+        try {
+          if (window.pywebview?.api?.set_drawer) {
+            window.pywebview.api.set_drawer(true);
+          } else if (window.pywebview?.api?.set_orientation) {
+            window.pywebview.api.set_orientation(isLand, true);
+          }
+        } catch (_) { }
+      };
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(runOpenDrawer);
+      } else {
+        runOpenDrawer();
+      }
     } else if (window.pywebview?.api?.set_drawer) {
-      window.pywebview.api.set_drawer(shouldOpen);
+      window.pywebview.api.set_drawer(false);
+    } else if (window.pywebview?.api?.set_orientation) {
+      window.pywebview.api.set_orientation(isLand, false);
     }
   } catch (_) { }
 }
@@ -733,6 +750,7 @@ function syncThemeToIframe() {
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", currentTheme);
+  document.body?.setAttribute("data-theme", currentTheme);
   const appEl = document.querySelector("#app-root");
   appEl?.setAttribute("data-theme", currentTheme);
   localStorage.setItem("pane-theme", currentTheme);

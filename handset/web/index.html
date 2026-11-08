@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=20261109_tahap125_ipad_resize_fluent">
+  <link rel="stylesheet" href="/app.css?v=tahap126">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -158,8 +158,8 @@
           </button>
         </div>
 
-        <div class="drawer-content">
-          <section class="card panel-theme">
+        <div class="drawer-content drawer-scroll">
+          <section class="card glass-card panel-theme">
             <span class="drawer-section-label">Appearance</span>
             <div class="segmented segmented-theme" role="radiogroup" aria-label="Theme">
               <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">
@@ -178,7 +178,7 @@
             </div>
           </section>
 
-          <section class="card panel-display-fit">
+          <section class="card glass-card panel-display-fit">
             <span class="drawer-section-label">Display Fit & Aspect</span>
             <div class="segmented segmented-fit" role="radiogroup" aria-label="Display Fit">
               <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true"><span class="btn-label">Auto-Fit</span></button>
@@ -296,7 +296,7 @@
           </section>
 
           <!-- Zero-Bluetooth USB Audio Pipe (Tahap 123: CoreDevice AAC-ELD + WASAPI + Jitter Buffer) -->
-          <section class="card panel-audio" id="panel-audio">
+          <section class="card glass-card panel-audio" id="panel-audio">
             <div class="card-header-row">
               <span class="drawer-section-label">Audio (iPhone -&gt; PC)</span>
               <span class="audio-badge active" id="audio-status-badge">
@@ -404,7 +404,7 @@
           </section>
 
           <!-- Trackpad Gesture Speed Card (3 Presets + Slider + Number Input + Persistent Save) -->
-          <section class="card panel-trackpad-speed" id="panel-trackpad-speed">
+          <section class="card glass-card panel-trackpad-speed" id="panel-trackpad-speed">
             <span class="drawer-section-label">Trackpad Gesture Speed</span>
             <div class="segmented segmented-speed" role="radiogroup" aria-label="Trackpad Gesture Speed Preset">
               <button type="button" class="seg" data-speed-choice="65" role="radio" aria-checked="false">Slow (65%)</button>
@@ -436,7 +436,7 @@
           </section>
 
           <!-- Keyboard & Cross-Platform Shortcuts Card -->
-          <section class="card panel-keyboard-shortcuts" id="panel-keyboard-shortcuts">
+          <section class="card glass-card panel-keyboard-shortcuts" id="panel-keyboard-shortcuts">
             <span class="drawer-section-label">Keyboard & Shortcuts</span>
 
             <!-- Toggle 1: Cross-Platform Shortcuts -->
@@ -472,7 +472,7 @@
                 <button type="button" class="seg is-active" data-paste-pc-choice="true" role="radio" aria-checked="true">ON</button>
                 <button type="button" class="seg" data-paste-pc-choice="false" role="radio" aria-checked="false">OFF</button>
               </div>
-              <div style="display: flex; gap: 6px; margin-top: 8px;">
+              <div class="dual-btn-row" style="display: flex; gap: 6px; margin-top: 8px;">
                 <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-paste-pc-now" style="flex: 1; margin-top: 0;">
                   <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
@@ -537,7 +537,7 @@
           </section>
 
           <!-- iPhone Screen & Stealth Control (Tahap 47) -->
-          <section class="card panel-screen-stealth" id="panel-screen-stealth">
+          <section class="card glass-card panel-screen-stealth" id="panel-screen-stealth">
             <span class="drawer-section-label">iPhone Screen & Stealth Control</span>
             
             <div class="stealth-btn-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
@@ -616,7 +616,7 @@
             </div>
           </section>
 
-          <section class="card panel-start">
+          <section class="card glass-card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
               <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
               <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi-Fi</button>
@@ -761,6 +761,6 @@
   </div>
 
   <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
-  <script src="/app.js?v=20261109_tahap125_ipad_resize_fluent"></script>
+  <script src="/app.js?v=tahap126"></script>
 </body>
 </html>

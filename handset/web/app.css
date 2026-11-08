@@ -2913,7 +2913,7 @@ body:has(.app.is-fullsize) .win-resize-handle {
   height: 100% !important;
 }
 
-/* Tahap 125 V2: Saat Side Drawer terbuka di jendela non-fullsize, kunci .side-drawer tepat 360px dan .display-col calc(100% - 360px) */
+/* Tahap 125 V2 + Tahap 126: Saat Side Drawer terbuka di jendela non-fullsize, kunci .side-drawer tepat 360px dan .display-col calc(100% - 360px) */
 .app.drawer-open:not(.is-fullsize) .side-drawer,
 .app.drawer-open:not(.is-fullsize) #control-pane,
 .app.has-custom-size:not(.is-fullsize).drawer-open .side-drawer,
@@ -2923,7 +2923,8 @@ body:has(.app.is-fullsize) .win-resize-handle {
   min-width: 360px !important;
   max-width: 360px !important;
   height: 100% !important;
-  overflow-y: auto !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
   box-sizing: border-box !important;
 }
 
@@ -2973,18 +2974,113 @@ body:has(.app.is-fullsize) .win-resize-handle {
 }
 
 /* ======================================================================
-   Tahap 125 V2: Perbaikan Baris Tombol Berdampingan & Kartu Side Drawer (Anti-Overflow)
+   Tahap 126: Single Scroll Container Drawer, Zero Inner Card Scrollbars,
+   Anti-Overlap Dual Buttons, & Anti-Black-Flash Window Expand
    ====================================================================== */
-.side-drawer,
-.drawer-scroll,
-.glass-card,
+html,
+body,
+.app {
+  background-color: #0b0f19 !important;
+  transition: color 0.15s ease !important;
+}
+
+html[data-theme="light"],
+html[data-theme="light"] body,
+body[data-theme="light"],
+[data-theme="light"] .app,
+.app[data-theme="light"] {
+  background-color: #f4f6fb !important;
+}
+
+#control-pane.side-drawer[hidden],
+.side-drawer[hidden],
+.app:not(.drawer-open) #control-pane[hidden] {
+  display: none !important;
+}
+
+#control-pane.side-drawer:not([hidden]),
+.app.drawer-open #control-pane.side-drawer:not([hidden]),
+.app.is-landscape.drawer-open #control-pane.side-drawer:not([hidden]) {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.app.is-fullsize.drawer-open #control-pane.side-drawer:not([hidden]) {
+  display: flex !important;
+  flex-direction: column !important;
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important;
+  box-sizing: border-box !important;
+}
+
+#control-pane .drawer-header,
+.side-drawer .drawer-header {
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+}
+
+#control-pane .drawer-scroll,
+#control-pane .drawer-content,
+.side-drawer .drawer-scroll,
+.side-drawer .drawer-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+#control-pane .glass-card,
+.side-drawer .glass-card,
+#control-pane section.glass-card,
+#control-pane .card,
 .side-drawer .card,
-.side-drawer section,
+#control-pane section.card,
+#control-pane details.card {
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+  height: auto !important;
+  min-height: max-content !important;
+  max-height: none !important;
+  overflow: visible !important;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-bottom: 0 !important;
+}
+
+#control-pane .glass-card[hidden],
+.side-drawer .glass-card[hidden],
+#control-pane .card[hidden],
+.side-drawer .card[hidden],
+#control-pane details.card[hidden] {
+  display: none !important;
+}
+
 .audio-vol-wrap,
 .crop-label-row {
   box-sizing: border-box !important;
   max-width: 100% !important;
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
 }
 
 .crop-label-row {
@@ -2997,6 +3093,7 @@ body:has(.app.is-fullsize) .win-resize-handle {
 
 .side-drawer .shortcut-actions-row,
 .side-drawer .stealth-btn-row,
+.side-drawer .crop-btn-row,
 .side-drawer .btn-row,
 .side-drawer .grid-2,
 .side-drawer .dual-btn-row,
