@@ -1962,128 +1962,217 @@ iframe[hidden],
   white-space: nowrap;
 }
 
-/* Saat window dalam mode Portrait sempit (default): sembunyikan brand-title & teks label Restart */
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .brand-title {
+/* Tahap 128: Saat window dalam mode Portrait sempit (default): sembunyikan brand-title & teks label Restart/Stop */
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .brand-title {
   display: none !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #restart-screen .btn-label {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen .btn-label,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen .btn-label {
   display: none !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #restart-screen {
-  padding: 0 4px !important;
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen:not([hidden]):not(.is-hidden) {
+  padding: 0 !important;
   width: 24px !important;
+  min-width: 24px !important;
+  max-width: 24px !important;
   height: 24px !important;
+  min-height: 24px !important;
   justify-content: center !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-bar {
-  padding: 0 10px 0 12px !important;
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar {
+  padding: 0 6px 0 8px !important;
   gap: 4px !important;
   overflow: hidden !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-title-area {
-  gap: 6px !important;
-  flex-shrink: 0 !important;
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-title-area {
+  gap: 4px !important;
+  flex-shrink: 1 !important;
+  min-width: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .pill {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .pill {
   padding: 2px 6px !important;
-  font-size: 11px !important;
+  font-size: 10.5px !important;
   flex-shrink: 0 !important;
   white-space: nowrap !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) #stop-screen {
-  padding: 0 6px !important;
-  height: 24px !important;
-  font-size: 11px !important;
-  flex-shrink: 0 !important;
-  white-space: nowrap !important;
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #status-pill {
+  max-width: 64px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .app-actions {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-actions {
   gap: 2px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .icon-btn {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .icon-btn,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #win-max {
   width: 24px !important;
+  min-width: 24px !important;
+  max-width: 24px !important;
   height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  margin: 0 !important;
   flex-shrink: 0 !important;
+  box-sizing: border-box !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .window-controls {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-rotate-landscape {
+  width: auto !important;
+  min-width: 24px !important;
+  max-width: 48px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 4px !important;
+  gap: 2px !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #rotate-mode-badge,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .rotate-mode-badge {
+  font-size: 8.5px !important;
+  padding: 1px 3px !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .window-controls {
   margin-left: 1px !important;
+  gap: 2px !important;
   flex-shrink: 0 !important;
 }
 
-.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize):not(.is-ipad):not(.has-custom-size) .win-btn {
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .win-btn {
   width: 24px !important;
+  min-width: 24px !important;
+  max-width: 24px !important;
   height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  margin: 0 !important;
   flex-shrink: 0 !important;
+  box-sizing: border-box !important;
 }
 
 /* Fallback media query saat window sempit (<= 520px) */
 @media (max-width: 520px) {
-  .brand-title {
+  .app:not(.drawer-open) .brand-title {
     display: none !important;
   }
-  #restart-screen .btn-label {
+  .app:not(.drawer-open) #restart-screen .btn-label,
+  .app:not(.drawer-open) #stop-screen .btn-label {
     display: none !important;
   }
-  #restart-screen {
-    padding: 0 4px !important;
+  .app:not(.drawer-open) #restart-screen,
+  .app:not(.drawer-open) #stop-screen:not([hidden]):not(.is-hidden) {
+    padding: 0 !important;
     width: 24px !important;
+    min-width: 24px !important;
+    max-width: 24px !important;
     height: 24px !important;
+    min-height: 24px !important;
     justify-content: center !important;
+    box-sizing: border-box !important;
   }
-  .app-bar {
-    padding: 0 10px 0 12px !important;
+  .app:not(.drawer-open) .app-bar {
+    padding: 0 6px 0 8px !important;
     gap: 4px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
   }
-  .pill {
+  .app:not(.drawer-open) .pill,
+  .app:not(.drawer-open) #status-pill {
     padding: 2px 6px !important;
-    font-size: 11px !important;
+    font-size: 10.5px !important;
+    max-width: 64px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
   }
-  .icon-btn {
+  .app:not(.drawer-open) .icon-btn,
+  .app:not(.drawer-open) #win-max,
+  .app:not(.drawer-open) .win-btn {
     width: 24px !important;
+    min-width: 24px !important;
+    max-width: 24px !important;
     height: 24px !important;
+    min-height: 24px !important;
+    padding: 0 !important;
+    margin: 0 !important;
     flex-shrink: 0 !important;
+    box-sizing: border-box !important;
   }
-  .win-btn {
-    width: 24px !important;
+  .app:not(.drawer-open) #btn-rotate-landscape {
+    width: auto !important;
+    min-width: 24px !important;
+    max-width: 48px !important;
     height: 24px !important;
+    padding: 0 4px !important;
+    gap: 2px !important;
     flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .app:not(.drawer-open) #rotate-mode-badge {
+    font-size: 8.5px !important;
+    padding: 1px 3px !important;
   }
 }
 
 /* Ketika Side Drawer terbuka, mode Landscape, atau Full Screen: tampilkan kembali dengan lega */
 .app.drawer-open .brand-title,
 .app.is-landscape .brand-title,
-.app.is-ipad .brand-title,
-.app.has-custom-size .brand-title,
-.app.is-fullsize .brand-title {
+.app.is-fullsize .brand-title,
+.app.is-ipad .brand-title {
   display: inline !important;
 }
 
 .app.drawer-open #restart-screen .btn-label,
+.app.drawer-open #stop-screen .btn-label,
 .app.is-landscape #restart-screen .btn-label,
-.app.is-ipad #restart-screen .btn-label,
-.app.has-custom-size #restart-screen .btn-label,
-.app.is-fullsize #restart-screen .btn-label {
+.app.is-landscape #stop-screen .btn-label,
+.app.is-fullsize #restart-screen .btn-label,
+.app.is-fullsize #stop-screen .btn-label {
   display: inline !important;
 }
 
 .app.drawer-open #restart-screen,
+.app.drawer-open #stop-screen:not([hidden]):not(.is-hidden),
 .app.is-landscape #restart-screen,
-.app.is-ipad #restart-screen,
-.app.has-custom-size #restart-screen,
-.app.is-fullsize #restart-screen {
+.app.is-landscape #stop-screen:not([hidden]):not(.is-hidden),
+.app.is-fullsize #restart-screen,
+.app.is-fullsize #stop-screen:not([hidden]):not(.is-hidden) {
   width: auto !important;
-  padding: 0 6px !important;
+  max-width: none !important;
+  padding: 0 8px !important;
+}
+
+.app.drawer-open .app-bar,
+.app.is-landscape .app-bar,
+.app.is-fullsize .app-bar {
+  padding: 0 10px 0 12px !important;
+  gap: 8px !important;
+}
+
+.app.drawer-open #status-pill,
+.app.is-landscape #status-pill,
+.app.is-fullsize #status-pill {
+  max-width: none !important;
 }
 
 /* ======================================================================
@@ -3327,4 +3416,175 @@ body[data-theme="light"],
 #device-card .ctl {
   max-width: 100% !important;
   box-sizing: border-box !important;
+}
+
+/* ======================================================================
+   Tahap 128: Final Authoritative Compact Top Bar for Portrait Mirroring
+   Guarantees that at width ~346px, all buttons (#win-close etc) remain
+   100% visible on screen without clipping or horizontal overflow.
+   ====================================================================== */
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-bar,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) .app-bar {
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 6px 0 8px !important;
+    gap: 4px !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .brand-title,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) .brand-title {
+    display: none !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen .btn-label,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen .btn-label,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) #restart-screen .btn-label,
+  .app:not(.drawer-open) #stop-screen .btn-label {
+    display: none !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #status-pill,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) #status-pill {
+    max-width: 64px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    padding: 2px 6px !important;
+    font-size: 10.5px !important;
+    line-height: 1.2 !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .app-actions,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) .app-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #restart-screen,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #stop-screen:not([hidden]):not(.is-hidden),
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-audio-top,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-settings,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #win-max,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .win-btn,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) #restart-screen,
+  .app:not(.drawer-open) #stop-screen:not([hidden]):not(.is-hidden),
+  .app:not(.drawer-open) #btn-audio-top,
+  .app:not(.drawer-open) #btn-settings,
+  .app:not(.drawer-open) #win-max,
+  .app:not(.drawer-open) .win-btn {
+    width: 24px !important;
+    min-width: 24px !important;
+    max-width: 24px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 6px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #btn-rotate-landscape,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) #btn-rotate-landscape {
+    width: auto !important;
+    min-width: 24px !important;
+    max-width: 48px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    padding: 0 4px !important;
+    margin: 0 !important;
+    gap: 2px !important;
+    border-radius: 6px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) #rotate-mode-badge,
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .rotate-mode-badge,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) #rotate-mode-badge,
+  .app:not(.drawer-open) .rotate-mode-badge {
+    font-size: 8.5px !important;
+    padding: 1px 3px !important;
+    line-height: 1 !important;
+    letter-spacing: 0 !important;
+    border-radius: 3px !important;
+  }
+}
+
+.app:not(.drawer-open):not(.is-landscape):not(.is-fullsize) .window-controls,
+@media (max-width: 520px) {
+  .app:not(.drawer-open) .window-controls {
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+    margin-left: 1px !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+/* Wide / Expanded layout overrides */
+.app.drawer-open .brand-title,
+.app.is-landscape .brand-title,
+.app.is-fullsize .brand-title {
+  display: inline-block !important;
+}
+
+.app.drawer-open #restart-screen .btn-label,
+.app.drawer-open #stop-screen .btn-label,
+.app.is-landscape #restart-screen .btn-label,
+.app.is-landscape #stop-screen .btn-label,
+.app.is-fullsize #restart-screen .btn-label,
+.app.is-fullsize #stop-screen .btn-label {
+  display: inline !important;
+}
+
+.app.drawer-open #restart-screen,
+.app.drawer-open #stop-screen:not([hidden]):not(.is-hidden),
+.app.is-landscape #restart-screen,
+.app.is-landscape #stop-screen:not([hidden]):not(.is-hidden),
+.app.is-fullsize #restart-screen,
+.app.is-fullsize #stop-screen:not([hidden]):not(.is-hidden) {
+  width: auto !important;
+  max-width: none !important;
+  padding: 0 8px !important;
+}
+
+.app.drawer-open .app-bar,
+.app.is-landscape .app-bar,
+.app.is-fullsize .app-bar {
+  padding: 0 10px 0 12px !important;
+  gap: 8px !important;
+}
+
+.app.drawer-open #status-pill,
+.app.is-landscape #status-pill,
+.app.is-fullsize #status-pill {
+  max-width: none !important;
 }
