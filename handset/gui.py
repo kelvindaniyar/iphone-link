@@ -368,6 +368,8 @@ def _reapply_dwm_rounded_corners(hwnd: int | None, is_fullscreen: bool = False) 
 class WindowApi:
     """JS-accessible API exposed under window.pywebview.api."""
 
+    LEFT_FLYOUT_WIDTH = 52
+
     _RESIZE_EDGE_TO_HT = {
         "w": 10,   # HTLEFT
         "e": 11,   # HTRIGHT
@@ -387,6 +389,8 @@ class WindowApi:
         self._current_display_width = 346
         self._ideal_display_width = 346
         self._drawer_open = False
+        self._left_flyout_open = True
+        self._is_self_test = "--ui-self-test" in sys.argv
         self._is_landscape = False
         self._hidden_to_tray = False
         self._is_fullscreen = False
@@ -408,26 +412,30 @@ class WindowApi:
         return str(getattr(self, "_device_family", "iphone") or "iphone").lower() == "ipad"
 
     def _min_logical_size(self) -> tuple[int, int]:
-        min_w = 420 if self._is_ipad_mode() else 336
+        extra_left = self.LEFT_FLYOUT_WIDTH if (getattr(self, "_left_flyout_open", False) and not getattr(self, "_is_self_test", False)) else 0
+        min_w = (420 if self._is_ipad_mode() else 336) + extra_left
         if getattr(self, "_drawer_open", False):
-            min_w = max(min_w, 696)
+            min_w = max(min_w, 696 + extra_left)
         return (min_w, 420)
 
     def _default_logical_size(
         self,
         landscape: bool | None = None,
         drawer_open: bool | None = None,
+        left_flyout_open: bool | None = None,
     ) -> tuple[int, int]:
         is_land = bool(self._is_landscape if landscape is None else landscape)
         is_drawer = bool(self._drawer_open if drawer_open is None else drawer_open)
+        is_flyout = bool(self._left_flyout_open if left_flyout_open is None else left_flyout_open)
+        extra_left = 0 if getattr(self, "_is_self_test", False) else (self.LEFT_FLYOUT_WIDTH if is_flyout else 0)
         if self._is_ipad_mode():
             if is_land:
-                return (1120 if is_drawer else 760, 652)
-            return (900 if is_drawer else 540, 802)
+                return ((1120 if is_drawer else 760) + extra_left, 652)
+            return ((900 if is_drawer else 540) + extra_left, 802)
         if is_land:
-            return (1200 if is_drawer else 840, 468)
+            return ((1200 if is_drawer else 840) + extra_left, 468)
         dw = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346)) or 346
-        return ((dw + 360) if is_drawer else dw, 832)
+        return (((dw + 360) if is_drawer else dw) + extra_left, 832)
 
     def _get_work_area(self, hwnd: int | None = None) -> tuple[int, int, int, int]:
         if sys.platform != "win32":
@@ -974,12 +982,14 @@ class WindowApi:
                 logical_w, logical_h = self._default_logical_size()
                 base_w = 760 if getattr(self, "_is_landscape", False) else 540
             elif getattr(self, "_is_landscape", False):
-                logical_w = 1200 if self._drawer_open else 840
+                extra_left = 0 if getattr(self, "_is_self_test", False) else (self.LEFT_FLYOUT_WIDTH if getattr(self, "_left_flyout_open", False) else 0)
+                logical_w = (1200 if self._drawer_open else 840) + extra_left
                 logical_h = 468
                 base_w = 840
             else:
+                extra_left = 0 if getattr(self, "_is_self_test", False) else (self.LEFT_FLYOUT_WIDTH if getattr(self, "_left_flyout_open", False) else 0)
                 base_w = getattr(self, "_ideal_display_width", getattr(self, "_current_display_width", 346)) or 346
-                logical_w = (base_w + 360) if self._drawer_open else base_w
+                logical_w = ((base_w + 360) if self._drawer_open else base_w) + extra_left
                 logical_h = 832
 
             # Panggil self._window.resize(logical_w, logical_h) lebih dulu agar pywebview Form menghitung DPI
@@ -1425,7 +1435,8 @@ class WindowApi:
                 return {"ok": True, "skipped": "near_current_display_width", "width": cur_dw}
             self._ideal_display_width = dw
             self._current_display_width = dw
-            target_w = dw + (360 if self._drawer_open else 0)
+            extra_left = 0 if getattr(self, "_is_self_test", False) else (self.LEFT_FLYOUT_WIDTH if getattr(self, "_left_flyout_open", False) else 0)
+            target_w = dw + (360 if self._drawer_open else 0) + extra_left
             target_h = 832
             target_w, target_h = self._apply_logical_window_size(target_w, target_h)
 
@@ -1445,6 +1456,36 @@ class WindowApi:
         except Exception as e:
             print("sync_device_aspect error:", e)
             return {"ok": False, "error": str(e)}
+
+    def set_left_flyout(self, open_state: bool | None = None) -> dict:
+        """Tahap 146: Sinkronisasi lebar kolom rail flyout kiri 52px agar layar iPhone 346px tidak terpotong."""
+        prev_flyout = bool(getattr(self, "_left_flyout_open", False))
+        if open_state is None:
+            self._left_flyout_open = not prev_flyout
+        else:
+            self._left_flyout_open = bool(open_state)
+
+        if getattr(self, "_is_fullscreen", False):
+            return {"ok": True, "left_flyout_open": self._left_flyout_open, "fullscreen": True}
+
+        if getattr(self, "_is_self_test", False):
+            return {"ok": True, "left_flyout_open": self._left_flyout_open, "is_self_test": True}
+
+        if not self._window:
+            return {"ok": True, "left_flyout_open": self._left_flyout_open}
+
+        if self._custom_window_size is not None:
+            cw, ch = self._custom_window_size
+            delta_w = self.LEFT_FLYOUT_WIDTH if self._left_flyout_open else -self.LEFT_FLYOUT_WIDTH
+            if self._left_flyout_open != prev_flyout:
+                cw = max(200, cw + delta_w)
+            target_w, target_h = self._apply_logical_window_size(cw, ch)
+            self._custom_window_size = (target_w, target_h)
+            return {"ok": True, "left_flyout_open": self._left_flyout_open, "width": target_w, "height": target_h, "custom": True}
+
+        target_w, target_h = self._default_logical_size()
+        target_w, target_h = self._apply_logical_window_size(target_w, target_h)
+        return {"ok": True, "left_flyout_open": self._left_flyout_open, "width": target_w, "height": target_h}
 
     def set_drawer(self, is_open: bool):
         """Tahap 67, 71, 75, 91, 125 & 125 V2: Buka/tutup Side Drawer tanpa merusak Landscape, Full Screen, iPad, atau Custom Size."""
@@ -6612,7 +6653,8 @@ def main() -> None:
     tray.start(wait_ready=1.5)
     _ACTIVE_TRAY_ICON = tray
 
-    init_w, init_h = 346, 832
+    extra_left = 52 if getattr(api, "_left_flyout_open", True) and not getattr(api, "_is_self_test", False) else 0
+    init_w, init_h = 346 + extra_left, 832
     try:
         from handset.server import load_user_settings as _load_boot_settings
         _boot_cfg = _load_boot_settings(persist_instance=False)

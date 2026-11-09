@@ -4732,28 +4732,106 @@ body[data-theme="light"],
 }
 
 /* ======================================================================
-   Tahap 145: Left Liquid Glass Quick-Action Flyout
+   Tahap 146: External Left Liquid Glass Flyout Rail (Di Luar Layar iPhone)
    WinUI 3 Fluent Liquid Glass Style Capsule & Precision Alignment
    ====================================================================== */
 
-.left-quick-flyout {
-  position: absolute;
-  left: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  z-index: 100;
-  pointer-events: auto;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+.main-body {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  position: relative !important;
 }
 
-/* Fullscreen portrait mode: align outside left frame of iPhone canvas */
-.app.is-fullsize:not(.is-landscape) .left-quick-flyout {
-  left: max(6px, calc(50% - ((100vh - 84px) * (346 / 750) / 2) - 46px)) !important;
+/* Saat Left Flyout Terbuka / Show (.left-quick-flyout:not(.is-collapsed)) pada mode Window Normal */
+.app:not(.is-fullsize) #left-quick-flyout {
+  position: relative !important;
+  left: auto !important;
+  top: auto !important;
+  transform: none !important;
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  flex: 0 0 52px !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-sizing: border-box !important;
+  z-index: 40 !important;
+  pointer-events: auto !important;
+  overflow: visible !important;
+  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              min-width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              max-width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              flex-basis 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="light"] .app:not(.is-fullsize) #left-quick-flyout {
+  border-right: 1px solid rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Saat Left Flyout Disembunyikan / Hide (#left-quick-flyout.is-collapsed) pada mode Window Normal */
+.app:not(.is-fullsize) #left-quick-flyout.is-collapsed {
+  width: 0px !important;
+  min-width: 0px !important;
+  max-width: 0px !important;
+  flex: 0 0 0px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+}
+
+/* Kunci Lebar .display-col Agar Layar iPhone 100% Bebas Gepeng */
+.app:not(.is-landscape):not(.is-fullsize) .display-col {
+  width: var(--display-width, 346px) !important;
+  min-width: var(--display-width, 346px) !important;
+  max-width: var(--display-width, 346px) !important;
+  flex: 0 0 var(--display-width, 346px) !important;
+}
+
+.app.is-landscape:not(.is-fullsize) .display-col {
+  width: 840px !important;
+  min-width: 840px !important;
+  max-width: 840px !important;
+  flex: 0 0 840px !important;
+}
+
+/* Mode Full Screen (.app.is-fullsize) */
+.app.is-fullsize:not(.is-landscape) #left-quick-flyout {
+  position: fixed !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  left: max(8px, calc(50vw - ((100vh - 84px) * (346 / 750) / 2) - 58px)) !important;
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  height: auto !important;
+  background: transparent !important;
+  border: none !important;
+  z-index: 100 !important;
+}
+
+.app.is-fullsize:not(.is-landscape).drawer-open #left-quick-flyout {
+  left: max(8px, calc(50vw - 180px - ((100vh - 84px) * (346 / 750) / 2) - 58px)) !important;
+}
+
+.app.is-fullsize.is-landscape #left-quick-flyout {
+  position: fixed !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  left: max(8px, calc(50vw - (min(100vw, calc((100vh - 82px) * (2656 / 1216))) / 2) - 58px)) !important;
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  height: auto !important;
+  background: transparent !important;
+  border: none !important;
+  z-index: 100 !important;
 }
 
 /* Flyout capsule panel */
@@ -4771,11 +4849,11 @@ body[data-theme="light"],
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.36);
   box-sizing: border-box;
   width: 44px;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              opacity 0.22s ease,
-              width 0.25s ease,
-              padding 0.25s ease,
-              margin 0.25s ease;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.2s ease,
+              width 0.22s ease,
+              padding 0.22s ease,
+              margin 0.22s ease;
   overflow: visible;
 }
 
@@ -4783,6 +4861,17 @@ body[data-theme="light"],
   background: rgba(255, 255, 255, 0.75);
   border-color: rgba(0, 0, 0, 0.12);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+#left-quick-flyout.is-collapsed .left-flyout-panel {
+  transform: translateX(-60px) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border: none !important;
 }
 
 /* 6 Fluent SVG Action Buttons (34px x 34px, SVG 18px x 18px centered, deltaX=0, deltaY=0) */
@@ -4864,12 +4953,12 @@ body[data-theme="light"],
 
 /* Show / Hide Toggle Handle */
 .btn-toggle-left-flyout {
-  width: 18px;
-  height: 38px;
-  min-width: 18px;
-  min-height: 38px;
+  width: 28px;
+  height: 24px;
+  min-width: 28px;
+  min-height: 24px;
   padding: 0;
-  margin: 0;
+  margin: 0 0 6px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4877,13 +4966,14 @@ body[data-theme="light"],
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 0 10px 10px 0;
+  border-radius: 6px;
   color: var(--text-color, #a0a0a5);
   cursor: pointer;
   box-sizing: border-box;
   transition: background-color 0.15s ease,
               color 0.15s ease,
-              border-color 0.15s ease;
+              border-color 0.15s ease,
+              opacity 0.2s ease;
 }
 
 [data-theme="light"] .btn-toggle-left-flyout {
@@ -4907,18 +4997,25 @@ body[data-theme="light"],
   pointer-events: none;
 }
 
-/* Collapsed state */
-.left-quick-flyout.is-collapsed .left-flyout-panel {
-  transform: translateX(-54px);
-  opacity: 0;
-  pointer-events: none;
-  width: 0;
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-  border: none;
+#left-quick-flyout.is-collapsed .btn-toggle-left-flyout {
+  position: absolute !important;
+  left: 0px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 14px !important;
+  min-width: 14px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  border-radius: 0 10px 10px 0 !important;
+  z-index: 120 !important;
+  opacity: 0.45 !important;
+  margin: 0 !important;
 }
 
-.left-quick-flyout.is-collapsed .btn-toggle-left-flyout svg {
+#left-quick-flyout.is-collapsed .btn-toggle-left-flyout:hover {
+  opacity: 1.0 !important;
+}
+
+#left-quick-flyout.is-collapsed .btn-toggle-left-flyout svg {
   transform: rotate(180deg);
 }

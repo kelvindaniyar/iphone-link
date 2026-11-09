@@ -3964,16 +3964,29 @@ window.updateSmartLockFlyoutButton = updateSmartLockFlyoutButton;
 function setFlyoutCollapsed(collapsed, save = true) {
   const flyoutContainer = document.querySelector("#left-quick-flyout");
   const btnToggleFlyout = document.querySelector("#btn-toggle-left-flyout");
+  const appRoot = document.querySelector("#app-root") || document.querySelector(".app");
   if (!flyoutContainer) return;
   if (collapsed) {
     flyoutContainer.classList.add("is-collapsed");
+    appRoot?.classList.remove("left-flyout-open");
     btnToggleFlyout?.setAttribute("title", "Show Quick Actions");
     btnToggleFlyout?.setAttribute("aria-label", "Show Quick Actions");
   } else {
     flyoutContainer.classList.remove("is-collapsed");
+    appRoot?.classList.add("left-flyout-open");
     btnToggleFlyout?.setAttribute("title", "Hide Quick Actions");
     btnToggleFlyout?.setAttribute("aria-label", "Hide Quick Actions");
   }
+
+  // Tahap 146: Sinkronisasi lebar jendela Win32 saat Left Flyout Show/Hide
+  try {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_left_flyout === "function") {
+      window.pywebview.api.set_left_flyout(!collapsed);
+    }
+  } catch (err) {
+    console.warn("set_left_flyout api error:", err);
+  }
+
   if (save) {
     try {
       localStorage.setItem("iphone_link_left_flyout_collapsed", collapsed ? "1" : "0");
@@ -3999,14 +4012,21 @@ function initLeftFlyoutControls() {
   });
 
   // Restore saved collapse state (default "0" = open)
+  let initialCollapsed = false;
   try {
     const saved = localStorage.getItem("iphone_link_left_flyout_collapsed");
     if (saved === "1") {
-      setFlyoutCollapsed(true, false);
-    } else {
-      setFlyoutCollapsed(false, false);
+      initialCollapsed = true;
     }
   } catch (_) { }
+  setFlyoutCollapsed(initialCollapsed, false);
+
+  window.addEventListener("pywebviewready", () => {
+    try {
+      const isCol = flyoutContainer?.classList.contains("is-collapsed");
+      window.pywebview?.api?.set_left_flyout?.(!isCol);
+    } catch (_) { }
+  });
 
   btnNotifications?.addEventListener("click", (e) => {
     e.stopPropagation();

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
-  <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
+  <title>iPhone Link - iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap145_left_liquid_glass_flyout">
+  <link rel="stylesheet" href="/app.css?v=tahap146_external_left_flyout_rail">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -98,12 +98,8 @@
 
     <!-- Main Container: Video Display (Kiri) + Side Drawer Settings (Kanan) -->
     <div class="main-body" id="main-body">
-      <div class="display-col" id="display-col">
-        <!-- Murni Display Edge-to-Edge -->
-        <main class="workspace stage" id="workspace">
-          <div class="screen-stage stage" id="phone-shell">
-            <!-- Left Liquid Glass Quick-Action Flyout (Tahap 145) -->
-            <div class="left-quick-flyout" id="left-quick-flyout" aria-label="Quick Actions">
+      <!-- Left Liquid Glass Quick-Action Rail (Tahap 146: Di Luar Sebelah Kiri Layar iPhone) -->
+      <aside class="left-quick-flyout" id="left-quick-flyout" aria-label="Quick Actions">
               <button type="button" class="btn-toggle-left-flyout" id="btn-toggle-left-flyout" title="Toggle Quick Actions" aria-label="Toggle Quick Actions">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="15 18 9 12 15 6"></polyline>
@@ -162,7 +158,12 @@
                   </svg>
                 </button>
               </div>
-            </div>
+            </aside>
+
+      <div class="display-col" id="display-col">
+        <!-- Murni Display Edge-to-Edge -->
+        <main class="workspace stage" id="workspace">
+          <div class="screen-stage stage" id="phone-shell">
             <div class="screen-viewport" id="phone-screen">
               <div class="placeholder screen-empty" id="screen-empty" data-alias="placeholder">
                 <div class="launchpad-shell" id="launchpad-shell">
@@ -989,6 +990,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap145_left_liquid_glass_flyout"></script>
+  <script src="/app.js?v=tahap146_external_left_flyout_rail"></script>
 </body>
 </html>
