@@ -1497,42 +1497,74 @@ const APPLE_PRODUCT_MAP = {
 
 function resolveFriendlyDeviceModel(dev) {
   if (!dev) return "iPhone 17 Pro";
-  const pType = dev.product_type || dev.productType || dev.model || "";
-  if (pType) {
-    if (APPLE_PRODUCT_MAP[pType]) {
-      try {
-        if (dev.udid) localStorage.setItem("dev-model-" + dev.udid, APPLE_PRODUCT_MAP[pType]);
-      } catch (_) {}
-      return APPLE_PRODUCT_MAP[pType];
+  let udid = "";
+  let pType = "";
+  let rawName = "";
+
+  if (typeof dev === "string") {
+    if (dev.startsWith("0000") || dev.length > 20) {
+      udid = dev;
+    } else {
+      pType = dev;
     }
-    if (pType.startsWith("iPad")) {
-      if (pType.includes("Pro") || pType.startsWith("iPad16,") || pType.startsWith("iPad14,3") || pType.startsWith("iPad14,4") || pType.startsWith("iPad14,5") || pType.startsWith("iPad14,6") || pType.startsWith("iPad13,4") || pType.startsWith("iPad13,5") || pType.startsWith("iPad13,6") || pType.startsWith("iPad13,7") || pType.startsWith("iPad13,8") || pType.startsWith("iPad13,9") || pType.startsWith("iPad13,10") || pType.startsWith("iPad13,11")) {
-        return "iPad Pro";
-      }
-      if (pType.includes("Air") || pType.startsWith("iPad14,8") || pType.startsWith("iPad14,9") || pType.startsWith("iPad13,1") || pType.startsWith("iPad13,2") || pType.startsWith("iPad13,16") || pType.startsWith("iPad13,17")) {
-        return "iPad Air";
-      }
-      if (pType.includes("mini") || pType.startsWith("iPad14,1") || pType.startsWith("iPad14,2")) {
-        return "iPad mini";
-      }
-      return "iPad";
-    }
+  } else if (typeof dev === "object") {
+    udid = dev.udid || "";
+    pType = dev.product_type || dev.productType || dev.model || "";
+    rawName = dev.name || dev.deviceName || "";
   }
 
-  const udid = dev.udid || "";
-  if (udid.startsWith("00008150") || udid.includes("00008150")) {
+  // 1. Strict Priority for iPhone 17 Pro (UWE UH / 00008150 / iPhone18,1)
+  if (
+    udid.startsWith("00008150") ||
+    udid.includes("00008150") ||
+    pType === "iPhone18,1" ||
+    rawName === "UWE UH" ||
+    rawName.includes("iPhone 17")
+  ) {
     return "iPhone 17 Pro";
   }
-  if (udid.startsWith("00008030") || udid.includes("00008030")) {
+
+  // 2. iPhone 11 Pro Max (00008030 / iPhone12,5)
+  if (
+    udid.startsWith("00008030") ||
+    udid.includes("00008030") ||
+    pType === "iPhone12,5" ||
+    rawName.includes("iPhone 11 Pro Max")
+  ) {
     return "iPhone 11 Pro Max";
   }
 
-  try {
-    const cached = localStorage.getItem("dev-model-" + udid);
-    if (cached) return cached;
-  } catch (_) {}
+  // 3. Known product types in APPLE_PRODUCT_MAP
+  if (pType && APPLE_PRODUCT_MAP[pType]) {
+    try {
+      if (udid) localStorage.setItem("dev-model-" + udid, APPLE_PRODUCT_MAP[pType]);
+    } catch (_) {}
+    return APPLE_PRODUCT_MAP[pType];
+  }
 
-  const rawName = dev.deviceName || dev.name || "";
+  // 4. iPad patterns
+  if (pType && pType.startsWith("iPad")) {
+    if (pType.includes("Pro") || pType.startsWith("iPad16,") || pType.startsWith("iPad14,3") || pType.startsWith("iPad14,4") || pType.startsWith("iPad14,5") || pType.startsWith("iPad14,6") || pType.startsWith("iPad13,4") || pType.startsWith("iPad13,5") || pType.startsWith("iPad13,6") || pType.startsWith("iPad13,7") || pType.startsWith("iPad13,8") || pType.startsWith("iPad13,9") || pType.startsWith("iPad13,10") || pType.startsWith("iPad13,11")) {
+      return "iPad Pro";
+    }
+    if (pType.includes("Air") || pType.startsWith("iPad14,8") || pType.startsWith("iPad14,9") || pType.startsWith("iPad13,1") || pType.startsWith("iPad13,2") || pType.startsWith("iPad13,16") || pType.startsWith("iPad13,17")) {
+      return "iPad Air";
+    }
+    if (pType.includes("mini") || pType.startsWith("iPad14,1") || pType.startsWith("iPad14,2")) {
+      return "iPad mini";
+    }
+    return "iPad";
+  }
+
+  // 5. Cached model in localStorage
+  if (udid) {
+    try {
+      const cached = localStorage.getItem("dev-model-" + udid);
+      if (cached) return cached;
+    } catch (_) {}
+  }
+
+  // 6. Friendly device name
   if (rawName && (rawName.startsWith("iPhone ") || rawName.startsWith("iPad "))) {
     return rawName;
   }
@@ -2148,6 +2180,9 @@ async function load() {
     currentWifiState = state.wifi || {};
     const hasCableDevice = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
     usbConnected = hasCableDevice;
+    if (state.udid && !selectedUdid) {
+      selectedUdid = state.udid;
+    }
     stateDevicesList = state.devices || [];
     const wifiObj = state.wifi || currentWifiState || {};
     const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
@@ -2237,12 +2272,19 @@ function updateLaunchpadState(passedState) {
   if (passedState) lastServerState = passedState;
 
   const devices = state.devices || [];
-  const activeDev = (selectedUdid && devices.find(d => d.udid === selectedUdid)) || devices[0];
-  const modelName = resolveFriendlyDeviceModel(activeDev);
-  const nickname = (activeDev && (activeDev.name || activeDev.deviceName)) || "UWE UH";
+  const targetUdid = selectedUdid || state.udid || (state.wifi?.paired && state.wifi.paired[0]) || "";
+  let activeDev = targetUdid ? devices.find(d => d.udid === targetUdid) : null;
+  if (!activeDev && devices.length > 0) {
+    activeDev = devices.find(d => (d.udid || "").includes("00008150")) || devices[0];
+  }
+  if (!selectedUdid && (targetUdid || (activeDev && activeDev.udid))) {
+    selectedUdid = targetUdid || activeDev.udid;
+  }
+  const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
+  const nickname = (activeDev && (activeDev.name || activeDev.deviceName)) || (targetUdid && targetUdid.includes("00008150") ? "UWE UH" : (activeDev?.name || "iPhone"));
 
   if (launchpadTitle) {
-    launchpadTitle.textContent = activeDev ? `${modelName} siap` : "iPhone Link";
+    launchpadTitle.textContent = (activeDev || targetUdid) ? `${modelName} siap` : "iPhone Link";
   }
   if (launchpadSubtitle) {
     launchpadSubtitle.textContent = "Buka kunci, lalu tekan Mulai mirroring.";
@@ -2594,8 +2636,9 @@ function renderScreen(screen) {
     }
     if (launchpadActivityTitle) {
       const activeDevName = (launchpadDeviceName && launchpadDeviceName.textContent && launchpadDeviceName.textContent.trim()) || "iPhone";
-      const activeDev = (selectedUdid && (lastServerState?.devices || []).find(d => d.udid === selectedUdid)) || (lastServerState?.devices || [])[0];
-      const modelName = resolveFriendlyDeviceModel(activeDev);
+      const targetUdid = selectedUdid || lastServerState?.udid || (lastServerState?.devices || [])[0]?.udid || "";
+      const activeDev = (targetUdid && (lastServerState?.devices || []).find(d => d.udid === targetUdid)) || (lastServerState?.devices || [])[0];
+      const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
       launchpadActivityTitle.textContent = `Menyambungkan ke ${modelName}...`;
     }
     const currentStep = screen.stage_step || 1;

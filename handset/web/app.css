@@ -512,40 +512,19 @@ iframe[hidden],
   box-shadow: none !important;
 }
 
-.placeholder:hover,
-.screen-empty:hover,
-#screen-empty:hover {
+.placeholder:hover {
   background: transparent !important;
 }
 
-[data-theme="light"] .placeholder:hover,
-[data-theme="light"] .screen-empty:hover,
-[data-theme="light"] #screen-empty:hover {
+[data-theme="light"] .placeholder:hover {
   background: transparent !important;
 }
-
 
 [data-theme="light"] .placeholder-title {
   color: #0f172a;
 }
 [data-theme="light"] .placeholder-icon {
   color: rgba(0, 120, 212, 0.65);
-}
-
-.placeholder:hover,
-.screen-empty:hover,
-#screen-empty:hover {
-  background:
-    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.28), transparent 65%),
-    rgba(18, 18, 24, 0.55);
-}
-
-[data-theme="light"] .placeholder:hover,
-[data-theme="light"] .screen-empty:hover,
-[data-theme="light"] #screen-empty:hover {
-  background:
-    radial-gradient(circle at 50% 35%, rgba(0, 120, 212, 0.20), transparent 65%),
-    rgba(255, 255, 255, 0.62);
 }
 
 .placeholder-icon {
@@ -3697,11 +3676,15 @@ body[data-theme="light"],
   justify-content: center !important;
   background: linear-gradient(
     180deg,
-    rgba(15, 20, 32, 0.56) 0%,
-    rgba(12, 16, 26, 0.62) 100%
+    rgba(14, 19, 30, 0.22) 0%,
+    rgba(10, 14, 24, 0.28) 100%
   ) !important;
-  backdrop-filter: blur(40px) brightness(0.78) saturate(140%) !important;
-  -webkit-backdrop-filter: blur(40px) brightness(0.78) saturate(140%) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
   border: none !important;
   box-shadow: none !important;
   padding: 16px !important;
@@ -3712,11 +3695,15 @@ body[data-theme="light"],
 [data-theme="light"] #screen-empty {
   background: linear-gradient(
     180deg,
-    rgba(248, 250, 252, 0.62) 0%,
-    rgba(241, 245, 249, 0.68) 100%
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(241, 245, 249, 0.30) 100%
   ) !important;
-  backdrop-filter: blur(40px) brightness(1.02) saturate(140%) !important;
-  -webkit-backdrop-filter: blur(40px) brightness(1.02) saturate(140%) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
 }
 
 /* Tahap 140: True Liquid Glass - Non-streaming transparent background rules */
@@ -4335,4 +4322,68 @@ body[data-theme="light"],
   align-items: center !important;
   justify-content: center !important;
   width: 100% !important;
+}
+
+/* ======================================================================
+   TAHAP 141: Consistent True Liquid Glass Launchpad (Zero Hover Shift)
+   ====================================================================== */
+.app:not(.is-streaming) .main-body,
+.app:not(.is-streaming) .display-col,
+.app:not(.is-streaming) .workspace,
+.app:not(.is-streaming) .stage,
+.app:not(.is-streaming) #phone-shell,
+.app:not(.is-streaming) #phone-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  contain: none !important;
+  will-change: auto !important;
+  box-shadow: none !important;
+}
+
+#screen-empty,
+#screen-empty:hover,
+#screen-empty:focus,
+#screen-empty:active {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: linear-gradient(
+    180deg,
+    rgba(14, 19, 30, 0.22) 0%,
+    rgba(10, 14, 24, 0.28) 100%
+  ) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 16px !important;
+  box-sizing: border-box !important;
+  z-index: 5 !important;
+}
+
+[data-theme="light"] #screen-empty,
+[data-theme="light"] #screen-empty:hover,
+[data-theme="light"] #screen-empty:focus,
+[data-theme="light"] #screen-empty:active {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(241, 245, 249, 0.30) 100%
+  ) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
 }
