@@ -61,7 +61,7 @@ from handset.screen import (
     wipe_all_privacy_data,
 )
 from handset.wifi import (
-    ensure_wireless_lockdown_disabled_for_bluetooth,
+    ensure_wifi_enabled_on_usb,
     get_wifi_status,
     pair_for_wifi,
     probe_wifi_device,
@@ -630,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
             selected_udid = None
             for d in devices:
                 if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
-                    ensure_wireless_lockdown_disabled_for_bluetooth(d["udid"])
+                    ensure_wifi_enabled_on_usb(d["udid"])
                     if not selected_udid:
                         selected_udid = d["udid"]
                     break

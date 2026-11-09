@@ -4193,9 +4193,7 @@ async function run(generation) {
 
   const { codec, description } = codecInfo;
   _currentCodec = codec;
-  if (codecInfo.isAirplay) {
-    window._isAirPlayStream = true;
-  }
+  window._isAirPlayStream = Boolean(codecInfo.isAirplay);
 
   const spsDims = parseHevcSpsDimensions(description);
   const streamWidth = spsDims?.width || codecInfo.width || 1080;

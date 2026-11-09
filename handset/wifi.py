@@ -47,7 +47,16 @@ _MDNS_GROUP = "224.0.0.251"
 _MDNS_PORT = 5353
 _bonjour_patched = False
 _AUTO_ENABLED_UDIDS: set[str] = set()
-_WIFI_LOCKDOWN_DISABLED_UDIDS: set[str] = set()
+_WIFI_ENABLED_UDIDS: set[str] = set()
+_WIFI_ENABLED_UDIDS_PENDING: set[str] = set()
+_LAN_FOUND: dict[str, dict] = {}
+_LAN_LOCK = threading.Lock()
+_LAN_SCANNING = threading.Event()
+_LAN_LAST_SCAN = 0.0
+LAN_RESCAN_S = 20.0
+LAN_FORGET_S = 90.0
+_VIRTUAL_ADAPTER_HINTS = ("vethernet", "virtual", "vmware", "hyper-v", "loopback", "wsl", "vpn", "tap")
+_REMOTEPAIRING_PORT_CACHE: dict[str, int] = {}
 _WIFI_LOCKDOWN_LOCK = threading.Lock()
 _WIFI_STATE_MEM_CACHE: tuple[str, float, dict] | None = None
 _PAIRED_UDIDS_MEM_CACHE: tuple[float, list[str]] | None = None
@@ -294,6 +303,209 @@ def discover_iphone_ip_on_lan(udid: Optional[str] = None, timeout: float = 0.35)
     return None
 
 
+# -----------------------------------------------------------------------------
+# Tahap 132: LAN identification per UDID (parity with ZenLink `zenlink.apple.lan`)
+# -----------------------------------------------------------------------------
+#
+# Windows often never receives mDNS replies, so the device is found by probing
+# TCP 62078 (lockdown) on this PC's own private /24 subnets and asking each
+# listener for its UniqueDeviceID with this PC's pair record. Unlike the older
+# "first host that answers 62078" heuristic this never confuses an iPhone with
+# another Apple device on the same network.
+
+
+def _lan_subnets() -> list:
+    import ipaddress
+
+    try:
+        import ifaddr
+    except ImportError:
+        return []
+    nets: list = []
+    for adapter in ifaddr.get_adapters():
+        label = f"{getattr(adapter, 'nice_name', '') or ''} {getattr(adapter, 'name', '') or ''}".lower()
+        if any(hint in label for hint in _VIRTUAL_ADAPTER_HINTS):
+            continue
+        for info in adapter.ips:
+            if not isinstance(info.ip, str):
+                continue
+            try:
+                addr = ipaddress.IPv4Address(info.ip)
+            except ValueError:
+                continue
+            if not addr.is_private or addr.is_loopback or addr.is_link_local:
+                continue
+            net = ipaddress.IPv4Network(f"{info.ip}/{max(int(info.network_prefix), 24)}", strict=False)
+            if net not in nets:
+                nets.append(net)
+    return nets
+
+
+def _lan_pair_records(udid: Optional[str] = None) -> list[tuple[str, dict]]:
+    """Trusted lockdown pair records of this PC (known UDID first, else every record on disk)."""
+    import os
+    import plistlib
+
+    records: list[tuple[str, dict]] = []
+    if udid:
+        with contextlib.suppress(Exception):
+            from pymobiledevice3.pair_records import create_pairing_records_cache_folder, get_preferred_pair_record
+
+            rec = get_preferred_pair_record(udid, create_pairing_records_cache_folder())
+            if rec:
+                records.append((udid, rec))
+    if not records:
+        folder = Path(os.environ.get("ALLUSERSPROFILE", "C:\\ProgramData")) / "Apple" / "Lockdown"
+        with contextlib.suppress(Exception):
+            for plist_path in folder.glob("*.plist"):
+                if plist_path.stem == "SystemConfiguration":
+                    continue
+                with contextlib.suppress(Exception):
+                    with plist_path.open("rb") as handle:
+                        records.append((plist_path.stem, plistlib.load(handle)))
+    return records
+
+
+async def _port_open_async(ip: str, port: int, timeout: float) -> bool:
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout)
+    except (OSError, asyncio.TimeoutError):
+        return False
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
+    return True
+
+
+async def _lan_identify(ip: str, records: list[tuple[str, dict]]) -> Optional[dict]:
+    from pymobiledevice3.lockdown import create_using_tcp
+
+    for ident, rec in records:
+        lockdown = None
+        try:
+            lockdown = await asyncio.wait_for(
+                create_using_tcp(ip, identifier=ident, autopair=False, pair_record=rec), timeout=6
+            )
+            values = getattr(lockdown, "all_values", None)
+            if not isinstance(values, dict) or not values:
+                values = await lockdown.get_value()
+            if not isinstance(values, dict):
+                continue
+            found = str(values.get("UniqueDeviceID") or "")
+            if found:
+                return {
+                    "udid": found,
+                    "ip": ip,
+                    "name": str(values.get("DeviceName") or ""),
+                    "productType": str(values.get("ProductType") or ""),
+                    "version": str(values.get("ProductVersion") or ""),
+                }
+        except Exception:
+            continue
+        finally:
+            if lockdown is not None:
+                with contextlib.suppress(Exception):
+                    await lockdown.close()
+    return None
+
+
+async def _lan_scan(udid: Optional[str] = None) -> dict[str, dict]:
+    import time as _time
+
+    hosts = [str(h) for net in _lan_subnets() for h in net.hosts()][:1022]
+    if not hosts:
+        return {}
+    sem = asyncio.Semaphore(128)
+
+    async def probe(ip: str) -> Optional[str]:
+        async with sem:
+            return ip if await _port_open_async(ip, 62078, 0.6) else None
+
+    open_ips = [ip for ip in await asyncio.gather(*(probe(h) for h in hosts)) if ip]
+    if not open_ips:
+        return {}
+    records = _lan_pair_records(udid)
+    if not records:
+        return {}
+    ident_sem = asyncio.Semaphore(6)
+
+    async def identify(ip: str) -> Optional[dict]:
+        async with ident_sem:
+            return await _lan_identify(ip, records)
+
+    found: dict[str, dict] = {}
+    for info in await asyncio.gather(*(identify(ip) for ip in open_ips)):
+        if info:
+            found[info["udid"]] = info
+    now = _time.monotonic()
+    with _LAN_LOCK:
+        for found_udid, info in found.items():
+            _LAN_FOUND[found_udid] = {**info, "seen": now}
+    for found_udid, info in found.items():
+        with contextlib.suppress(Exception):
+            update_device_wifi_state(found_udid, ip=info["ip"], name=info.get("name") or None, last_seen_wifi=True)
+    return found
+
+
+def _run_lan_scan(udid: Optional[str] = None) -> None:
+    global _LAN_LAST_SCAN
+    import time as _time
+
+    try:
+        asyncio.run(_lan_scan(udid))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("lan scan failed: %s", exc)
+    finally:
+        _LAN_LAST_SCAN = _time.monotonic()
+        _LAN_SCANNING.clear()
+
+
+def lan_host_for(udid: str, *, rescan: bool = False) -> Optional[str]:
+    """LAN IPv4 of the device with this UDID (identified via lockdown, cached 90 s)."""
+    import time as _time
+
+    if not udid:
+        return None
+    with _LAN_LOCK:
+        entry = dict(_LAN_FOUND.get(udid) or {})
+    if entry and not rescan and (_time.monotonic() - entry.get("seen", 0.0)) < LAN_FORGET_S:
+        return entry.get("ip")
+    if entry and entry.get("ip") and probe_tcp_port(entry["ip"], 62078, timeout=0.4):
+        with _LAN_LOCK:
+            if udid in _LAN_FOUND:
+                _LAN_FOUND[udid]["seen"] = _time.monotonic()
+        return entry["ip"]
+    if not _LAN_SCANNING.is_set():
+        _LAN_SCANNING.set()
+        _run_lan_scan(udid)
+    with _LAN_LOCK:
+        entry = dict(_LAN_FOUND.get(udid) or {})
+    return entry.get("ip")
+
+
+def lan_scan_async(udid: Optional[str] = None, *, force: bool = False) -> None:
+    """Refresh the LAN cache in the background (at most every ``LAN_RESCAN_S`` seconds)."""
+    import time as _time
+
+    if _LAN_SCANNING.is_set():
+        return
+    if not force and (_time.monotonic() - _LAN_LAST_SCAN) < LAN_RESCAN_S:
+        return
+    _LAN_SCANNING.set()
+    threading.Thread(target=_run_lan_scan, args=(udid,), name="lan-scan", daemon=True).start()
+
+
+def lan_recently_seen(udid: str, max_age: float = LAN_FORGET_S) -> Optional[str]:
+    """Cached LAN IP if the device was identified within ``max_age`` seconds (no network I/O)."""
+    import time as _time
+
+    with _LAN_LOCK:
+        entry = _LAN_FOUND.get(udid)
+        if entry and (_time.monotonic() - entry.get("seen", 0.0)) < max_age:
+            return entry.get("ip")
+    return None
+
+
 def _patch_bonjour() -> None:
     """Browse mDNS on prioritized IPv4 adapters, ensuring LAN interface receives replies."""
     global _bonjour_patched
@@ -350,133 +562,94 @@ def _patch_bonjour() -> None:
 
 
 # -----------------------------------------------------------------------------
-# Auto-Enable Wireless Lockdown (Pilar 2)
+# Wi-Fi Connections (Tahap 132, parity with ZenLink "Apple Driver - Wi-Fi")
 # -----------------------------------------------------------------------------
+#
+# Tahap 59 used to switch Wi-Fi connections off on every plug-in (to keep
+# Bluetooth audio clean). That made CoreDevice Wi-Fi mirroring impossible, so it
+# is gone: iPhone Link never switches Wi-Fi connections off. Whenever the phone
+# is on the cable (or "Set up Wi-Fi" is pressed) the flag is turned ON.
 
-async def auto_enable_wireless_lockdown(udid: str) -> dict:
-    """Enable Wireless Lockdown on the device over trusted USB link and record state."""
-    from pymobiledevice3.lockdown import create_using_usbmux
-
-    lockdown = await create_using_usbmux(serial=udid, connection_type="USB", autopair=True)
-    try:
-        try:
-            enabled = await lockdown.get_enable_wifi_connections()
-        except Exception:
-            enabled = False
-
-        if not enabled:
-            try:
-                await lockdown.set_enable_wifi_connections(True)
-                enabled = await lockdown.get_enable_wifi_connections()
-            except Exception as e:
-                logger.warning("Failed to set enable_wifi_connections: %s", e)
-
-        mac = getattr(lockdown, "wifi_mac_address", None)
-        device_name = getattr(lockdown, "display_name", None) or lockdown.short_info.get("DeviceName")
-
-        # Discover real LAN IP immediately across local subnet
-        ip = discover_iphone_ip_on_lan(udid)
-        update_device_wifi_state(
-            udid,
-            enabled=enabled,
-            mac=mac,
-            ip=ip,
-            name=device_name,
-            last_seen_cable=True,
-        )
-        return {"ok": True, "enabled": enabled, "mac": mac, "ip": ip, "name": device_name}
-    finally:
-        await lockdown.close()
-
-
-def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
-    """Tahap 59: Permanently disabled. Automatic Wireless Lockdown & Wireless Debugging
-    cause continuous 2.4 GHz Wi-Fi chatter between iPhone and AppleMobileDeviceService.exe
-    that collides with Bluetooth A2DP audio packets even when mirroring is stopped."""
-    return
-
-
-async def disable_wireless_lockdown_async(udid: str, lockdown=None) -> dict:
-    """Permanently set EnableWifiConnections=False & EnableWifiDebugging=False on iPhone NVRAM."""
+async def enable_wifi_connections_async(udid: str, lockdown=None) -> dict:
+    """Turn ON EnableWifiConnections over the trusted USB link and record the Wi-Fi state."""
     from pymobiledevice3.lockdown import create_using_usbmux
 
     owns_lockdown = lockdown is None
     if owns_lockdown:
-        lockdown = await create_using_usbmux(serial=udid, connection_type="USB", autopair=False)
-
+        lockdown = await create_using_usbmux(serial=udid, connection_type="USB", autopair=True)
     try:
-        await lockdown.set_value(False, "com.apple.mobile.wireless_lockdown", "EnableWifiConnections")
-        await lockdown.set_value(False, "com.apple.mobile.wireless_lockdown", "EnableWifiDebugging")
+        enabled = False
         with contextlib.suppress(Exception):
-            await lockdown.set_enable_wifi_connections(False)
+            enabled = bool(await lockdown.get_enable_wifi_connections())
+        if not enabled:
+            try:
+                await lockdown.set_enable_wifi_connections(True)
+                enabled = bool(await lockdown.get_enable_wifi_connections())
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to set enable_wifi_connections: %s", exc)
 
-        verified_domain = {}
+        mac = getattr(lockdown, "wifi_mac_address", None)
+        device_name = None
         with contextlib.suppress(Exception):
-            raw_dom = await lockdown.get_value("com.apple.mobile.wireless_lockdown")
-            if isinstance(raw_dom, dict):
-                verified_domain = raw_dom
-
-        with _WIFI_LOCKDOWN_LOCK:
-            _WIFI_LOCKDOWN_DISABLED_UDIDS.add(udid)
-
-        wifi_path = get_app_root() / "wifi_state.json"
-        if wifi_path.is_file():
-            device_name = None
-            with contextlib.suppress(Exception):
-                device_name = getattr(lockdown, "display_name", None) or (lockdown.short_info or {}).get("DeviceName")
-            update_device_wifi_state(udid, enabled=False, name=device_name, last_seen_cable=True)
-
-        return {
-            "ok": True,
-            "udid": udid,
-            "EnableWifiConnections": bool(verified_domain.get("EnableWifiConnections", False)),
-            "EnableWifiDebugging": bool(verified_domain.get("EnableWifiDebugging", False)),
-        }
+            device_name = getattr(lockdown, "display_name", None) or (lockdown.short_info or {}).get("DeviceName")
+        cached_ip = get_device_wifi_state(udid).get("last_ip")
+        update_device_wifi_state(
+            udid, enabled=enabled, mac=mac, ip=cached_ip, name=device_name, last_seen_cable=True
+        )
+        if enabled:
+            with _WIFI_LOCKDOWN_LOCK:
+                _WIFI_ENABLED_UDIDS.add(udid)
+            lan_scan_async(udid, force=True)
+        return {"ok": True, "enabled": enabled, "mac": mac, "ip": cached_ip, "name": device_name}
     finally:
         if owns_lockdown and lockdown is not None:
             with contextlib.suppress(Exception):
                 await lockdown.close()
 
 
-def ensure_wireless_lockdown_disabled_for_bluetooth(udid: str, *, blocking: bool = False) -> dict:
-    """Disable EnableWifiConnections & EnableWifiDebugging ONCE per plugged-in USB UDID."""
+async def auto_enable_wireless_lockdown(udid: str) -> dict:
+    """Enable Wireless Lockdown on the device over trusted USB link and record state."""
+    return await enable_wifi_connections_async(udid)
+
+
+def ensure_wifi_enabled_on_usb(udid: str, *, blocking: bool = False) -> dict:
+    """Turn EnableWifiConnections ON once per plugged-in USB UDID."""
     if not udid:
         return {"ok": False, "reason": "missing_udid"}
 
     with _WIFI_LOCKDOWN_LOCK:
-        if udid in _WIFI_LOCKDOWN_DISABLED_UDIDS and not blocking:
-            return {
-                "ok": True,
-                "udid": udid,
-                "cached": True,
-                "EnableWifiConnections": False,
-                "EnableWifiDebugging": False,
-            }
-        _WIFI_LOCKDOWN_DISABLED_UDIDS.add(udid)
+        if udid in _WIFI_ENABLED_UDIDS and not blocking:
+            return {"ok": True, "udid": udid, "cached": True, "EnableWifiConnections": True}
+        if udid in _WIFI_ENABLED_UDIDS_PENDING and not blocking:
+            return {"ok": True, "udid": udid, "scheduled": True}
+        _WIFI_ENABLED_UDIDS_PENDING.add(udid)
+
+    def _work() -> dict:
+        try:
+            return asyncio.run(enable_wifi_connections_async(udid))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ensure_wifi_enabled_on_usb failed for %s: %s", udid, exc)
+            return {"ok": False, "udid": udid, "error": str(exc)}
+        finally:
+            with _WIFI_LOCKDOWN_LOCK:
+                _WIFI_ENABLED_UDIDS_PENDING.discard(udid)
 
     if blocking:
-        try:
-            return asyncio.run(disable_wireless_lockdown_async(udid))
-        except Exception as exc:
-            logger.debug("ensure_wireless_lockdown_disabled_for_bluetooth(blocking) failed: %s", exc)
-            return {"ok": False, "udid": udid, "error": str(exc)}
-
-    def _worker() -> None:
-        try:
-            asyncio.run(disable_wireless_lockdown_async(udid))
-        except Exception as exc:
-            logger.debug("Background disable_wireless_lockdown_async failed for %s: %s", udid, exc)
-
-    threading.Thread(target=_worker, name=f"handset-bt-clean-{udid[:8]}", daemon=True).start()
+        return _work()
+    threading.Thread(target=_work, name=f"handset-wifi-on-{udid[:8]}", daemon=True).start()
     return {"ok": True, "udid": udid, "scheduled": True}
 
 
+def trigger_auto_enable_wireless_lockdown(udid: str) -> None:
+    """Background-enable Wi-Fi connections for a freshly plugged device (once per plug-in)."""
+    ensure_wifi_enabled_on_usb(udid)
+
+
 def on_usb_devices_changed(active_usb_udids: set[str]) -> None:
-    """Clear per-plug state for any UDID that has been physically unplugged."""
+    """Forget per-plug state for any UDID that has been physically unplugged."""
     with _WIFI_LOCKDOWN_LOCK:
-        disconnected = _WIFI_LOCKDOWN_DISABLED_UDIDS - set(active_usb_udids)
-        for dead in disconnected:
-            _WIFI_LOCKDOWN_DISABLED_UDIDS.discard(dead)
+        for dead in _WIFI_ENABLED_UDIDS - set(active_usb_udids):
+            _WIFI_ENABLED_UDIDS.discard(dead)
 
 
 # -----------------------------------------------------------------------------
@@ -504,7 +677,7 @@ def pair_for_wifi(udid: str) -> dict:
     """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link."""
     global _PAIRED_UDIDS_MEM_CACHE
     with _WIFI_LOCKDOWN_LOCK:
-        _WIFI_LOCKDOWN_DISABLED_UDIDS.discard(udid)
+        _WIFI_ENABLED_UDIDS.discard(udid)
 
     async def pair() -> None:
         from pymobiledevice3.exceptions import RemotePairingCompletedError
@@ -531,8 +704,8 @@ def pair_for_wifi(udid: str) -> dict:
             finally:
                 await service.close()
 
-            # 3. Discover real LAN IP and record state
-            ip = discover_iphone_ip_on_lan(udid)
+            # 3. Discover real LAN IP (identified by UDID) and record state
+            ip = await asyncio.to_thread(lan_host_for, udid, rescan=True) or discover_iphone_ip_on_lan(udid)
             update_device_wifi_state(udid, enabled=True, mac=mac, ip=ip, name=device_name, last_seen_cable=True)
         finally:
             await lockdown.close()
@@ -702,16 +875,31 @@ def get_wifi_status(selected_udid: Optional[str] = None, *, probe_network: bool 
         is_paired = target in paired_list
         wifi_enabled = bool(cached.get("wifi_enabled_on_device", False))
         if is_paired:
-            ip_note = f" (IP terakhir: {last_ip})" if last_ip else ""
+            # Tahap 132: refresh the LAN cache in the background (never blocks this poll).
+            lan_scan_async(target)
+            live_ip = lan_recently_seen(target)
+            ip_note = f" (IP: {live_ip or last_ip})" if (live_ip or last_ip) else ""
+            if wifi_enabled and live_ip:
+                return {
+                    "paired": paired_list,
+                    "enabled": True,
+                    "reachable": True,
+                    "ip": live_ip,
+                    "method": "lan-identified",
+                    "statusText": "✓ Wi‑Fi siap (Terhubung di LAN)",
+                    "statusTone": "ok",
+                    "note": f"Mirroring CoreDevice via Wi‑Fi tanpa kabel siap{ip_note}.",
+                    "udid": target,
+                }
             return {
                 "paired": paired_list,
                 "enabled": wifi_enabled,
                 "reachable": False,
                 "ip": last_ip,
                 "method": "cached",
-                "statusText": "📶 Klik 'Scan Wi‑Fi' jika ingin menyambung tanpa kabel",
-                "statusTone": "warn" if not wifi_enabled else "ok",
-                "note": f"Mode Cable + Bluetooth Audio bebas interferensi aktif{ip_note}.",
+                "statusText": "✓ Wi‑Fi siap" if wifi_enabled else "📶 Colok kabel sekali untuk aktifkan Wi‑Fi",
+                "statusTone": "ok" if wifi_enabled else "warn",
+                "note": f"Wi‑Fi CoreDevice dipasangkan. Pastikan iPhone menyala di jaringan yang sama{ip_note}.",
                 "udid": target,
             }
         return {
@@ -828,15 +1016,103 @@ def sync_force_reset_userspace_tunnel() -> None:
         logger.debug("sync_force_reset_userspace_tunnel exception: %s", exc)
 
 
-async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout: float = 1.5):
-    """Directly resolve and connect to RemotePairing service on target IP without multicast Bonjour."""
-    from pymobiledevice3 import bonjour
+def _mdns_remotepairing_ports(host: str, timeout: float = 2.5) -> list[int]:
+    """RemotePairing ports `host` advertises (zeroconf receives Bonjour on Windows where pmd3's browser may not)."""
+    import time as _time
+
+    ports: list[int] = []
+    try:
+        from zeroconf import ServiceBrowser, Zeroconf
+    except Exception:
+        return ports
+
+    names: list[str] = []
+    service_type = "_remotepairing._tcp.local."
+
+    class Listener:
+        def add_service(self, _zc, _type, name):  # noqa: ANN001
+            names.append(name)
+
+        def update_service(self, *_args):  # noqa: ANN002
+            return None
+
+        def remove_service(self, *_args):  # noqa: ANN002
+            return None
+
+    zc = None
+    try:
+        zc = Zeroconf()
+        ServiceBrowser(zc, service_type, Listener())
+        _time.sleep(timeout)
+        for name in list(names):
+            info = zc.get_service_info(service_type, name, timeout=1500)
+            if info and host in info.parsed_addresses() and info.port:
+                ports.append(int(info.port))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("zeroconf RemotePairing browse failed: %s", exc)
+    finally:
+        if zc is not None:
+            with contextlib.suppress(Exception):
+                zc.close()
+    return ports
+
+
+async def _open_ports(host: str, first: int = 49152, last: int = 65535, timeout: float = 12.0) -> list[int]:
+    """The RemotePairing port is dynamic: find the device's listening ports (ZenLink range scan)."""
+    sem = asyncio.Semaphore(1500)
+
+    async def probe(port: int) -> Optional[int]:
+        async with sem:
+            return port if await _port_open_async(host, port, 0.8) else None
+
+    tasks = [asyncio.ensure_future(probe(p)) for p in range(first, last + 1)]
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    return sorted(t.result() for t in done if not t.cancelled() and t.exception() is None and t.result())
+
+
+async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout: float = 10.0):
     from pymobiledevice3.remote import tunnel_service
 
-    discovered_port: Optional[int] = None
-    loop = asyncio.get_running_loop()
+    try:
+        svc = await asyncio.wait_for(
+            tunnel_service.create_core_device_tunnel_service_using_remotepairing(serial or "", ip, port, autopair=False),
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("wifi: %s:%s is not RemotePairing (%r)", ip, port, exc)
+        _REMOTEPAIRING_PORT_CACHE.pop(ip, None)
+        return None
+    _REMOTEPAIRING_PORT_CACHE[ip] = port
+    logger.info("wifi: RemotePairing at %s:%s", ip, port)
+    return svc
+
+
+async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout: float = 1.5):
+    """Find and open the RemotePairing service on `ip` without relying on multicast Bonjour.
+
+    Order (parity with ZenLink): cached port -> unicast DNS-SD -> zeroconf -> well-known ports -> full
+    ephemeral range scan 49152-65535.
+    """
+    from pymobiledevice3 import bonjour
+
+    tried: set[int] = set()
+
+    async def attempt(port: Optional[int]):
+        if not port or port in tried:
+            return None
+        tried.add(port)
+        return await _try_remotepairing(serial, ip, port)
+
+    # 0. Port that worked last time
+    svc = await attempt(_REMOTEPAIRING_PORT_CACHE.get(ip))
+    if svc is not None:
+        return svc, None
 
     # 1. Ephemeral UDP socket to send direct Unicast DNS-SD query on (ip, 5353)
+    discovered_port: Optional[int] = None
+    loop = asyncio.get_running_loop()
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setblocking(False)
@@ -856,37 +1132,30 @@ async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout
             except (asyncio.TimeoutError, OSError):
                 break
         sock.close()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("Unicast DNS-SD resolution failed on %s: %s", ip, exc)
+    svc = await attempt(discovered_port)
+    if svc is not None:
+        return svc, None
 
-    if discovered_port:
-        try:
-            logger.info("Found RemotePairing port %d on %s via Unicast DNS-SD", discovered_port, ip)
-            svc = await tunnel_service.create_core_device_tunnel_service_using_remotepairing(
-                serial or "", ip, discovered_port, autopair=False
-            )
+    # 2. zeroconf browse (worker thread)
+    for port in await asyncio.to_thread(_mdns_remotepairing_ports, ip, 2.5):
+        svc = await attempt(port)
+        if svc is not None:
             return svc, None
-        except Exception as exc:
-            logger.debug("Failed connecting to discovered RemotePairing port %d on %s: %s", discovered_port, ip, exc)
 
-    # 2. Ephemeral candidate ports scan across full range (including iOS 27 active port 58767)
-    candidate_ports = [49152, 58767, 49153, 49154, 49155, 50000, 52341]
-    for p in candidate_ports:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.15)
-            s.connect((ip, p))
-            s.close()
-            svc = await asyncio.wait_for(
-                tunnel_service.create_core_device_tunnel_service_using_remotepairing(
-                    serial or "", ip, p, autopair=False
-                ),
-                timeout=1.0,
-            )
-            logger.info("Connected to RemotePairing on port %d on %s", p, ip)
+    # 3. Well-known ports (including the iOS 27 active port 58767)
+    for port in (49152, 58767, 49153, 49154, 49155, 50000, 52341):
+        if await _port_open_async(ip, port, 0.15):
+            svc = await attempt(port)
+            if svc is not None:
+                return svc, None
+
+    # 4. Full ephemeral range scan
+    for port in await _open_ports(ip):
+        svc = await attempt(port)
+        if svc is not None:
             return svc, None
-        except Exception:
-            continue
 
     return None, None
 
@@ -898,9 +1167,11 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
 
     _patch_bonjour()
 
-    # Ensure we know the target device's active LAN IP
+    # Ensure we know the target device's active LAN IP (identified by UDID, like ZenLink lan.py)
     cached_info = get_device_wifi_state(serial) if serial else {}
-    ip = discover_iphone_ip_on_lan(serial) or cached_info.get("last_ip")
+    ip = await asyncio.to_thread(lan_host_for, serial) if serial else None
+    if not ip:
+        ip = cached_info.get("last_ip") or await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
 
     # STAGE 1: Direct Unicast DNS-SD & Ephemeral Scan on target IP (0% multicast dependency!)
     if ip:

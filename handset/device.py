@@ -5,8 +5,8 @@ Tahap 59:
   (`_DEVELOPER_MODE_CACHE[udid]`), and `driver_status()` (`_DRIVER_STATUS_CACHE`) in RAM
   so `GET /api/status` & `GET /api/devices/<udid>` take < 1ms with 0% USB TLS Lockdown
   chatter and 0% `sc.exe` subprocess spawns once a device is plugged in.
-- Unifies initial USB plug-in inspection with `disable_wireless_lockdown_async(udid)` in
-  a single `create_using_usbmux` session so `EnableWifiConnections` & `EnableWifiDebugging`
+- Unifies initial USB plug-in inspection with `enable_wifi_connections_async(udid)` in
+  a single `create_using_usbmux` session so `EnableWifiConnections` is turned ON (Tahap 132) and
   are permanently set to `False` with <= 1 Lockdown session total per plug-in.
 """
 
@@ -274,11 +274,11 @@ def developer_mode_enabled(udid: str) -> bool | None:
 
         lockdown = await create_using_usbmux(serial=udid, autopair=False)
         try:
-            # 1. Disable EnableWifiConnections & EnableWifiDebugging in the SAME single USB session!
+            # 1. Tahap 132: turn EnableWifiConnections ON in the SAME single USB session (CoreDevice Wi-Fi)
             with contextlib.suppress(Exception):
-                from handset.wifi import disable_wireless_lockdown_async
+                from handset.wifi import enable_wifi_connections_async
 
-                await disable_wireless_lockdown_async(udid, lockdown=lockdown)
+                await enable_wifi_connections_async(udid, lockdown=lockdown)
 
             # 2. Pre-populate _HANDSET_METADATA_CACHE[udid] so read_handset(udid) needs 0 extra sockets!
             with contextlib.suppress(Exception):

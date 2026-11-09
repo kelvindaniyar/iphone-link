@@ -196,7 +196,7 @@ def screen_status() -> dict:
 
 def stop_screen() -> dict:
     """Cleanly stop mirroring, terminate stream server, restore brightness & speaker volume, and reset state."""
-    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONALLY_LOCKED
+    global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONLY_LOCKED, _WIFI_MODE
     try:
         from handset.audio import audio_manager
         audio_manager.usb_engine.stop(release_coredevice=False)
@@ -215,9 +215,11 @@ def stop_screen() -> dict:
     _DEVICE_INTENTIONALLY_LOCKED = False
 
     is_wifi = False
+    notify_transport = "cable"
     with _LOCK:
-        if _STATE.get("transport") == "wifi":
+        if _STATE.get("transport") == "wifi" and _WIFI_MODE != "coredevice":
             is_wifi = True
+            notify_transport = "wifi"
             from handset.airplay import get_global_airplay_server
             srv = get_global_airplay_server()
             if srv:
@@ -225,6 +227,9 @@ def stop_screen() -> dict:
                     srv.reset_stream_state()
             _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
         else:
+            if _STATE.get("transport") == "wifi":
+                notify_transport = "wifi"
+            _WIFI_MODE = None
             if _CURRENT_TASK and _CURRENT_LOOP and _CURRENT_LOOP.is_running():
                 try:
                     _CURRENT_LOOP.call_soon_threadsafe(_CURRENT_TASK.cancel)
@@ -235,7 +240,7 @@ def stop_screen() -> dict:
 
     try:
         from handset.audio import notify_screen_phase_changed
-        notify_screen_phase_changed("idle", "wifi" if is_wifi else "cable")
+        notify_screen_phase_changed("idle", notify_transport)
     except Exception:
         pass
     if not is_wifi:
@@ -293,6 +298,108 @@ def _ensure_airplay_server_running() -> Any:
     return server
 
 
+_WIFI_MODE: Optional[str] = None  # "coredevice" | "airplay" | None
+_AIRPLAY_NOTE = "📡 Wi-Fi AirPlay Receiver Aktif — Buka Control Center di iPhone/iPad > Ketuk 'Pencerminan Layar' (Screen Mirroring) > Pilih 'iPhone Link'"
+
+
+def _stop_airplay_receiver() -> None:
+    """Close the AirPlay receiver (RTSP 7100 + HTTP 8766) so CoreDevice can own port 8766."""
+    global _AIRPLAY_THREAD
+    try:
+        from handset.airplay import get_global_airplay_server
+
+        srv = get_global_airplay_server()
+    except Exception:
+        return
+    if srv is None:
+        return
+    with contextlib.suppress(Exception):
+        srv.stop_and_release_ports()
+    thread = _AIRPLAY_THREAD
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
+    _AIRPLAY_THREAD = None
+
+
+def _start_airplay_receiver(chosen: str, note: Optional[str] = None) -> dict:
+    """Native AirPlay receiver (H.264) over Wi-Fi: video-only fallback / Control Center mode."""
+    global _WIFI_MODE
+    _WIFI_MODE = "airplay"
+    note = note or _AIRPLAY_NOTE
+    server = _ensure_airplay_server_running()
+
+    def on_airplay_state(state: str, detail: str | None = None) -> None:
+        if state in ("connected", "streaming"):
+            _set(
+                phase="running",
+                udid=chosen,
+                url=VIEW_URL,
+                error=None,
+                note=None,
+                transport="wifi",
+            )
+            try:
+                from handset.audio import notify_screen_phase_changed
+                notify_screen_phase_changed("running", "wifi")
+            except Exception:
+                pass
+        elif state == "stopped":
+            _set(
+                phase="idle",
+                udid=None,
+                url=None,
+                error=None,
+                note="AirPlay disconnected.",
+                transport="wifi",
+            )
+            try:
+                from handset.audio import notify_screen_phase_changed
+                notify_screen_phase_changed("idle", "wifi")
+            except Exception:
+                pass
+
+    server.on_state = on_airplay_state
+    with _LOCK:
+        phase = "running" if server.is_streaming else "waiting_airplay"
+        _STATE.update(phase=phase, udid=chosen, url=VIEW_URL, error=None, note=note, transport="wifi")
+    try:
+        from handset.audio import notify_screen_phase_changed
+        notify_screen_phase_changed(phase, "wifi")
+    except Exception:
+        pass
+    return screen_status()
+
+
+def _start_coredevice_wifi(chosen: str) -> dict:
+    """CoreDevice (ScreenStreamServer) session over a Wi-Fi tunnel: full video / touch / keyboard / audio / shortcuts."""
+    global _WIFI_MODE
+    with _LOCK:
+        if _STATE["phase"] in {"starting", "running"} and _STATE["udid"] == chosen and _WIFI_MODE == "coredevice":
+            return dict(_STATE)
+    if _WIFI_MODE == "airplay":
+        try:
+            from handset.airplay import get_global_airplay_server
+
+            srv = get_global_airplay_server()
+            if srv is not None and getattr(srv, "is_streaming", False):
+                return screen_status()  # an iPhone is mirroring over AirPlay right now: do not tear it down
+        except Exception:
+            pass
+    _stop_airplay_receiver()
+    with _LOCK:
+        _WIFI_MODE = "coredevice"
+        _STATE.update(
+            phase="starting",
+            udid=chosen,
+            url=None,
+            error=None,
+            note="Opening a secure Wi-Fi tunnel to the device...",
+            transport="wifi",
+        )
+    threading.Thread(target=_run, args=(chosen, "wifi"), name="handset-screen", daemon=True).start()
+    return screen_status()
+
+
 def start_screen(udid: str | None, transport: str = "cable") -> dict:
     usb = _usb_udids()
     wifi = wifi_paired_udids()
@@ -300,50 +407,12 @@ def start_screen(udid: str | None, transport: str = "cable") -> dict:
         transport = "usb"
 
     if transport == "wifi":
-        chosen = (udid or "").strip() or _only_udid(usb, wifi, transport) or (wifi[0] if wifi else "airplay")
-        note = "📡 Wi-Fi AirPlay Receiver Aktif — Buka Control Center di iPhone/iPad > Ketuk 'Pencerminan Layar' (Screen Mirroring) > Pilih 'iPhone Link'"
-        server = _ensure_airplay_server_running()
-
-        def on_airplay_state(state: str, detail: str | None = None) -> None:
-            if state in ("connected", "streaming"):
-                _set(
-                    phase="running",
-                    udid=chosen,
-                    url=VIEW_URL,
-                    error=None,
-                    note=None,
-                    transport="wifi",
-                )
-                try:
-                    from handset.audio import notify_screen_phase_changed
-                    notify_screen_phase_changed("running", "wifi")
-                except Exception:
-                    pass
-            elif state == "stopped":
-                _set(
-                    phase="idle",
-                    udid=None,
-                    url=None,
-                    error=None,
-                    note="AirPlay disconnected.",
-                    transport="wifi",
-                )
-                try:
-                    from handset.audio import notify_screen_phase_changed
-                    notify_screen_phase_changed("idle", "wifi")
-                except Exception:
-                    pass
-
-        server.on_state = on_airplay_state
-        with _LOCK:
-            phase = "running" if server.is_streaming else "waiting_airplay"
-            _STATE.update(phase=phase, udid=chosen, url=VIEW_URL, error=None, note=note, transport="wifi")
-        try:
-            from handset.audio import notify_screen_phase_changed
-            notify_screen_phase_changed(phase, "wifi")
-        except Exception:
-            pass
-        return screen_status()
+        chosen = (udid or "").strip() or _only_udid(usb, wifi, transport) or (wifi[0] if wifi else "")
+        if chosen and chosen in wifi:
+            # Tahap 132: same pipeline as the cable (CoreDevice ScreenStreamServer: HEVC + AAC-ELD + HID),
+            # only the tunnel goes over Wi-Fi (RemotePairing record exists).
+            return _start_coredevice_wifi(chosen)
+        return _start_airplay_receiver(chosen or "airplay")
 
     chosen = (udid or "").strip() or _only_udid(usb, wifi, transport)
     if not chosen:
@@ -364,7 +433,9 @@ def start_screen(udid: str | None, transport: str = "cable") -> dict:
 
 def _run(udid: str, transport: str) -> None:
     try:
-        asyncio.run(_serve(udid, transport))
+        outcome = asyncio.run(_serve(udid, transport))
+        if outcome == "airplay":
+            return  # CoreDevice Wi-Fi unavailable: the AirPlay receiver owns the session now
         _set(phase="idle", udid=udid, url=None, error="The screen stream stopped.")
     except Exception as error:
         _set(phase="error", udid=udid, url=None, error=_plain(error))
@@ -461,10 +532,12 @@ async def _serve_airplay(udid: str) -> None:
         _ACTIVE_SERVER = None
 
 
-async def _serve(udid: str, transport: str) -> None:
+async def _serve(udid: str, transport: str):
+    global _CURRENT_TASK, _CURRENT_LOOP
     if transport == "wifi":
-        await _serve_airplay(udid)
-        return
+        # Tahap 132: Stop must be able to cancel while the Wi-Fi tunnel is still opening.
+        _CURRENT_LOOP = asyncio.get_running_loop()
+        _CURRENT_TASK = asyncio.current_task()
 
     from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
@@ -503,40 +576,27 @@ async def _serve(udid: str, transport: str) -> None:
                     await asyncio.sleep(0.3)
                     continue
                 raise
+    except asyncio.CancelledError:
+        return None
     except Exception as exc:
         if transport == "wifi":
-            probe = probe_wifi_device(udid)
-            target_ip = probe.get("ip") or get_device_wifi_state(udid).get("last_ip")
+            import logging
 
-            # CEK D: Direct Wi-Fi Lockdown Screen Streamer via port 62078
-            if target_ip and (probe.get("reachable") or probe_tcp_port(target_ip, 62078, timeout=0.35)):
-                import logging
-                logging.getLogger(__name__).info("Activating Direct Wi-Fi Lockdown Screen Streamer on %s:62078...", target_ip)
-                try:
-                    await _serve_lockdown_wifi_stream(udid, target_ip)
-                    return
-                except Exception as stream_err:
-                    logging.getLogger(__name__).warning("Wi-Fi Lockdown Streamer fallback error: %s", stream_err)
-
-                raise RuntimeError(
-                    f"iPhone terdeteksi di Wi-Fi ({target_ip}:62078), namun iOS 27.0.1 menutup port RemoteXPC "
-                    f"video stream saat tanpa kabel USB. Untuk iOS 27.0.1, gunakan mode Cable atau mulai mirroring saat kabel terpasang."
-                ) from exc
-
-            err_str = str(exc)
-            if "Gagal terhubung via Wi-Fi" in err_str or "Gagal menghubungkan" in err_str:
-                raise RuntimeError(err_str) from exc
-            if not probe.get("reachable"):
-                raise RuntimeError(
-                    "Gagal terhubung via Wi-Fi: iPhone tidak merespons di jaringan lokal. "
-                    "Pastikan layar iPhone menyala (unlocked), terhubung ke Wi-Fi yang sama dengan PC, "
-                    "atau colok kabel USB 1x untuk mengaktifkan izin Wi-Fi Sync."
-                ) from exc
-            ip_str = f" ({probe.get('ip')})" if probe.get("ip") else ""
-            raise RuntimeError(
-                f"Gagal menghubungkan tunnel mirroring Wi-Fi ke iPhone{ip_str}: {exc}. "
-                "Pastikan Developer Mode aktif dan firewall Windows mengizinkan koneksi lokal."
-            ) from exc
+            reason = _plain(exc)
+            logging.getLogger(__name__).warning(
+                "CoreDevice Wi-Fi unavailable (%s); falling back to the AirPlay receiver", reason
+            )
+            _CURRENT_TASK = None
+            with contextlib.suppress(Exception):
+                await force_reset_userspace_tunnel()
+            _start_airplay_receiver(
+                udid,
+                note=(
+                    f"Kontrol penuh via Wi-Fi belum tersedia ({reason}). Mode AirPlay (video saja) aktif: "
+                    "buka Control Center di iPhone > Pencerminan Layar > pilih 'iPhone Link'."
+                ),
+            )
+            return "airplay"
         raise
 
 

@@ -732,7 +732,11 @@ class AirPlayMirrorServer:
         if self.on_state:
             self.on_state("connected", self.client_name)
 
-        # Setup timing transport
+        # Setup timing transport (SETUP is sent twice: close the stage-1 endpoint first)
+        if self._timing_transport is not None:
+            with contextlib.suppress(Exception):
+                self._timing_transport.close()
+            self._timing_transport = None
         loop = asyncio.get_running_loop()
         timing_transport, _ = await loop.create_datagram_endpoint(
             asyncio.DatagramProtocol, local_addr=("0.0.0.0", 0)
@@ -1144,9 +1148,10 @@ class AirPlayMirrorServer:
 
     async def close(self) -> None:
         self._stopped = True
-        await self._unadvertise()
         self._close_streams()
 
+        # Release the listening sockets first (port 8766 / 7100 are handed to CoreDevice immediately);
+        # the slower mDNS goodbye follows.
         if self._rtsp_server is not None:
             with contextlib.suppress(Exception):
                 self._rtsp_server.close()
@@ -1158,6 +1163,8 @@ class AirPlayMirrorServer:
                 self._http_server.close()
                 await self._http_server.wait_closed()
             self._http_server = None
+
+        await self._unadvertise()
 
         for task in list(self._tasks):
             task.cancel()
