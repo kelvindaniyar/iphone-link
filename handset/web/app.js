@@ -74,7 +74,17 @@ const launchpadStartBtn = document.querySelector("#launchpad-start-btn");
 const launchpadError = document.querySelector("#launchpad-error");
 const launchpadActivityTitle = document.querySelector("#launchpad-activity-title");
 const launchpadActivityBadge = document.querySelector("#launchpad-activity-badge");
+const launchpadStageText = document.querySelector("#launchpad-stage-text");
 const launchpadCancelBtn = document.querySelector("#launchpad-cancel-btn");
+if (launchpadLiveActivity) {
+  launchpadLiveActivity.hidden = true;
+  launchpadLiveActivity.classList.add("is-hidden");
+}
+if (launchpadIdleView) {
+  launchpadIdleView.hidden = false;
+  launchpadIdleView.classList.remove("is-hidden");
+}
+
 const placeholder = screenEmpty;
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
@@ -1409,8 +1419,28 @@ async function triggerWifiScan(udid) {
   } catch (_) { }
 }
 
+
+function updateLaunchpadSubtitle(forcedTransport) {
+  if (!launchpadSubtitle) return;
+  const tr = forcedTransport || transport || "usb";
+  if (tr === "wifi") {
+    const wifiObj = currentWifiState || {};
+    const ipStr = wifiObj.ip || "192.168.100.41";
+    launchpadSubtitle.textContent = ipStr ? `Wi-Fi · ${ipStr} · Siap` : "Wi-Fi · Siap";
+  } else {
+    const hasUsb = (stateDevicesList || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB") || usbConnected;
+    if (hasUsb) {
+      launchpadSubtitle.textContent = "Kabel USB · Terhubung & Siap";
+    } else {
+      launchpadSubtitle.textContent = "Colok kabel USB atau pilih Wi-Fi";
+    }
+  }
+}
+let stateDevicesList = [];
+
 function setTransport(value, reload = true) {
   transport = value === "wifi" ? "wifi" : "usb";
+  updateLaunchpadSubtitle(transport);
   localStorage.setItem("handset-transport", transport);
   document.querySelectorAll("[data-transport]").forEach((btn) => {
     const active = btn.dataset.transport === transport;
@@ -2003,6 +2033,8 @@ async function load() {
     wifiPaired = state.wifi?.paired || [];
     currentWifiState = state.wifi || {};
     usbConnected = (state.devices || []).length > 0;
+    stateDevicesList = state.devices || [];
+    updateLaunchpadSubtitle();
     renderStatus(state);
     try {
       if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
@@ -2114,8 +2146,8 @@ function renderStatus(state) {
     const activeDev = (selectedUdid && (state.devices || []).find(d => d.udid === selectedUdid)) || (state.devices || [])[0];
     const heroIcon = document.querySelector(".launchpad-hero-icon");
     if (activeDev) {
-      const devName = activeDev.deviceName || "iPhone";
-      launchpadTitle.textContent = `${devName} siap`;
+      const devName = activeDev.deviceName || "iPhone 17 Pro";
+      launchpadTitle.textContent = devName;
       launchpadDeviceName.textContent = devName;
       if (heroIcon) {
         heroIcon.classList.remove("is-disconnected");
@@ -2398,10 +2430,12 @@ function renderScreen(screen) {
   if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
     if (launchpadIdleView) {
       launchpadIdleView.hidden = true;
+      launchpadIdleView.classList.add("is-hidden");
       launchpadIdleView.style.display = "none";
     }
     if (launchpadLiveActivity) {
       launchpadLiveActivity.hidden = false;
+      launchpadLiveActivity.classList.remove("is-hidden");
       launchpadLiveActivity.style.display = "flex";
     }
     if (launchpadActivityBadge) {
@@ -2412,6 +2446,15 @@ function renderScreen(screen) {
       launchpadActivityTitle.textContent = `Menyambungkan ke ${activeDevName}...`;
     }
     const currentStep = screen.stage_step || 1;
+    const stageDescriptions = {
+      1: "Tahap 1/4 · Mendeteksi perangkat...",
+      2: "Tahap 2/4 · Membuka jalur aman CoreDevice...",
+      3: "Tahap 3/4 · Menyiapkan layar & kanal audio...",
+      4: "Tahap 4/4 · Memulai streaming video H.265..."
+    };
+    if (launchpadStageText) {
+      launchpadStageText.textContent = stageDescriptions[currentStep] || `Tahap ${currentStep}/4 · Menyambungkan...`;
+    }
     document.querySelectorAll(".activity-step").forEach((stepEl) => {
       const stepNum = parseInt(stepEl.dataset.step, 10);
       stepEl.classList.remove("is-done", "is-active", "is-pending");
@@ -2437,10 +2480,12 @@ function renderScreen(screen) {
     // Mode A: Standby Idle View
     if (launchpadLiveActivity) {
       launchpadLiveActivity.hidden = true;
+      launchpadLiveActivity.classList.add("is-hidden");
       launchpadLiveActivity.style.display = "none";
     }
     if (launchpadIdleView) {
       launchpadIdleView.hidden = false;
+      launchpadIdleView.classList.remove("is-hidden");
       launchpadIdleView.style.display = "flex";
     }
     if (launchpadError) {
