@@ -13,14 +13,37 @@ window.addEventListener("unhandledrejection", (e) => {
   console.error("[iPhoneLink-UnhandledRejection]", msg);
 });
 
-// Alias & dual-binding hook for #status-pill and #pill-connection
+// Alias & dual-binding hook for #status-pill / #pill-connection and #wifi-summary / #wifi-state
 (() => {
-  const origQS = Document.prototype.querySelector;
+  const origDocQS = Document.prototype.querySelector;
   Document.prototype.querySelector = function (sel) {
     if (sel === "#pill-connection" || sel === "#status-pill") {
-      return origQS.call(this, "#status-pill") || origQS.call(this, "#pill-connection");
+      return origDocQS.call(this, "#status-pill") || origDocQS.call(this, "#pill-connection");
     }
-    return origQS.call(this, sel);
+    if (sel === "#wifi-summary" || sel === "#wifi-state") {
+      return origDocQS.call(this, "#wifi-state") || origDocQS.call(this, "#wifi-summary");
+    }
+    return origDocQS.call(this, sel);
+  };
+  const origElemQS = Element.prototype.querySelector;
+  Element.prototype.querySelector = function (sel) {
+    if (sel === "#pill-connection" || sel === "#status-pill") {
+      return origElemQS.call(this, "#status-pill") || origElemQS.call(this, "#pill-connection");
+    }
+    if (sel === "#wifi-summary" || sel === "#wifi-state") {
+      return origElemQS.call(this, "#wifi-state") || origElemQS.call(this, "#wifi-summary");
+    }
+    return origElemQS.call(this, sel);
+  };
+  const origGetId = Document.prototype.getElementById;
+  Document.prototype.getElementById = function (id) {
+    if (id === "pill-connection" || id === "status-pill") {
+      return origGetId.call(this, "status-pill") || origGetId.call(this, "pill-connection");
+    }
+    if (id === "wifi-summary" || id === "wifi-state") {
+      return origGetId.call(this, "wifi-state") || origGetId.call(this, "wifi-summary");
+    }
+    return origGetId.call(this, id);
   };
 })();
 
@@ -96,7 +119,7 @@ const I18N_DICT = {
     "section.appearance": "TAMPILAN & BAHASA",
     "theme.dark": "Gelap",
     "theme.light": "Terang",
-    "label.language": "Bahasa / Language",
+    "label.language": "Bahasa",
 
     // Card 2: Display Fit & Aspect
     "section.display_fit": "RASIO & UKURAN LAYAR",
@@ -155,6 +178,7 @@ const I18N_DICT = {
     "btn.stealth_dim_on": "Mode Redup Siluman (Alt+D): ON",
     "stealth.subhint": "Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).",
     "label.pin": "Auto-Unlock PIN (Opsional):",
+    "pin.placeholder": "4 atau 6 digit PIN",
     "pin.subhint": "Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.",
     "btn.wipe_privacy": "Hapus PIN & Data Privasi",
     "btn.hide_to_tray": "Sembunyikan ke System Tray",
@@ -195,6 +219,10 @@ const I18N_DICT = {
     "device.summary": "Detail Perangkat & Koneksi",
     "device.refresh": "Segarkan Perangkat",
     "guide.summary": "Panduan & Pemecahan Masalah",
+    "guide.step1": "1. Sambungkan iPhone via USB dan buka kuncinya.",
+    "guide.step2": "2. Ketuk Percayai pada layar iPhone.",
+    "guide.step3": "3. Pastikan Mode Pengembang aktif di Pengaturan > Privasi & Keamanan.",
+    "guide.step4": "4. Klik Mulai mirroring.",
     "saweria.btn": "Dukung Kreator di Saweria",
 
     // Nav Tooltips
@@ -238,7 +266,7 @@ const I18N_DICT = {
     "section.appearance": "APPEARANCE & LANGUAGE",
     "theme.dark": "Dark",
     "theme.light": "Light",
-    "label.language": "Bahasa / Language",
+    "label.language": "Language",
 
     // Card 2: Display Fit & Aspect
     "section.display_fit": "DISPLAY FIT & ASPECT",
@@ -262,7 +290,7 @@ const I18N_DICT = {
     "section.audio": "Audio (iPhone -> PC)",
     "audio.subtitle": "Zero Bluetooth (Direct USB/Wi-Fi to PC)",
     "audio.out_pc": "On this PC",
-    "audio.out_device": "Phone only",
+    "audio.out_device": "Device only",
     "audio.vol_pc": "PC Volume",
     "audio.buffer": "Audio Buffer",
     "audio.buf_low": "Low",
@@ -297,7 +325,8 @@ const I18N_DICT = {
     "btn.stealth_dim_on": "Stealth Dim Mode (Alt+D): ON",
     "stealth.subhint": "Dim physical iPhone display to 0% during USB control (PC mirror stays bright).",
     "label.pin": "Auto-Unlock PIN (Optional):",
-    "pin.subhint": "Saved in local browser only. Leave blank if you prefer manual PIN typing.",
+    "pin.placeholder": "4 or 6 digit PIN",
+    "pin.subhint": "Stored in local browser only. Leave blank to enter PIN manually.",
     "btn.wipe_privacy": "Clear Saved PIN & Privacy Data",
     "btn.hide_to_tray": "Hide Window to System Tray",
 
@@ -337,6 +366,10 @@ const I18N_DICT = {
     "device.summary": "Device & Connection Details",
     "device.refresh": "Refresh Devices",
     "guide.summary": "How to run & Troubleshooting",
+    "guide.step1": "1. Plug in iPhone via USB and unlock it.",
+    "guide.step2": "2. Tap Trust on the iPhone.",
+    "guide.step3": "3. Ensure Developer Mode is enabled in Settings > Privacy & Security.",
+    "guide.step4": "4. Click Start mirroring.",
     "saweria.btn": "Support Creator on Saweria",
 
     // Nav Tooltips
@@ -346,6 +379,68 @@ const I18N_DICT = {
     "nav.swipe_right": "Swipe Right (→)"
   }
 };
+
+function translateDynamicStatusText(rawText, lang) {
+  if (!rawText || typeof rawText !== "string") return rawText || "";
+  const targetLang = (lang === "en" || (!lang && currentLang === "en")) ? "en" : "id";
+  let t = rawText;
+  if (targetLang === "en") {
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*siap\s*\(Terhubung di LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi ready (Connected to LAN)");
+    t = t.replace(/(🔌\s*)?Colok kabel USB 1x untuk aktifkan mode Wi[-‑]Fi/gi, "🔌 Plug USB cable 1x to enable Wi-Fi mode");
+    t = t.replace(/Wi[-‑]Fi\s*siap/gi, "Wi-Fi ready");
+    t = t.replace(/USB\s*terputus/gi, "USB disconnected");
+    t = t.replace(/USB\s*siap/gi, "USB ready");
+    t = t.replace(/Buka kunci perangkat,\s*lalu klik Mulai mirroring\.?/gi, "Unlock device, then click Start mirroring.");
+    t = t.replace(/Buka kunci,\s*lalu tekan Mulai mirroring\.?/gi, "Unlock device, then click Start mirroring.");
+    t = t.replace(/Wi[-‑]Fi\s*belum diatur/gi, "Wi-Fi not configured");
+    t = t.replace(/Memindai\.\.\./gi, "Scanning...");
+    t = t.replace(/Menyiapkan\.\.\./gi, "Setting up...");
+    t = t.replace(/Menghubungkan\.\.\./gi, "Connecting...");
+    t = t.replace(/Mulai mirroring/gi, "Start mirroring");
+    t = t.replace(/Hentikan mirroring/gi, "Stop mirroring");
+    t = t.replace(/Putuskan Mirroring/gi, "Disconnect Mirroring");
+    t = t.replace(/Di PC ini/gi, "On this PC");
+    t = t.replace(/Hanya perangkat/gi, "Device only");
+    t = t.replace(/Cek update/gi, "Check for updates");
+    t = t.replace(/iPhone Link sudah versi terbaru\.?/gi, "iPhone Link is up to date.");
+    t = t.replace(/Memeriksa pembaruan\.\.\./gi, "Checking for updates...");
+    t = t.replace(/Gagal memeriksa pembaruan \(koneksi offline\)\.?/gi, "Failed to check for updates (offline).");
+    t = t.replace(/Bahasa \/ Language/gi, "Language");
+    t = t.replace(/4 atau 6 digit PIN/gi, "4 or 6 digit PIN");
+    t = t.replace(/Tersimpan di browser lokal saja\. Kosongkan jika ingin mengetik PIN manual\.?/gi, "Stored in local browser only. Leave blank to enter PIN manually.");
+    t = t.replace(/Tersimpan di browser/gi, "Stored in local browser");
+    t = t.replace(/Kosongkan jika/gi, "Leave blank if");
+    t = t.replace(/(\s+)siap$/i, "$1ready");
+    return t;
+  } else {
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*ready\s*\(Connected to LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi siap (Terhubung di LAN)");
+    t = t.replace(/(🔌\s*)?Plug USB cable 1x to enable Wi[-‑]Fi mode/gi, "🔌 Colok kabel USB 1x untuk aktifkan mode Wi-Fi");
+    t = t.replace(/Wi[-‑]Fi\s*ready/gi, "Wi-Fi siap");
+    t = t.replace(/USB\s*disconnected/gi, "USB terputus");
+    t = t.replace(/USB\s*ready/gi, "USB siap");
+    t = t.replace(/Unlock device,\s*then click Start mirroring\.?/gi, "Buka kunci, lalu tekan Mulai mirroring.");
+    t = t.replace(/Wi[-‑]Fi\s*not configured/gi, "Wi-Fi belum diatur");
+    t = t.replace(/Wi[-‑]Fi\s*not set up/gi, "Wi-Fi belum diatur");
+    t = t.replace(/Scanning\.\.\./gi, "Memindai...");
+    t = t.replace(/Setting up\.\.\./gi, "Menyiapkan...");
+    t = t.replace(/Connecting\.\.\./gi, "Menghubungkan...");
+    t = t.replace(/Start mirroring/gi, "Mulai mirroring");
+    t = t.replace(/Stop mirroring/gi, "Hentikan mirroring");
+    t = t.replace(/Disconnect Mirroring/gi, "Putuskan Mirroring");
+    t = t.replace(/On this PC/gi, "Di PC ini");
+    t = t.replace(/Device only/gi, "Hanya perangkat");
+    t = t.replace(/Check for updates/gi, "Cek update");
+    t = t.replace(/iPhone Link is up to date\.?/gi, "iPhone Link sudah versi terbaru.");
+    t = t.replace(/Checking for updates\.\.\./gi, "Memeriksa pembaruan...");
+    t = t.replace(/Failed to check for updates \(offline\)\.?/gi, "Gagal memeriksa pembaruan (koneksi offline).");
+    t = t.replace(/Language/gi, "Bahasa");
+    t = t.replace(/4 or 6 digit PIN/gi, "4 atau 6 digit PIN");
+    t = t.replace(/Stored in local browser only\. Leave blank to enter PIN manual\.?/gi, "Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.");
+    t = t.replace(/(\s+)ready$/i, "$1siap");
+    return t;
+  }
+}
+window.translateDynamicStatusText = translateDynamicStatusText;
 
 function t(key, params = {}) {
   const dict = I18N_DICT[currentLang] || I18N_DICT["id"];
@@ -359,6 +454,11 @@ function t(key, params = {}) {
 function applyLanguage(lang, save = true) {
   const targetLang = (lang === "en") ? "en" : "id";
   currentLang = targetLang;
+  window._langSwitchLockUntil = Date.now() + 3000;
+
+  if (window.state && window.state.settings) {
+    window.state.settings.language = targetLang;
+  }
 
   document.documentElement.lang = targetLang;
   document.documentElement.setAttribute("data-lang", targetLang);
@@ -373,6 +473,7 @@ function applyLanguage(lang, save = true) {
     btnEn.setAttribute("aria-pressed", String(!isId));
   }
 
+  // Update elements with data-i18n
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
     const val = t(key);
@@ -392,6 +493,19 @@ function applyLanguage(lang, save = true) {
     }
   });
 
+  // Update elements with data-i18n-placeholder
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-placeholder");
+    const val = t(key);
+    if (val) el.placeholder = val;
+  });
+
+  // Dedicated direct PIN input placeholder update
+  const pinInput = document.getElementById("input-unlock-pin");
+  if (pinInput) {
+    pinInput.placeholder = t("pin.placeholder");
+  }
+
   // Nav buttons tooltips (preserve text content as 'Swipe', 'Home', 'Recent', 'Swipe')
   const navLeft = document.getElementById("nav-swipe-left");
   if (navLeft) navLeft.setAttribute("title", t("nav.swipe_left"));
@@ -402,27 +516,40 @@ function applyLanguage(lang, save = true) {
   const navRight = document.getElementById("nav-swipe-right");
   if (navRight) navRight.setAttribute("title", t("nav.swipe_right"));
 
-  // Remote panel buttons
+  // Remote panel buttons text & tooltips (protecting SVGs)
   const notifBtn = document.getElementById("hw-btn-notifications");
   if (notifBtn) {
     const s = notifBtn.querySelector("span");
     if (s) s.textContent = t("remote.notifications");
+    notifBtn.setAttribute("title", targetLang === "en" ? "Pull iPhone Notification Center" : "Tarik Pusat Notifikasi iPhone");
   }
   const ctrlBtn = document.getElementById("hw-btn-control-center");
   if (ctrlBtn) {
     const s = ctrlBtn.querySelector("span");
     if (s) s.textContent = t("remote.control_center");
+    ctrlBtn.setAttribute("title", targetLang === "en" ? "Open iPhone Control Center" : "Buka Control Center iPhone");
   }
   const muteBtn = document.getElementById("hw-btn-mute");
   if (muteBtn) {
     const s = muteBtn.querySelector("span");
     if (s) s.textContent = t("remote.mute");
+    muteBtn.setAttribute("title", targetLang === "en" ? "Mute iPhone speaker" : "Bisukan speaker iPhone");
+  }
+  const volUpBtn = document.getElementById("hw-btn-vol-up");
+  if (volUpBtn) {
+    volUpBtn.setAttribute("title", targetLang === "en" ? "Increase iPhone volume" : "Naikkan Volume iPhone");
+  }
+  const volDownBtn = document.getElementById("hw-btn-vol-down");
+  if (volDownBtn) {
+    volDownBtn.setAttribute("title", targetLang === "en" ? "Decrease iPhone volume" : "Turunkan Volume iPhone");
   }
 
   // Update hardware smart lock button label & title
   const smartLockBtn = document.querySelector("#hw-btn-smart-lock");
   const isLocked = smartLockBtn ? smartLockBtn.classList.contains("is-locked-state") : false;
-  updateHardwareSmartLockButton(isLocked);
+  if (typeof updateHardwareSmartLockButton === "function") {
+    try { updateHardwareSmartLockButton(isLocked); } catch (_) {}
+  }
 
   // Update Audio route button labels
   const btnAudioPc = document.getElementById("btn-audio-out-pc");
@@ -433,40 +560,95 @@ function applyLanguage(lang, save = true) {
   const btnAudioDev = document.getElementById("btn-audio-out-device");
   if (btnAudioDev) {
     const s = btnAudioDev.querySelector(".btn-label");
-    if (s) s.textContent = (targetLang === "en") ? "Phone only" : "Hanya perangkat";
+    if (s) s.textContent = (targetLang === "en") ? "Device only" : "Hanya perangkat";
   }
 
   // Update updater status & check button if not in active check
   const updateStatusText = document.getElementById("update-status-text");
   const btnCheckUpdate = document.getElementById("btn-check-update");
   if (btnCheckUpdate && !btnCheckUpdate.disabled && !btnCheckUpdate.classList.contains("has-update")) {
-    const s = btnCheckUpdate.querySelector(".btn-label");
-    if (s) s.textContent = t("updater.check_btn");
+    const s = btnCheckUpdate.querySelector(".btn-label") || btnCheckUpdate;
+    s.textContent = t("updater.check_btn");
   }
   if (updateStatusText && !activeUpdateAvailable) {
     updateStatusText.textContent = t("updater.status_up_to_date");
   }
 
   // Update main start mirroring button in panel-start & launchpad
-  if (showScreen && !showScreen.classList.contains("is-disconnect") && !showScreen.disabled) {
-    const s = showScreen.querySelector(".btn-label") || showScreen;
-    s.textContent = t("launchpad.start_mirror");
+  if (showScreen && !showScreen.disabled) {
+    if (showScreen.classList.contains("is-disconnect")) {
+      showScreen.textContent = (targetLang === "en") ? "⏹ Disconnect Mirroring" : "⏹ Putuskan Mirroring";
+    } else {
+      const s = showScreen.querySelector(".btn-label");
+      if (s) {
+        s.textContent = t("conn.start_mirror");
+      } else {
+        showScreen.textContent = t("conn.start_mirror");
+      }
+    }
   }
   if (launchpadStartBtn && !launchpadStartBtn.disabled) {
-    const s = launchpadStartBtn.querySelector(".btn-label") || launchpadStartBtn;
-    s.textContent = t("launchpad.start_mirror");
+    const s = launchpadStartBtn.querySelector(".btn-label");
+    if (s) {
+      s.textContent = t("launchpad.start_mirror");
+    } else {
+      launchpadStartBtn.textContent = t("launchpad.start_mirror");
+    }
   }
 
-  // Refresh Launchpad status text
-  if (typeof updateLaunchpadDeviceStatus === "function") {
-    try { updateLaunchpadDeviceStatus(); } catch (_) {}
+  // Update tooltips on controls
+  const btnResetWin = document.getElementById("btn-reset-window-size");
+  if (btnResetWin) btnResetWin.title = (targetLang === "en") ? "Reset window size to default 1:1 active device aspect ratio" : "Kembalikan ukuran jendela ke rasio default 1:1 perangkat aktif";
+  const btnClearCache = document.getElementById("btn-clear-copy-cache");
+  if (btnClearCache) btnClearCache.title = (targetLang === "en") ? "Clear long text stitcher cache" : "Bersihkan memori penyambung teks panjang";
+  const btnScanQr = document.getElementById("btn-scan-qr-link");
+  if (btnScanQr) btnScanQr.title = (targetLang === "en") ? "Copy Instagram / Threads / TikTok share link directly to Windows PC (Alt+B)" : "Salin tautan share Instagram / Threads / TikTok dari iPhone langsung ke PC Windows (Alt+B)";
+  const btnHideTray = document.getElementById("btn-hide-to-tray");
+  if (btnHideTray) btnHideTray.title = (targetLang === "en") ? "Hide window to Windows 11 System Tray (Mirroring & Audio remain active)" : "Sembunyikan jendela ke Windows 11 System Tray (Mirroring & Audio tetap aktif)";
+  const wifiScanBtn = document.getElementById("wifi-scan");
+  if (wifiScanBtn) wifiScanBtn.title = (targetLang === "en") ? "Scan iPhone IP on local network" : "Scan IP iPhone di jaringan lokal";
+  const winMinBtn = document.getElementById("win-min");
+  if (winMinBtn) winMinBtn.title = (targetLang === "en") ? "Minimize (Left Click) · Hide to System Tray (Right Click)" : "Minimize (Klik Kiri) · Hide to System Tray (Klik Kanan)";
+  const lpScanBtn = document.getElementById("launchpad-scan-btn");
+  if (lpScanBtn) lpScanBtn.title = (targetLang === "en") ? "Rescan devices" : "Pindai ulang perangkat";
+  const btnUpdInfo = document.getElementById("btn-update-info");
+  if (btnUpdInfo) btnUpdInfo.title = (targetLang === "en") ? "Update information" : "Penjelasan pembaruan";
+  const btnUpdColl = document.getElementById("btn-update-collapse");
+  if (btnUpdColl) btnUpdColl.title = (targetLang === "en") ? "Collapse/expand card" : "Lipat/buka kartu";
+
+  // Dynamic elements refresh (0ms instant re-rendering without restart)
+  const curWifiStateEl = document.querySelector("#wifi-state") || document.querySelector("#wifi-summary");
+  if (curWifiStateEl && curWifiStateEl.textContent) {
+    curWifiStateEl.textContent = translateDynamicStatusText(curWifiStateEl.textContent, targetLang);
+  }
+  if (typeof updateLaunchpadState === "function") {
+    try { updateLaunchpadState(lastServerState); } catch (_) {}
+  }
+  if (typeof renderWifi === "function") {
+    try { renderWifi(); } catch (_) {}
+  }
+  if (typeof renderAudioControls === "function" && typeof currentAudioState !== "undefined") {
+    try { renderAudioControls(currentAudioState); } catch (_) {}
+  }
+  if (typeof renderStatus === "function" && lastServerState) {
+    try { renderStatus(lastServerState); } catch (_) {}
+  }
+  if (typeof renderPills === "function" && lastServerState) {
+    try { renderPills(lastServerState); } catch (_) {}
+  }
+  if (typeof renderLaunchpad === "function") {
+    try { renderLaunchpad(); } catch (_) {}
+  }
+  if (typeof render === "function") {
+    try { render(); } catch (_) {}
   }
 
   // Save preference
+  try {
+    localStorage.setItem("iphone_link_lang", targetLang);
+    localStorage.setItem("iphone_link_language", targetLang);
+  } catch (_) {}
   if (save) {
-    try {
-      localStorage.setItem("iphone_link_language", targetLang);
-    } catch (_) {}
     postJson("/api/settings", { language: targetLang }).catch((e) => {
       console.warn("save language error:", e);
     });
@@ -852,7 +1034,7 @@ async function fetchUserSettings() {
     if (res.theme) {
       try { applyTheme(res.theme); } catch (_) { }
     }
-    if (res.language) {
+    if (res.language && (!window._langSwitchLockUntil || Date.now() > window._langSwitchLockUntil)) {
       try { applyLanguage(res.language, false); } catch (_) { }
     }
     if (res.trackpadSpeed !== undefined) {
@@ -977,13 +1159,14 @@ function renderAudio(audio) {
   const btnTop = document.querySelector("#btn-audio-top");
   const iconOn = btnTop?.querySelector(".audio-icon-on");
   const iconOff = btnTop?.querySelector(".audio-icon-off");
+  const isEnAudio = (currentLang === "en");
   if (btnTop) {
     btnTop.classList.toggle("is-active", isAudibleOnPc);
     btnTop.title = isMuted
-      ? "PC Audio Muted — Klik atau tekan Alt+M untuk Unmute"
+      ? (isEnAudio ? "PC Audio Muted - Click or press Alt+M to Unmute" : "PC Audio Muted - Klik atau tekan Alt+M untuk Unmute")
       : mode === "device"
-        ? "Output: Hanya perangkat (iPhone) — Klik untuk alihkan ke PC"
-        : `Zero-Bluetooth USB Audio Aktif (~${shownMs} ms) — Klik / Alt+M untuk Mute`;
+        ? (isEnAudio ? "Output: Device only (iPhone) - Click to route to PC" : "Output: Hanya perangkat (iPhone) - Klik untuk alihkan ke PC")
+        : (isEnAudio ? `Zero-Bluetooth USB Audio Active (~${shownMs} ms) - Click / Alt+M to Mute` : `Zero-Bluetooth USB Audio Aktif (~${shownMs} ms) - Klik / Alt+M untuk Mute`);
     if (iconOn && iconOff) {
       iconOn.hidden = !isAudibleOnPc;
       iconOff.hidden = isAudibleOnPc;
@@ -997,9 +1180,9 @@ function renderAudio(audio) {
     badge.classList.toggle("active", mode === "pc" && !isMuted);
     if (mode === "pc") {
       if (isMuted) {
-        badge.textContent = "🔇 Di PC ini · Muted (Alt+M)";
+        badge.textContent = isEnAudio ? "🔇 On this PC · Muted (Alt+M)" : "🔇 Di PC ini · Muted (Alt+M)";
       } else if (currentAudioState.iphoneSpeakerMuted) {
-        badge.textContent = `✓ USB Audio · Speaker iPhone Auto-Muted (~${shownMs} ms)`;
+        badge.textContent = isEnAudio ? `✓ USB Audio · iPhone Speaker Auto-Muted (~${shownMs} ms)` : `✓ USB Audio · Speaker iPhone Auto-Muted (~${shownMs} ms)`;
       } else {
         badge.textContent = `✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~${shownMs} ms)`;
       }
@@ -1008,7 +1191,7 @@ function renderAudio(audio) {
         ? `🔵 Bluetooth A2DP (${currentAudioState.device || "iPhone"})`
         : "○ Bluetooth A2DP (Disconnected)";
     } else {
-      badge.textContent = "📱 Hanya perangkat (Speaker iPhone)";
+      badge.textContent = isEnAudio ? "📱 Device only (iPhone Speaker)" : "📱 Hanya perangkat (Speaker iPhone)";
     }
   }
 
@@ -2356,20 +2539,24 @@ window.triggerToggleStealthDim = triggerToggleStealthDim;
 
 function renderWifi() {
   const wifi = currentWifiState || {};
+  const isEn = (currentLang === "en");
   if (wifi.statusText) {
-    wifiState.textContent = wifi.statusText;
+    wifiState.textContent = translateDynamicStatusText(wifi.statusText, currentLang);
     wifiState.className = "wifi-state" + (wifi.statusTone ? ` ${wifi.statusTone}` : "");
   } else {
     const ready = wifi.reachable === true;
-    wifiState.textContent = ready ? "✓ Wi‑Fi ready" : "Wi‑Fi not set up";
+    wifiState.textContent = ready ? (isEn ? "✓ Wi-Fi ready" : "✓ Wi-Fi siap") : (isEn ? "Wi-Fi not configured" : "Wi-Fi belum diatur");
     wifiState.className = "wifi-state" + (ready ? " ok" : "");
   }
   const isPairedAndEnabled = Boolean(wifi.paired && wifi.paired.length > 0 && wifi.enabled);
   const hasUsb = Boolean(usbConnected);
   wifiPair.hidden = Boolean((wifi.reachable || isPairedAndEnabled) && !hasUsb);
   wifiPair.disabled = !hasUsb;
-  wifiPair.title = hasUsb ? "Atur atau perbarui Wi-Fi melalui kabel USB" : "Plug in the cable once to set up Wi‑Fi";
+  wifiPair.title = hasUsb
+    ? (isEn ? "Configure or update Wi-Fi via USB cable" : "Atur atau perbarui Wi-Fi melalui kabel USB")
+    : (isEn ? "Plug in the cable once to set up Wi-Fi" : "Colok kabel USB 1x untuk aktifkan mode Wi-Fi");
 }
+window.renderWifi = renderWifi;
 
 async function setUpWifi() {
   wifiPair.disabled = true;
@@ -2399,39 +2586,6 @@ function initDeviceActionControls() {
   window.triggerWakeUnlockIphone = triggerWakeUnlockIphone;
   window.triggerLockIphone = triggerLockIphone;
   window.triggerToggleStealthDim = triggerToggleStealthDim;
-
-  function renderWifi() {
-    const wifi = currentWifiState || {};
-    if (wifi.statusText) {
-      wifiState.textContent = wifi.statusText;
-      wifiState.className = "wifi-state" + (wifi.statusTone ? ` ${wifi.statusTone}` : "");
-    } else {
-      const ready = wifi.reachable === true;
-      wifiState.textContent = ready ? "✓ Wi‑Fi ready" : "Wi‑Fi not set up";
-      wifiState.className = "wifi-state" + (ready ? " ok" : "");
-    }
-    const isPairedAndEnabled = Boolean(wifi.paired && wifi.paired.length > 0 && wifi.enabled);
-    wifiPair.hidden = Boolean(wifi.reachable || isPairedAndEnabled);
-    wifiPair.disabled = !usbConnected;
-    wifiPair.title = usbConnected ? "One-time setup over the cable" : "Plug in the cable once to set up Wi‑Fi";
-  }
-
-  async function setUpWifi() {
-    wifiPair.disabled = true;
-    wifiPair.textContent = "Setting up…";
-    try {
-      const result = await postJson("/api/wifi/pair", { udid: selectedUdid });
-      if (!result.ok) throw new Error(result.error || "Wi‑Fi setup failed.");
-      screenNote.textContent = "Wi‑Fi is set up. You can unplug the cable and choose Wi‑Fi.";
-      screenNote.className = "";
-    } catch (error) {
-      screenNote.textContent = error.message;
-      screenNote.className = "warn";
-    } finally {
-      wifiPair.textContent = "Set up Wi‑Fi";
-      load();
-    }
-  }
 
   // screenEmpty already declared above
   const placeholder = screenEmpty;
@@ -2874,7 +3028,7 @@ function renderStatus(state) {
   statusList.replaceChildren(
     ...row("Client", library.ready ? "ready" : "missing", library.ready),
     ...row("USB service", driver.ready ? "running" : "missing", driver.ready),
-    ...row("Developer Mode", state.developerMode === false ? "off" : state.developerMode ? "on" : "—", state.developerMode !== false),
+    ...row("Developer Mode", state.developerMode === false ? "off" : state.developerMode ? "on" : "-", state.developerMode !== false),
   );
   const connected = (state.devices || []).length > 0;
   if (state.developerMode === false) {
@@ -2891,7 +3045,7 @@ function renderStatus(state) {
   if (!connected && (state.wifi?.paired || []).length) {
     statusNote.textContent = "No cable. Choose Wi‑Fi, keep the iPhone unlocked on the same network, and press Start mirroring.";
     statusNote.className = "";
-    placeholderHint.textContent = "No cable needed — choose Wi‑Fi and press Start mirroring.";
+    placeholderHint.textContent = "No cable needed - choose Wi‑Fi and press Start mirroring.";
   } else if (!connected) {
     placeholderHint.textContent = "Connect your iPhone with a data cable, unlock it, and tap Trust.";
   }
@@ -3402,10 +3556,10 @@ async function restartMirror() {
     await postJson("/api/screen/restart", { udid: selectedUdid });
     await new Promise((r) => setTimeout(r, 1500));
     reloadMirrorIframe();
-    screenNote.textContent = "Restart sent — waiting for picture…";
+    screenNote.textContent = "Restart sent - waiting for picture...";
     window.setTimeout(() => {
       if (workspace.classList.contains("is-live")) {
-        screenNote.textContent = "Mirroring — use Restart screen if the picture stays black.";
+        screenNote.textContent = "Mirroring - use Restart screen if the picture stays black.";
       }
     }, 4000);
   } catch (error) {
@@ -3550,7 +3704,12 @@ window.handsetKeyboardOn = true;
 function setKeyboard(on) {
   window.handsetKeyboardOn = on;
   kbToggle.setAttribute("aria-pressed", String(on));
-  kbToggle.textContent = `⌨ Keyboard → iPhone: ${on ? "On" : "Off"}`;
+  const kbLabel = kbToggle.querySelector(".btn-label");
+  if (kbLabel) {
+    kbLabel.textContent = `Keyboard → iPhone: ${on ? "On" : "Off"}`;
+  } else {
+    kbToggle.textContent = `⌨ Keyboard → iPhone: ${on ? "On" : "Off"}`;
+  }
   kbToggle.classList.toggle("is-on", on);
   if (!on) keyboard.releaseAll();
 }
@@ -4231,8 +4390,8 @@ async function runCheckUpdate(isSilent = false) {
 
   if (!isSilent) {
     if (btnCheck) btnCheck.disabled = true;
-    if (btnLabel) btnLabel.textContent = "... · Mohon tunggu";
-    if (statusText) statusText.textContent = "Memeriksa pembaruan...";
+    if (btnLabel) btnLabel.textContent = (currentLang === "en") ? "... · Please wait" : "... · Mohon tunggu";
+    if (statusText) statusText.textContent = (currentLang === "en") ? "Checking for updates..." : "Memeriksa pembaruan...";
   }
 
   try {
@@ -4247,13 +4406,13 @@ async function runCheckUpdate(isSilent = false) {
       activeDownloadUrl = res.downloadUrl || "";
       activeTargetVersion = res.latestVersion || "";
       if (statusText) {
-        statusText.textContent = res.message || `Tersedia pembaruan: iPhone Link v${res.latestVersion}`;
+        statusText.textContent = res.message ? translateDynamicStatusText(res.message, currentLang) : ((currentLang === "en") ? `Update available: iPhone Link v${res.latestVersion}` : `Tersedia pembaruan: iPhone Link v${res.latestVersion}`);
       }
       if (btnCheck) {
         btnCheck.classList.add("has-update");
       }
       if (btnLabel) {
-        btnLabel.textContent = `Perbarui ke v${res.latestVersion}`;
+        btnLabel.textContent = (currentLang === "en") ? `Update to v${res.latestVersion}` : `Perbarui ke v${res.latestVersion}`;
       }
     } else {
       activeUpdateAvailable = false;
@@ -4266,15 +4425,15 @@ async function runCheckUpdate(isSilent = false) {
         btnLabel.textContent = (currentLang === "en") ? "Check for updates" : "Cek update";
       }
       if (statusText) {
-        statusText.textContent = res?.message || ((currentLang === "en") ? "iPhone Link is up to date." : "iPhone Link sudah versi terbaru.");
+        statusText.textContent = res?.message ? translateDynamicStatusText(res.message, currentLang) : ((currentLang === "en") ? "iPhone Link is up to date." : "iPhone Link sudah versi terbaru.");
       }
     }
   } catch (err) {
     console.warn("runCheckUpdate error:", err);
     if (btnCheck) btnCheck.disabled = false;
-    if (btnLabel) btnLabel.textContent = "Cek update";
+    if (btnLabel) btnLabel.textContent = (currentLang === "en") ? "Check for updates" : "Cek update";
     if (statusText && !isSilent) {
-      statusText.textContent = "Gagal memeriksa pembaruan (koneksi offline).";
+      statusText.textContent = (currentLang === "en") ? "Failed to check for updates (offline)." : "Gagal memeriksa pembaruan (koneksi offline).";
     }
   }
 }
@@ -4288,7 +4447,7 @@ async function runInstallUpdate() {
   const btnLabel = btnCheck ? (btnCheck.querySelector(".btn-label") || btnCheck) : null;
 
   if (btnCheck) btnCheck.disabled = true;
-  if (btnLabel) btnLabel.textContent = "Mengunduh...";
+  if (btnLabel) btnLabel.textContent = (currentLang === "en") ? "Downloading..." : "Mengunduh...";
   if (progressWrap) progressWrap.hidden = false;
   if (progressFill) progressFill.style.width = "5%";
   if (progressLabel) progressLabel.textContent = "5%";
@@ -4311,21 +4470,21 @@ async function runInstallUpdate() {
           progressLabel.textContent = `${st.progress}%`;
         }
         if (statusText && st.message) {
-          statusText.textContent = st.message;
+          statusText.textContent = translateDynamicStatusText(st.message, currentLang);
         }
         if (st.status === "ready_to_restart" || st.status === "failed") {
           clearInterval(updatePollingTimer);
           updatePollingTimer = null;
           if (btnCheck) btnCheck.disabled = false;
-          if (btnLabel) btnLabel.textContent = st.status === "failed" ? "Coba lagi" : "Memulai ulang...";
+          if (btnLabel) btnLabel.textContent = st.status === "failed" ? ((currentLang === "en") ? "Try again" : "Coba lagi") : ((currentLang === "en") ? "Restarting..." : "Memulai ulang...");
         }
       } catch (_) { }
     }, 500);
   } catch (err) {
     console.error("runInstallUpdate error:", err);
     if (btnCheck) btnCheck.disabled = false;
-    if (btnLabel) btnLabel.textContent = "Coba lagi";
-    if (statusText) statusText.textContent = "Gagal memulai unduhan pembaruan.";
+    if (btnLabel) btnLabel.textContent = (currentLang === "en") ? "Try again" : "Coba lagi";
+    if (statusText) statusText.textContent = (currentLang === "en") ? "Failed to start update download." : "Gagal memulai unduhan pembaruan.";
   }
 }
 
@@ -4422,7 +4581,7 @@ function bootstrapApp() {
   try { initDeviceProfileAndResizeControls(); } catch (e) { console.error("initDeviceProfileAndResizeControls error:", e); }
   try { initAudioControls(); } catch (e) { console.error("initAudioControls error:", e); }
   try { bindDisplayFitAndAutoRotateControls(); } catch (e) { console.error("bindDisplayFitAndAutoRotateControls error:", e); }
-  try { applyLanguage(localStorage.getItem("iphone_link_language") || "id", false); } catch (e) { console.error("applyLanguage error:", e); }
+  try { applyLanguage(localStorage.getItem("iphone_link_language") || localStorage.getItem("iphone_link_lang") || "id", false); } catch (e) { console.error("applyLanguage error:", e); }
   try { applyTheme(currentTheme); } catch (e) { console.error("applyTheme error:", e); }
   try { applyFitMode(currentFitMode); } catch (e) { console.error("applyFitMode error:", e); }
   try { applyCrop(currentCrop, true); } catch (e) { console.error("applyCrop error:", e); }

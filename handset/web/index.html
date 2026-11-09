@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link - iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap148_bilingual_id_en">
+  <link rel="stylesheet" href="/app.css?v=tahap149_complete_bilingual_and_light_contrast">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -112,7 +112,7 @@
                         <img src="/logo.svg" alt="iPhone Link" class="launchpad-logo-img" width="56" height="56" />
                       </div>
                       <h2 class="launchpad-title" id="launchpad-title">iPhone 17 Pro siap</h2>
-                      <p class="launchpad-subtitle" id="launchpad-subtitle">Buka kunci, lalu tekan Mulai mirroring.</p>
+                      <p class="launchpad-subtitle" id="launchpad-subtitle" data-i18n="launchpad.subtitle">Buka kunci, lalu tekan Mulai mirroring.</p>
                       <p id="placeholder-hint" hidden></p>
                     </div>
 
@@ -188,7 +188,7 @@
                     <div class="activity-header">
                       <div class="activity-title-wrap">
                         <span class="activity-pulse-dot"></span>
-                        <h2 class="activity-title" id="launchpad-activity-title">Menyambungkan ke iPhone...</h2>
+                        <h2 class="activity-title" id="launchpad-activity-title" data-i18n="launchpad.activity_title">Menyambungkan ke iPhone...</h2>
                       </div>
                       <span class="activity-badge" id="launchpad-activity-badge">USB</span>
                     </div>
@@ -242,7 +242,7 @@
                       </div>
                     </div>
 
-                    <p id="launchpad-stage-text" class="launchpad-stage-text">Tahap 1/4 · Mendeteksi perangkat...</p>
+                    <p id="launchpad-stage-text" class="launchpad-stage-text" data-i18n="launchpad.stage1">Tahap 1/4 · Mendeteksi perangkat...</p>
 
                     <button type="button" class="launchpad-cancel-btn" id="launchpad-cancel-btn" data-i18n="launchpad.cancel">
                       Batal
@@ -318,7 +318,7 @@
             </div>
 
             <div class="lang-control-row">
-              <span class="control-label" data-i18n="label.language">Bahasa / Language</span>
+              <span class="control-label" data-i18n="label.language">Bahasa</span>
               <div class="segmented segmented-lang" id="language-toggle-group" role="group" aria-label="Language">
                 <button type="button" class="seg-btn is-active" id="btn-lang-id" data-lang="id" aria-pressed="true"><span class="lang-badge">ID</span><span>Indonesia</span></button>
                 <button type="button" class="seg-btn" id="btn-lang-en" data-lang="en" aria-pressed="false"><span class="lang-badge">EN</span><span>English</span></button>
@@ -732,7 +732,7 @@
                 Auto-Unlock PIN (Opsional):
               </label>
               <div class="pin-input-wrap">
-                <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric">
+                <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric" data-i18n-placeholder="pin.placeholder">
                 <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN">
                   <svg class="fluent-icon svg-state-off pin-eye-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
@@ -744,7 +744,7 @@
                   </svg>
                 </button>
               </div>
-              <p style="font-size: 10px; opacity: 0.6; margin-top: 3px;">
+              <p style="font-size: 10px; opacity: 0.6; margin-top: 3px;" data-i18n="pin.subhint">
                 Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.
               </p>
               <button type="button" class="ctl ctl-sm btn-wipe-privacy" id="btn-wipe-privacy" style="width: 100%; margin-top: 6px;" title="Wipe saved PIN, local cache, and history data">
@@ -770,7 +770,7 @@
               <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false" data-i18n="conn.wifi">Wi-Fi</button>
             </div>
             <div class="wifi-row" id="wifi-row">
-              <span class="wifi-state wifi-status-text" id="wifi-state">Wi-Fi not set up</span>
+              <span class="wifi-state wifi-status-text wifi-summary" id="wifi-state" data-alias="wifi-summary">Wi-Fi not set up</span>
               <div class="wifi-actions" id="wifi-actions">
                 <button type="button" class="ctl ctl-sm" id="wifi-scan" title="Scan IP iPhone di jaringan lokal">
                   <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -966,10 +966,10 @@
           <details class="card card-details">
             <summary data-i18n="guide.summary">How to run &amp; Troubleshooting</summary>
             <div style="font-size: 12px; line-height: 1.6; color: var(--muted); padding-top: 6px;">
-              <p style="margin: 0 0 6px;">1. Plug in iPhone via USB and unlock it.</p>
-              <p style="margin: 0 0 6px;">2. Tap <strong>Trust</strong> on the iPhone.</p>
-              <p style="margin: 0 0 6px;">3. Ensure <strong>Developer Mode</strong> is enabled in Settings &gt; Privacy &amp; Security.</p>
-              <p style="margin: 0;">4. Click <strong>Start mirroring</strong>.</p>
+              <p style="margin: 0 0 6px;" data-i18n="guide.step1">1. Plug in iPhone via USB and unlock it.</p>
+              <p style="margin: 0 0 6px;" data-i18n="guide.step2">2. Tap <strong>Trust</strong> on the iPhone.</p>
+              <p style="margin: 0 0 6px;" data-i18n="guide.step3">3. Ensure <strong>Developer Mode</strong> is enabled in Settings &gt; Privacy &amp; Security.</p>
+              <p style="margin: 0;" data-i18n="guide.step4">4. Click <strong>Start mirroring</strong>.</p>
             </div>
             <button type="button" class="ghost ghost-block" id="toggle-guide" style="display: none;" aria-hidden="true"></button>
           </details>
@@ -1005,6 +1005,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap148_bilingual_id_en"></script>
+  <script src="/app.js?v=tahap149_complete_bilingual_and_light_contrast"></script>
 </body>
 </html>

@@ -3310,6 +3310,7 @@ body[data-theme="light"],
 
 .wifi-state,
 #wifi-state,
+#wifi-summary,
 #wifi-status,
 .wifi-status-text {
   width: 100% !important;
@@ -3323,7 +3324,8 @@ body[data-theme="light"],
 }
 
 .wifi-state.ok,
-#wifi-state.ok {
+#wifi-state.ok,
+#wifi-summary.ok {
   color: var(--ok) !important;
   font-weight: 500 !important;
 }
@@ -4902,3 +4904,45 @@ body[data-theme="light"],
   background: rgba(2, 132, 199, 0.15);
   color: #0284c7;
 }
+
+/* TAHAP 149: High-Contrast Wake/Unlock & Wipe Privacy Buttons in Light Mode */
+[data-theme="light"] #btn-wake-unlock,
+[data-theme="light"] #btn-wake-unlock span {
+  color: #0369a1 !important;
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}
+[data-theme="light"] #btn-wake-unlock {
+  background: rgba(14, 165, 233, 0.16) !important;
+  border: 1px solid rgba(2, 132, 199, 0.48) !important;
+}
+[data-theme="light"] #btn-wake-unlock svg {
+  color: #0284c7 !important;
+  stroke: #0284c7 !important;
+  opacity: 1 !important;
+}
+[data-theme="light"] #btn-wake-unlock:hover {
+  background: rgba(14, 165, 233, 0.26) !important;
+  border-color: rgba(3, 105, 161, 0.65) !important;
+}
+
+[data-theme="light"] #btn-wipe-privacy,
+[data-theme="light"] #btn-wipe-privacy span {
+  color: #b91c1c !important;
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}
+[data-theme="light"] #btn-wipe-privacy {
+  background: rgba(239, 68, 68, 0.14) !important;
+  border: 1px solid rgba(220, 38, 38, 0.45) !important;
+}
+[data-theme="light"] #btn-wipe-privacy svg {
+  color: #dc2626 !important;
+  stroke: #dc2626 !important;
+  opacity: 1 !important;
+}
+[data-theme="light"] #btn-wipe-privacy:hover {
+  background: rgba(239, 68, 68, 0.24) !important;
+  border-color: rgba(185, 28, 28, 0.65) !important;
+}
+
