@@ -1420,27 +1420,130 @@ async function triggerWifiScan(udid) {
 }
 
 
-function updateLaunchpadSubtitle(forcedTransport) {
-  if (!launchpadSubtitle) return;
-  const tr = forcedTransport || transport || "usb";
-  if (tr === "wifi") {
-    const wifiObj = currentWifiState || {};
-    const ipStr = wifiObj.ip || "192.168.100.41";
-    launchpadSubtitle.textContent = ipStr ? `Wi-Fi · ${ipStr} · Siap` : "Wi-Fi · Siap";
-  } else {
-    const hasUsb = (stateDevicesList || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB") || usbConnected;
-    if (hasUsb) {
-      launchpadSubtitle.textContent = "Kabel USB · Terhubung & Siap";
-    } else {
-      launchpadSubtitle.textContent = "Colok kabel USB atau pilih Wi-Fi";
+
+const APPLE_PRODUCT_MAP = {
+  // iPhone models
+  "iPhone10,3": "iPhone X",
+  "iPhone10,6": "iPhone X",
+  "iPhone11,2": "iPhone XS",
+  "iPhone11,4": "iPhone XS Max",
+  "iPhone11,6": "iPhone XS Max",
+  "iPhone11,8": "iPhone XR",
+  "iPhone12,1": "iPhone 11",
+  "iPhone12,3": "iPhone 11 Pro",
+  "iPhone12,5": "iPhone 11 Pro Max",
+  "iPhone12,8": "iPhone SE",
+  "iPhone13,1": "iPhone 12 mini",
+  "iPhone13,2": "iPhone 12",
+  "iPhone13,3": "iPhone 12 Pro",
+  "iPhone13,4": "iPhone 12 Pro Max",
+  "iPhone14,4": "iPhone 13 mini",
+  "iPhone14,5": "iPhone 13",
+  "iPhone14,2": "iPhone 13 Pro",
+  "iPhone14,3": "iPhone 13 Pro Max",
+  "iPhone14,6": "iPhone SE",
+  "iPhone14,7": "iPhone 14",
+  "iPhone14,8": "iPhone 14 Plus",
+  "iPhone15,2": "iPhone 14 Pro",
+  "iPhone15,3": "iPhone 14 Pro Max",
+  "iPhone15,4": "iPhone 15",
+  "iPhone15,5": "iPhone 15 Plus",
+  "iPhone16,1": "iPhone 15 Pro",
+  "iPhone16,2": "iPhone 15 Pro Max",
+  "iPhone17,1": "iPhone 16 Pro",
+  "iPhone17,2": "iPhone 16 Pro Max",
+  "iPhone17,3": "iPhone 16",
+  "iPhone17,4": "iPhone 16 Plus",
+  "iPhone17,5": "iPhone 16e",
+  "iPhone18,1": "iPhone 17 Pro",
+  "iPhone18,2": "iPhone 17 Pro Max",
+  "iPhone18,3": "iPhone 17",
+  "iPhone18,4": "iPhone 17 Air",
+  // iPad models
+  "iPad11,1": "iPad mini",
+  "iPad11,2": "iPad mini",
+  "iPad11,3": "iPad Air",
+  "iPad11,4": "iPad Air",
+  "iPad13,1": "iPad Air",
+  "iPad13,2": "iPad Air",
+  "iPad13,4": "iPad Pro",
+  "iPad13,5": "iPad Pro",
+  "iPad13,6": "iPad Pro",
+  "iPad13,7": "iPad Pro",
+  "iPad13,8": "iPad Pro",
+  "iPad13,9": "iPad Pro",
+  "iPad13,10": "iPad Pro",
+  "iPad13,11": "iPad Pro",
+  "iPad13,16": "iPad Air",
+  "iPad13,17": "iPad Air",
+  "iPad14,1": "iPad mini",
+  "iPad14,2": "iPad mini",
+  "iPad14,3": "iPad Pro",
+  "iPad14,4": "iPad Pro",
+  "iPad14,5": "iPad Pro",
+  "iPad14,6": "iPad Pro",
+  "iPad14,8": "iPad Air",
+  "iPad14,9": "iPad Air",
+  "iPad16,3": "iPad Pro",
+  "iPad16,4": "iPad Pro",
+  "iPad16,5": "iPad Pro",
+  "iPad16,6": "iPad Pro"
+};
+
+function resolveFriendlyDeviceModel(dev) {
+  if (!dev) return "iPhone 17 Pro";
+  const pType = dev.product_type || dev.productType || dev.model || "";
+  if (pType) {
+    if (APPLE_PRODUCT_MAP[pType]) {
+      try {
+        if (dev.udid) localStorage.setItem("dev-model-" + dev.udid, APPLE_PRODUCT_MAP[pType]);
+      } catch (_) {}
+      return APPLE_PRODUCT_MAP[pType];
+    }
+    if (pType.startsWith("iPad")) {
+      if (pType.includes("Pro") || pType.startsWith("iPad16,") || pType.startsWith("iPad14,3") || pType.startsWith("iPad14,4") || pType.startsWith("iPad14,5") || pType.startsWith("iPad14,6") || pType.startsWith("iPad13,4") || pType.startsWith("iPad13,5") || pType.startsWith("iPad13,6") || pType.startsWith("iPad13,7") || pType.startsWith("iPad13,8") || pType.startsWith("iPad13,9") || pType.startsWith("iPad13,10") || pType.startsWith("iPad13,11")) {
+        return "iPad Pro";
+      }
+      if (pType.includes("Air") || pType.startsWith("iPad14,8") || pType.startsWith("iPad14,9") || pType.startsWith("iPad13,1") || pType.startsWith("iPad13,2") || pType.startsWith("iPad13,16") || pType.startsWith("iPad13,17")) {
+        return "iPad Air";
+      }
+      if (pType.includes("mini") || pType.startsWith("iPad14,1") || pType.startsWith("iPad14,2")) {
+        return "iPad mini";
+      }
+      return "iPad";
     }
   }
-}
-let stateDevicesList = [];
 
+  const udid = dev.udid || "";
+  if (udid.startsWith("00008150") || udid.includes("00008150")) {
+    return "iPhone 17 Pro";
+  }
+  if (udid.startsWith("00008030") || udid.includes("00008030")) {
+    return "iPhone 11 Pro Max";
+  }
+
+  try {
+    const cached = localStorage.getItem("dev-model-" + udid);
+    if (cached) return cached;
+  } catch (_) {}
+
+  const rawName = dev.deviceName || dev.name || "";
+  if (rawName && (rawName.startsWith("iPhone ") || rawName.startsWith("iPad "))) {
+    return rawName;
+  }
+
+  return "iPhone 17 Pro";
+}
+window.resolveFriendlyDeviceModel = resolveFriendlyDeviceModel;
+window.APPLE_PRODUCT_MAP = APPLE_PRODUCT_MAP;
 function setTransport(value, reload = true) {
   transport = value === "wifi" ? "wifi" : "usb";
-  updateLaunchpadSubtitle(transport);
+  if (launchpadError) {
+    launchpadError.hidden = true;
+    launchpadError.classList.add("is-hidden");
+    launchpadError.textContent = "";
+  }
+  updateLaunchpadState();
   localStorage.setItem("handset-transport", transport);
   document.querySelectorAll("[data-transport]").forEach((btn) => {
     const active = btn.dataset.transport === transport;
@@ -2032,9 +2135,14 @@ async function load() {
     const state = await getJson("/api/status");
     wifiPaired = state.wifi?.paired || [];
     currentWifiState = state.wifi || {};
-    usbConnected = (state.devices || []).length > 0;
+    const hasCableDevice = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
+    usbConnected = hasCableDevice;
     stateDevicesList = state.devices || [];
-    updateLaunchpadSubtitle();
+    const wifiObj = state.wifi || currentWifiState || {};
+    const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
+    if (!hasCableDevice && wifiReady && transport === "usb" && (!state.screen || state.screen.phase === "idle" || state.screen.phase === "stopped")) {
+      setTransport("wifi", false);
+    }
     renderStatus(state);
     try {
       if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
@@ -2113,6 +2221,71 @@ function setPill(el, text, tone) {
   el.className = "pill" + (tone ? ` pill-${tone}` : "");
 }
 
+
+let lastServerState = null;
+function updateLaunchpadState(passedState) {
+  const state = passedState || lastServerState || {};
+  if (passedState) lastServerState = passedState;
+
+  const devices = state.devices || [];
+  const activeDev = (selectedUdid && devices.find(d => d.udid === selectedUdid)) || devices[0];
+  const modelName = resolveFriendlyDeviceModel(activeDev);
+  const nickname = (activeDev && (activeDev.name || activeDev.deviceName)) || "UWE UH";
+
+  if (launchpadTitle) {
+    launchpadTitle.textContent = activeDev ? `${modelName} siap` : "iPhone Link";
+  }
+  if (launchpadSubtitle) {
+    launchpadSubtitle.textContent = "Buka kunci, lalu tekan Mulai mirroring.";
+  }
+  if (launchpadDeviceName) {
+    launchpadDeviceName.textContent = nickname;
+  }
+
+  const hasCableDevice = devices.some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
+  usbConnected = hasCableDevice;
+  const wifiObj = state.wifi || currentWifiState || {};
+  const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
+
+  if (launchpadDeviceSub) {
+    if (transport === "wifi") {
+      const ipStr = wifiObj.ip || "192.168.100.41";
+      launchpadDeviceSub.textContent = `${modelName} · Wi-Fi ${ipStr}`;
+    } else {
+      if (hasCableDevice) {
+        launchpadDeviceSub.textContent = `${modelName} · USB siap`;
+      } else {
+        launchpadDeviceSub.textContent = `${modelName} · Kabel belum terhubung — pilih Wi-Fi`;
+      }
+    }
+  }
+
+  if (launchpadStatusDot) {
+    if (transport === "wifi") {
+      launchpadStatusDot.className = wifiReady ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
+    } else {
+      launchpadStatusDot.className = hasCableDevice ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
+    }
+  }
+
+  const heroIcon = document.querySelector(".launchpad-hero-icon");
+  if (heroIcon) {
+    if (activeDev && ((transport === "wifi" && wifiReady) || (transport === "usb" && hasCableDevice))) {
+      heroIcon.classList.remove("is-disconnected");
+      heroIcon.classList.add("is-ready");
+    } else {
+      heroIcon.classList.remove("is-ready");
+      heroIcon.classList.add("is-disconnected");
+    }
+  }
+
+  if (launchpadSetupWifiBtn) {
+    launchpadSetupWifiBtn.disabled = !hasCableDevice;
+    launchpadSetupWifiBtn.title = hasCableDevice ? "Atur atau perbarui Wi-Fi melalui kabel USB" : "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi";
+  }
+}
+window.updateLaunchpadState = updateLaunchpadState;
+
 function renderStatus(state) {
   const library = state.library || {};
   const driver = state.driver || {};
@@ -2141,48 +2314,8 @@ function renderStatus(state) {
     placeholderHint.textContent = "Connect your iPhone with a data cable, unlock it, and tap Trust.";
   }
 
-  // Tahap 135: Update Launchpad Card & Header
-  if (launchpadDeviceName && launchpadDeviceSub && launchpadStatusDot && launchpadTitle) {
-    const activeDev = (selectedUdid && (state.devices || []).find(d => d.udid === selectedUdid)) || (state.devices || [])[0];
-    const heroIcon = document.querySelector(".launchpad-hero-icon");
-    if (activeDev) {
-      const devName = activeDev.deviceName || "iPhone 17 Pro";
-      launchpadTitle.textContent = devName;
-      launchpadDeviceName.textContent = devName;
-      if (heroIcon) {
-        heroIcon.classList.remove("is-disconnected");
-        heroIcon.classList.add("is-ready");
-      }
-      const isUsb = String(activeDev.connection || "").toUpperCase() === "USB";
-      if (isUsb) {
-        launchpadDeviceSub.textContent = "USB · siap";
-        launchpadStatusDot.className = "launchpad-status-dot";
-      } else {
-        const ipStr = state.wifi?.ip || "";
-        launchpadDeviceSub.textContent = ipStr ? `Wi-Fi · ${ipStr} · siap` : "Wi-Fi · siap";
-        launchpadStatusDot.className = "launchpad-status-dot";
-      }
-    } else {
-      launchpadTitle.textContent = "iPhone Link";
-      launchpadDeviceName.textContent = "iPhone";
-      launchpadDeviceSub.textContent = "Belum terhubung";
-      launchpadStatusDot.className = "launchpad-status-dot warn";
-      if (heroIcon) {
-        heroIcon.classList.remove("is-ready");
-        heroIcon.classList.add("is-disconnected");
-      }
-    }
-    if (launchpadSetupWifiBtn) {
-      const hasUsb = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB") || (usbConnected && transport === "usb");
-      if (hasUsb) {
-        launchpadSetupWifiBtn.disabled = false;
-        launchpadSetupWifiBtn.title = "Atur atau perbarui Wi-Fi melalui kabel USB";
-      } else {
-        launchpadSetupWifiBtn.disabled = true;
-        launchpadSetupWifiBtn.title = "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi";
-      }
-    }
-  }
+  // Tahap 138: Update Launchpad Pure Canvas ZenLink x Gemini App Model & Nickname
+  updateLaunchpadState(state);
 }
 
 function renderDevices(list) {
@@ -2443,7 +2576,9 @@ function renderScreen(screen) {
     }
     if (launchpadActivityTitle) {
       const activeDevName = (launchpadDeviceName && launchpadDeviceName.textContent && launchpadDeviceName.textContent.trim()) || "iPhone";
-      launchpadActivityTitle.textContent = `Menyambungkan ke ${activeDevName}...`;
+      const activeDev = (selectedUdid && (lastServerState?.devices || []).find(d => d.udid === selectedUdid)) || (lastServerState?.devices || [])[0];
+      const modelName = resolveFriendlyDeviceModel(activeDev);
+      launchpadActivityTitle.textContent = `Menyambungkan ke ${modelName}...`;
     }
     const currentStep = screen.stage_step || 1;
     const stageDescriptions = {
