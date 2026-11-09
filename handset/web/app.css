@@ -4452,3 +4452,281 @@ body[data-theme="light"],
 #btn-toggle-pin-visibility .fluent-icon[hidden] {
   display: none !important;
 }
+
+
+/* ====================================================================== */
+/* Tahap 144: Card Pembaruan (OTA Auto-Updater - WinUI 3 Fluent Liquid Glass) */
+/* ====================================================================== */
+#card-updater {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+#update-card-body {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+.update-card-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 10px !important;
+}
+
+.update-header-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.update-icon-badge {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 8px !important;
+  background: rgba(16, 185, 129, 0.18) !important;
+  color: #10b981 !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+.update-card-title {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--fg) !important;
+}
+
+.update-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+.update-icon-btn {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--muted) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+}
+
+.update-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--fg) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.update-icon-btn .icon-chevron {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.card-updater.is-collapsed .icon-chevron {
+  transform: rotate(180deg) !important;
+}
+
+.card-updater.is-collapsed #update-card-body {
+  display: none !important;
+}
+
+#update-info-box {
+  margin-bottom: 12px !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  font-size: 11.5px !important;
+  line-height: 1.5 !important;
+  color: var(--fg) !important;
+  background: rgba(16, 185, 129, 0.10) !important;
+  border: 1px solid rgba(16, 185, 129, 0.25) !important;
+  box-sizing: border-box !important;
+}
+
+#update-info-box p {
+  margin: 0 !important;
+}
+
+#update-current-version {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--fg) !important;
+  margin-bottom: 10px !important;
+}
+
+.update-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 8px !important;
+  min-height: 32px !important;
+}
+
+.update-row-label {
+  font-size: 12px !important;
+  color: var(--fg) !important;
+  font-weight: 500 !important;
+}
+
+#toggle-auto-update-check {
+  width: 40px !important;
+  height: 22px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  position: relative !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  transition: background 0.2s ease, border-color 0.2s ease !important;
+  outline: none !important;
+}
+
+#toggle-auto-update-check.is-active {
+  background: #10b981 !important;
+  border-color: #059669 !important;
+}
+
+#toggle-auto-update-check .toggle-switch-thumb {
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  position: absolute !important;
+  top: 2px !important;
+  left: 2px !important;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+  display: block !important;
+}
+
+#toggle-auto-update-check.is-active .toggle-switch-thumb {
+  transform: translateX(18px) !important;
+}
+
+#update-channel-group {
+  display: inline-flex !important;
+  border-radius: 999px !important;
+  padding: 2px !important;
+  background: rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  gap: 2px !important;
+}
+
+#update-channel-group .seg {
+  border-radius: 999px !important;
+  font-size: 11.5px !important;
+  padding: 4px 12px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  line-height: 18px !important;
+  border: none !important;
+  cursor: pointer !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  transition: background 0.15s ease, color 0.15s ease !important;
+}
+
+#update-channel-group .seg.is-active {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: var(--fg) !important;
+  font-weight: 600 !important;
+}
+
+#update-status-text {
+  font-size: 11.5px !important;
+  line-height: 1.45 !important;
+  color: var(--muted) !important;
+  margin: 4px 0 10px 0 !important;
+}
+
+#update-progress-wrap {
+  margin-bottom: 10px !important;
+}
+
+.update-progress-bar {
+  width: 100% !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  overflow: hidden !important;
+}
+
+#update-progress-fill {
+  height: 100% !important;
+  background: #10b981 !important;
+  border-radius: 999px !important;
+  transition: width 0.2s ease !important;
+}
+
+#update-progress-label {
+  font-size: 10.5px !important;
+  color: var(--muted) !important;
+  text-align: right !important;
+  margin-top: 3px !important;
+}
+
+#btn-check-update {
+  width: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  border-radius: 999px !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+}
+
+#btn-check-update.has-update {
+  background: #10b981 !important;
+  border-color: #059669 !important;
+  color: #ffffff !important;
+}
+
+/* Light Mode Overrides */
+[data-theme="light"] #card-updater .update-card-title,
+[data-theme="light"] #card-updater .update-version-label,
+[data-theme="light"] #card-updater .update-row-label {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] #update-channel-group {
+  background: rgba(0, 0, 0, 0.06) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] #update-channel-group .seg.is-active {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="light"] #toggle-auto-update-check {
+  background: rgba(0, 0, 0, 0.16) !important;
+  border-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+[data-theme="light"] #toggle-auto-update-check.is-active {
+  background: #10b981 !important;
+  border-color: #059669 !important;
+}
+
+[data-theme="light"] #update-info-box {
+  background: rgba(16, 185, 129, 0.12) !important;
+  color: #065f46 !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+[data-theme="light"] .update-progress-bar {
+  background: rgba(0, 0, 0, 0.08) !important;
+}

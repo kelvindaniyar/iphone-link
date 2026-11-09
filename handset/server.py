@@ -149,6 +149,8 @@ DEFAULT_SETTINGS = {
     "autoRotate": False,
     "deviceProfile": "auto",
     "customWindowSize": None,
+    "autoCheckUpdate": True,
+    "updateChannel": "stable",
 }
 
 def get_windows_clipboard_seq() -> int:
@@ -503,6 +505,10 @@ def save_user_settings(new_settings: dict) -> dict:
             current["audioBufferPreset"] = normalize_buffer_preset(str(v or "normal"))
         elif k == "deviceProfile":
             current["deviceProfile"] = _normalize_device_profile(v)
+        elif k == "autoCheckUpdate":
+            current["autoCheckUpdate"] = bool(v)
+        elif k == "updateChannel":
+            current["updateChannel"] = "beta" if str(v).strip().lower() == "beta" else "stable"
         elif k == "customWindowSize":
             current["customWindowSize"] = _normalize_custom_window_size(v)
         elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate", "lipSync", "audioMuted"):
@@ -672,6 +678,10 @@ class Handler(BaseHTTPRequestHandler):
             target_udid = (query.get("udid") or [None])[0]
             self._json({"ok": True, "wifi": get_wifi_status(target_udid, probe_network=True)})
             return
+        if path == "/api/update/status":
+            from handset.updater import get_update_status
+            self._json(get_update_status())
+            return
         if path in ("/api/settings", "/api/keyboard/settings"):
             self._json(load_user_settings(persist_instance=True))
             return
@@ -736,6 +746,17 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             payload = {}
 
+        if path == "/api/update/check":
+            from handset.updater import check_for_updates
+            ch = payload.get("channel") or load_user_settings(persist_instance=False).get("updateChannel", "stable")
+            self._json(check_for_updates(channel=str(ch)))
+            return
+        if path == "/api/update/install":
+            from handset.updater import start_download_and_apply_update
+            dl_url = str(payload.get("downloadUrl") or "")
+            target_v = str(payload.get("targetVersion") or "")
+            self._json(start_download_and_apply_update(download_url=dl_url, target_version=target_v))
+            return
         if path == "/api/settings":
             saved = save_user_settings(payload)
             self._json({"ok": True, "settings": saved})

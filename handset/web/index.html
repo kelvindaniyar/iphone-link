@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap143_v2_lock_screen_restore">
+  <link rel="stylesheet" href="/app.css?v=tahap144_ota_auto_updater">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -796,6 +796,80 @@
             <p class="control-hint" id="control-hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
           </section>
 
+          <!-- Card Pembaruan (OTA Auto-Updater - Tahap 144) -->
+          <section class="card glass-card card-updater" id="card-updater">
+            <div class="update-card-header">
+              <div class="update-header-left">
+                <div class="update-icon-badge" aria-hidden="true">
+                  <svg class="fluent-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                  </svg>
+                </div>
+                <span class="update-card-title">Pembaruan</span>
+              </div>
+              <div class="update-header-actions">
+                <button type="button" class="update-icon-btn" id="btn-update-info" title="Penjelasan pembaruan" aria-label="Penjelasan pembaruan" aria-expanded="false">
+                  <svg class="fluent-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                </button>
+                <button type="button" class="update-icon-btn" id="btn-update-collapse" title="Lipat/buka kartu" aria-label="Lipat/buka kartu" aria-expanded="true">
+                  <svg class="fluent-icon icon-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="18 15 12 9 6 15"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Kotak Penjelasan (i) -->
+            <div class="update-info-box" id="update-info-box" hidden>
+              <p>Cek versi baru di GitHub, unduh berkas instalasi, verifikasi integritas berkas, lalu jalankan pembaruan otomatis tanpa menghentikan kerja Anda. Pengaturan Anda tetap aman. Kanal Beta menerima rilis percobaan lebih awal.</p>
+            </div>
+
+            <div class="update-card-body" id="update-card-body">
+              <div class="update-version-label" id="update-current-version">iPhone Link v3.0.0</div>
+
+              <!-- Baris 1: Cek otomatis saat mulai -->
+              <div class="update-row">
+                <span class="update-row-label">Cek otomatis saat mulai</span>
+                <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Cek otomatis saat mulai">
+                  <span class="toggle-switch-thumb"></span>
+                </button>
+              </div>
+
+              <!-- Baris 2: Kanal -->
+              <div class="update-row">
+                <span class="update-row-label">Kanal</span>
+                <div class="segmented segmented-channel" id="update-channel-group" role="radiogroup" aria-label="Kanal Pembaruan">
+                  <button type="button" class="seg is-active" id="btn-channel-stable" data-channel="stable" role="radio" aria-checked="true"><span class="btn-label">Stabil</span></button>
+                  <button type="button" class="seg" id="btn-channel-beta" data-channel="beta" role="radio" aria-checked="false"><span class="btn-label">Beta</span></button>
+                </div>
+              </div>
+
+              <!-- Baris Status Pembaruan -->
+              <div class="update-status-row">
+                <p class="update-status-text" id="update-status-text">iPhone Link sudah versi terbaru.</p>
+              </div>
+
+              <!-- Progress Bar Unduhan -->
+              <div class="update-progress-wrap" id="update-progress-wrap" hidden>
+                <div class="update-progress-bar">
+                  <div class="update-progress-fill" id="update-progress-fill" style="width: 0%;"></div>
+                </div>
+                <div class="update-progress-label" id="update-progress-label">0%</div>
+              </div>
+
+              <!-- Tombol Aksi Utama Penuh -->
+              <div class="update-action-row">
+                <button type="button" class="ctl ctl-accent update-action-btn" id="btn-check-update">
+                  <span class="btn-label">Cek update</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
           <!-- Remote Gestures & Keys (Collapsible Accordion) -->
           <details class="card card-details" id="remote-panel" hidden>
             <summary>Gestures & Hardware Keys</summary>
@@ -895,7 +969,7 @@
               </a>
             </div>
             <p class="credit-main" style="margin: 0; font-weight: 600;">
-              <span class="credit-app-name">iPhone Link v2.0</span> by <a href="https://github.com/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="credit-author">Kelvin Daniyar</a>
+              <span class="credit-app-name">iPhone Link v3.0</span> by <a href="https://github.com/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="credit-author">Kelvin Daniyar</a>
             </p>
             <p class="credit-sub" style="margin: 4px 0 0;">
               Forked from <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows" target="_blank" rel="noopener noreferrer" class="credit-upstream">teyboxv1/pane-iphone-mirror-windows</a> · GPL-3.0
@@ -911,6 +985,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap143_v2_lock_screen_restore"></script>
+  <script src="/app.js?v=tahap144_ota_auto_updater"></script>
 </body>
 </html>

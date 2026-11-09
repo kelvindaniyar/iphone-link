@@ -405,6 +405,7 @@ async function fetchUserSettings() {
     const res = await getJson("/api/settings");
     if (!res) return;
     try { applyCleanSlatePinGuard(res); } catch (_) { }
+    try { syncUpdaterSettings(res); } catch (_) { }
     if (res.crop) {
       try {
         currentCrop = {
@@ -3709,6 +3710,222 @@ function initDeviceProfileAndResizeControls() {
 }
 
 // ======================================================================
+// ======================================================================
+// Tahap 144: GitHub OTA Auto-Updater Controls (Pembaruan)
+// ======================================================================
+const currentUpdateSettings = {
+  autoCheckUpdate: true,
+  updateChannel: "stable",
+};
+let activeUpdateAvailable = false;
+let activeDownloadUrl = "";
+let activeTargetVersion = "";
+let updatePollingTimer = null;
+
+function syncUpdaterSettings(settings) {
+  if (!settings) return;
+  if (settings.autoCheckUpdate !== undefined) {
+    currentUpdateSettings.autoCheckUpdate = Boolean(settings.autoCheckUpdate);
+    const toggleAuto = document.getElementById("toggle-auto-update-check");
+    if (toggleAuto) {
+      toggleAuto.classList.toggle("is-active", currentUpdateSettings.autoCheckUpdate);
+      toggleAuto.setAttribute("aria-checked", String(currentUpdateSettings.autoCheckUpdate));
+    }
+  }
+  if (settings.updateChannel !== undefined) {
+    currentUpdateSettings.updateChannel = String(settings.updateChannel) === "beta" ? "beta" : "stable";
+    const btnStable = document.getElementById("btn-channel-stable");
+    const btnBeta = document.getElementById("btn-channel-beta");
+    if (btnStable && btnBeta) {
+      const isBeta = currentUpdateSettings.updateChannel === "beta";
+      btnStable.classList.toggle("is-active", !isBeta);
+      btnStable.setAttribute("aria-checked", String(!isBeta));
+      btnBeta.classList.toggle("is-active", isBeta);
+      btnBeta.setAttribute("aria-checked", String(isBeta));
+    }
+  }
+}
+
+async function runCheckUpdate(isSilent = false) {
+  const btnCheck = document.getElementById("btn-check-update");
+  const statusText = document.getElementById("update-status-text");
+  const btnLabel = btnCheck ? (btnCheck.querySelector(".btn-label") || btnCheck) : null;
+
+  if (!isSilent) {
+    if (btnCheck) btnCheck.disabled = true;
+    if (btnLabel) btnLabel.textContent = "... · Mohon tunggu";
+    if (statusText) statusText.textContent = "Memeriksa pembaruan...";
+  }
+
+  try {
+    const res = await postJson("/api/update/check", {
+      channel: currentUpdateSettings.updateChannel,
+    });
+
+    if (btnCheck) btnCheck.disabled = false;
+
+    if (res && res.updateAvailable) {
+      activeUpdateAvailable = true;
+      activeDownloadUrl = res.downloadUrl || "";
+      activeTargetVersion = res.latestVersion || "";
+      if (statusText) {
+        statusText.textContent = res.message || `Tersedia pembaruan: iPhone Link v${res.latestVersion}`;
+      }
+      if (btnCheck) {
+        btnCheck.classList.add("has-update");
+      }
+      if (btnLabel) {
+        btnLabel.textContent = `Perbarui ke v${res.latestVersion}`;
+      }
+    } else {
+      activeUpdateAvailable = false;
+      activeDownloadUrl = "";
+      activeTargetVersion = "";
+      if (btnCheck) {
+        btnCheck.classList.remove("has-update");
+      }
+      if (btnLabel) {
+        btnLabel.textContent = "Cek update";
+      }
+      if (statusText) {
+        statusText.textContent = res?.message || "iPhone Link sudah versi terbaru.";
+      }
+    }
+  } catch (err) {
+    console.warn("runCheckUpdate error:", err);
+    if (btnCheck) btnCheck.disabled = false;
+    if (btnLabel) btnLabel.textContent = "Cek update";
+    if (statusText && !isSilent) {
+      statusText.textContent = "Gagal memeriksa pembaruan (koneksi offline).";
+    }
+  }
+}
+
+async function runInstallUpdate() {
+  const btnCheck = document.getElementById("btn-check-update");
+  const statusText = document.getElementById("update-status-text");
+  const progressWrap = document.getElementById("update-progress-wrap");
+  const progressFill = document.getElementById("update-progress-fill");
+  const progressLabel = document.getElementById("update-progress-label");
+  const btnLabel = btnCheck ? (btnCheck.querySelector(".btn-label") || btnCheck) : null;
+
+  if (btnCheck) btnCheck.disabled = true;
+  if (btnLabel) btnLabel.textContent = "Mengunduh...";
+  if (progressWrap) progressWrap.hidden = false;
+  if (progressFill) progressFill.style.width = "5%";
+  if (progressLabel) progressLabel.textContent = "5%";
+
+  try {
+    await postJson("/api/update/install", {
+      downloadUrl: activeDownloadUrl,
+      targetVersion: activeTargetVersion,
+    });
+
+    if (updatePollingTimer) clearInterval(updatePollingTimer);
+    updatePollingTimer = setInterval(async () => {
+      try {
+        const st = await getJson("/api/update/status");
+        if (!st) return;
+        if (progressFill && st.progress !== undefined) {
+          progressFill.style.width = `${st.progress}%`;
+        }
+        if (progressLabel && st.progress !== undefined) {
+          progressLabel.textContent = `${st.progress}%`;
+        }
+        if (statusText && st.message) {
+          statusText.textContent = st.message;
+        }
+        if (st.status === "ready_to_restart" || st.status === "failed") {
+          clearInterval(updatePollingTimer);
+          updatePollingTimer = null;
+          if (btnCheck) btnCheck.disabled = false;
+          if (btnLabel) btnLabel.textContent = st.status === "failed" ? "Coba lagi" : "Memulai ulang...";
+        }
+      } catch (_) { }
+    }, 500);
+  } catch (err) {
+    console.error("runInstallUpdate error:", err);
+    if (btnCheck) btnCheck.disabled = false;
+    if (btnLabel) btnLabel.textContent = "Coba lagi";
+    if (statusText) statusText.textContent = "Gagal memulai unduhan pembaruan.";
+  }
+}
+
+function initUpdaterControls() {
+  const card = document.getElementById("card-updater");
+  const btnInfo = document.getElementById("btn-update-info");
+  const infoBox = document.getElementById("update-info-box");
+  const btnCollapse = document.getElementById("btn-update-collapse");
+  const toggleAuto = document.getElementById("toggle-auto-update-check");
+  const btnStable = document.getElementById("btn-channel-stable");
+  const btnBeta = document.getElementById("btn-channel-beta");
+  const btnCheck = document.getElementById("btn-check-update");
+
+  if (btnInfo && infoBox) {
+    btnInfo.addEventListener("click", () => {
+      infoBox.hidden = !infoBox.hidden;
+      btnInfo.setAttribute("aria-expanded", String(!infoBox.hidden));
+    });
+  }
+
+  if (btnCollapse && card) {
+    btnCollapse.addEventListener("click", () => {
+      card.classList.toggle("is-collapsed");
+      btnCollapse.setAttribute("aria-expanded", String(!card.classList.contains("is-collapsed")));
+    });
+  }
+
+  if (toggleAuto) {
+    toggleAuto.addEventListener("click", () => {
+      currentUpdateSettings.autoCheckUpdate = !currentUpdateSettings.autoCheckUpdate;
+      toggleAuto.classList.toggle("is-active", currentUpdateSettings.autoCheckUpdate);
+      toggleAuto.setAttribute("aria-checked", String(currentUpdateSettings.autoCheckUpdate));
+      postJson("/api/settings", { autoCheckUpdate: currentUpdateSettings.autoCheckUpdate }).catch((e) => {
+        console.warn("save autoCheckUpdate error:", e);
+      });
+    });
+  }
+
+  const setChannel = (ch) => {
+    currentUpdateSettings.updateChannel = ch;
+    if (btnStable && btnBeta) {
+      const isBeta = ch === "beta";
+      btnStable.classList.toggle("is-active", !isBeta);
+      btnStable.setAttribute("aria-checked", String(!isBeta));
+      btnBeta.classList.toggle("is-active", isBeta);
+      btnBeta.setAttribute("aria-checked", String(isBeta));
+    }
+    postJson("/api/settings", { updateChannel: ch }).catch((e) => {
+      console.warn("save updateChannel error:", e);
+    });
+    runCheckUpdate(false);
+  };
+
+  if (btnStable) {
+    btnStable.addEventListener("click", () => setChannel("stable"));
+  }
+  if (btnBeta) {
+    btnBeta.addEventListener("click", () => setChannel("beta"));
+  }
+
+  if (btnCheck) {
+    btnCheck.addEventListener("click", () => {
+      if (btnCheck.classList.contains("has-update")) {
+        runInstallUpdate();
+      } else {
+        runCheckUpdate(false);
+      }
+    });
+  }
+
+  // Silent automatic check after 2.5 seconds on app startup
+  setTimeout(() => {
+    if (currentUpdateSettings.autoCheckUpdate) {
+      runCheckUpdate(true);
+    }
+  }, 2500);
+}
+
 // Tahap 70: Orderly Bootstrap Sequence at Bottom of File (Anti-TDZ 100%)
 // ======================================================================
 function bootstrapApp() {
@@ -3736,6 +3953,7 @@ function bootstrapApp() {
   try { startPureJsScreenParallax(); } catch (e) { console.error("startPureJsScreenParallax error:", e); }
   try { startWallpaperSigWatcher(); } catch (e) { console.error("startWallpaperSigWatcher error:", e); }
   try { fetchUserSettings(); } catch (e) { console.error("fetchUserSettings error:", e); }
+  try { initUpdaterControls(); } catch (e) { console.error("initUpdaterControls error:", e); }
   try { load(); } catch (e) { console.error("load error:", e); }
 }
 
