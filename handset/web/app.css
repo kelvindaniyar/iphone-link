@@ -833,6 +833,8 @@ iframe[hidden],
 .panel-theme {
   padding: 10px 12px;
   margin-bottom: 2px;
+  overflow: visible !important;
+  max-height: none !important;
 }
 
 /* Display Fit & Aspect Panel in Drawer */
@@ -1073,6 +1075,7 @@ iframe[hidden],
 }
 
 .segmented-theme,
+.segmented-lang,
 .segmented-fit,
 .segmented-speed,
 .segmented-toggle {
@@ -1788,7 +1791,7 @@ iframe[hidden],
 }
 
 /* ====================================================================== */
-/* Tahap 49 — Horizontal / Landscape Gaming & Viewing Mode */
+/* Tahap 49 - Horizontal / Landscape Gaming & Viewing Mode */
 /* ====================================================================== */
 
 .icon-btn.active,
@@ -2347,7 +2350,7 @@ iframe[hidden],
 }
 
 /* ======================================================================
-   TAHAP 68 — TRUE REAL-TIME DESKTOP PARALLAX BLUR & 3D LIQUID GLASS
+   TAHAP 68 - TRUE REAL-TIME DESKTOP PARALLAX BLUR & 3D LIQUID GLASS
    ====================================================================== */
 
 :root {
@@ -4803,4 +4806,99 @@ body[data-theme="light"],
   background: rgba(16, 185, 129, 0.16) !important;
   border-color: rgba(5, 150, 105, 0.45) !important;
   color: #047857 !important;
+}
+
+/* Language Switcher in Drawer Appearance Card (Tahap 148) */
+.lang-control-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.segmented-lang {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 0 !important;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.segmented-lang .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.segmented-lang .seg-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.segmented-lang .seg-btn.is-active {
+  background: var(--surface-card);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.segmented-lang .lang-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  letter-spacing: 0.5px;
+  line-height: 1;
+}
+
+.segmented-lang .seg-btn.is-active .lang-badge {
+  background: rgba(99, 102, 241, 0.25);
+  color: var(--accent);
+}
+
+[data-theme="light"] .segmented-lang {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .segmented-lang .seg-btn {
+  color: #475569;
+}
+
+[data-theme="light"] .segmented-lang .seg-btn:hover {
+  color: #0f172a;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .segmented-lang .seg-btn.is-active {
+  background: #ffffff;
+  color: #0284c7;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .segmented-lang .lang-badge {
+  background: rgba(0, 0, 0, 0.08);
+  color: #334155;
+}
+
+[data-theme="light"] .segmented-lang .seg-btn.is-active .lang-badge {
+  background: rgba(2, 132, 199, 0.15);
+  color: #0284c7;
 }

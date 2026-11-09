@@ -151,6 +151,7 @@ DEFAULT_SETTINGS = {
     "customWindowSize": None,
     "autoCheckUpdate": True,
     "updateChannel": "stable",
+    "language": "id",
 }
 
 def get_windows_clipboard_seq() -> int:
@@ -458,6 +459,7 @@ def load_user_settings(persist_instance: bool = False) -> dict:
 
     merged["deviceProfile"] = _normalize_device_profile(merged.get("deviceProfile"))
     merged["customWindowSize"] = _normalize_custom_window_size(merged.get("customWindowSize"))
+    merged["language"] = "en" if str(merged.get("language", "id")).strip().lower() == "en" else "id"
     _IS_FRESH_EXTRACTED_FOLDER = is_fresh
     merged["folderInstanceId"] = app_root_id
     merged["isFreshFolder"] = is_fresh
@@ -509,6 +511,8 @@ def save_user_settings(new_settings: dict) -> dict:
             current["autoCheckUpdate"] = bool(v)
         elif k == "updateChannel":
             current["updateChannel"] = "beta" if str(v).strip().lower() == "beta" else "stable"
+        elif k == "language":
+            current["language"] = "en" if str(v).strip().lower() == "en" else "id"
         elif k == "customWindowSize":
             current["customWindowSize"] = _normalize_custom_window_size(v)
         elif k in ("crossPlatformShortcuts", "pastePcClipboard", "autoRotate", "lipSync", "audioMuted"):

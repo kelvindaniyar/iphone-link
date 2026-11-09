@@ -56,6 +56,425 @@ const remotePanel = document.querySelector("#remote-panel");
 const restartScreen = document.querySelector("#restart-screen");
 const stopScreen = document.querySelector("#stop-screen");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
+
+// Tahap 148: Bilingual Language Dictionary (ID / EN)
+let currentLang = "id";
+
+const I18N_DICT = {
+  id: {
+    // Drawer Header
+    "drawer.title": "Pengaturan & Kontrol",
+
+    // Launchpad
+    "launchpad.tab_usb": "Kabel (USB)",
+    "launchpad.tab_wifi": "Wi-Fi",
+    "launchpad.device_ready": "{model} siap",
+    "launchpad.device_disconnected": "{model} · USB terputus",
+    "launchpad.device_connected": "{model} · USB siap",
+    "launchpad.wifi_ready": "{model} · Wi-Fi siap",
+    "launchpad.wifi_scan_hint": "{model} · Wi-Fi (Klik Scan)",
+    "launchpad.subtitle": "Buka kunci, lalu tekan Mulai mirroring.",
+    "launchpad.setup_wifi": "Atur Wi-Fi Sekarang",
+    "launchpad.start_mirror": "Mulai mirroring",
+    "launchpad.stop_mirror": "Hentikan mirroring",
+    "launchpad.activity_title": "Menyambungkan ke iPhone...",
+    "launchpad.cancel": "Batal",
+    "launchpad.step1_title": "1. Deteksi perangkat",
+    "launchpad.step1_desc": "Memastikan driver Apple Mobile Device terlihat.",
+    "launchpad.step2_title": "2. Koneksi aman",
+    "launchpad.step2_desc": "Membuka jalur terenkripsi CoreDevice ke perangkat.",
+    "launchpad.step3_title": "3. Siapkan perangkat",
+    "launchpad.step3_desc": "Cek Developer Mode, kunci layar, & kanal audio.",
+    "launchpad.step4_title": "4. Mulai stream",
+    "launchpad.step4_desc": "Menerima frame H.265/HEVC 60fps.",
+    "launchpad.stage1": "Tahap 1/4 · Mendeteksi perangkat...",
+    "launchpad.stage2": "Tahap 2/4 · Membuka jalur aman...",
+    "launchpad.stage3": "Tahap 3/4 · Menyiapkan perangkat...",
+    "launchpad.stage4": "Tahap 4/4 · Memulai stream video...",
+
+    // Card 1: Appearance & Language
+    "section.appearance": "TAMPILAN & BAHASA",
+    "theme.dark": "Gelap",
+    "theme.light": "Terang",
+    "label.language": "Bahasa / Language",
+
+    // Card 2: Display Fit & Aspect
+    "section.display_fit": "RASIO & UKURAN LAYAR",
+    "fit.autofit": "Otomatis",
+    "fit.fill": "Penuh",
+    "fit.contain": "Rasio Asli",
+    "device_aspect.label": "Perangkat (Aspect)",
+    "btn.reset_window_size": "Reset Ukuran Default (1:1)",
+    "toggle.auto_rotate": "Putar Otomatis Game",
+
+    // Card 3: Edge Crop
+    "section.edge_crop": "POTONG TEPI (0-24 PX PRESISI)",
+    "crop.top": "Atas (Top)",
+    "crop.bottom": "Bawah (Bottom)",
+    "crop.left": "Kiri (Left)",
+    "crop.right": "Kanan (Right)",
+    "crop.reset": "Reset (0 px)",
+    "crop.save": "Simpan Crop",
+
+    // Card 4: Audio
+    "section.audio": "Audio (iPhone -> PC)",
+    "audio.subtitle": "Tanpa Bluetooth (USB/Wi-Fi langsung ke PC)",
+    "audio.out_pc": "Di PC ini",
+    "audio.out_device": "Hanya perangkat",
+    "audio.vol_pc": "Volume PC",
+    "audio.buffer": "Buffer Audio",
+    "audio.buf_low": "Rendah",
+    "audio.buf_normal": "Normal",
+    "audio.buf_high": "Tinggi",
+    "audio.lipsync": "Sinkron Bibir (Lip Sync)",
+
+    // Card 5: Trackpad Gesture Speed
+    "section.trackpad_speed": "KECEPATAN GESTUR TRACKPAD",
+    "speed.slow": "Lambat (65%)",
+    "speed.default": "Standar (100%)",
+    "speed.fast": "Cepat (140%)",
+    "speed.sensitivity": "Sensitivitas Kecepatan",
+    "speed.save": "Simpan Kecepatan",
+
+    // Card 6: Keyboard & Shortcuts
+    "section.keyboard": "KEYBOARD & PINTASAN",
+    "kb.cross_platform": "Pintasan Lintas Platform",
+    "kb.paste_pc": "Ctrl+V Tempel Clipboard PC",
+    "kb.btn_paste_now": "Tempel Teks PC (Alt+V)",
+    "kb.btn_copy_now": "Salin Teks iPhone (Alt+C)",
+    "kb.btn_clear_cache": "Bersihkan Cache Salin (Alt+R)",
+    "kb.btn_grab_link": "Grab Link (Alt+B)",
+    "kb.btn_toggle_kb": "Tampilkan Keyboard Layar iPhone (Ctrl+K)",
+    "kb.note": "Pintasan: Alt+V Tempel, Alt+C Salin, Alt+R Reset Cache, Alt+B Ambil Link, Ctrl+K Keyboard, Alt+D Mode Redup, Alt+U Bangun, Alt+L Kunci.",
+
+    // Card 7: Screen & Stealth
+    "section.screen_stealth": "LAYAR IPHONE & MODE SILUMAN",
+    "btn.wake_unlock": "Bangun / Buka (Alt+U)",
+    "btn.lock_iphone": "Kunci iPhone (Alt+L)",
+    "btn.stealth_dim": "Mode Redup Siluman (Alt+D): OFF",
+    "btn.stealth_dim_on": "Mode Redup Siluman (Alt+D): ON",
+    "stealth.subhint": "Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).",
+    "label.pin": "Auto-Unlock PIN (Opsional):",
+    "pin.subhint": "Tersimpan di browser lokal saja. Kosongkan jika ingin mengetik PIN manual.",
+    "btn.wipe_privacy": "Hapus PIN & Data Privasi",
+    "btn.hide_to_tray": "Sembunyikan ke System Tray",
+
+    // Card 8: Connection
+    "conn.cable": "Kabel",
+    "conn.wifi": "Wi-Fi",
+    "conn.scan": "Pindai",
+    "conn.setup_wifi": "Atur Wi-Fi",
+    "conn.start_mirror": "Mulai mirroring",
+    "conn.stop_mirror": "Putuskan Mirroring",
+    "conn.hint": "Mengetik langsung ke iPhone. Geser dari tepi bawah untuk Home.",
+
+    // Card 9: Software Update
+    "updater.title": "Pembaruan",
+    "updater.info": "Cek versi baru di GitHub, unduh berkas instalasi, verifikasi integritas berkas, lalu jalankan pembaruan otomatis tanpa menghentikan kerja Anda. Pengaturan Anda tetap aman. Kanal Beta menerima rilis percobaan lebih awal.",
+    "updater.current_version": "Versi saat ini:",
+    "updater.auto_check": "Cek otomatis saat mulai",
+    "updater.channel": "Kanal",
+    "updater.stable": "Stabil",
+    "updater.beta": "Beta",
+    "updater.status_up_to_date": "iPhone Link sudah versi terbaru.",
+    "updater.status_checking": "Memeriksa pembaruan...",
+    "updater.status_failed": "Gagal memeriksa pembaruan (koneksi offline).",
+    "updater.check_btn": "Cek update",
+
+    // Card 10: Remote Gestures & Keys
+    "remote.summary": "Gestur & Tombol Fisik",
+    "remote.notifications": "Notifikasi",
+    "remote.control_center": "Pusat Kontrol",
+    "remote.lock": "Kunci",
+    "remote.wake": "Bangun",
+    "remote.mute": "Bisukan",
+    "remote.vol_up": "Vol +",
+    "remote.vol_down": "Vol -",
+
+    // Card 11 & 12
+    "device.summary": "Detail Perangkat & Koneksi",
+    "device.refresh": "Segarkan Perangkat",
+    "guide.summary": "Panduan & Pemecahan Masalah",
+    "saweria.btn": "Dukung Kreator di Saweria",
+
+    // Nav Tooltips
+    "nav.swipe_left": "Geser Kiri (←)",
+    "nav.home": "Layar Utama",
+    "nav.recent": "Aplikasi Terbaru",
+    "nav.swipe_right": "Geser Kanan (→)"
+  },
+  en: {
+    // Drawer Header
+    "drawer.title": "Settings & Controls",
+
+    // Launchpad
+    "launchpad.tab_usb": "Cable (USB)",
+    "launchpad.tab_wifi": "Wi-Fi",
+    "launchpad.device_ready": "{model} ready",
+    "launchpad.device_disconnected": "{model} · USB disconnected",
+    "launchpad.device_connected": "{model} · USB ready",
+    "launchpad.wifi_ready": "{model} · Wi-Fi ready",
+    "launchpad.wifi_scan_hint": "{model} · Wi-Fi (Click Scan)",
+    "launchpad.subtitle": "Unlock device, then click Start mirroring.",
+    "launchpad.setup_wifi": "Set up Wi-Fi Now",
+    "launchpad.start_mirror": "Start mirroring",
+    "launchpad.stop_mirror": "Stop mirroring",
+    "launchpad.activity_title": "Connecting to iPhone...",
+    "launchpad.cancel": "Cancel",
+    "launchpad.step1_title": "1. Device detection",
+    "launchpad.step1_desc": "Checking Apple Mobile Device driver visibility.",
+    "launchpad.step2_title": "2. Secure handshake",
+    "launchpad.step2_desc": "Opening encrypted CoreDevice tunnel to device.",
+    "launchpad.step3_title": "3. Prepare device",
+    "launchpad.step3_desc": "Checking Developer Mode, screen lock, & audio pipeline.",
+    "launchpad.step4_title": "4. Start video stream",
+    "launchpad.step4_desc": "Receiving 60fps H.265/HEVC frames.",
+    "launchpad.stage1": "Stage 1/4 · Detecting device...",
+    "launchpad.stage2": "Stage 2/4 · Opening secure tunnel...",
+    "launchpad.stage3": "Stage 3/4 · Preparing device...",
+    "launchpad.stage4": "Stage 4/4 · Starting video stream...",
+
+    // Card 1: Appearance & Language
+    "section.appearance": "APPEARANCE & LANGUAGE",
+    "theme.dark": "Dark",
+    "theme.light": "Light",
+    "label.language": "Bahasa / Language",
+
+    // Card 2: Display Fit & Aspect
+    "section.display_fit": "DISPLAY FIT & ASPECT",
+    "fit.autofit": "Auto-Fit",
+    "fit.fill": "Edge-to-Edge",
+    "fit.contain": "Original Ratio",
+    "device_aspect.label": "Device (Aspect)",
+    "btn.reset_window_size": "Reset Default Size (1:1)",
+    "toggle.auto_rotate": "Auto-Rotate Game",
+
+    // Card 3: Edge Crop
+    "section.edge_crop": "EDGE CROP (0-24 PX FINE TUNING)",
+    "crop.top": "Top",
+    "crop.bottom": "Bottom",
+    "crop.left": "Left",
+    "crop.right": "Right",
+    "crop.reset": "Reset (0 px)",
+    "crop.save": "Save Crop",
+
+    // Card 4: Audio
+    "section.audio": "Audio (iPhone -> PC)",
+    "audio.subtitle": "Zero Bluetooth (Direct USB/Wi-Fi to PC)",
+    "audio.out_pc": "On this PC",
+    "audio.out_device": "Phone only",
+    "audio.vol_pc": "PC Volume",
+    "audio.buffer": "Audio Buffer",
+    "audio.buf_low": "Low",
+    "audio.buf_normal": "Normal",
+    "audio.buf_high": "High",
+    "audio.lipsync": "Lip Sync",
+
+    // Card 5: Trackpad Gesture Speed
+    "section.trackpad_speed": "TRACKPAD GESTURE SPEED",
+    "speed.slow": "Slow (65%)",
+    "speed.default": "Default (100%)",
+    "speed.fast": "Fast (140%)",
+    "speed.sensitivity": "Speed Sensitivity",
+    "speed.save": "Save Speed",
+
+    // Card 6: Keyboard & Shortcuts
+    "section.keyboard": "KEYBOARD & SHORTCUTS",
+    "kb.cross_platform": "Cross-Platform Shortcuts",
+    "kb.paste_pc": "Ctrl+V Pastes PC Clipboard",
+    "kb.btn_paste_now": "Paste PC Text (Alt+V)",
+    "kb.btn_copy_now": "Copy iPhone Text (Alt+C)",
+    "kb.btn_clear_cache": "Clear Copy Cache (Alt+R)",
+    "kb.btn_grab_link": "Grab Link (Alt+B)",
+    "kb.btn_toggle_kb": "Toggle iPhone On-Screen Keyboard (Ctrl+K)",
+    "kb.note": "Shortcuts: Alt+V Paste, Alt+C Copy, Alt+R Reset Cache, Alt+B Grab Link, Ctrl+K Keyboard, Alt+D Stealth Dim, Alt+U Wake, Alt+L Lock.",
+
+    // Card 7: Screen & Stealth
+    "section.screen_stealth": "IPHONE SCREEN & STEALTH CONTROL",
+    "btn.wake_unlock": "Wake / Unlock (Alt+U)",
+    "btn.lock_iphone": "Lock iPhone (Alt+L)",
+    "btn.stealth_dim": "Stealth Dim Mode (Alt+D): OFF",
+    "btn.stealth_dim_on": "Stealth Dim Mode (Alt+D): ON",
+    "stealth.subhint": "Dim physical iPhone display to 0% during USB control (PC mirror stays bright).",
+    "label.pin": "Auto-Unlock PIN (Optional):",
+    "pin.subhint": "Saved in local browser only. Leave blank if you prefer manual PIN typing.",
+    "btn.wipe_privacy": "Clear Saved PIN & Privacy Data",
+    "btn.hide_to_tray": "Hide Window to System Tray",
+
+    // Card 8: Connection
+    "conn.cable": "Cable",
+    "conn.wifi": "Wi-Fi",
+    "conn.scan": "Scan",
+    "conn.setup_wifi": "Set up Wi-Fi",
+    "conn.start_mirror": "Start mirroring",
+    "conn.stop_mirror": "Disconnect Mirroring",
+    "conn.hint": "Typing routes straight to iPhone. Swipe up from bottom edge for Home.",
+
+    // Card 9: Software Update
+    "updater.title": "Software Update",
+    "updater.info": "Check for new versions on GitHub, download the installation package, verify file integrity, and apply updates automatically without interrupting your work. Your settings remain safe. The Beta channel receives early preview releases.",
+    "updater.current_version": "Current version:",
+    "updater.auto_check": "Check automatically on startup",
+    "updater.channel": "Channel",
+    "updater.stable": "Stable",
+    "updater.beta": "Beta",
+    "updater.status_up_to_date": "iPhone Link is up to date.",
+    "updater.status_checking": "Checking for updates...",
+    "updater.status_failed": "Failed to check for updates (offline).",
+    "updater.check_btn": "Check for updates",
+
+    // Card 10: Remote Gestures & Keys
+    "remote.summary": "Gestures & Hardware Keys",
+    "remote.notifications": "Notifications",
+    "remote.control_center": "Control Center",
+    "remote.lock": "Lock",
+    "remote.wake": "Wake",
+    "remote.mute": "Mute",
+    "remote.vol_up": "Vol +",
+    "remote.vol_down": "Vol -",
+
+    // Card 11 & 12
+    "device.summary": "Device & Connection Details",
+    "device.refresh": "Refresh Devices",
+    "guide.summary": "How to run & Troubleshooting",
+    "saweria.btn": "Support Creator on Saweria",
+
+    // Nav Tooltips
+    "nav.swipe_left": "Swipe Left (←)",
+    "nav.home": "Home Screen",
+    "nav.recent": "App Switcher (Recent)",
+    "nav.swipe_right": "Swipe Right (→)"
+  }
+};
+
+function t(key, params = {}) {
+  const dict = I18N_DICT[currentLang] || I18N_DICT["id"];
+  let str = dict[key] || (I18N_DICT["id"][key] || key);
+  for (const [k, v] of Object.entries(params)) {
+    str = str.replace(`{${k}}`, v);
+  }
+  return str;
+}
+
+function applyLanguage(lang, save = true) {
+  const targetLang = (lang === "en") ? "en" : "id";
+  currentLang = targetLang;
+
+  document.documentElement.lang = targetLang;
+  document.documentElement.setAttribute("data-lang", targetLang);
+
+  const btnId = document.getElementById("btn-lang-id");
+  const btnEn = document.getElementById("btn-lang-en");
+  if (btnId && btnEn) {
+    const isId = (targetLang === "id");
+    btnId.classList.toggle("is-active", isId);
+    btnId.setAttribute("aria-pressed", String(isId));
+    btnEn.classList.toggle("is-active", !isId);
+    btnEn.setAttribute("aria-pressed", String(!isId));
+  }
+
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    const val = t(key);
+    if (!val) return;
+    const btnLabel = el.querySelector(".btn-label");
+    if (btnLabel) {
+      btnLabel.textContent = val;
+    } else if (el.tagName === "BUTTON" || el.tagName === "A") {
+      const innerSpan = el.querySelector("span:not(.lang-badge)");
+      if (innerSpan) {
+        innerSpan.textContent = val;
+      } else {
+        el.textContent = val;
+      }
+    } else {
+      el.textContent = val;
+    }
+  });
+
+  // Nav buttons tooltips (preserve text content as 'Swipe', 'Home', 'Recent', 'Swipe')
+  const navLeft = document.getElementById("nav-swipe-left");
+  if (navLeft) navLeft.setAttribute("title", t("nav.swipe_left"));
+  const navHome = document.getElementById("nav-home");
+  if (navHome) navHome.setAttribute("title", t("nav.home"));
+  const navRecent = document.getElementById("nav-recent");
+  if (navRecent) navRecent.setAttribute("title", t("nav.recent"));
+  const navRight = document.getElementById("nav-swipe-right");
+  if (navRight) navRight.setAttribute("title", t("nav.swipe_right"));
+
+  // Remote panel buttons
+  const notifBtn = document.getElementById("hw-btn-notifications");
+  if (notifBtn) {
+    const s = notifBtn.querySelector("span");
+    if (s) s.textContent = t("remote.notifications");
+  }
+  const ctrlBtn = document.getElementById("hw-btn-control-center");
+  if (ctrlBtn) {
+    const s = ctrlBtn.querySelector("span");
+    if (s) s.textContent = t("remote.control_center");
+  }
+  const muteBtn = document.getElementById("hw-btn-mute");
+  if (muteBtn) {
+    const s = muteBtn.querySelector("span");
+    if (s) s.textContent = t("remote.mute");
+  }
+
+  // Update hardware smart lock button label & title
+  const smartLockBtn = document.querySelector("#hw-btn-smart-lock");
+  const isLocked = smartLockBtn ? smartLockBtn.classList.contains("is-locked-state") : false;
+  updateHardwareSmartLockButton(isLocked);
+
+  // Update Audio route button labels
+  const btnAudioPc = document.getElementById("btn-audio-out-pc");
+  if (btnAudioPc) {
+    const s = btnAudioPc.querySelector(".btn-label");
+    if (s) s.textContent = (targetLang === "en") ? "On this PC" : "Di PC ini";
+  }
+  const btnAudioDev = document.getElementById("btn-audio-out-device");
+  if (btnAudioDev) {
+    const s = btnAudioDev.querySelector(".btn-label");
+    if (s) s.textContent = (targetLang === "en") ? "Phone only" : "Hanya perangkat";
+  }
+
+  // Update updater status & check button if not in active check
+  const updateStatusText = document.getElementById("update-status-text");
+  const btnCheckUpdate = document.getElementById("btn-check-update");
+  if (btnCheckUpdate && !btnCheckUpdate.disabled && !btnCheckUpdate.classList.contains("has-update")) {
+    const s = btnCheckUpdate.querySelector(".btn-label");
+    if (s) s.textContent = t("updater.check_btn");
+  }
+  if (updateStatusText && !activeUpdateAvailable) {
+    updateStatusText.textContent = t("updater.status_up_to_date");
+  }
+
+  // Update main start mirroring button in panel-start & launchpad
+  if (showScreen && !showScreen.classList.contains("is-disconnect") && !showScreen.disabled) {
+    const s = showScreen.querySelector(".btn-label") || showScreen;
+    s.textContent = t("launchpad.start_mirror");
+  }
+  if (launchpadStartBtn && !launchpadStartBtn.disabled) {
+    const s = launchpadStartBtn.querySelector(".btn-label") || launchpadStartBtn;
+    s.textContent = t("launchpad.start_mirror");
+  }
+
+  // Refresh Launchpad status text
+  if (typeof updateLaunchpadDeviceStatus === "function") {
+    try { updateLaunchpadDeviceStatus(); } catch (_) {}
+  }
+
+  // Save preference
+  if (save) {
+    try {
+      localStorage.setItem("iphone_link_language", targetLang);
+    } catch (_) {}
+    postJson("/api/settings", { language: targetLang }).catch((e) => {
+      console.warn("save language error:", e);
+    });
+  }
+}
+window.applyLanguage = applyLanguage;
+window.t = t;
+
 const screenEmpty = document.querySelector("#screen-empty");
 const launchpadShell = document.querySelector("#launchpad-shell");
 const launchpadIdleView = document.querySelector("#launchpad-idle-view");
@@ -432,6 +851,9 @@ async function fetchUserSettings() {
     }
     if (res.theme) {
       try { applyTheme(res.theme); } catch (_) { }
+    }
+    if (res.language) {
+      try { applyLanguage(res.language, false); } catch (_) { }
     }
     if (res.trackpadSpeed !== undefined) {
       try { applyTrackpadSpeed(res.trackpadSpeed, true); } catch (_) { }
@@ -1400,6 +1822,15 @@ function syncSettingsToIframe() {
 
 
 function initThemeAndFitControls() {
+  const btnLangId = document.getElementById("btn-lang-id");
+  if (btnLangId) {
+    btnLangId.onclick = () => applyLanguage("id", true);
+  }
+  const btnLangEn = document.getElementById("btn-lang-en");
+  if (btnLangEn) {
+    btnLangEn.onclick = () => applyLanguage("en", true);
+  }
+
   document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
     btn.onclick = () => {
       applyTheme(btn.dataset.themeChoice);
@@ -1776,18 +2207,19 @@ function updateHardwareSmartLockButton(isLocked) {
   const iconLock = btn?.querySelector('.hw-icon-lock');
   const iconWake = btn?.querySelector('.hw-icon-wake');
   if (!btn) return;
+  const isEn = (currentLang === 'en');
   if (isLocked) {
     btn.classList.add('is-locked-state');
-    btn.setAttribute('title', 'Wake / Unlock iPhone (Alt+U)');
-    btn.setAttribute('aria-label', 'Wake / Unlock iPhone (Alt+U)');
-    if (label) label.textContent = 'Wake';
+    btn.setAttribute('title', isEn ? 'Wake / Unlock iPhone (Alt+U)' : 'Bangun / Buka iPhone (Alt+U)');
+    btn.setAttribute('aria-label', isEn ? 'Wake / Unlock iPhone (Alt+U)' : 'Bangun / Buka iPhone (Alt+U)');
+    if (label) label.textContent = isEn ? 'Wake' : 'Bangun';
     if (iconLock) iconLock.style.display = 'none';
     if (iconWake) iconWake.style.display = 'block';
   } else {
     btn.classList.remove('is-locked-state');
-    btn.setAttribute('title', 'Lock iPhone (Alt+L)');
-    btn.setAttribute('aria-label', 'Lock iPhone (Alt+L)');
-    if (label) label.textContent = 'Lock';
+    btn.setAttribute('title', isEn ? 'Lock iPhone (Alt+L)' : 'Kunci iPhone (Alt+L)');
+    btn.setAttribute('aria-label', isEn ? 'Lock iPhone (Alt+L)' : 'Kunci iPhone (Alt+L)');
+    if (label) label.textContent = isEn ? 'Lock' : 'Kunci';
     if (iconLock) iconLock.style.display = 'block';
     if (iconWake) iconWake.style.display = 'none';
   }
@@ -2375,11 +2807,12 @@ function updateLaunchpadState(passedState) {
   const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
   const nickname = (activeDev && (activeDev.name || activeDev.deviceName)) || (targetUdid && targetUdid.includes("00008150") ? "UWE UH" : (activeDev?.name || "iPhone"));
 
+  const isEnLp = (currentLang === "en");
   if (launchpadTitle) {
-    launchpadTitle.textContent = (activeDev || targetUdid) ? `${modelName} siap` : "iPhone Link";
+    launchpadTitle.textContent = (activeDev || targetUdid) ? `${modelName} ${isEnLp ? "ready" : "siap"}` : "iPhone Link";
   }
   if (launchpadSubtitle) {
-    launchpadSubtitle.textContent = "Buka kunci, lalu tekan Mulai mirroring.";
+    launchpadSubtitle.textContent = isEnLp ? "Unlock device, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.";
   }
   if (launchpadDeviceName) {
     launchpadDeviceName.textContent = nickname;
@@ -2396,15 +2829,15 @@ function updateLaunchpadState(passedState) {
       if (ipStr) {
         launchpadDeviceSub.textContent = `${modelName} · Wi-Fi ${ipStr}`;
       } else if (wifiReady) {
-        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi siap`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi ready" : "Wi-Fi siap"}`;
       } else {
-        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi (Klik Scan)`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi (Click Scan)" : "Wi-Fi (Klik Scan)"}`;
       }
     } else {
       if (hasCableDevice) {
-        launchpadDeviceSub.textContent = `${modelName} · USB siap`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "USB ready" : "USB siap"}`;
       } else {
-        launchpadDeviceSub.textContent = `${modelName} · USB terputus`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "USB disconnected" : "USB terputus"}`;
       }
     }
   }
@@ -2733,17 +3166,24 @@ function renderScreen(screen) {
       const targetUdid = selectedUdid || lastServerState?.udid || (lastServerState?.devices || [])[0]?.udid || "";
       const activeDev = (targetUdid && (lastServerState?.devices || []).find(d => d.udid === targetUdid)) || (lastServerState?.devices || [])[0];
       const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
-      launchpadActivityTitle.textContent = `Menyambungkan ke ${modelName}...`;
+      const isEnAct = (currentLang === "en");
+      launchpadActivityTitle.textContent = isEnAct ? `Connecting to ${modelName}...` : `Menyambungkan ke ${modelName}...`;
     }
     const currentStep = screen.stage_step || 1;
-    const stageDescriptions = {
+    const isEnStage = (currentLang === "en");
+    const stageDescriptions = isEnStage ? {
+      1: "Stage 1/4 · Detecting device...",
+      2: "Stage 2/4 · Opening secure CoreDevice tunnel...",
+      3: "Stage 3/4 · Preparing screen & audio pipeline...",
+      4: "Stage 4/4 · Starting H.265 video stream..."
+    } : {
       1: "Tahap 1/4 · Mendeteksi perangkat...",
       2: "Tahap 2/4 · Membuka jalur aman CoreDevice...",
       3: "Tahap 3/4 · Menyiapkan layar & kanal audio...",
       4: "Tahap 4/4 · Memulai streaming video H.265..."
     };
     if (launchpadStageText) {
-      launchpadStageText.textContent = stageDescriptions[currentStep] || `Tahap ${currentStep}/4 · Menyambungkan...`;
+      launchpadStageText.textContent = stageDescriptions[currentStep] || (isEnStage ? `Stage ${currentStep}/4 · Connecting...` : `Tahap ${currentStep}/4 · Menyambungkan...`);
     }
     document.querySelectorAll(".activity-step").forEach((stepEl) => {
       const stepNum = parseInt(stepEl.dataset.step, 10);
@@ -3823,10 +4263,10 @@ async function runCheckUpdate(isSilent = false) {
         btnCheck.classList.remove("has-update");
       }
       if (btnLabel) {
-        btnLabel.textContent = "Cek update";
+        btnLabel.textContent = (currentLang === "en") ? "Check for updates" : "Cek update";
       }
       if (statusText) {
-        statusText.textContent = res?.message || "iPhone Link sudah versi terbaru.";
+        statusText.textContent = res?.message || ((currentLang === "en") ? "iPhone Link is up to date." : "iPhone Link sudah versi terbaru.");
       }
     }
   } catch (err) {
@@ -3982,6 +4422,7 @@ function bootstrapApp() {
   try { initDeviceProfileAndResizeControls(); } catch (e) { console.error("initDeviceProfileAndResizeControls error:", e); }
   try { initAudioControls(); } catch (e) { console.error("initAudioControls error:", e); }
   try { bindDisplayFitAndAutoRotateControls(); } catch (e) { console.error("bindDisplayFitAndAutoRotateControls error:", e); }
+  try { applyLanguage(localStorage.getItem("iphone_link_language") || "id", false); } catch (e) { console.error("applyLanguage error:", e); }
   try { applyTheme(currentTheme); } catch (e) { console.error("applyTheme error:", e); }
   try { applyFitMode(currentFitMode); } catch (e) { console.error("applyFitMode error:", e); }
   try { applyCrop(currentCrop, true); } catch (e) { console.error("applyCrop error:", e); }

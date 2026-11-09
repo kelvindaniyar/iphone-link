@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id" data-lang="id">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link - iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap144_ota_auto_updater">
+  <link rel="stylesheet" href="/app.css?v=tahap148_bilingual_id_en">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -143,7 +143,7 @@
                             <path d="M12 18v4"></path>
                           </svg>
                         </span>
-                        <span class="pill-label">Kabel (USB)</span>
+                        <span class="pill-label" data-i18n="launchpad.tab_usb">Kabel (USB)</span>
                       </button>
                       <button type="button" class="launchpad-pill" id="launchpad-transport-wifi" data-transport="wifi" aria-checked="false">
                         <span class="launchpad-pill-icon" aria-hidden="true">
@@ -153,7 +153,7 @@
                             <circle cx="12" cy="20" r="1.2" fill="currentColor"></circle>
                           </svg>
                         </span>
-                        <span class="pill-label">Wi-Fi</span>
+                        <span class="pill-label" data-i18n="launchpad.tab_wifi">Wi-Fi</span>
                       </button>
                     </div>
 
@@ -164,7 +164,7 @@
                           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
                         </svg>
                       </span>
-                      <span class="btn-label">Atur Wi-Fi Sekarang</span>
+                      <span class="btn-label" data-i18n="launchpad.setup_wifi">Atur Wi-Fi Sekarang</span>
                     </button>
                     <div class="launchpad-wifi-feedback" id="launchpad-wifi-feedback" hidden></div>
 
@@ -175,7 +175,7 @@
                           <polygon points="6 4 20 12 6 20 6 4"></polygon>
                         </svg>
                       </span>
-                      <span class="btn-label">Mulai mirroring</span>
+                      <span class="btn-label" data-i18n="launchpad.start_mirror">Mulai mirroring</span>
                     </button>
                     <div class="launchpad-error" id="launchpad-error" hidden></div>
                   </div>
@@ -201,8 +201,8 @@
                           <span class="step-line"></span>
                         </div>
                         <div class="step-content">
-                          <div class="step-title">1. Deteksi perangkat</div>
-                          <div class="step-desc">Memastikan driver Apple Mobile Device terlihat.</div>
+                          <div class="step-title" data-i18n="launchpad.step1_title">1. Deteksi perangkat</div>
+                          <div class="step-desc" data-i18n="launchpad.step1_desc">Memastikan driver Apple Mobile Device terlihat.</div>
                         </div>
                       </div>
 
@@ -213,8 +213,8 @@
                           <span class="step-line"></span>
                         </div>
                         <div class="step-content">
-                          <div class="step-title">2. Koneksi aman</div>
-                          <div class="step-desc">Membuka jalur terenkripsi CoreDevice ke perangkat.</div>
+                          <div class="step-title" data-i18n="launchpad.step2_title">2. Koneksi aman</div>
+                          <div class="step-desc" data-i18n="launchpad.step2_desc">Membuka jalur terenkripsi CoreDevice ke perangkat.</div>
                         </div>
                       </div>
 
@@ -225,8 +225,8 @@
                           <span class="step-line"></span>
                         </div>
                         <div class="step-content">
-                          <div class="step-title">3. Siapkan perangkat</div>
-                          <div class="step-desc">Cek Developer Mode, kunci layar, & kanal audio.</div>
+                          <div class="step-title" data-i18n="launchpad.step3_title">3. Siapkan perangkat</div>
+                          <div class="step-desc" data-i18n="launchpad.step3_desc">Cek Developer Mode, kunci layar, & kanal audio.</div>
                         </div>
                       </div>
 
@@ -236,15 +236,15 @@
                           <span class="step-dot"></span>
                         </div>
                         <div class="step-content">
-                          <div class="step-title">4. Mulai stream</div>
-                          <div class="step-desc">Menerima frame H.265/HEVC 60fps.</div>
+                          <div class="step-title" data-i18n="launchpad.step4_title">4. Mulai stream</div>
+                          <div class="step-desc" data-i18n="launchpad.step4_desc">Menerima frame H.265/HEVC 60fps.</div>
                         </div>
                       </div>
                     </div>
 
                     <p id="launchpad-stage-text" class="launchpad-stage-text">Tahap 1/4 · Mendeteksi perangkat...</p>
 
-                    <button type="button" class="launchpad-cancel-btn" id="launchpad-cancel-btn">
+                    <button type="button" class="launchpad-cancel-btn" id="launchpad-cancel-btn" data-i18n="launchpad.cancel">
                       Batal
                     </button>
                   </div>
@@ -289,7 +289,7 @@
       <!-- Settings Side-Drawer (Sebelah Kanan, Tidak Menutupi Layar Video) -->
       <aside class="side-drawer" id="control-pane" aria-label="Settings and controls" hidden>
         <div class="drawer-header">
-          <h2 class="drawer-title">Settings & Controls</h2>
+          <h2 class="drawer-title" data-i18n="drawer.title">Pengaturan & Kontrol</h2>
           <button type="button" class="icon-btn-close" id="close-settings" title="Close settings" aria-label="Close">
             <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -300,30 +300,38 @@
 
         <div class="drawer-content drawer-scroll">
           <section class="card glass-card panel-theme">
-            <span class="drawer-section-label">Appearance</span>
+            <span class="drawer-section-label" data-i18n="section.appearance">Appearance</span>
             <div class="segmented segmented-theme" role="radiogroup" aria-label="Theme">
               <button type="button" class="seg is-active" data-theme-choice="dark" role="radio" aria-checked="true">
                 <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                 </svg>
-                <span class="btn-label">Dark</span>
+                <span class="btn-label" data-i18n="theme.dark">Dark</span>
               </button>
               <button type="button" class="seg" data-theme-choice="light" role="radio" aria-checked="false">
                 <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="4"></circle>
                   <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
                 </svg>
-                <span class="btn-label">Light</span>
+                <span class="btn-label" data-i18n="theme.light">Light</span>
               </button>
+            </div>
+
+            <div class="lang-control-row">
+              <span class="control-label" data-i18n="label.language">Bahasa / Language</span>
+              <div class="segmented segmented-lang" id="language-toggle-group" role="group" aria-label="Language">
+                <button type="button" class="seg-btn is-active" id="btn-lang-id" data-lang="id" aria-pressed="true"><span class="lang-badge">ID</span><span>Indonesia</span></button>
+                <button type="button" class="seg-btn" id="btn-lang-en" data-lang="en" aria-pressed="false"><span class="lang-badge">EN</span><span>English</span></button>
+              </div>
             </div>
           </section>
 
           <section class="card glass-card panel-display-fit">
-            <span class="drawer-section-label">Display Fit & Aspect</span>
+            <span class="drawer-section-label" data-i18n="section.display_fit">Display Fit & Aspect</span>
             <div class="segmented segmented-fit" role="radiogroup" aria-label="Display Fit">
-              <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true"><span class="btn-label">Auto-Fit</span></button>
-              <button type="button" class="seg" data-fit-choice="fill" role="radio" aria-checked="false"><span class="btn-label">Edge-to-Edge</span></button>
-              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false"><span class="btn-label">Original Ratio</span></button>
+              <button type="button" class="seg is-active active" data-fit-choice="autofit" role="radio" aria-checked="true"><span class="btn-label" data-i18n="fit.autofit">Auto-Fit</span></button>
+              <button type="button" class="seg" data-fit-choice="fill" role="radio" aria-checked="false"><span class="btn-label" data-i18n="fit.fill">Edge-to-Edge</span></button>
+              <button type="button" class="seg" data-fit-choice="contain" role="radio" aria-checked="false"><span class="btn-label" data-i18n="fit.contain">Original Ratio</span></button>
             </div>
 
             <div class="setting-toggle-item" style="margin-top: 8px; margin-bottom: 8px;">
@@ -333,7 +341,7 @@
                     <rect x="3" y="4" width="12" height="16" rx="2"></rect>
                     <rect x="13" y="8" width="8" height="12" rx="1.5"></rect>
                   </svg>
-                  <span class="btn-label">Perangkat (Aspect)</span>
+                  <span class="btn-label" data-i18n="device_aspect.label">Perangkat (Aspect)</span>
                 </span>
                 <span class="setting-hint" id="device-profile-hint">Auto (iPhone)</span>
               </div>
@@ -349,7 +357,7 @@
                 <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
                 </svg>
-                <span class="btn-label">Reset Ukuran Default (1:1)</span>
+                <span class="btn-label" data-i18n="btn.reset_window_size">Reset Ukuran Default (1:1)</span>
               </button>
             </div>
 
@@ -360,7 +368,7 @@
                     <rect x="2" y="6" width="20" height="12" rx="4"></rect>
                     <path d="M6 12h4M8 10v4M15 11h.01M18 13h.01"></path>
                   </svg>
-                  <span class="btn-label">Auto-Rotate Game</span>
+                  <span class="btn-label" data-i18n="toggle.auto_rotate">Auto-Rotate Game</span>
                 </span>
                 <span class="setting-hint">eFootball / Genshin</span>
               </div>
@@ -371,12 +379,12 @@
             </div>
             
             <div class="crop-grid">
-              <span class="drawer-section-label" style="margin-bottom: 2px;">Edge Crop (Fine Tuning)</span>
+              <span class="drawer-section-label" data-i18n="section.edge_crop" style="margin-bottom: 2px;">Edge Crop (Fine Tuning)</span>
               
               <!-- Crop Atas (Top) -->
               <div class="crop-item">
                 <div class="crop-label-row">
-                  <span>Atas (Top)</span>
+                  <span data-i18n="crop.top">Atas (Top)</span>
                   <div class="crop-input-wrap">
                     <input type="number" id="crop-top-num" min="0" max="120" step="1" value="0">
                     <span class="unit">px</span>
@@ -388,7 +396,7 @@
               <!-- Crop Bawah (Bottom) -->
               <div class="crop-item">
                 <div class="crop-label-row">
-                  <span>Bawah (Bottom)</span>
+                  <span data-i18n="crop.bottom">Bawah (Bottom)</span>
                   <div class="crop-input-wrap">
                     <input type="number" id="crop-bottom-num" min="0" max="120" step="1" value="0">
                     <span class="unit">px</span>
@@ -400,7 +408,7 @@
               <!-- Crop Kiri (Left) -->
               <div class="crop-item">
                 <div class="crop-label-row">
-                  <span>Kiri (Left)</span>
+                  <span data-i18n="crop.left">Kiri (Left)</span>
                   <div class="crop-input-wrap">
                     <input type="number" id="crop-left-num" min="0" max="120" step="1" value="0">
                     <span class="unit">px</span>
@@ -412,7 +420,7 @@
               <!-- Crop Kanan (Right) -->
               <div class="crop-item">
                 <div class="crop-label-row">
-                  <span>Kanan (Right)</span>
+                  <span data-i18n="crop.right">Kanan (Right)</span>
                   <div class="crop-input-wrap">
                     <input type="number" id="crop-right-num" min="0" max="120" step="1" value="0">
                     <span class="unit">px</span>
@@ -422,14 +430,14 @@
               </div>
 
               <div class="crop-btn-row">
-                <button type="button" class="ctl ctl-sm" id="btn-reset-crop"><span class="btn-label">Reset (0 px)</span></button>
+                <button type="button" class="ctl ctl-sm" id="btn-reset-crop"><span class="btn-label" data-i18n="crop.reset">Reset (0 px)</span></button>
                 <button type="button" class="ctl ctl-sm ctl-accent btn-save-crop" id="btn-save-crop">
                   <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                     <polyline points="17 21 17 13 7 13 7 21"></polyline>
                     <polyline points="7 3 7 8 15 8"></polyline>
                   </svg>
-                  <span class="btn-label">Save Crop</span>
+                  <span class="btn-label" data-i18n="crop.save">Save Crop</span>
                 </button>
               </div>
             </div>
@@ -438,7 +446,7 @@
           <!-- Zero-Bluetooth USB Audio Pipe (Tahap 123: CoreDevice AAC-ELD + WASAPI + Jitter Buffer) -->
           <section class="card glass-card panel-audio" id="panel-audio">
             <div class="card-header-row">
-              <span class="drawer-section-label">Audio (iPhone -&gt; PC)</span>
+              <span class="drawer-section-label" data-i18n="section.audio">Audio (iPhone -&gt; PC)</span>
               <span class="audio-badge active" id="audio-status-badge">
                 <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12"></polyline>
@@ -454,20 +462,20 @@
                   <line x1="8" y1="21" x2="16" y2="21"></line>
                   <line x1="12" y1="17" x2="12" y2="21"></line>
                 </svg>
-                <span class="btn-label">Di PC ini (USB)</span>
+                <span class="btn-label" data-i18n="audio.out_pc">Di PC ini (USB)</span>
               </button>
               <button type="button" class="seg" data-audio-out="device" id="btn-audio-out-device" role="radio" aria-checked="false">
                 <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="6" y="2" width="12" height="20" rx="2"></rect>
                   <line x1="12" y1="18" x2="12.01" y2="18"></line>
                 </svg>
-                <span class="btn-label">Hanya perangkat</span>
+                <span class="btn-label" data-i18n="audio.out_device">Hanya perangkat</span>
               </button>
             </div>
 
             <div class="audio-vol-wrap" style="margin-top: 8px;">
               <div class="crop-label-row">
-                <span>Volume PC</span>
+                <span data-i18n="audio.vol_pc">Volume PC</span>
                 <div style="display: inline-flex; align-items: center; gap: 6px;">
                   <span class="unit" id="audio-vol-val">100%</span>
                   <button type="button" class="ctl ctl-sm audio-mute-inline-btn" id="btn-audio-drawer" title="Mute / Unmute PC Audio (Alt+M)">
@@ -495,14 +503,14 @@
                   <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
                   </svg>
-                  <span class="btn-label">Buffer Audio</span>
+                  <span class="btn-label" data-i18n="audio.buffer">Buffer Audio</span>
                 </span>
                 <span class="setting-hint" id="audio-buffer-hint">Normal · ~40 ms</span>
               </div>
               <div class="segmented segmented-audio-buffer" id="segmented-audio-buffer" role="radiogroup" aria-label="Buffer Audio Preset">
-                <button type="button" class="seg" data-audio-buffer="low" role="radio" aria-checked="false">Rendah</button>
-                <button type="button" class="seg is-active" data-audio-buffer="normal" role="radio" aria-checked="true">Normal</button>
-                <button type="button" class="seg" data-audio-buffer="high" role="radio" aria-checked="false">Tinggi</button>
+                <button type="button" class="seg" data-audio-buffer="low" role="radio" aria-checked="false" data-i18n="audio.buf_low">Rendah</button>
+                <button type="button" class="seg is-active" data-audio-buffer="normal" role="radio" aria-checked="true" data-i18n="audio.buf_normal">Normal</button>
+                <button type="button" class="seg" data-audio-buffer="high" role="radio" aria-checked="false" data-i18n="audio.buf_high">Tinggi</button>
               </div>
             </div>
 
@@ -545,16 +553,16 @@
 
           <!-- Trackpad Gesture Speed Card (3 Presets + Slider + Number Input + Persistent Save) -->
           <section class="card glass-card panel-trackpad-speed" id="panel-trackpad-speed">
-            <span class="drawer-section-label">Trackpad Gesture Speed</span>
+            <span class="drawer-section-label" data-i18n="section.trackpad_speed">Trackpad Gesture Speed</span>
             <div class="segmented segmented-speed" role="radiogroup" aria-label="Trackpad Gesture Speed Preset">
-              <button type="button" class="seg" data-speed-choice="65" role="radio" aria-checked="false">Slow (65%)</button>
-              <button type="button" class="seg is-active" data-speed-choice="100" role="radio" aria-checked="true">Default (100%)</button>
-              <button type="button" class="seg" data-speed-choice="140" role="radio" aria-checked="false">Fast (140%)</button>
+              <button type="button" class="seg" data-speed-choice="65" role="radio" aria-checked="false" data-i18n="speed.slow">Slow (65%)</button>
+              <button type="button" class="seg is-active" data-speed-choice="100" role="radio" aria-checked="true" data-i18n="speed.default">Default (100%)</button>
+              <button type="button" class="seg" data-speed-choice="140" role="radio" aria-checked="false" data-i18n="speed.fast">Fast (140%)</button>
             </div>
 
             <div class="speed-slider-wrap">
               <div class="crop-label-row">
-                <span>Speed Sensitivity</span>
+                <span data-i18n="speed.sensitivity">Speed Sensitivity</span>
                 <div class="crop-input-wrap">
                   <input type="number" id="trackpad-speed-num" min="30" max="200" step="5" value="100">
                   <span class="unit">%</span>
@@ -570,14 +578,14 @@
                   <polyline points="17 21 17 13 7 13 7 21"></polyline>
                   <polyline points="7 3 7 8 15 8"></polyline>
                 </svg>
-                <span class="btn-label">Save Speed</span>
+                <span class="btn-label" data-i18n="speed.save">Save Speed</span>
               </button>
             </div>
           </section>
 
           <!-- Keyboard & Cross-Platform Shortcuts Card -->
           <section class="card glass-card panel-keyboard-shortcuts" id="panel-keyboard-shortcuts">
-            <span class="drawer-section-label">Keyboard & Shortcuts</span>
+            <span class="drawer-section-label" data-i18n="section.keyboard">Keyboard & Shortcuts</span>
 
             <!-- Toggle 1: Cross-Platform Shortcuts -->
             <div class="setting-toggle-item">
@@ -586,7 +594,7 @@
                   <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
                   </svg>
-                  <span class="btn-label">Cross-Platform Shortcuts</span>
+                  <span class="btn-label" data-i18n="kb.cross_platform">Cross-Platform Shortcuts</span>
                 </span>
                 <span class="setting-hint">Ctrl -&gt; Cmd</span>
               </div>
@@ -604,7 +612,7 @@
                     <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
                     <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
                   </svg>
-                  <span class="btn-label">Ctrl+V Pastes PC Clipboard</span>
+                  <span class="btn-label" data-i18n="kb.paste_pc">Ctrl+V Pastes PC Clipboard</span>
                 </span>
                 <span class="setting-hint">PC -&gt; iPhone</span>
               </div>
@@ -619,7 +627,7 @@
                     <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
                     <path d="M12 11v6M9 14l3 3 3-3"></path>
                   </svg>
-                  <span class="btn-label">Paste PC Text (Alt+V)</span>
+                  <span class="btn-label" data-i18n="kb.btn_paste_now">Paste PC Text (Alt+V)</span>
                 </button>
                 <button type="button" class="ctl ctl-sm btn-action-block" id="btn-copy-iphone-now" style="flex: 1; margin-top: 0;">
                   <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -627,14 +635,14 @@
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
-                  <span class="btn-label">Copy iPhone Text (Alt+C)</span>
+                  <span class="btn-label" data-i18n="kb.btn_copy_now">Copy iPhone Text (Alt+C)</span>
                 </button>
               </div>
               <button type="button" class="ctl ctl-sm btn-secondary btn-action-block" id="btn-clear-copy-cache" title="Bersihkan memori penyambung teks panjang" style="margin-top: 6px; width: 100%;">
                 <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8l10-10c.8-.8 2-.8 2.8 0l5.7 5.7c.8.8.8 2 0 2.8L13 20"></path>
                 </svg>
-                <span class="btn-label">Clear Copy Cache (Alt+R)</span>
+                <span class="btn-label" data-i18n="kb.btn_clear_cache">Clear Copy Cache (Alt+R)</span>
               </button>
               <div class="qr-bridge-row" style="margin-top: 6px;">
                 <button type="button" class="ctl ctl-sm ctl-accent btn-action-block" id="btn-scan-qr-link" title="Salin tautan share Instagram / Threads / TikTok dari iPhone langsung ke PC Windows (Alt+B)" style="width: 100%; margin-top: 0;">
@@ -642,7 +650,7 @@
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                   </svg>
-                  <span class="btn-label">Grab Link (Alt+B)</span>
+                  <span class="btn-label" data-i18n="kb.btn_grab_link">Grab Link (Alt+B)</span>
                 </button>
               </div>
             </div>
@@ -653,7 +661,7 @@
                 <rect x="2" y="5" width="20" height="14" rx="2"></rect>
                 <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8"></path>
               </svg>
-              <span class="btn-label">Toggle iPhone On-Screen Keyboard (Ctrl+K)</span>
+              <span class="btn-label" data-i18n="kb.btn_toggle_kb">Toggle iPhone On-Screen Keyboard (Ctrl+K)</span>
             </button>
 
             <!-- Badge / Shortcut List -->
@@ -678,7 +686,7 @@
 
           <!-- iPhone Screen & Stealth Control (Tahap 47) -->
           <section class="card glass-card panel-screen-stealth" id="panel-screen-stealth">
-            <span class="drawer-section-label">iPhone Screen & Stealth Control</span>
+            <span class="drawer-section-label" data-i18n="section.screen_stealth">iPhone Screen & Stealth Control</span>
             
             <div class="stealth-btn-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
               <button type="button" class="ctl ctl-accent btn-action-block" id="btn-wake-unlock" title="Wake screen & unlock iPhone (Alt+U)" style="flex: 1; margin-top: 0;">
@@ -686,14 +694,14 @@
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
                 </svg>
-                <span class="btn-label">Wake / Unlock (Alt+U)</span>
+                <span class="btn-label" data-i18n="btn.wake_unlock">Wake / Unlock (Alt+U)</span>
               </button>
               <button type="button" class="ctl btn-action-block" id="btn-lock-iphone" title="Lock & sleep iPhone screen (Alt+L)" style="flex: 1; margin-top: 0;">
                 <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-                <span class="btn-label">Lock iPhone (Alt+L)</span>
+                <span class="btn-label" data-i18n="btn.lock_iphone">Lock iPhone (Alt+L)</span>
               </button>
             </div>
 
@@ -712,15 +720,15 @@
                 <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                 </svg>
-                <span class="btn-label">Stealth Dim Mode: OFF</span>
+                <span class="btn-label" data-i18n="btn.stealth_dim">Stealth Dim Mode: OFF</span>
               </button>
-              <p class="stealth-subhint" style="font-size: 11px; opacity: 0.7; margin-top: 4px; line-height: 1.35;">
+              <p class="stealth-subhint" data-i18n="stealth.subhint" style="font-size: 11px; opacity: 0.7; margin-top: 4px; line-height: 1.35;">
                 Redupkan layar fisik iPhone ke 0% saat dikontrol via USB (tampilan di PC tetap terang).
               </p>
             </div>
 
             <div class="pin-unlock-item" style="margin-top: 10px;">
-              <label for="input-unlock-pin" class="setting-label" style="display: block; font-size: 12px; margin-bottom: 4px;">
+              <label for="input-unlock-pin" class="setting-label" data-i18n="label.pin" style="display: block; font-size: 12px; margin-bottom: 4px;">
                 Auto-Unlock PIN (Opsional):
               </label>
               <div class="pin-input-wrap">
@@ -745,21 +753,21 @@
                   <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
                   <path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
                 </svg>
-                <span class="btn-label">Clear Saved PIN &amp; Privacy Data</span>
+                <span class="btn-label" data-i18n="btn.wipe_privacy">Clear Saved PIN &amp; Privacy Data</span>
               </button>
               <button type="button" class="ctl ctl-sm" id="btn-hide-to-tray" style="width: 100%; margin-top: 6px;" title="Sembunyikan jendela ke Windows 11 System Tray (Mirroring &amp; Audio tetap aktif)">
                 <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"></path>
                 </svg>
-                <span class="btn-label">Hide Window to System Tray</span>
+                <span class="btn-label" data-i18n="btn.hide_to_tray">Hide Window to System Tray</span>
               </button>
             </div>
           </section>
 
           <section class="card glass-card panel-start">
             <div class="segmented" role="radiogroup" aria-label="Connection">
-              <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true">Cable</button>
-              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false">Wi-Fi</button>
+              <button type="button" class="seg is-active" data-transport="usb" role="radio" aria-checked="true" data-i18n="conn.cable">Cable</button>
+              <button type="button" class="seg" data-transport="wifi" role="radio" aria-checked="false" data-i18n="conn.wifi">Wi-Fi</button>
             </div>
             <div class="wifi-row" id="wifi-row">
               <span class="wifi-state wifi-status-text" id="wifi-state">Wi-Fi not set up</span>
@@ -769,7 +777,7 @@
                     <circle cx="11" cy="11" r="8"></circle>
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                   </svg>
-                  <span class="btn-label">Scan</span>
+                  <span class="btn-label" data-i18n="conn.scan">Scan</span>
                 </button>
                 <button type="button" class="ctl ctl-sm" id="wifi-pair" title="Set up Wi-Fi over USB">
                   <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -778,12 +786,12 @@
                     <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
                     <line x1="12" y1="20" x2="12.01" y2="20"></line>
                   </svg>
-                  <span class="btn-label">Set up Wi-Fi</span>
+                  <span class="btn-label" data-i18n="conn.setup_wifi">Set up Wi-Fi</span>
                 </button>
               </div>
             </div>
             <button type="button" class="primary primary-block" id="show-screen">
-              <span class="btn-label">Start mirroring</span>
+              <span class="btn-label" data-i18n="conn.start_mirror">Start mirroring</span>
             </button>
             <div id="screen-error-banner" class="screen-error-banner" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12px; line-height:1.4; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.35); color:#fca5a5;"></div>
             <button type="button" class="ghost ghost-block kb-toggle" id="kb-toggle" aria-pressed="true" hidden>
@@ -793,7 +801,7 @@
               </svg>
               <span class="btn-label">Keyboard -&gt; iPhone: On</span>
             </button>
-            <p class="control-hint" id="control-hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
+            <p class="control-hint" id="control-hint" data-i18n="conn.hint">Typing routes straight to iPhone. Swipe up from bottom edge for Home.</p>
           </section>
 
           <!-- Card Pembaruan (OTA Auto-Updater - Tahap 144) -->
@@ -805,7 +813,7 @@
                     <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                   </svg>
                 </div>
-                <span class="update-card-title">Pembaruan</span>
+                <span class="update-card-title" data-i18n="updater.title">Pembaruan</span>
               </div>
               <div class="update-header-actions">
                 <button type="button" class="update-icon-btn" id="btn-update-info" title="Penjelasan pembaruan" aria-label="Penjelasan pembaruan" aria-expanded="false">
@@ -825,7 +833,7 @@
 
             <!-- Kotak Penjelasan (i) -->
             <div class="update-info-box" id="update-info-box" hidden>
-              <p>Cek versi baru di GitHub, unduh berkas instalasi, verifikasi integritas berkas, lalu jalankan pembaruan otomatis tanpa menghentikan kerja Anda. Pengaturan Anda tetap aman. Kanal Beta menerima rilis percobaan lebih awal.</p>
+              <p data-i18n="updater.info">Cek versi baru di GitHub, unduh berkas instalasi, verifikasi integritas berkas, lalu jalankan pembaruan otomatis tanpa menghentikan kerja Anda. Pengaturan Anda tetap aman. Kanal Beta menerima rilis percobaan lebih awal.</p>
             </div>
 
             <div class="update-card-body" id="update-card-body">
@@ -833,7 +841,7 @@
 
               <!-- Baris 1: Cek otomatis saat mulai -->
               <div class="update-row">
-                <span class="update-row-label">Cek otomatis saat mulai</span>
+                <span class="update-row-label" data-i18n="updater.auto_check">Cek otomatis saat mulai</span>
                 <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Cek otomatis saat mulai">
                   <span class="toggle-switch-thumb"></span>
                 </button>
@@ -841,16 +849,16 @@
 
               <!-- Baris 2: Kanal -->
               <div class="update-row">
-                <span class="update-row-label">Kanal</span>
+                <span class="update-row-label" data-i18n="updater.channel">Kanal</span>
                 <div class="segmented segmented-channel" id="update-channel-group" role="radiogroup" aria-label="Kanal Pembaruan">
-                  <button type="button" class="seg is-active" id="btn-channel-stable" data-channel="stable" role="radio" aria-checked="true"><span class="btn-label">Stabil</span></button>
-                  <button type="button" class="seg" id="btn-channel-beta" data-channel="beta" role="radio" aria-checked="false"><span class="btn-label">Beta</span></button>
+                  <button type="button" class="seg is-active" id="btn-channel-stable" data-channel="stable" role="radio" aria-checked="true"><span class="btn-label" data-i18n="updater.stable">Stabil</span></button>
+                  <button type="button" class="seg" id="btn-channel-beta" data-channel="beta" role="radio" aria-checked="false"><span class="btn-label" data-i18n="updater.beta">Beta</span></button>
                 </div>
               </div>
 
               <!-- Baris Status Pembaruan -->
               <div class="update-status-row">
-                <p class="update-status-text" id="update-status-text">iPhone Link sudah versi terbaru.</p>
+                <p class="update-status-text" id="update-status-text" data-i18n="updater.status_up_to_date">iPhone Link sudah versi terbaru.</p>
               </div>
 
               <!-- Progress Bar Unduhan -->
@@ -864,7 +872,7 @@
               <!-- Tombol Aksi Utama Penuh -->
               <div class="update-action-row">
                 <button type="button" class="ctl ctl-accent update-action-btn" id="btn-check-update">
-                  <span class="btn-label">Cek update</span>
+                  <span class="btn-label" data-i18n="updater.check_btn">Cek update</span>
                 </button>
               </div>
             </div>
@@ -872,7 +880,7 @@
 
           <!-- Remote Gestures & Keys (Collapsible Accordion) -->
           <details class="card card-details" id="remote-panel" open>
-            <summary>Gestures &amp; Hardware Keys</summary>
+            <summary data-i18n="remote.summary">Gestures &amp; Hardware Keys</summary>
             <div class="details-body">
               <div class="hw-quick-grid">
                 <button type="button" class="hw-quick-btn" data-gesture="notifications" id="hw-btn-notifications" title="Tarik Pusat Notifikasi iPhone">
@@ -880,7 +888,7 @@
                     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                     <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                   </svg>
-                  <span>Notifications</span>
+                  <span data-i18n="remote.notifications">Notifications</span>
                 </button>
 
                 <button type="button" class="hw-quick-btn" data-gesture="control" id="hw-btn-control-center" title="Buka Control Center iPhone">
@@ -895,7 +903,7 @@
                     <line x1="9" y1="8" x2="15" y2="8"></line>
                     <line x1="17" y1="16" x2="23" y2="16"></line>
                   </svg>
-                  <span>Control Center</span>
+                  <span data-i18n="remote.control_center">Control Center</span>
                 </button>
 
                 <button type="button" class="hw-quick-btn" id="hw-btn-smart-lock" title="Lock iPhone (Alt+L)">
@@ -907,7 +915,7 @@
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                     <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
                   </svg>
-                  <span id="hw-smart-lock-label">Lock</span>
+                  <span id="hw-smart-lock-label" data-i18n="remote.lock">Lock</span>
                 </button>
 
                 <button type="button" class="hw-quick-btn" data-button="mute" data-btn="mute" id="hw-btn-mute" title="Mute iPhone (Bisukan Suara HP)">
@@ -916,7 +924,7 @@
                     <line x1="23" y1="9" x2="17" y2="15"></line>
                     <line x1="17" y1="9" x2="23" y2="15"></line>
                   </svg>
-                  <span>Mute</span>
+                  <span data-i18n="remote.mute">Mute</span>
                 </button>
 
                 <button type="button" class="hw-quick-btn" data-button="volume-up" data-btn="volume-up" id="hw-btn-vol-up" title="Naikkan Volume iPhone">
@@ -940,13 +948,13 @@
           </details>
 
           <details class="card card-details" id="device-card">
-            <summary>Device & Connection Details</summary>
+            <summary data-i18n="device.summary">Device & Connection Details</summary>
             <div class="details-body">
               <button type="button" class="ctl ctl-sm" id="refresh" style="width: 100%; margin-bottom: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
                 <svg class="fluent-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
                 </svg>
-                <span class="btn-label">Refresh Devices</span>
+                <span class="btn-label" data-i18n="device.refresh">Refresh Devices</span>
               </button>
               <ul class="device-list" id="devices"></ul>
               <div class="device-detail" id="detail" hidden></div>
@@ -956,7 +964,7 @@
           </details>
 
           <details class="card card-details">
-            <summary>How to run &amp; Troubleshooting</summary>
+            <summary data-i18n="guide.summary">How to run &amp; Troubleshooting</summary>
             <div style="font-size: 12px; line-height: 1.6; color: var(--muted); padding-top: 6px;">
               <p style="margin: 0 0 6px;">1. Plug in iPhone via USB and unlock it.</p>
               <p style="margin: 0 0 6px;">2. Tap <strong>Trust</strong> on the iPhone.</p>
@@ -977,7 +985,7 @@
                   <line x1="10" y1="1" x2="10" y2="4"></line>
                   <line x1="14" y1="1" x2="14" y2="4"></line>
                 </svg>
-                <span class="btn-label">Support Creator on Saweria</span>
+                <span class="btn-label" data-i18n="saweria.btn">Support Creator on Saweria</span>
               </a>
             </div>
             <p class="credit-main" style="margin: 0; font-weight: 600;">
@@ -997,6 +1005,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap144_ota_auto_updater"></script>
+  <script src="/app.js?v=tahap148_bilingual_id_en"></script>
 </body>
 </html>
