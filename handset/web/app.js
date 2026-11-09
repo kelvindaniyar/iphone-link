@@ -1795,6 +1795,7 @@ async function triggerWakeUnlockIphone() {
       try {
         screenView?.contentWindow?.postMessage({ type: "wake-stream-pli" }, "*");
       } catch (_) { }
+      try { updateSmartLockFlyoutButton(false); } catch (_) { }
       setTimeout(() => load(), 200);
     }
   } catch (err) {
@@ -1835,6 +1836,7 @@ async function triggerLockIphone() {
       try {
         screenView?.contentWindow?.postMessage({ type: "device-locked" }, "*");
       } catch (_) { }
+      try { updateSmartLockFlyoutButton(true); } catch (_) { }
       setTimeout(() => load(), 200);
     }
   } catch (err) {
@@ -2574,6 +2576,7 @@ function sendAppMetrics() {
 
 function renderScreen(screen) {
   if (!screen) return;
+  try { updateSmartLockFlyoutButton(Boolean(screen.intentionally_locked)); } catch (_) { }
   if (typeof screen.stealth_dim === "boolean") {
     updateStealthDimUI(screen.stealth_dim);
   }
@@ -2583,7 +2586,7 @@ function renderScreen(screen) {
     appContainer.classList.add("is-streaming");
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
-    remotePanel.hidden = false;
+    if (remotePanel) remotePanel.hidden = false;
     restartScreen.hidden = false;
     restartScreen.disabled = false;
     kbToggle.hidden = false;
@@ -2647,7 +2650,7 @@ function renderScreen(screen) {
   appContainer.classList.remove("is-streaming");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
-  remotePanel.hidden = true;
+  if (remotePanel) remotePanel.hidden = true;
   restartScreen.hidden = false;
   restartScreen.disabled = false;
   if (stopScreen) {
@@ -3926,6 +3929,129 @@ function initUpdaterControls() {
   }, 2500);
 }
 
+// ======================================================================
+// Tahap 145: Left Liquid Glass Quick-Action Flyout Controls
+// ======================================================================
+function triggerFlyoutPulse(btn) {
+  if (!btn) return;
+  btn.classList.add("is-active-pulse");
+  setTimeout(() => btn.classList.remove("is-active-pulse"), 160);
+}
+
+function updateSmartLockFlyoutButton(isLocked) {
+  const btn = document.querySelector("#flyout-btn-smart-lock");
+  if (!btn) return;
+  if (isLocked) {
+    btn.classList.add("is-locked-state");
+    btn.setAttribute("title", "Wake / Unlock iPhone (Alt+U)");
+    btn.setAttribute("aria-label", "Wake / Unlock iPhone (Alt+U)");
+    const lockIcon = btn.querySelector(".flyout-icon-lock");
+    const wakeIcon = btn.querySelector(".flyout-icon-wake");
+    if (lockIcon) lockIcon.style.display = "none";
+    if (wakeIcon) wakeIcon.style.display = "block";
+  } else {
+    btn.classList.remove("is-locked-state");
+    btn.setAttribute("title", "Lock iPhone (Alt+L)");
+    btn.setAttribute("aria-label", "Lock iPhone (Alt+L)");
+    const lockIcon = btn.querySelector(".flyout-icon-lock");
+    const wakeIcon = btn.querySelector(".flyout-icon-wake");
+    if (lockIcon) lockIcon.style.display = "block";
+    if (wakeIcon) wakeIcon.style.display = "none";
+  }
+}
+window.updateSmartLockFlyoutButton = updateSmartLockFlyoutButton;
+
+function setFlyoutCollapsed(collapsed, save = true) {
+  const flyoutContainer = document.querySelector("#left-quick-flyout");
+  const btnToggleFlyout = document.querySelector("#btn-toggle-left-flyout");
+  if (!flyoutContainer) return;
+  if (collapsed) {
+    flyoutContainer.classList.add("is-collapsed");
+    btnToggleFlyout?.setAttribute("title", "Show Quick Actions");
+    btnToggleFlyout?.setAttribute("aria-label", "Show Quick Actions");
+  } else {
+    flyoutContainer.classList.remove("is-collapsed");
+    btnToggleFlyout?.setAttribute("title", "Hide Quick Actions");
+    btnToggleFlyout?.setAttribute("aria-label", "Hide Quick Actions");
+  }
+  if (save) {
+    try {
+      localStorage.setItem("iphone_link_left_flyout_collapsed", collapsed ? "1" : "0");
+    } catch (_) { }
+  }
+}
+window.setFlyoutCollapsed = setFlyoutCollapsed;
+
+function initLeftFlyoutControls() {
+  const flyoutContainer = document.querySelector("#left-quick-flyout");
+  const btnToggleFlyout = document.querySelector("#btn-toggle-left-flyout");
+  const btnNotifications = document.querySelector("#flyout-btn-notifications");
+  const btnControlCenter = document.querySelector("#flyout-btn-control-center");
+  const btnSmartLock = document.querySelector("#flyout-btn-smart-lock");
+  const btnMute = document.querySelector("#flyout-btn-mute");
+  const btnVolUp = document.querySelector("#flyout-btn-vol-up");
+  const btnVolDown = document.querySelector("#flyout-btn-vol-down");
+
+  btnToggleFlyout?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isCollapsed = flyoutContainer?.classList.contains("is-collapsed");
+    setFlyoutCollapsed(!isCollapsed, true);
+  });
+
+  // Restore saved collapse state (default "0" = open)
+  try {
+    const saved = localStorage.getItem("iphone_link_left_flyout_collapsed");
+    if (saved === "1") {
+      setFlyoutCollapsed(true, false);
+    } else {
+      setFlyoutCollapsed(false, false);
+    }
+  } catch (_) { }
+
+  btnNotifications?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnNotifications);
+    try { gesture("notifications"); } catch (err) { console.warn("gesture notifications err:", err); }
+  });
+
+  btnControlCenter?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnControlCenter);
+    try { gesture("control"); } catch (err) { console.warn("gesture control err:", err); }
+  });
+
+  btnSmartLock?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnSmartLock);
+    if (btnSmartLock.classList.contains("is-locked-state")) {
+      triggerWakeUnlockIphone();
+    } else {
+      triggerLockIphone();
+    }
+  });
+
+  btnMute?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnMute);
+    mirrorPost("/button", { name: "mute", state: "press" });
+    sendPostMotionPliSettler();
+  });
+
+  btnVolUp?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnVolUp);
+    mirrorPost("/button", { name: "volume-up", state: "press" });
+    sendPostMotionPliSettler();
+  });
+
+  btnVolDown?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    triggerFlyoutPulse(btnVolDown);
+    mirrorPost("/button", { name: "volume-down", state: "press" });
+    sendPostMotionPliSettler();
+  });
+}
+
 // Tahap 70: Orderly Bootstrap Sequence at Bottom of File (Anti-TDZ 100%)
 // ======================================================================
 function bootstrapApp() {
@@ -3954,6 +4080,7 @@ function bootstrapApp() {
   try { startWallpaperSigWatcher(); } catch (e) { console.error("startWallpaperSigWatcher error:", e); }
   try { fetchUserSettings(); } catch (e) { console.error("fetchUserSettings error:", e); }
   try { initUpdaterControls(); } catch (e) { console.error("initUpdaterControls error:", e); }
+  try { initLeftFlyoutControls(); } catch (e) { console.error("initLeftFlyoutControls error:", e); }
   try { load(); } catch (e) { console.error("load error:", e); }
 }
 

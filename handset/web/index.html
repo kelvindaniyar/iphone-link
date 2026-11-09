@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap144_ota_auto_updater">
+  <link rel="stylesheet" href="/app.css?v=tahap145_left_liquid_glass_flyout">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -102,6 +102,67 @@
         <!-- Murni Display Edge-to-Edge -->
         <main class="workspace stage" id="workspace">
           <div class="screen-stage stage" id="phone-shell">
+            <!-- Left Liquid Glass Quick-Action Flyout (Tahap 145) -->
+            <div class="left-quick-flyout" id="left-quick-flyout" aria-label="Quick Actions">
+              <button type="button" class="btn-toggle-left-flyout" id="btn-toggle-left-flyout" title="Toggle Quick Actions" aria-label="Toggle Quick Actions">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+              </button>
+              <div class="left-flyout-panel" id="left-flyout-panel">
+                <button type="button" class="flyout-btn" id="flyout-btn-notifications" title="Notifications" aria-label="Notifications">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                  </svg>
+                </button>
+                <button type="button" class="flyout-btn" id="flyout-btn-control-center" title="Control Center" aria-label="Control Center">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="4" y1="21" x2="4" y2="14"></line>
+                    <line x1="4" y1="10" x2="4" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12" y2="3"></line>
+                    <line x1="20" y1="21" x2="20" y2="16"></line>
+                    <line x1="20" y1="12" x2="20" y2="3"></line>
+                    <line x1="1" y1="14" x2="7" y2="14"></line>
+                    <line x1="9" y1="8" x2="15" y2="8"></line>
+                    <line x1="17" y1="16" x2="23" y2="16"></line>
+                  </svg>
+                </button>
+                <button type="button" class="flyout-btn" id="flyout-btn-smart-lock" title="Lock iPhone" aria-label="Lock or Wake iPhone">
+                  <!-- Lock Icon (default when unlocked) -->
+                  <svg class="flyout-icon-lock" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  <!-- Wake Icon (shown when locked) -->
+                  <svg class="flyout-icon-wake" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                  </svg>
+                </button>
+                <button type="button" class="flyout-btn" id="flyout-btn-mute" title="Mute iPhone" aria-label="Mute iPhone">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <line x1="23" y1="9" x2="17" y2="15"></line>
+                    <line x1="17" y1="9" x2="23" y2="15"></line>
+                  </svg>
+                </button>
+                <button type="button" class="flyout-btn" id="flyout-btn-vol-up" title="Volume Up" aria-label="Volume Up">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                  </svg>
+                </button>
+                <button type="button" class="flyout-btn" id="flyout-btn-vol-down" title="Volume Down" aria-label="Volume Down">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div class="screen-viewport" id="phone-screen">
               <div class="placeholder screen-empty" id="screen-empty" data-alias="placeholder">
                 <div class="launchpad-shell" id="launchpad-shell">
@@ -870,63 +931,6 @@
             </div>
           </section>
 
-          <!-- Remote Gestures & Keys (Collapsible Accordion) -->
-          <details class="card card-details" id="remote-panel" hidden>
-            <summary>Gestures & Hardware Keys</summary>
-            <div class="details-body">
-              <div class="control-grid">
-                <button type="button" class="ctl ctl-accent" data-gesture="back" title="Back (swipe from left edge)"><span class="btn-label">Back</span></button>
-                <button type="button" class="ctl ctl-accent" data-gesture="home" title="Go to the Home Screen"><span class="btn-label">Home</span></button>
-                <button type="button" class="ctl" data-gesture="switcher" title="Show recent apps"><span class="btn-label">App switcher</span></button>
-                <button type="button" class="ctl" data-gesture="notifications" title="Swipe down from the top left"><span class="btn-label">Notifications</span></button>
-                <button type="button" class="ctl" data-gesture="control" title="Swipe down from the top right"><span class="btn-label">Control Center</span></button>
-                <button type="button" class="ctl" data-swipe="left" title="Swipe from right edge"><span class="btn-label">Swipe Left</span></button>
-                <button type="button" class="ctl" data-swipe="right" title="Swipe from left edge"><span class="btn-label">Swipe Right</span></button>
-              </div>
-              <div class="control-row">
-                <button type="button" class="ctl ctl-sm" data-btn="home">Home</button>
-                <button type="button" class="ctl ctl-sm" data-btn="siri">Siri</button>
-                <button type="button" class="ctl ctl-sm" data-btn="lock">Lock</button>
-                <button type="button" class="ctl ctl-sm" data-btn="mute">Mute</button>
-              </div>
-              <div class="control-row control-row-2">
-                <button type="button" class="ctl ctl-sm" data-btn="volume-up">Vol +</button>
-                <button type="button" class="ctl ctl-sm" data-btn="volume-down">Vol -</button>
-              </div>
-              <div class="view-tools">
-                <span class="view-label">View</span>
-                <div class="zoom-cluster">
-                  <button type="button" class="ctl ctl-icon" id="zoom-out" title="Zoom out">-</button>
-                  <button type="button" class="ctl ctl-icon" id="zoom-reset" title="Fit">100%</button>
-                  <button type="button" class="ctl ctl-icon" id="zoom-in" title="Zoom in">+</button>
-                </div>
-                <div class="rotate-cluster">
-                  <button type="button" class="ctl ctl-icon" id="rotate-ccw" title="Rotate counter-clockwise" aria-label="Rotate counter-clockwise">
-                    <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <polyline points="1 4 1 10 7 10"></polyline>
-                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-                    </svg>
-                  </button>
-                  <button type="button" class="ctl ctl-icon" id="rotate-cw" title="Rotate clockwise" aria-label="Rotate clockwise">
-                    <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                    </svg>
-                  </button>
-                </div>
-                <button type="button" class="ctl ctl-full" id="fullscreen" title="Full screen touch view (Esc to exit)">
-                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <polyline points="9 21 3 21 3 15"></polyline>
-                    <line x1="21" y1="3" x2="14" y2="10"></line>
-                    <line x1="3" y1="21" x2="10" y2="14"></line>
-                  </svg>
-                  <span class="btn-label">Full screen</span>
-                </button>
-              </div>
-            </div>
-          </details>
-
           <details class="card card-details" id="device-card">
             <summary>Device & Connection Details</summary>
             <div class="details-body">
@@ -985,6 +989,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap144_ota_auto_updater"></script>
+  <script src="/app.js?v=tahap145_left_liquid_glass_flyout"></script>
 </body>
 </html>
