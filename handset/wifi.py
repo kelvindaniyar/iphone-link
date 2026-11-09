@@ -42,6 +42,28 @@ from typing import Optional
 
 logger = logging.getLogger("handset.wifi")
 
+
+def wifi_debug_log(stage: str, message: str, exc: Optional[BaseException] = None) -> None:
+    """Flight-recorder logger writing to wifi_debug.log in application root."""
+    try:
+        from handset.device import get_app_root
+        log_file = get_app_root() / "wifi_debug.log"
+    except Exception:
+        log_file = Path("wifi_debug.log")
+    import datetime, traceback
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    line = f"[{now_str}] [{stage}] {message}\n"
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        line += f"--- TRACEBACK ---\n{tb}-----------------\n"
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+    logger.info("[%s] %s", stage, message)
+
+
 BONJOUR_TIMEOUT = 2.0
 _MDNS_GROUP = "224.0.0.251"
 _MDNS_PORT = 5353
@@ -507,59 +529,11 @@ def lan_recently_seen(udid: str, max_age: float = LAN_FORGET_S) -> Optional[str]
 
 
 def _patch_bonjour() -> None:
-    """Browse mDNS on prioritized IPv4 adapters, ensuring LAN interface receives replies."""
+    """Ensure mDNS discovery is enabled without intrusive socket manipulation (parity with ZenLink)."""
     global _bonjour_patched
     if _bonjour_patched:
         return
-    from pymobiledevice3 import bonjour
-
-    original_bind = bonjour._bind_ipv4
-    original_send = bonjour._send_query_all
-
-    async def bind_ipv4(*args, **kwargs):
-        transport, sock = await original_bind(*args, **kwargs)
-        group = socket.inet_aton(_MDNS_GROUP)
-        for ip in _local_ipv4():
-            with contextlib.suppress(OSError):
-                sock.setsockopt(
-                    socket.IPPROTO_IP,
-                    socket.IP_ADD_MEMBERSHIP,
-                    struct.pack("=4s4s", group, socket.inet_aton(ip)),
-                )
-        return transport, sock
-
-    async def send_query_all(transports, pkt, *args, **kwargs):
-        sent = await original_send(transports, pkt, *args, **kwargs)
-        for _, sock in transports:
-            if sock.family == socket.AF_INET:
-                for ip in _local_ipv4():
-                    with contextlib.suppress(OSError):
-                        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
-                        sock.sendto(pkt, (_MDNS_GROUP, _MDNS_PORT))
-                        sent += 1
-                # DIRECT UNICAST INJECTION: send query directly to known device IPs (bypasses Hidden SSID multicast filters)
-                try:
-                    for dev_state in get_all_device_wifi_states().values():
-                        dev_ip = dev_state.get("last_ip")
-                        if dev_ip and _is_private_lan(dev_ip):
-                            with contextlib.suppress(OSError):
-                                sock.sendto(pkt, (dev_ip, _MDNS_PORT))
-                                sent += 1
-                except Exception:
-                    pass
-            elif sock.family == socket.AF_INET6:
-                # Include IPv6 Multicast queries across active wireless adapters (iOS 27 mDNS)
-                with contextlib.suppress(Exception):
-                    for ifindex, ifname in socket.if_nameindex():
-                        if "wireless" in ifname or ifindex == 4:
-                            sock.sendto(pkt, (bonjour.MDNS_MCAST_V6, bonjour.MDNS_PORT, 0, ifindex))
-                            sent += 1
-        return sent
-
-    bonjour._bind_ipv4 = bind_ipv4
-    bonjour._send_query_all = send_query_all
     _bonjour_patched = True
-
 
 # -----------------------------------------------------------------------------
 # Wi-Fi Connections (Tahap 132, parity with ZenLink "Apple Driver - Wi-Fi")
@@ -674,12 +648,19 @@ def wifi_paired_udids() -> list[str]:
 
 
 def pair_for_wifi(udid: str) -> dict:
-    """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link."""
+    """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link.
+    Immediately scans LAN to record the device's real IP into wifi_state.json."""
     global _PAIRED_UDIDS_MEM_CACHE
+    wifi_debug_log("PAIR_FOR_WIFI", f"Initiating Wi-Fi setup for {udid} over USB...")
     with _WIFI_LOCKDOWN_LOCK:
         _WIFI_ENABLED_UDIDS.discard(udid)
 
+    mac: Optional[str] = None
+    device_name: Optional[str] = None
+    discovered_ip: Optional[str] = None
+
     async def pair() -> None:
+        nonlocal mac, device_name
         from pymobiledevice3.exceptions import RemotePairingCompletedError
         from pymobiledevice3.lockdown import create_using_usbmux
         from pymobiledevice3.remote.tunnel_service import RemotePairingLockdownService
@@ -689,8 +670,9 @@ def pair_for_wifi(udid: str) -> dict:
             # 1. Enable wireless lockdown key
             try:
                 await lockdown.set_enable_wifi_connections(True)
+                wifi_debug_log("PAIR_FOR_WIFI", "set_enable_wifi_connections(True) succeeded.")
             except Exception as e:
-                logger.warning("Warning: could not set enable_wifi_connections during pair: %s", e)
+                wifi_debug_log("PAIR_FOR_WIFI", f"set_enable_wifi_connections warning: {e}")
 
             mac = getattr(lockdown, "wifi_mac_address", None)
             device_name = getattr(lockdown, "display_name", None) or lockdown.short_info.get("DeviceName")
@@ -699,65 +681,60 @@ def pair_for_wifi(udid: str) -> dict:
             service = await RemotePairingLockdownService.create(lockdown)
             try:
                 await service.connect(autopair=True)
+                wifi_debug_log("PAIR_FOR_WIFI", "RemotePairingLockdownService registered successfully.")
             except RemotePairingCompletedError:
-                pass
+                wifi_debug_log("PAIR_FOR_WIFI", "RemotePairingLockdownService already paired (OK).")
             finally:
                 await service.close()
-
-            # 3. Discover real LAN IP (identified by UDID) and record state
-            ip = await asyncio.to_thread(lan_host_for, udid, rescan=True) or discover_iphone_ip_on_lan(udid)
-            update_device_wifi_state(udid, enabled=True, mac=mac, ip=ip, name=device_name, last_seen_cable=True)
         finally:
             await lockdown.close()
 
     try:
         asyncio.run(pair())
     except Exception as error:
-        return {"ok": False, "error": f"Wi-Fi setup needs the cable once: {error}"}
+        wifi_debug_log("PAIR_FOR_WIFI_ERR", f"Pairing handshake failed: {error}", error)
+        # Even if USB handshake had a hiccup, check if pair record exists
+        if not has_remote_record(udid):
+            return {"ok": False, "error": f"Wi-Fi setup needs the cable once: {error}"}
+
+    # 3. Aggressively discover real LAN IP on local subnet with lockdown closed
+    try:
+        discovered_ip = discover_iphone_ip_on_lan(udid, timeout=1.5)
+        if not discovered_ip and mac:
+            discovered_ip = find_ip_by_mac(mac)
+        if not discovered_ip:
+            discovered_ip = lan_host_for(udid, rescan=True)
+        if discovered_ip:
+            wifi_debug_log("PAIR_FOR_WIFI", f"Discovered device LAN IP: {discovered_ip}")
+            update_device_wifi_state(udid, enabled=True, mac=mac, ip=discovered_ip, name=device_name, last_seen_cable=True)
+        else:
+            wifi_debug_log("PAIR_FOR_WIFI", "Device paired, but not yet responding on LAN IP.")
+            update_device_wifi_state(udid, enabled=True, mac=mac, name=device_name, last_seen_cable=True)
+    except Exception as exc:
+        wifi_debug_log("PAIR_FOR_WIFI_DISCOVERY_ERR", f"IP discovery error: {exc}", exc)
 
     _PAIRED_UDIDS_MEM_CACHE = None
     paired_list = wifi_paired_udids()
     is_paired = udid in paired_list
-    return {"ok": is_paired, "paired": paired_list, "wifi_enabled": True}
-
+    msg = f"✓ Wi-Fi Ready (Connected on LAN: {discovered_ip})" if discovered_ip else "✓ Wi-Fi Paired"
+    return {
+        "ok": is_paired,
+        "paired": paired_list,
+        "wifi_enabled": True,
+        "ip": discovered_ip,
+        "message": msg,
+    }
 
 def probe_wifi_device(udid: str) -> dict:
     """Probe whether the device is truly reachable over the local network (Wi-Fi).
-
-    Checks:
-    1. usbmuxd attached devices with ConnectionType == 'Network'
-    2. TCP probe to port 62078 at last known IP in wifi_state.json
-    3. Active LAN Subnet Discovery (Pilar 1 - tolerates randomized MAC & hidden network)
-    4. ARP cache lookup via stored Wi-Fi MAC address
-    """
+    Checks last known IP, auto-discovers on active LAN subnets, and returns honest status."""
     paired = udid in wifi_paired_udids()
     cached = get_device_wifi_state(udid)
     enabled = cached.get("wifi_enabled_on_device", False)
-
-    # 1. Check usbmux for Network connection
-    try:
-        from handset.mux import list_devices
-
-        for d in list_devices():
-            if d.get("udid") == udid and str(d.get("connection", "")).lower() in ("network", "wifi"):
-                update_device_wifi_state(udid, last_seen_wifi=True)
-                return {
-                    "udid": udid,
-                    "reachable": True,
-                    "ip": cached.get("last_ip"),
-                    "method": "usbmux_network",
-                    "wifi_enabled": True,
-                    "paired": paired,
-                    "status_text": f"✓ Wi‑Fi Ready (Connected on LAN: {cached.get('last_ip') or 'Network'})",
-                    "status_tone": "ok",
-                    "message": "iPhone terdeteksi aktif di jaringan Wi-Fi via Apple Service. Siap mirroring.",
-                }
-    except Exception:
-        pass
-
-    # 2. Check TCP probe to last known IP
     last_ip = cached.get("last_ip")
-    if last_ip and probe_tcp_port(last_ip, 62078, timeout=0.25):
+
+    # 1. Check TCP probe on last known IP (port 62078)
+    if last_ip and probe_tcp_port(last_ip, 62078, timeout=0.8):
         update_device_wifi_state(udid, last_seen_wifi=True)
         return {
             "udid": udid,
@@ -766,14 +743,36 @@ def probe_wifi_device(udid: str) -> dict:
             "method": "tcp_probe",
             "wifi_enabled": True,
             "paired": paired,
-            "status_text": f"✓ Wi‑Fi Ready (Connected on LAN: {last_ip})",
+            "status_text": f"✓ Wi-Fi Ready (Connected on LAN: {last_ip})",
             "status_tone": "ok",
             "message": f"iPhone terdeteksi aktif di IP {last_ip}. Siap mirroring tanpa kabel.",
         }
 
+    # 2. Check usbmux for Network connection
+    try:
+        from handset.mux import list_devices
+
+        for d in list_devices():
+            if d.get("udid") == udid and str(d.get("connection", "")).lower() in ("network", "wifi"):
+                update_device_wifi_state(udid, last_seen_wifi=True)
+                ip_display = last_ip or "Network"
+                return {
+                    "udid": udid,
+                    "reachable": True,
+                    "ip": last_ip,
+                    "method": "usbmux_network",
+                    "wifi_enabled": True,
+                    "paired": paired,
+                    "status_text": f"✓ Wi-Fi Ready (Connected on LAN: {ip_display})",
+                    "status_tone": "ok",
+                    "message": "iPhone terdeteksi aktif di jaringan Wi-Fi via Apple Service. Siap mirroring.",
+                }
+    except Exception:
+        pass
+
     # 3. Active LAN Subnet Discovery (Pilar 1 - tolerates randomized MAC & hidden network)
-    discovered_ip = discover_iphone_ip_on_lan(udid, timeout=0.35)
-    if discovered_ip and probe_tcp_port(discovered_ip, 62078, timeout=0.25):
+    discovered_ip = discover_iphone_ip_on_lan(udid, timeout=1.2)
+    if discovered_ip and probe_tcp_port(discovered_ip, 62078, timeout=0.8):
         update_device_wifi_state(udid, ip=discovered_ip, last_seen_wifi=True)
         return {
             "udid": udid,
@@ -782,7 +781,7 @@ def probe_wifi_device(udid: str) -> dict:
             "method": "subnet_scan",
             "wifi_enabled": True,
             "paired": paired,
-            "status_text": f"✓ Wi‑Fi Ready (Connected on LAN: {discovered_ip})",
+            "status_text": f"✓ Wi-Fi Ready (Connected on LAN: {discovered_ip})",
             "status_tone": "ok",
             "message": f"iPhone terdeteksi aktif di IP {discovered_ip}. Siap mirroring tanpa kabel.",
         }
@@ -791,7 +790,7 @@ def probe_wifi_device(udid: str) -> dict:
     mac = cached.get("mac_address")
     if mac:
         found_ip = find_ip_by_mac(mac)
-        if found_ip and probe_tcp_port(found_ip, 62078, timeout=0.25):
+        if found_ip and probe_tcp_port(found_ip, 62078, timeout=0.8):
             update_device_wifi_state(udid, ip=found_ip, last_seen_wifi=True)
             return {
                 "udid": udid,
@@ -800,14 +799,14 @@ def probe_wifi_device(udid: str) -> dict:
                 "method": "arp_probe",
                 "wifi_enabled": True,
                 "paired": paired,
-                "status_text": f"✓ Wi‑Fi Ready (Connected on LAN: {found_ip})",
+                "status_text": f"✓ Wi-Fi Ready (Connected on LAN: {found_ip})",
                 "status_tone": "ok",
                 "message": f"iPhone terdeteksi aktif di IP {found_ip}. Siap mirroring tanpa kabel.",
             }
 
-    # If unreachable, return honest diagnosis with last known IP note
-    target_ip_note = f" (IP terakhir: {last_ip})" if last_ip else ""
-    if paired and enabled:
+    # Unreachable on Wi-Fi
+    if paired:
+        offline_label = f"Wi-Fi Paired (Offline - IP terakhir: {last_ip})" if last_ip else "Wi-Fi Paired (Offline)"
         return {
             "udid": udid,
             "reachable": False,
@@ -815,24 +814,12 @@ def probe_wifi_device(udid: str) -> dict:
             "method": "none",
             "wifi_enabled": True,
             "paired": True,
-            "status_text": "⚠️ Wi‑Fi Paired (Pastikan iPhone menyala & di Wi‑Fi yang sama)",
+            "status_text": f"⚠ {offline_label}",
             "status_tone": "warn",
             "message": (
-                f"Profil pairing tersimpan{target_ip_note}, tetapi iPhone belum merespons di jaringan lokal. "
-                "Pastikan layar iPhone menyala (unlocked) dan terhubung ke Wi-Fi yang sama dengan PC."
+                "Perangkat ter-pairing untuk Wi-Fi tetapi tidak terdeteksi di LAN saat ini. "
+                "Pastikan iPhone menyala, Wi-Fi aktif, dan terhubung ke jaringan yang sama."
             ),
-        }
-    if paired and not enabled:
-        return {
-            "udid": udid,
-            "reachable": False,
-            "ip": last_ip,
-            "method": "none",
-            "wifi_enabled": False,
-            "paired": True,
-            "status_text": "🔌 Colok kabel USB 1x untuk aktifkan mode Wi‑Fi",
-            "status_tone": "bad",
-            "message": "Izin Wireless Lockdown belum aktif pada iPhone. Colok kabel USB 1x untuk mengaktifkannya otomatis.",
         }
 
     return {
@@ -842,11 +829,10 @@ def probe_wifi_device(udid: str) -> dict:
         "method": "none",
         "wifi_enabled": False,
         "paired": False,
-        "status_text": "🔌 Colok kabel USB 1x untuk aktifkan mode Wi‑Fi",
-        "status_tone": "bad",
-        "message": "iPhone belum pernah di-setup untuk Wi-Fi. Colokkan kabel USB dan klik 'Set up Wi-Fi'.",
+        "status_text": "Wi-Fi Not Configured",
+        "status_tone": "muted",
+        "message": "Wi-Fi belum dikonfigurasi. Hubungkan iPhone via kabel lalu klik 'Set up Wi-Fi'.",
     }
-
 
 def get_wifi_status(selected_udid: Optional[str] = None, *, probe_network: bool = False) -> dict:
     """Return consolidated Wi-Fi status.
@@ -1161,67 +1147,59 @@ async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout
 
 
 async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fallback: bool = True):
-    from pymobiledevice3.lockdown import create_using_tcp, create_using_usbmux
-    from pymobiledevice3.pair_records import create_pairing_records_cache_folder, get_preferred_pair_record
+    """1:1 drop-in for userspace_tunnel._create_no_root_tunnel_provider (ZenLink bytecode disassembly)."""
+    from pymobiledevice3.exceptions import UserspaceTunnelUnavailableError
     from pymobiledevice3.remote import tunnel_service
 
-    _patch_bonjour()
+    wifi_debug_log("WIFI_PROVIDER", f"Resolving Wi-Fi CoreDevice tunnel for {serial}...")
 
-    # Ensure we know the target device's active LAN IP (identified by UDID, like ZenLink lan.py)
-    cached_info = get_device_wifi_state(serial) if serial else {}
-    ip = await asyncio.to_thread(lan_host_for, serial) if serial else None
-    if not ip:
-        ip = cached_info.get("last_ip") or await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
-
-    # STAGE 1: Direct Unicast DNS-SD & Ephemeral Scan on target IP (0% multicast dependency!)
-    if ip:
-        svc, ld = await resolve_remote_pairing_service(serial, ip, timeout=1.5)
-        if svc is not None:
-            logger.info("Wi-Fi Stage 1 SUCCESS: Direct Unicast RemotePairing on %s", ip)
-            return svc, ld
-
-    # STAGE 2: RemotePairing over Bonjour / mDNS (with unicast injection from _patch_bonjour)
-    try:
-        services = await tunnel_service.get_remote_pairing_tunnel_services(
-            udid=serial, bonjour_timeout=2.0
+    if not serial or not has_remote_record(serial):
+        wifi_debug_log("WIFI_PROVIDER_ERR", f"No RemotePairing record for {serial}")
+        raise UserspaceTunnelUnavailableError(
+            "Wi-Fi isn't set up for this device yet. Connect the cable, unlock the device, "
+            "press 'Set up Wi-Fi' in Settings once, then unplug."
         )
+
+    # 1. Resolve host IP on LAN
+    host = lan_host_for(serial)
+    if host is None:
+        cached = get_device_wifi_state(serial)
+        last_ip = cached.get("last_ip")
+        if last_ip and probe_tcp_port(last_ip, 62078, timeout=0.8):
+            host = last_ip
+        else:
+            wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for device host IP...")
+            host = await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
+
+    wifi_debug_log("WIFI_PROVIDER", f"Target device host on LAN: {host}")
+
+    # 2. If host IP found, connect via RemotePairing by IP
+    if host:
+        try:
+            svc = await _remotepairing_by_ip(serial, host)
+            if svc is not None:
+                wifi_debug_log("WIFI_PROVIDER", f"Successfully opened RemotePairing tunnel at {host}!")
+                return (svc, None)
+        except Exception as exc:
+            wifi_debug_log("WIFI_PROVIDER_WARN", f"_remotepairing_by_ip({host}) failed: {exc}", exc)
+
+    # 3. Fallback: tunnel_service.get_remote_pairing_tunnel_services
+    wifi_debug_log("WIFI_PROVIDER", "Direct IP failed, trying get_remote_pairing_tunnel_services...")
+    try:
+        services = await tunnel_service.get_remote_pairing_tunnel_services(udid=serial)
         if services:
             for extra in services[1:]:
-                await extra.close()
-            logger.info("Wi-Fi Stage 2 SUCCESS: Connected via Bonjour RemotePairing for %s", serial)
-            return services[0], None
-    except Exception as e:
-        logger.debug("Wi-Fi Stage 2 Bonjour failed: %s", e)
+                with contextlib.suppress(Exception):
+                    await extra.close()
+            wifi_debug_log("WIFI_PROVIDER", "Connected via get_remote_pairing_tunnel_services!")
+            return (services[0], None)
+    except Exception as exc:
+        wifi_debug_log("WIFI_PROVIDER_WARN", f"get_remote_pairing_tunnel_services failed: {exc}", exc)
 
-    # STAGE 3: CoreDeviceTunnelProxy over usbmux Network connection
-    try:
-        ld_net = await create_using_usbmux(serial=serial, connection_type="Network", autopair=True)
-        proxy = await tunnel_service.CoreDeviceTunnelProxy.create(ld_net)
-        logger.info("Wi-Fi Stage 3 SUCCESS: CoreDeviceTunnelProxy over usbmux Network")
-        return proxy, ld_net
-    except Exception as e:
-        logger.debug("Wi-Fi Stage 3 usbmux Network failed: %s", e)
-
-    # STAGE 4: USB-Assisted Bootstrap / Hybrid Fallback if cable is still plugged in
-    try:
-        ld_usb = await create_using_usbmux(serial=serial, connection_type="USB", autopair=True)
-        with contextlib.suppress(Exception):
-            await ld_usb.set_enable_wifi_connections(True)
-            await ld_usb.set_value(True, "com.apple.mobile.wireless_lockdown", "EnableWifiDebugging")
-        proxy = await tunnel_service.CoreDeviceTunnelProxy.create(ld_usb)
-        setattr(proxy, "_is_usb_fallback", True)
-        logger.info("Wi-Fi Stage 4 SUCCESS: Bootstrapped via USB-Assisted Hybrid Link")
-        return proxy, ld_usb
-    except Exception as e:
-        logger.debug("Wi-Fi Stage 4 USB bootstrap failed: %s", e)
-
-    target_info = f" (IP terakhir: {ip})" if ip else ""
-    raise WifiNotFoundError(
-        f"Gagal terhubung via Wi-Fi{target_info}: iPhone tidak merespons di jaringan lokal. "
-        "Pastikan layar iPhone menyala (unlocked), terhubung ke Wi-Fi yang sama dengan PC, "
-        "atau colok kabel USB 1x untuk mengaktifkan izin Wi-Fi Sync."
+    wifi_debug_log("WIFI_PROVIDER_ERR", "Device not found on Wi-Fi.")
+    raise UserspaceTunnelUnavailableError(
+        "The device wasn't found on Wi-Fi. Keep it unlocked and on the same network as this PC."
     )
-
 
 def wifi_tunnel(udid: str):
     """An RSD tunnel to ``udid`` over Wi-Fi with clean lifecycle reset."""

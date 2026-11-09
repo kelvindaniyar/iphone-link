@@ -1174,21 +1174,24 @@ class AirPlayMirrorServer:
     def stop_and_release_ports(self) -> None:
         """Synchronously close RTSP, HTTP and mDNS servers and release all listening ports."""
         self._stopped = True
+        if self._rtsp_server is not None:
+            with contextlib.suppress(Exception):
+                self._rtsp_server.close()
+            self._rtsp_server = None
+        if self._http_server is not None:
+            with contextlib.suppress(Exception):
+                self._http_server.close()
+            self._http_server = None
+        if self._mirror_server is not None:
+            with contextlib.suppress(Exception):
+                self._mirror_server.close()
+            self._mirror_server = None
         if self._loop and self._loop.is_running():
             try:
                 fut = asyncio.run_coroutine_threadsafe(self.close(), self._loop)
-                fut.result(timeout=2.0)
+                fut.result(timeout=1.0)
             except Exception:
                 pass
-        else:
-            if self._rtsp_server is not None:
-                with contextlib.suppress(Exception):
-                    self._rtsp_server.close()
-                self._rtsp_server = None
-            if self._http_server is not None:
-                with contextlib.suppress(Exception):
-                    self._http_server.close()
-                self._http_server = None
 
 
 _GLOBAL_AIRPLAY_SERVER: Optional[AirPlayMirrorServer] = None

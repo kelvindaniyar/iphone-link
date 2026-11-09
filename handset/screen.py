@@ -194,6 +194,70 @@ def screen_status() -> dict:
         return st
 
 
+
+def _ensure_local_stream_port_free(port: int = 8766, timeout: float = 2.5) -> bool:
+    """Ensure port 8766 is completely released and unbound before starting a stream server.
+    Closes any active stream servers, terminates orphan processes if needed, and verifies socket bind."""
+    global _ACTIVE_SERVER
+    # 1. Stop any AirPlay receiver holding 8766
+    _stop_airplay_receiver()
+
+    # 2. Close active server
+    if _ACTIVE_SERVER is not None:
+        srv = _ACTIVE_SERVER
+        _ACTIVE_SERVER = None
+        for fn_name in ("close", "stop", "stop_and_release_ports"):
+            if hasattr(srv, fn_name):
+                try:
+                    res = getattr(srv, fn_name)()
+                    if asyncio.iscoroutine(res):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(res)
+                        except RuntimeError:
+                            pass
+                except Exception:
+                    pass
+        if hasattr(srv, "_server") and srv._server is not None:
+            with contextlib.suppress(Exception):
+                srv._server.close()
+
+    # 3. Test binding with SO_REUSEADDR
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", port))
+            s.close()
+            return True
+        except OSError:
+            time.sleep(0.08)
+
+    # 4. If still busy, check netstat and kill orphan if not our own process
+    try:
+        import subprocess, os
+        out = subprocess.check_output(f'netstat -ano | findstr ":{port} "', shell=True, text=True)
+        for line in out.strip().splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 5 and "LISTENING" in line:
+                pid = int(parts[-1])
+                if pid != os.getpid() and pid > 0:
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+                    time.sleep(0.1)
+    except Exception:
+        pass
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", port))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
 def stop_screen() -> dict:
     """Cleanly stop mirroring, terminate stream server, restore brightness & speaker volume, and reset state."""
     global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONLY_LOCKED, _WIFI_MODE
@@ -225,6 +289,7 @@ def stop_screen() -> dict:
             if srv:
                 with contextlib.suppress(Exception):
                     srv.reset_stream_state()
+            _ensure_local_stream_port_free(8766, timeout=1.0)
             _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
         else:
             if _STATE.get("transport") == "wifi":
@@ -408,11 +473,9 @@ def start_screen(udid: str | None, transport: str = "cable") -> dict:
 
     if transport == "wifi":
         chosen = (udid or "").strip() or _only_udid(usb, wifi, transport) or (wifi[0] if wifi else "")
-        if chosen and chosen in wifi:
-            # Tahap 132: same pipeline as the cable (CoreDevice ScreenStreamServer: HEVC + AAC-ELD + HID),
-            # only the tunnel goes over Wi-Fi (RemotePairing record exists).
+        if chosen:
             return _start_coredevice_wifi(chosen)
-        return _start_airplay_receiver(chosen or "airplay")
+        return _set(phase="error", udid=None, url=None, error="Tidak ada iPhone yang ter-pairing untuk Wi-Fi. Hubungkan kabel sekali lalu klik 'Set up Wi-Fi'.")
 
     chosen = (udid or "").strip() or _only_udid(usb, wifi, transport)
     if not chosen:
@@ -535,43 +598,53 @@ async def _serve_airplay(udid: str) -> None:
 async def _serve(udid: str, transport: str):
     global _CURRENT_TASK, _CURRENT_LOOP
     if transport == "wifi":
-        # Tahap 132: Stop must be able to cancel while the Wi-Fi tunnel is still opening.
         _CURRENT_LOOP = asyncio.get_running_loop()
         _CURRENT_TASK = asyncio.current_task()
 
     from pymobiledevice3.remote.core_device.screen_stream import ScreenStreamServer, _NAMED_BUTTONS
     from pymobiledevice3.services.mobile_image_mounter import auto_mount
-    from .wifi import force_reset_userspace_tunnel
+    from .wifi import force_reset_userspace_tunnel, wifi_debug_log
 
     # Ensure no lingering userspace tunnel is active from a previous session
     await force_reset_userspace_tunnel()
 
     # HID Consumer Control (0x0C): 0x00B8 (Eject) to toggle iOS virtual keyboard cleanly
-    # (Do NOT use 0x029D AL Keyboard Layout as it acts as Globe key and switches to Emoji)
     _NAMED_BUTTONS["volume-up"] = (12, 0x00E9, 0.025)
     _NAMED_BUTTONS["volume-down"] = (12, 0x00EA, 0.025)
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
     _NAMED_BUTTONS.pop("keyboard-toggle", None)
 
+    wifi_debug_log("SCREEN_SERVE", f"Starting screen session for {udid} (transport={transport})...")
+
+    # Stage 1: Deteksi perangkat
+    _set(note="1. Deteksi perangkat...")
+    wifi_debug_log("SCREEN_SERVE", f"[STAGE 1] Deteksi perangkat {udid} (transport={transport})")
+
+    # Stage 2: Koneksi aman
+    _set(note="2. Koneksi aman - Membuka jalur terenkripsi CoreDevice...")
+    wifi_debug_log("SCREEN_SERVE", "[STAGE 2] Membuka jalur terenkripsi CoreDevice ke perangkat...")
+
     try:
         for attempt in range(2):
             try:
                 async with _open_tunnel(udid, transport) as rsd:
-                    if DISPLAY_SERVICE in (rsd.peer_info or {}).get("Services", {}):
-                        await _stream(rsd, udid, ScreenStreamServer)
-                        return
-                    if attempt:
-                        raise RuntimeError(
-                            "The developer image mounted, but the iPhone still offers no display service. "
-                            "Unplug it, plug it back in, and press Show screen again."
-                        )
-                    _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
-                    await auto_mount(rsd)
+                    # Stage 3: Siapkan perangkat
+                    _set(note="3. Siapkan perangkat...")
+                    wifi_debug_log("SCREEN_SERVE", "[STAGE 3] Menyiapkan perangkat...")
+                    if DISPLAY_SERVICE not in (rsd.peer_info or {}).get("Services", {}):
+                        _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
+                        wifi_debug_log("SCREEN_SERVE", "[STAGE 3] auto_mount developer disk image...")
+                        await auto_mount(rsd)
+
+                    # Stage 4: Mulai stream
+                    _set(note="4. Mulai stream...")
+                    wifi_debug_log("SCREEN_SERVE", "[STAGE 4] Memulai screen stream server...")
+                    await _stream(rsd, udid, ScreenStreamServer)
+                    return
             except Exception as tunnel_err:
                 err_text = str(tunnel_err)
                 if "already active in this process" in err_text and attempt == 0:
-                    import logging
-                    logging.getLogger(__name__).warning("Userspace tunnel collision detected, forcing reset and retrying: %s", tunnel_err)
+                    wifi_debug_log("SCREEN_SERVE", "Userspace tunnel collision detected, resetting and retrying...")
                     await force_reset_userspace_tunnel()
                     await asyncio.sleep(0.3)
                     continue
@@ -579,26 +652,22 @@ async def _serve(udid: str, transport: str):
     except asyncio.CancelledError:
         return None
     except Exception as exc:
+        wifi_debug_log("SCREEN_SERVE_ERR", f"Screen stream error on {transport}: {exc}", exc)
+        _CURRENT_TASK = None
+        with contextlib.suppress(Exception):
+            await force_reset_userspace_tunnel()
+        _ensure_local_stream_port_free(8766, timeout=1.0)
         if transport == "wifi":
-            import logging
-
-            reason = _plain(exc)
-            logging.getLogger(__name__).warning(
-                "CoreDevice Wi-Fi unavailable (%s); falling back to the AirPlay receiver", reason
+            _set(
+                phase="error",
+                udid=udid,
+                url=None,
+                error=f"Koneksi CoreDevice Wi-Fi gagal: {_plain(exc)}. Pastikan iPhone menyala, layar tidak terkunci, dan terhubung ke Wi-Fi yang sama dengan PC.",
+                note=None,
+                transport="wifi",
             )
-            _CURRENT_TASK = None
-            with contextlib.suppress(Exception):
-                await force_reset_userspace_tunnel()
-            _start_airplay_receiver(
-                udid,
-                note=(
-                    f"Kontrol penuh via Wi-Fi belum tersedia ({reason}). Mode AirPlay (video saja) aktif: "
-                    "buka Control Center di iPhone > Pencerminan Layar > pilih 'iPhone Link'."
-                ),
-            )
-            return "airplay"
+            return None
         raise
-
 
 async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
     from pymobiledevice3.remote.core_device.display_service import is_media_in_use_error
@@ -651,6 +720,9 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
 
     # Tahap 123: Ensure zlaac.dll CoreDevice AAC-ELD decoder patch is active for /audio.bin
     install_coredevice_aac_decoder()
+
+    if not _ensure_local_stream_port_free(8766, timeout=2.5):
+        raise RuntimeError("Port 127.0.0.1:8766 masih digunakan oleh proses lain.")
 
     server = ScreenStreamServer(
         rsd,
