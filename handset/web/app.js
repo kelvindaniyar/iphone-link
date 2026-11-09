@@ -1770,6 +1770,30 @@ function updateStealthDimUI(active) {
   }
 }
 
+function updateHardwareSmartLockButton(isLocked) {
+  const btn = document.querySelector('#hw-btn-smart-lock');
+  const label = document.querySelector('#hw-smart-lock-label');
+  const iconLock = btn?.querySelector('.hw-icon-lock');
+  const iconWake = btn?.querySelector('.hw-icon-wake');
+  if (!btn) return;
+  if (isLocked) {
+    btn.classList.add('is-locked-state');
+    btn.setAttribute('title', 'Wake / Unlock iPhone (Alt+U)');
+    btn.setAttribute('aria-label', 'Wake / Unlock iPhone (Alt+U)');
+    if (label) label.textContent = 'Wake';
+    if (iconLock) iconLock.style.display = 'none';
+    if (iconWake) iconWake.style.display = 'block';
+  } else {
+    btn.classList.remove('is-locked-state');
+    btn.setAttribute('title', 'Lock iPhone (Alt+L)');
+    btn.setAttribute('aria-label', 'Lock iPhone (Alt+L)');
+    if (label) label.textContent = 'Lock';
+    if (iconLock) iconLock.style.display = 'block';
+    if (iconWake) iconWake.style.display = 'none';
+  }
+}
+window.updateHardwareSmartLockButton = updateHardwareSmartLockButton;
+
 async function triggerWakeUnlockIphone() {
   if (btnWakeUnlock) {
     btnWakeUnlock.disabled = true;
@@ -1791,11 +1815,11 @@ async function triggerWakeUnlockIphone() {
         screenNote.textContent = pin ? "Layar iPhone dibangunkan & PIN diinjeksi." : "Layar iPhone telah dibangunkan.";
         screenNote.className = "ok";
       }
+      updateHardwareSmartLockButton(false);
       // Tahap 53: Do NOT break the active stream! Send wake-stream-pli to request keyframes cleanly
       try {
         screenView?.contentWindow?.postMessage({ type: "wake-stream-pli" }, "*");
       } catch (_) { }
-      try { updateSmartLockFlyoutButton(false); } catch (_) { }
       setTimeout(() => load(), 200);
     }
   } catch (err) {
@@ -1832,11 +1856,11 @@ async function triggerLockIphone() {
         screenNote.textContent = 'iPhone Terkunci (Standby) - Layar fisik dimatikan. Klik "Wake / Unlock (Alt+U)" untuk membuka kembali.';
         screenNote.className = "calm-standby";
       }
+      updateHardwareSmartLockButton(true);
       // Tahap 53: Inform mirror iframe to hide status pill completely during locked mode
       try {
         screenView?.contentWindow?.postMessage({ type: "device-locked" }, "*");
       } catch (_) { }
-      try { updateSmartLockFlyoutButton(true); } catch (_) { }
       setTimeout(() => load(), 200);
     }
   } catch (err) {
@@ -1883,6 +1907,16 @@ async function triggerToggleStealthDim(explicitState = null) {
 btnWakeUnlock?.addEventListener("click", triggerWakeUnlockIphone);
 btnLockIphone?.addEventListener("click", triggerLockIphone);
 btnStealthMode?.addEventListener("click", () => triggerToggleStealthDim());
+  const hwBtnSmartLock = document.querySelector('#hw-btn-smart-lock');
+  hwBtnSmartLock?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isLocked = hwBtnSmartLock.classList.contains('is-locked-state');
+    if (isLocked) {
+      triggerWakeUnlockIphone();
+    } else {
+      triggerLockIphone();
+    }
+  });
 
 window.triggerWakeUnlockIphone = triggerWakeUnlockIphone;
 window.triggerLockIphone = triggerLockIphone;
@@ -2576,7 +2610,8 @@ function sendAppMetrics() {
 
 function renderScreen(screen) {
   if (!screen) return;
-  try { updateSmartLockFlyoutButton(Boolean(screen.intentionally_locked)); } catch (_) { }
+  const isLockedScreen = Boolean(screen.intentionally_locked || screen.intentionallyLocked);
+  updateHardwareSmartLockButton(isLockedScreen);
   if (typeof screen.stealth_dim === "boolean") {
     updateStealthDimUI(screen.stealth_dim);
   }
@@ -2586,7 +2621,7 @@ function renderScreen(screen) {
     appContainer.classList.add("is-streaming");
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
-    if (remotePanel) remotePanel.hidden = false;
+    remotePanel.hidden = false;
     restartScreen.hidden = false;
     restartScreen.disabled = false;
     kbToggle.hidden = false;
@@ -2650,7 +2685,7 @@ function renderScreen(screen) {
   appContainer.classList.remove("is-streaming");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
-  if (remotePanel) remotePanel.hidden = true;
+  remotePanel.hidden = true;
   restartScreen.hidden = false;
   restartScreen.disabled = false;
   if (stopScreen) {
@@ -3147,9 +3182,9 @@ function wireRemoteControls() {
     const btn = document.querySelector("#fullscreen");
     if (btn) btn.textContent = document.fullscreenElement ? "Exit full screen" : "⛶ Full screen";
   });
-  document.querySelectorAll("[data-btn]").forEach((btn) => {
+  document.querySelectorAll("[data-btn], [data-button]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const name = btn.dataset.btn;
+      const name = btn.dataset.btn || btn.dataset.button;
       if (name === "home") clearOcrSessionMemory();
       if (name) mirrorPost("/button", { name, state: "press" });
       sendPostMotionPliSettler();
@@ -3929,149 +3964,6 @@ function initUpdaterControls() {
   }, 2500);
 }
 
-// ======================================================================
-// Tahap 145: Left Liquid Glass Quick-Action Flyout Controls
-// ======================================================================
-function triggerFlyoutPulse(btn) {
-  if (!btn) return;
-  btn.classList.add("is-active-pulse");
-  setTimeout(() => btn.classList.remove("is-active-pulse"), 160);
-}
-
-function updateSmartLockFlyoutButton(isLocked) {
-  const btn = document.querySelector("#flyout-btn-smart-lock");
-  if (!btn) return;
-  if (isLocked) {
-    btn.classList.add("is-locked-state");
-    btn.setAttribute("title", "Wake / Unlock iPhone (Alt+U)");
-    btn.setAttribute("aria-label", "Wake / Unlock iPhone (Alt+U)");
-    const lockIcon = btn.querySelector(".flyout-icon-lock");
-    const wakeIcon = btn.querySelector(".flyout-icon-wake");
-    if (lockIcon) lockIcon.style.display = "none";
-    if (wakeIcon) wakeIcon.style.display = "block";
-  } else {
-    btn.classList.remove("is-locked-state");
-    btn.setAttribute("title", "Lock iPhone (Alt+L)");
-    btn.setAttribute("aria-label", "Lock iPhone (Alt+L)");
-    const lockIcon = btn.querySelector(".flyout-icon-lock");
-    const wakeIcon = btn.querySelector(".flyout-icon-wake");
-    if (lockIcon) lockIcon.style.display = "block";
-    if (wakeIcon) wakeIcon.style.display = "none";
-  }
-}
-window.updateSmartLockFlyoutButton = updateSmartLockFlyoutButton;
-
-function setFlyoutCollapsed(collapsed, save = true) {
-  const flyoutContainer = document.querySelector("#left-quick-flyout");
-  const btnToggleFlyout = document.querySelector("#btn-toggle-left-flyout");
-  const appRoot = document.querySelector("#app-root") || document.querySelector(".app");
-  if (!flyoutContainer) return;
-  if (collapsed) {
-    flyoutContainer.classList.add("is-collapsed");
-    appRoot?.classList.remove("left-flyout-open");
-    btnToggleFlyout?.setAttribute("title", "Show Quick Actions");
-    btnToggleFlyout?.setAttribute("aria-label", "Show Quick Actions");
-  } else {
-    flyoutContainer.classList.remove("is-collapsed");
-    appRoot?.classList.add("left-flyout-open");
-    btnToggleFlyout?.setAttribute("title", "Hide Quick Actions");
-    btnToggleFlyout?.setAttribute("aria-label", "Hide Quick Actions");
-  }
-
-  // Tahap 146: Sinkronisasi lebar jendela Win32 saat Left Flyout Show/Hide
-  try {
-    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_left_flyout === "function") {
-      window.pywebview.api.set_left_flyout(!collapsed);
-    }
-  } catch (err) {
-    console.warn("set_left_flyout api error:", err);
-  }
-
-  if (save) {
-    try {
-      localStorage.setItem("iphone_link_left_flyout_collapsed", collapsed ? "1" : "0");
-    } catch (_) { }
-  }
-}
-window.setFlyoutCollapsed = setFlyoutCollapsed;
-
-function initLeftFlyoutControls() {
-  const flyoutContainer = document.querySelector("#left-quick-flyout");
-  const btnToggleFlyout = document.querySelector("#btn-toggle-left-flyout");
-  const btnNotifications = document.querySelector("#flyout-btn-notifications");
-  const btnControlCenter = document.querySelector("#flyout-btn-control-center");
-  const btnSmartLock = document.querySelector("#flyout-btn-smart-lock");
-  const btnMute = document.querySelector("#flyout-btn-mute");
-  const btnVolUp = document.querySelector("#flyout-btn-vol-up");
-  const btnVolDown = document.querySelector("#flyout-btn-vol-down");
-
-  btnToggleFlyout?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const isCollapsed = flyoutContainer?.classList.contains("is-collapsed");
-    setFlyoutCollapsed(!isCollapsed, true);
-  });
-
-  // Restore saved collapse state (default "0" = open)
-  let initialCollapsed = false;
-  try {
-    const saved = localStorage.getItem("iphone_link_left_flyout_collapsed");
-    if (saved === "1") {
-      initialCollapsed = true;
-    }
-  } catch (_) { }
-  setFlyoutCollapsed(initialCollapsed, false);
-
-  window.addEventListener("pywebviewready", () => {
-    try {
-      const isCol = flyoutContainer?.classList.contains("is-collapsed");
-      window.pywebview?.api?.set_left_flyout?.(!isCol);
-    } catch (_) { }
-  });
-
-  btnNotifications?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnNotifications);
-    try { gesture("notifications"); } catch (err) { console.warn("gesture notifications err:", err); }
-  });
-
-  btnControlCenter?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnControlCenter);
-    try { gesture("control"); } catch (err) { console.warn("gesture control err:", err); }
-  });
-
-  btnSmartLock?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnSmartLock);
-    if (btnSmartLock.classList.contains("is-locked-state")) {
-      triggerWakeUnlockIphone();
-    } else {
-      triggerLockIphone();
-    }
-  });
-
-  btnMute?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnMute);
-    mirrorPost("/button", { name: "mute", state: "press" });
-    sendPostMotionPliSettler();
-  });
-
-  btnVolUp?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnVolUp);
-    mirrorPost("/button", { name: "volume-up", state: "press" });
-    sendPostMotionPliSettler();
-  });
-
-  btnVolDown?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    triggerFlyoutPulse(btnVolDown);
-    mirrorPost("/button", { name: "volume-down", state: "press" });
-    sendPostMotionPliSettler();
-  });
-}
-
 // Tahap 70: Orderly Bootstrap Sequence at Bottom of File (Anti-TDZ 100%)
 // ======================================================================
 function bootstrapApp() {
@@ -4100,7 +3992,6 @@ function bootstrapApp() {
   try { startWallpaperSigWatcher(); } catch (e) { console.error("startWallpaperSigWatcher error:", e); }
   try { fetchUserSettings(); } catch (e) { console.error("fetchUserSettings error:", e); }
   try { initUpdaterControls(); } catch (e) { console.error("initUpdaterControls error:", e); }
-  try { initLeftFlyoutControls(); } catch (e) { console.error("initLeftFlyoutControls error:", e); }
   try { load(); } catch (e) { console.error("load error:", e); }
 }
 
