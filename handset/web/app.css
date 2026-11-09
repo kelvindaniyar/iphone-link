@@ -3690,22 +3690,23 @@ body[data-theme="light"],
    ====================================================================== */
 
 .launchpad-shell {
-  width: calc(100% - 28px) !important;
-  max-width: 306px !important;
-  box-sizing: border-box !important;
-  margin: 0 auto !important;
-  padding: 16px 14px !important;
+  width: calc(100% - 24px) !important;
+  max-width: 300px !important;
+  padding: 8px 4px !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
   display: flex !important;
   flex-direction: column !important;
-  align-items: stretch !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  box-sizing: border-box !important;
+  margin: 0 auto !important;
   user-select: none;
   cursor: default;
-  background: rgba(11, 15, 25, 0.84) !important;
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-radius: 18px !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
 }
 
 .launchpad-idle-view,
@@ -3734,54 +3735,81 @@ body[data-theme="light"],
 
 .launchpad-icon-wrap {
   position: relative;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 8px;
+  width: auto;
+  height: auto;
+  min-width: 64px;
+  min-height: 124px;
+  margin: 0 auto 6px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.launchpad-logo {
+.launchpad-hero-icon {
   position: relative;
   z-index: 2;
-  filter: drop-shadow(0 6px 16px rgba(0, 120, 212, 0.4));
-  border-radius: 14px;
+  width: 64px;
+  height: 124px;
+  color: #10b981;
+  filter: drop-shadow(0 0 22px rgba(16, 185, 129, 0.38));
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  display: block;
+}
+
+.launchpad-hero-icon.is-disconnected {
+  color: #94a3b8;
+  filter: drop-shadow(0 0 16px rgba(148, 163, 184, 0.25));
 }
 
 .launchpad-glow {
   position: absolute;
-  inset: -4px;
-  border-radius: 18px;
-  background: radial-gradient(circle, rgba(0, 120, 212, 0.25) 0%, transparent 70%);
+  inset: -14px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.22) 0%, rgba(56, 189, 248, 0.12) 40%, transparent 70%);
   z-index: 1;
+  pointer-events: none;
 }
 
-.launchpad-title {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-  margin: 0 0 2px 0;
-  color: var(--text-primary, #f1f5f9);
+.launchpad-title,
+#launchpad-title {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  margin: 10px 0 4px !important;
+  color: #f8fafc !important;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55) !important;
 }
 
-.launchpad-subtitle {
-  font-size: 11px;
-  color: var(--text-muted, #94a3b8);
-  margin: 0;
-  line-height: 1.35;
+.launchpad-subtitle,
+#launchpad-subtitle {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  max-width: 250px !important;
+  margin: 0 auto 14px !important;
+  color: rgba(241, 245, 249, 0.85) !important;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5) !important;
 }
 
 /* Device Status Card */
-.launchpad-device-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  border-radius: 10px;
-  padding: 8px 10px;
-  box-sizing: border-box;
+.launchpad-device-card,
+#launchpad-device-card {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  width: auto !important;
+  min-width: 220px !important;
+  max-width: 284px !important;
+  padding: 6px 8px 6px 14px !important;
+  margin: 0 auto 14px !important;
+  border-radius: 999px !important;
+  background: rgba(15, 23, 42, 0.48) !important;
+  backdrop-filter: blur(16px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
+  box-sizing: border-box !important;
 }
 
 .launchpad-status-dot {
@@ -3826,20 +3854,23 @@ body[data-theme="light"],
   text-overflow: ellipsis;
 }
 
-.launchpad-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted, #94a3b8);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-  line-height: 1;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
+.launchpad-icon-btn,
+#launchpad-scan-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-muted, #94a3b8) !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  line-height: 1 !important;
+  transition: all 0.15s ease !important;
+  flex-shrink: 0 !important;
 }
 
 .launchpad-icon-btn svg {
@@ -3853,42 +3884,61 @@ body[data-theme="light"],
 }
 
 /* Transport Pills Row */
-.launchpad-transport-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  width: 100%;
+.launchpad-transport-row,
+#launchpad-transport-row {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 3px !important;
+  width: 232px !important;
+  max-width: 100% !important;
+  padding: 3px !important;
+  margin: 0 auto 8px !important;
+  border-radius: 999px !important;
+  background: rgba(15, 23, 42, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  box-sizing: border-box !important;
 }
 
-.launchpad-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 32px;
-  font-size: 11.5px;
-  font-weight: 500;
-  background: var(--bg-card, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
-  color: var(--text-muted, #94a3b8);
-  cursor: pointer;
-  padding: 0 8px;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  box-sizing: border-box;
+.launchpad-pill,
+#launchpad-transport-cable,
+#launchpad-btn-cable,
+#launchpad-transport-wifi,
+#launchpad-btn-wifi {
+  border-radius: 999px !important;
+  height: 30px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: rgba(241, 245, 249, 0.7) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  padding: 0 8px !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
 }
 
-.launchpad-pill:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-primary, #f1f5f9);
+.launchpad-pill:hover,
+#launchpad-transport-cable:hover,
+#launchpad-transport-wifi:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary, #f1f5f9) !important;
 }
 
-.launchpad-pill.is-active {
-  background: rgba(0, 120, 212, 0.2);
-  border-color: #0078d4;
-  color: #38bdf8;
-  font-weight: 600;
+.launchpad-pill.is-active,
+.launchpad-pill.active,
+#launchpad-transport-cable.is-active,
+#launchpad-transport-wifi.is-active {
+  background: rgba(56, 189, 248, 0.22) !important;
+  color: #f8fafc !important;
+  border-color: rgba(56, 189, 248, 0.48) !important;
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.25) !important;
 }
 
 .launchpad-pill-icon {
@@ -3919,27 +3969,31 @@ body[data-theme="light"],
 }
 
 /* Action Buttons */
-.launchpad-setup-wifi-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 30px;
-  font-size: 11px;
-  font-weight: 500;
-  background: transparent;
-  border: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.15));
-  border-radius: 8px;
-  color: var(--text-muted, #94a3b8);
-  cursor: pointer;
-  padding: 0 10px;
-  transition: all 0.15s ease;
+.launchpad-setup-wifi-btn,
+#launchpad-setup-wifi-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  height: 28px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: none !important;
+  opacity: 0.85 !important;
+  padding: 4px 10px !important;
+  margin: 0 auto 6px !important;
+  border-radius: 999px !important;
+  color: var(--text-muted, #94a3b8) !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
 }
 
-.launchpad-setup-wifi-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: var(--text-primary, #f1f5f9);
+.launchpad-setup-wifi-btn:hover,
+#launchpad-setup-wifi-btn:hover {
+  opacity: 1 !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #38bdf8 !important;
 }
 
 .launchpad-wifi-feedback {
@@ -3950,30 +4004,36 @@ body[data-theme="light"],
   line-height: 1.3;
 }
 
-.launchpad-start-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 36px;
-  font-size: 12.5px;
-  font-weight: 600;
-  background: linear-gradient(135deg, #0078d4 0%, #0284c7 100%);
-  border: none;
-  border-radius: 9px;
-  color: #ffffff;
-  cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 120, 212, 0.35);
-  transition: all 0.15s ease;
+.launchpad-start-btn,
+#launchpad-start-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  width: 224px !important;
+  max-width: 100% !important;
+  height: 40px !important;
+  margin: 2px auto 0 !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+  background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  box-shadow: 0 10px 26px -4px rgba(37, 99, 235, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
 }
 
-.launchpad-start-btn:hover {
-  filter: brightness(1.1);
-  box-shadow: 0 6px 18px rgba(0, 120, 212, 0.5);
+.launchpad-start-btn:hover,
+#launchpad-start-btn:hover {
+  filter: brightness(1.1) !important;
+  box-shadow: 0 12px 30px -4px rgba(37, 99, 235, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
 }
 
-.launchpad-start-btn:active {
-  transform: scale(0.98);
+.launchpad-start-btn:active,
+#launchpad-start-btn:active {
+  transform: scale(0.98) !important;
 }
 
 .launchpad-error {
@@ -3985,13 +4045,28 @@ body[data-theme="light"],
 }
 
 /* Live 4-Stage Activity Panel */
+.launchpad-live-activity,
+#launchpad-live-activity {
+  width: 100% !important;
+  max-width: 280px !important;
+  margin: 0 auto !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 10px !important;
+}
+
 .activity-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 0 6px 0;
-  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding: 2px 0 4px 0 !important;
+  border-bottom: none !important;
 }
 
 .activity-title-wrap {
@@ -4051,6 +4126,19 @@ body[data-theme="light"],
   gap: 10px;
   position: relative;
   min-height: 38px;
+  border-radius: 12px !important;
+  background: rgba(15, 23, 42, 0.40) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  padding: 8px 12px !important;
+  box-sizing: border-box !important;
+  transition: all 0.2s ease !important;
+}
+
+.activity-step.is-active {
+  background: rgba(56, 189, 248, 0.16) !important;
+  border-color: rgba(56, 189, 248, 0.35) !important;
 }
 
 .step-indicator {
@@ -4143,16 +4231,18 @@ body[data-theme="light"],
   color: #475569;
 }
 
-.launchpad-cancel-btn {
+.launchpad-cancel-btn,
+#launchpad-cancel-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 30px;
+  padding: 0 16px;
   font-size: 11px;
   font-weight: 500;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  border-radius: 8px;
+  border-radius: 999px !important;
   color: var(--text-muted, #94a3b8);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -4166,56 +4256,121 @@ body[data-theme="light"],
 
 /* Light Theme Adaptations */
 [data-theme="light"] .launchpad-shell {
-  background: rgba(255, 255, 255, 0.88) !important;
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-  border: 1px solid rgba(0, 0, 0, 0.12) !important;
-  border-radius: 18px !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.7) inset !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
-[data-theme="light"] .launchpad-title {
-  color: #0f172a;
+[data-theme="light"] .launchpad-hero-icon {
+  color: #059669;
+  filter: drop-shadow(0 0 18px rgba(16, 185, 129, 0.32));
 }
-[data-theme="light"] .launchpad-subtitle {
+
+[data-theme="light"] .launchpad-hero-icon.is-disconnected {
   color: #64748b;
+  filter: drop-shadow(0 0 14px rgba(100, 116, 139, 0.2));
 }
-[data-theme="light"] .launchpad-device-card {
-  background: #ffffff;
-  border-color: #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+[data-theme="light"] .launchpad-title,
+[data-theme="light"] #launchpad-title {
+  color: #0f172a !important;
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.85) !important;
 }
+
+[data-theme="light"] .launchpad-subtitle,
+[data-theme="light"] #launchpad-subtitle {
+  color: #334155 !important;
+  text-shadow: 0 1px 6px rgba(255, 255, 255, 0.8) !important;
+}
+
+[data-theme="light"] .launchpad-device-card,
+[data-theme="light"] #launchpad-device-card {
+  background: rgba(255, 255, 255, 0.68) !important;
+  backdrop-filter: blur(16px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08) !important;
+}
+
 [data-theme="light"] .launchpad-card-title {
-  color: #0f172a;
+  color: #0f172a !important;
 }
+
 [data-theme="light"] .launchpad-card-sub {
-  color: #64748b;
+  color: #64748b !important;
 }
-[data-theme="light"] .launchpad-pill {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #475569;
+
+[data-theme="light"] .launchpad-icon-btn,
+[data-theme="light"] #launchpad-scan-btn {
+  background: rgba(15, 23, 42, 0.06) !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+  color: #475569 !important;
 }
-[data-theme="light"] .launchpad-pill:hover {
-  background: #f1f5f9;
-  color: #0f172a;
+
+[data-theme="light"] .launchpad-transport-row,
+[data-theme="light"] #launchpad-transport-row {
+  background: rgba(15, 23, 42, 0.07) !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
 }
-[data-theme="light"] .launchpad-pill.is-active {
-  background: #eff6ff;
-  border-color: #0078d4;
-  color: #0078d4;
+
+[data-theme="light"] .launchpad-pill,
+[data-theme="light"] #launchpad-transport-cable,
+[data-theme="light"] #launchpad-transport-wifi {
+  color: #475569 !important;
 }
+
+[data-theme="light"] .launchpad-pill:hover,
+[data-theme="light"] #launchpad-transport-cable:hover,
+[data-theme="light"] #launchpad-transport-wifi:hover {
+  background: rgba(15, 23, 42, 0.05) !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .launchpad-pill.is-active,
+[data-theme="light"] .launchpad-pill.active,
+[data-theme="light"] #launchpad-transport-cable.is-active,
+[data-theme="light"] #launchpad-transport-wifi.is-active {
+  background: #ffffff !important;
+  color: #0284c7 !important;
+  border-color: rgba(2, 132, 199, 0.25) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08) !important;
+}
+
+[data-theme="light"] .launchpad-setup-wifi-btn:hover,
+[data-theme="light"] #launchpad-setup-wifi-btn:hover {
+  background: rgba(15, 23, 42, 0.06) !important;
+  color: #0284c7 !important;
+}
+
+[data-theme="light"] .activity-step {
+  background: rgba(255, 255, 255, 0.65) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+[data-theme="light"] .activity-step.is-active {
+  background: rgba(2, 132, 199, 0.12) !important;
+  border-color: rgba(2, 132, 199, 0.3) !important;
+}
+
 [data-theme="light"] .activity-title {
-  color: #0f172a;
+  color: #0f172a !important;
 }
+
 [data-theme="light"] .step-line {
-  background: #e2e8f0;
+  background: #e2e8f0 !important;
 }
+
 [data-theme="light"] .activity-header {
-  border-bottom-color: #e2e8f0;
+  border-bottom: none !important;
 }
-[data-theme="light"] .launchpad-cancel-btn {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-  color: #475569;
+
+[data-theme="light"] .launchpad-cancel-btn,
+[data-theme="light"] #launchpad-cancel-btn {
+  background: rgba(15, 23, 42, 0.06) !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+  color: #475569 !important;
 }

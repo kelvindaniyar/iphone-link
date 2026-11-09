@@ -66,8 +66,8 @@ const launchpadDeviceName = document.querySelector("#launchpad-device-name");
 const launchpadDeviceSub = document.querySelector("#launchpad-device-sub");
 const launchpadStatusDot = document.querySelector("#launchpad-status-dot");
 const launchpadScanBtn = document.querySelector("#launchpad-scan-btn");
-const launchpadTransportCable = document.querySelector("#launchpad-transport-cable");
-const launchpadTransportWifi = document.querySelector("#launchpad-transport-wifi");
+const launchpadTransportCable = document.querySelector("#launchpad-transport-cable, #launchpad-btn-cable");
+const launchpadTransportWifi = document.querySelector("#launchpad-transport-wifi, #launchpad-btn-wifi");
 const launchpadSetupWifiBtn = document.querySelector("#launchpad-setup-wifi-btn");
 const launchpadWifiFeedback = document.querySelector("#launchpad-wifi-feedback");
 const launchpadStartBtn = document.querySelector("#launchpad-start-btn");
@@ -2112,10 +2112,15 @@ function renderStatus(state) {
   // Tahap 135: Update Launchpad Card & Header
   if (launchpadDeviceName && launchpadDeviceSub && launchpadStatusDot && launchpadTitle) {
     const activeDev = (selectedUdid && (state.devices || []).find(d => d.udid === selectedUdid)) || (state.devices || [])[0];
+    const heroIcon = document.querySelector(".launchpad-hero-icon");
     if (activeDev) {
       const devName = activeDev.deviceName || "iPhone";
       launchpadTitle.textContent = `${devName} siap`;
       launchpadDeviceName.textContent = devName;
+      if (heroIcon) {
+        heroIcon.classList.remove("is-disconnected");
+        heroIcon.classList.add("is-ready");
+      }
       const isUsb = String(activeDev.connection || "").toUpperCase() === "USB";
       if (isUsb) {
         launchpadDeviceSub.textContent = "USB · siap";
@@ -2130,6 +2135,10 @@ function renderStatus(state) {
       launchpadDeviceName.textContent = "iPhone";
       launchpadDeviceSub.textContent = "Belum terhubung";
       launchpadStatusDot.className = "launchpad-status-dot warn";
+      if (heroIcon) {
+        heroIcon.classList.remove("is-ready");
+        heroIcon.classList.add("is-disconnected");
+      }
     }
     if (launchpadSetupWifiBtn) {
       const hasUsb = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB") || (usbConnected && transport === "usb");
