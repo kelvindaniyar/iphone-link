@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap131">
+  <link rel="stylesheet" href="/app.css?v=tahap135">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -103,12 +103,117 @@
         <main class="workspace stage" id="workspace">
           <div class="screen-stage stage" id="phone-shell">
             <div class="screen-viewport" id="phone-screen">
-              <div class="placeholder screen-empty" id="screen-empty" data-alias="placeholder" title="Click to start mirroring">
-                <div class="placeholder-icon" aria-hidden="true" style="margin-bottom: 12px;">
-                  <img src="/logo.svg" width="76" height="76" alt="iPhone Link" style="filter: drop-shadow(0 10px 24px rgba(0, 120, 212, 0.45)); border-radius: 18px; pointer-events: none;">
+              <div class="placeholder screen-empty" id="screen-empty" data-alias="placeholder">
+                <div class="launchpad-shell" id="launchpad-shell">
+                  <!-- Mode A: Standby Idle View -->
+                  <div class="launchpad-idle-view" id="launchpad-idle-view">
+                    <div class="launchpad-hero">
+                      <div class="launchpad-icon-wrap" aria-hidden="true">
+                        <img src="/logo.svg" width="56" height="56" alt="iPhone Link" class="launchpad-logo">
+                        <div class="launchpad-glow"></div>
+                      </div>
+                      <h2 class="launchpad-title" id="launchpad-title">iPhone Link</h2>
+                      <p class="launchpad-subtitle" id="launchpad-subtitle">Buka kunci iPhone, lalu tekan Mulai mirroring.</p>
+                      <p id="placeholder-hint" hidden></p>
+                    </div>
+
+                    <!-- Device Card -->
+                    <div class="launchpad-device-card" id="launchpad-device-card">
+                      <span class="launchpad-status-dot" id="launchpad-status-dot"></span>
+                      <div class="launchpad-card-text">
+                        <div class="launchpad-card-title" id="launchpad-device-name">iPhone</div>
+                        <div class="launchpad-card-sub" id="launchpad-device-sub">USB · siap</div>
+                      </div>
+                      <button type="button" class="launchpad-icon-btn" id="launchpad-scan-btn" title="Pindai ulang perangkat" aria-label="Refresh">↻</button>
+                    </div>
+
+                    <!-- Transport Pills Row -->
+                    <div class="launchpad-transport-row" id="launchpad-transport-row">
+                      <button type="button" class="launchpad-pill is-active" id="launchpad-transport-cable" data-transport="usb" aria-checked="true">
+                        <span class="launchpad-pill-icon">🔌</span> Kabel (USB)
+                      </button>
+                      <button type="button" class="launchpad-pill" id="launchpad-transport-wifi" data-transport="wifi" aria-checked="false">
+                        <span class="launchpad-pill-icon">📡</span> Wi-Fi
+                      </button>
+                    </div>
+
+                    <!-- Quick Wi-Fi Setup Button -->
+                    <button type="button" class="launchpad-setup-wifi-btn" id="launchpad-setup-wifi-btn">
+                      <span class="btn-icon">⚡</span> Atur Wi-Fi Sekarang
+                    </button>
+                    <div class="launchpad-wifi-feedback" id="launchpad-wifi-feedback" hidden></div>
+
+                    <!-- Primary Action Button -->
+                    <button type="button" class="launchpad-start-btn" id="launchpad-start-btn">
+                      <span class="btn-icon">▷</span> Mulai mirroring
+                    </button>
+                    <div class="launchpad-error" id="launchpad-error" hidden></div>
+                  </div>
+
+                  <!-- Mode B: Live 4-Stage Activity -->
+                  <div class="launchpad-live-activity" id="launchpad-live-activity" hidden>
+                    <div class="activity-header">
+                      <div class="activity-title-wrap">
+                        <span class="activity-pulse-dot"></span>
+                        <h2 class="activity-title" id="launchpad-activity-title">Menyambungkan ke iPhone...</h2>
+                      </div>
+                      <span class="activity-badge" id="launchpad-activity-badge">USB</span>
+                    </div>
+
+                    <div class="activity-stepper">
+                      <!-- Step 1 -->
+                      <div class="activity-step is-active" data-step="1">
+                        <div class="step-indicator">
+                          <span class="step-dot"></span>
+                          <span class="step-line"></span>
+                        </div>
+                        <div class="step-content">
+                          <div class="step-title">1. Deteksi perangkat</div>
+                          <div class="step-desc">Memastikan driver Apple Mobile Device terlihat.</div>
+                        </div>
+                      </div>
+
+                      <!-- Step 2 -->
+                      <div class="activity-step is-pending" data-step="2">
+                        <div class="step-indicator">
+                          <span class="step-dot"></span>
+                          <span class="step-line"></span>
+                        </div>
+                        <div class="step-content">
+                          <div class="step-title">2. Koneksi aman</div>
+                          <div class="step-desc">Membuka jalur terenkripsi CoreDevice ke perangkat.</div>
+                        </div>
+                      </div>
+
+                      <!-- Step 3 -->
+                      <div class="activity-step is-pending" data-step="3">
+                        <div class="step-indicator">
+                          <span class="step-dot"></span>
+                          <span class="step-line"></span>
+                        </div>
+                        <div class="step-content">
+                          <div class="step-title">3. Siapkan perangkat</div>
+                          <div class="step-desc">Cek Developer Mode, kunci layar, & kanal audio.</div>
+                        </div>
+                      </div>
+
+                      <!-- Step 4 -->
+                      <div class="activity-step is-pending" data-step="4">
+                        <div class="step-indicator">
+                          <span class="step-dot"></span>
+                        </div>
+                        <div class="step-content">
+                          <div class="step-title">4. Mulai stream</div>
+                          <div class="step-desc">Menerima frame H.265/HEVC 60fps.</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button type="button" class="launchpad-cancel-btn" id="launchpad-cancel-btn">
+                      Batal
+                    </button>
+                  </div>
                 </div>
-                <p class="placeholder-title" style="font-size: 17px; font-weight: 600; letter-spacing: -0.3px; margin: 0 0 4px;">iPhone Link</p>
-                <p class="placeholder-hint" id="placeholder-hint">Connect your iPhone via USB, then press Start mirroring.</p>
               </div>
               <iframe id="screen-view" name="mirror-frame" class="screen-frame mirror-frame" title="iPhone screen" hidden src="about:blank"></iframe>
               <button type="button" class="fs-exit" id="fs-exit" title="Exit full screen (Esc)">Exit full screen</button>
@@ -770,7 +875,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=20261101_tahap67_true_dwm_autofit"></script>
-  <script src="/app.js?v=tahap131"></script>
+  <script src="/keys.js?v=tahap135"></script>
+  <script src="/app.js?v=tahap135"></script>
 </body>
 </html>

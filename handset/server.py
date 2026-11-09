@@ -1210,6 +1210,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/wifi/pair":
             if not udid:
+                snap = snapshot()
+                for d in snap.get("devices", []):
+                    if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
+                        udid = d["udid"]
+                        break
+                if not udid and snap.get("devices"):
+                    udid = snap["devices"][0].get("udid")
+            if not udid:
                 self._json({"ok": False, "error": "Plug in the iPhone first."}, status=400)
                 return
             self._json(pair_for_wifi(udid))

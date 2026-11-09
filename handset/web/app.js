@@ -57,6 +57,24 @@ const restartScreen = document.querySelector("#restart-screen");
 const stopScreen = document.querySelector("#stop-screen");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
 const screenEmpty = document.querySelector("#screen-empty");
+const launchpadShell = document.querySelector("#launchpad-shell");
+const launchpadIdleView = document.querySelector("#launchpad-idle-view");
+const launchpadLiveActivity = document.querySelector("#launchpad-live-activity");
+const launchpadTitle = document.querySelector("#launchpad-title");
+const launchpadSubtitle = document.querySelector("#launchpad-subtitle");
+const launchpadDeviceName = document.querySelector("#launchpad-device-name");
+const launchpadDeviceSub = document.querySelector("#launchpad-device-sub");
+const launchpadStatusDot = document.querySelector("#launchpad-status-dot");
+const launchpadScanBtn = document.querySelector("#launchpad-scan-btn");
+const launchpadTransportCable = document.querySelector("#launchpad-transport-cable");
+const launchpadTransportWifi = document.querySelector("#launchpad-transport-wifi");
+const launchpadSetupWifiBtn = document.querySelector("#launchpad-setup-wifi-btn");
+const launchpadWifiFeedback = document.querySelector("#launchpad-wifi-feedback");
+const launchpadStartBtn = document.querySelector("#launchpad-start-btn");
+const launchpadError = document.querySelector("#launchpad-error");
+const launchpadActivityTitle = document.querySelector("#launchpad-activity-title");
+const launchpadActivityBadge = document.querySelector("#launchpad-activity-badge");
+const launchpadCancelBtn = document.querySelector("#launchpad-cancel-btn");
 const placeholder = screenEmpty;
 const kbToggle = document.querySelector("#kb-toggle");
 const wifiState = document.querySelector("#wifi-state");
@@ -1416,6 +1434,59 @@ function initTransportControls() {
     btn.onclick = () => setTransport(btn.dataset.transport);
   });
   if (wifiPair) wifiPair.onclick = () => setUpWifi();
+
+  // Tahap 135: Wire Launchpad Buttons
+  if (launchpadStartBtn) {
+    launchpadStartBtn.onclick = (e) => {
+      e.stopPropagation();
+      showPhone();
+    };
+  }
+  if (launchpadCancelBtn) {
+    launchpadCancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      stopMirror();
+    };
+  }
+  if (launchpadScanBtn) {
+    launchpadScanBtn.onclick = async (e) => {
+      e.stopPropagation();
+      launchpadScanBtn.style.animation = "spin 0.6s linear infinite";
+      try {
+        if (transport === "wifi") {
+          await triggerWifiScan(selectedUdid);
+        }
+        await load();
+      } finally {
+        launchpadScanBtn.style.animation = "";
+      }
+    };
+  }
+  if (launchpadSetupWifiBtn) {
+    launchpadSetupWifiBtn.onclick = async (e) => {
+      e.stopPropagation();
+      launchpadSetupWifiBtn.disabled = true;
+      if (launchpadWifiFeedback) {
+        launchpadWifiFeedback.hidden = false;
+        launchpadWifiFeedback.style.color = "#38bdf8";
+        launchpadWifiFeedback.textContent = "Mengonfigurasi Wi-Fi...";
+      }
+      try {
+        const res = await setUpWifi();
+        if (res && res.ok && launchpadWifiFeedback) {
+          launchpadWifiFeedback.textContent = "✓ Wi-Fi siap. Sekarang bisa tanpa kabel.";
+          launchpadWifiFeedback.style.color = "#10b981";
+        }
+      } catch (err) {
+        if (launchpadWifiFeedback) {
+          launchpadWifiFeedback.textContent = "Gagal atur Wi-Fi: " + (err.message || err);
+          launchpadWifiFeedback.style.color = "#ef4444";
+        }
+      } finally {
+        launchpadSetupWifiBtn.disabled = false;
+      }
+    };
+  }
   if (wifiScan) {
     wifiScan.onclick = async () => {
       wifiScan.disabled = true;
@@ -2036,6 +2107,30 @@ function renderStatus(state) {
   } else if (!connected) {
     placeholderHint.textContent = "Connect your iPhone with a data cable, unlock it, and tap Trust.";
   }
+
+  // Tahap 135: Update Launchpad Card & Header
+  if (launchpadDeviceName && launchpadDeviceSub && launchpadStatusDot && launchpadTitle) {
+    const activeDev = (selectedUdid && (state.devices || []).find(d => d.udid === selectedUdid)) || (state.devices || [])[0];
+    if (activeDev) {
+      const devName = activeDev.deviceName || "iPhone";
+      launchpadTitle.textContent = `${devName} siap`;
+      launchpadDeviceName.textContent = devName;
+      const isUsb = String(activeDev.connection || "").toUpperCase() === "USB";
+      if (isUsb) {
+        launchpadDeviceSub.textContent = "USB · siap";
+        launchpadStatusDot.className = "launchpad-status-dot";
+      } else {
+        const ipStr = state.wifi?.ip || "";
+        launchpadDeviceSub.textContent = ipStr ? `Wi-Fi · ${ipStr} · siap` : "Wi-Fi · siap";
+        launchpadStatusDot.className = "launchpad-status-dot";
+      }
+    } else {
+      launchpadTitle.textContent = "iPhone Link";
+      launchpadDeviceName.textContent = "iPhone";
+      launchpadDeviceSub.textContent = "Belum terhubung";
+      launchpadStatusDot.className = "launchpad-status-dot warn";
+    }
+  }
 }
 
 function renderDevices(list) {
@@ -2279,7 +2374,36 @@ function renderScreen(screen) {
   showScreen.classList.remove("is-disconnect");
   showScreen.disabled = false;
 
-  if (screen.phase === "starting") {
+  // Tahap 135: Handle Launchpad Idle vs Live 4-Stage Activity
+  if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
+    if (launchpadIdleView) {
+      launchpadIdleView.hidden = true;
+      launchpadIdleView.style.display = "none";
+    }
+    if (launchpadLiveActivity) {
+      launchpadLiveActivity.hidden = false;
+      launchpadLiveActivity.style.display = "flex";
+    }
+    if (launchpadActivityBadge) {
+      launchpadActivityBadge.textContent = (transport === "wifi") ? "Wi-Fi" : "USB";
+    }
+    if (launchpadActivityTitle) {
+      const activeDevName = (launchpadDeviceName && launchpadDeviceName.textContent && launchpadDeviceName.textContent.trim()) || "iPhone";
+      launchpadActivityTitle.textContent = `Menyambungkan ke ${activeDevName}...`;
+    }
+    const currentStep = screen.stage_step || 1;
+    document.querySelectorAll(".activity-step").forEach((stepEl) => {
+      const stepNum = parseInt(stepEl.dataset.step, 10);
+      stepEl.classList.remove("is-done", "is-active", "is-pending");
+      if (stepNum < currentStep) {
+        stepEl.classList.add("is-done");
+      } else if (stepNum === currentStep) {
+        stepEl.classList.add("is-active");
+      } else {
+        stepEl.classList.add("is-pending");
+      }
+    });
+
     if (screenNote) {
       screenNote.textContent = "";
       screenNote.hidden = true;
@@ -2289,7 +2413,26 @@ function renderScreen(screen) {
     restartScreen.disabled = true;
     if (screenErrorBanner) screenErrorBanner.style.display = "none";
     return;
+  } else {
+    // Mode A: Standby Idle View
+    if (launchpadLiveActivity) {
+      launchpadLiveActivity.hidden = true;
+      launchpadLiveActivity.style.display = "none";
+    }
+    if (launchpadIdleView) {
+      launchpadIdleView.hidden = false;
+      launchpadIdleView.style.display = "flex";
+    }
+    if (launchpadError) {
+      if (screen.error) {
+        launchpadError.hidden = false;
+        launchpadError.textContent = screen.error;
+      } else {
+        launchpadError.hidden = true;
+      }
+    }
   }
+
   if (screen.error) {
     if (screenNote) {
       screenNote.textContent = "";
@@ -2366,7 +2509,7 @@ function watchScreen() {
       }
       window.clearInterval(screenTimer);
     }
-  }, 1000);
+  }, 180);
 }
 
 function row(label, value, ok) {

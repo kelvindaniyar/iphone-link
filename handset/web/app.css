@@ -3683,3 +3683,494 @@ body[data-theme="light"],
 .app-bar .win-btn svg {
   flex-shrink: 0 !important;
 }
+
+
+/* ======================================================================
+   Tahap 135: Interactive Launchpad & Live 4-Stage Activity Panel
+   ====================================================================== */
+
+.launchpad-shell {
+  width: calc(100% - 28px) !important;
+  max-width: 306px !important;
+  box-sizing: border-box !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  user-select: none;
+  cursor: default;
+}
+
+.launchpad-idle-view,
+.launchpad-live-activity {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.launchpad-idle-view[hidden],
+.launchpad-live-activity[hidden] {
+  display: none !important;
+}
+
+/* Hero Section */
+.launchpad-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 2px;
+}
+
+.launchpad-icon-wrap {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launchpad-logo {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 6px 16px rgba(0, 120, 212, 0.4));
+  border-radius: 14px;
+}
+
+.launchpad-glow {
+  position: absolute;
+  inset: -4px;
+  border-radius: 18px;
+  background: radial-gradient(circle, rgba(0, 120, 212, 0.25) 0%, transparent 70%);
+  z-index: 1;
+}
+
+.launchpad-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin: 0 0 2px 0;
+  color: var(--text-primary, #f1f5f9);
+}
+
+.launchpad-subtitle {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  margin: 0;
+  line-height: 1.35;
+}
+
+/* Device Status Card */
+.launchpad-device-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+.launchpad-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  flex-shrink: 0;
+}
+
+.launchpad-status-dot.warn {
+  background-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+}
+
+.launchpad-status-dot.bad {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+.launchpad-card-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.launchpad-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #f1f5f9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launchpad-card-sub {
+  font-size: 10.5px;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launchpad-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.launchpad-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #f1f5f9);
+}
+
+/* Transport Pills Row */
+.launchpad-transport-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.launchpad-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--bg-card, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  padding: 0 8px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.launchpad-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #f1f5f9);
+}
+
+.launchpad-pill.is-active {
+  background: rgba(0, 120, 212, 0.2);
+  border-color: #0078d4;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.launchpad-pill-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Action Buttons */
+.launchpad-setup-wifi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  font-size: 11px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.15));
+  border-radius: 8px;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  padding: 0 10px;
+  transition: all 0.15s ease;
+}
+
+.launchpad-setup-wifi-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--text-primary, #f1f5f9);
+}
+
+.launchpad-wifi-feedback {
+  font-size: 10.5px;
+  color: #10b981;
+  text-align: center;
+  padding: 2px 0;
+  line-height: 1.3;
+}
+
+.launchpad-start-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #0078d4 0%, #0284c7 100%);
+  border: none;
+  border-radius: 9px;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 120, 212, 0.35);
+  transition: all 0.15s ease;
+}
+
+.launchpad-start-btn:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 18px rgba(0, 120, 212, 0.5);
+}
+
+.launchpad-start-btn:active {
+  transform: scale(0.98);
+}
+
+.launchpad-error {
+  font-size: 10.5px;
+  color: #ef4444;
+  text-align: center;
+  line-height: 1.35;
+  padding: 2px 0;
+}
+
+/* Live 4-Stage Activity Panel */
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 6px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.activity-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.activity-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #0078d4;
+  box-shadow: 0 0 10px #0078d4;
+  animation: launchpadPulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes launchpadPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.6; }
+}
+
+.activity-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary, #f1f5f9);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(0, 120, 212, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+.activity-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 6px 0 8px 0;
+}
+
+.activity-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  position: relative;
+  min-height: 38px;
+}
+
+.step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 14px;
+  flex-shrink: 0;
+  padding-top: 3px;
+}
+
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #475569;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.step-line {
+  flex: 1 1 auto;
+  width: 2px;
+  min-height: 24px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 3px 0;
+  transition: background 0.2s ease;
+}
+
+.step-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.step-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #94a3b8;
+  line-height: 1.25;
+  transition: color 0.2s ease;
+}
+
+.step-desc {
+  font-size: 9.5px;
+  color: #64748b;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+/* Step States */
+.activity-step.is-done .step-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.activity-step.is-done .step-line {
+  background: #10b981;
+}
+
+.activity-step.is-done .step-title {
+  color: #10b981;
+}
+
+.activity-step.is-active .step-dot {
+  background: #0078d4;
+  box-shadow: 0 0 8px #0078d4;
+  animation: launchpadPulse 1.2s ease-in-out infinite;
+}
+
+.activity-step.is-active .step-title {
+  color: #38bdf8;
+}
+
+.activity-step.is-active .step-desc {
+  color: #94a3b8;
+}
+
+.activity-step.is-pending .step-dot {
+  background: transparent;
+  border: 1.5px solid #475569;
+}
+
+.activity-step.is-pending .step-title {
+  color: #64748b;
+}
+
+.activity-step.is-pending .step-desc {
+  color: #475569;
+}
+
+.launchpad-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.launchpad-cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+/* Light Theme Adaptations */
+[data-theme="light"] .launchpad-title {
+  color: #0f172a;
+}
+[data-theme="light"] .launchpad-subtitle {
+  color: #64748b;
+}
+[data-theme="light"] .launchpad-device-card {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .launchpad-card-title {
+  color: #0f172a;
+}
+[data-theme="light"] .launchpad-card-sub {
+  color: #64748b;
+}
+[data-theme="light"] .launchpad-pill {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+[data-theme="light"] .launchpad-pill:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+[data-theme="light"] .launchpad-pill.is-active {
+  background: #eff6ff;
+  border-color: #0078d4;
+  color: #0078d4;
+}
+[data-theme="light"] .activity-title {
+  color: #0f172a;
+}
+[data-theme="light"] .step-line {
+  background: #e2e8f0;
+}
+[data-theme="light"] .activity-header {
+  border-bottom-color: #e2e8f0;
+}
+[data-theme="light"] .launchpad-cancel-btn {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}

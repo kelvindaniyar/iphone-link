@@ -211,7 +211,7 @@ def snapshot() -> dict:
                     "udid": p_udid,
                     "connection": "Network",
                     "connectionType": "Network",
-                    "deviceName": cached_dev.get("name") or "iPhone",
+                    "deviceName": cached_dev.get("device_name") or cached_dev.get("name") or "iPhone",
                 })
                 active_udids.add(p_udid)
 

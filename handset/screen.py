@@ -52,6 +52,9 @@ DEVELOPER_MODE_MESSAGE = (
 VIEW_URL = "http://127.0.0.1:8766/"
 _LOCK = threading.Lock()
 _STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": None, "transport": "cable"}
+_STAGE_STEP: int = 0
+_STAGE_TITLE: str = ""
+_STAGE_DETAIL: str = ""
 _CURRENT_TASK: asyncio.Task | None = None
 _CURRENT_LOOP: asyncio.AbstractEventLoop | None = None
 _ACTIVE_SERVER = None
@@ -189,6 +192,9 @@ def screen_status() -> dict:
         st = dict(_STATE)
         st["stealth_dim"] = _STEALTH_DIM_ACTIVE
         st["intentionally_locked"] = _DEVICE_INTENTIONALLY_LOCKED
+        st["stage_step"] = _STAGE_STEP
+        st["stage_title"] = _STAGE_TITLE
+        st["stage_detail"] = _STAGE_DETAIL
         if not st.get("transport"):
             st["transport"] = "cable"
         return st
@@ -456,6 +462,9 @@ def _start_coredevice_wifi(chosen: str) -> dict:
     _stop_airplay_receiver()
     with _LOCK:
         _WIFI_MODE = "coredevice"
+        _STAGE_STEP = 1
+        _STAGE_TITLE = "Deteksi perangkat"
+        _STAGE_DETAIL = "Memastikan driver Apple Mobile Device terlihat."
         _STATE.update(
             phase="starting",
             udid=chosen,
@@ -463,6 +472,9 @@ def _start_coredevice_wifi(chosen: str) -> dict:
             error=None,
             note="Opening a secure Wi-Fi tunnel to the device...",
             transport="wifi",
+            stage_step=_STAGE_STEP,
+            stage_title=_STAGE_TITLE,
+            stage_detail=_STAGE_DETAIL,
         )
     threading.Thread(target=_run, args=(chosen, "wifi"), name="handset-screen", daemon=True).start()
     return screen_status()
@@ -492,7 +504,20 @@ def start_screen(udid: str | None, transport: str = "cable") -> dict:
     with _LOCK:
         if _STATE["phase"] in {"starting", "running"} and _STATE["udid"] == chosen:
             return dict(_STATE)
-        _STATE.update(phase="starting", udid=chosen, url=None, error=None, note=note, transport=transport)
+        _STAGE_STEP = 1
+        _STAGE_TITLE = "Deteksi perangkat"
+        _STAGE_DETAIL = "Memastikan driver Apple Mobile Device terlihat."
+        _STATE.update(
+            phase="starting",
+            udid=chosen,
+            url=None,
+            error=None,
+            note=note,
+            transport=transport,
+            stage_step=_STAGE_STEP,
+            stage_title=_STAGE_TITLE,
+            stage_detail=_STAGE_DETAIL,
+        )
     threading.Thread(target=_run, args=(chosen, transport), name="handset-screen", daemon=True).start()
     return screen_status()
 
@@ -623,11 +648,11 @@ async def _serve(udid: str, transport: str):
     wifi_debug_log("SCREEN_SERVE", f"Starting screen session for {udid} (transport={transport})...")
 
     # Stage 1: Deteksi perangkat
-    _set(note="1. Deteksi perangkat...")
+    _set(stage_step=1, stage_title="Deteksi perangkat", stage_detail="Memastikan driver Apple Mobile Device terlihat.", note="1. Deteksi perangkat...")
     wifi_debug_log("SCREEN_SERVE", f"[STAGE 1] Deteksi perangkat {udid} (transport={transport})")
 
     # Stage 2: Koneksi aman
-    _set(note="2. Koneksi aman - Membuka jalur terenkripsi CoreDevice...")
+    _set(stage_step=2, stage_title="Koneksi aman", stage_detail="Membuka jalur terenkripsi CoreDevice ke perangkat.", note="2. Koneksi aman - Membuka jalur terenkripsi CoreDevice...")
     wifi_debug_log("SCREEN_SERVE", "[STAGE 2] Membuka jalur terenkripsi CoreDevice ke perangkat...")
 
     try:
@@ -635,7 +660,7 @@ async def _serve(udid: str, transport: str):
             try:
                 async with _open_tunnel(udid, transport) as rsd:
                     # Stage 3: Siapkan perangkat
-                    _set(note="3. Siapkan perangkat...")
+                    _set(stage_step=3, stage_title="Siapkan perangkat", stage_detail="Cek Developer Mode, kunci layar, & kanal audio.", note="3. Siapkan perangkat...")
                     wifi_debug_log("SCREEN_SERVE", "[STAGE 3] Menyiapkan perangkat...")
                     if DISPLAY_SERVICE not in (rsd.peer_info or {}).get("Services", {}):
                         _set(note="Mounting the developer image on the iPhone. This downloads it the first time.")
@@ -643,7 +668,7 @@ async def _serve(udid: str, transport: str):
                         await auto_mount(rsd)
 
                     # Stage 4: Mulai stream
-                    _set(note="4. Mulai stream...")
+                    _set(stage_step=4, stage_title="Mulai stream", stage_detail="Menerima frame H.265/HEVC 60fps.", note="4. Mulai stream...")
                     wifi_debug_log("SCREEN_SERVE", "[STAGE 4] Memulai screen stream server...")
                     await _stream(rsd, udid, ScreenStreamServer)
                     return
@@ -3515,11 +3540,28 @@ def _only_udid(usb: list[str] | None = None, wifi: list[str] | None = None, tran
 
 
 def _set(**values) -> dict:
+    global _STAGE_STEP, _STAGE_TITLE, _STAGE_DETAIL
     prev_phase = None
     new_phase = None
     transport = "cable"
     with _LOCK:
         prev_phase = _STATE.get("phase")
+        if "stage_step" in values:
+            _STAGE_STEP = int(values["stage_step"])
+            _STAGE_TITLE = str(values.get("stage_title", ""))
+            _STAGE_DETAIL = str(values.get("stage_detail", ""))
+        new_phase_val = values.get("phase")
+        if new_phase_val in ("idle", "error"):
+            _STAGE_STEP = 0
+            _STAGE_TITLE = ""
+            _STAGE_DETAIL = ""
+        elif new_phase_val == "running":
+            _STAGE_STEP = 4
+            _STAGE_TITLE = "Mulai stream"
+            _STAGE_DETAIL = "Menerima frame H.265/HEVC 60fps."
+        values["stage_step"] = _STAGE_STEP
+        values["stage_title"] = _STAGE_TITLE
+        values["stage_detail"] = _STAGE_DETAIL
         _STATE.update(values)
         new_phase = _STATE.get("phase")
         transport = _STATE.get("transport") or "cable"
