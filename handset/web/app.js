@@ -1817,7 +1817,7 @@ async function triggerLockIphone() {
   }
   try {
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 2500);
+    const tid = setTimeout(() => controller.abort(), 4500);
     const res = await fetch("/api/device/lock", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

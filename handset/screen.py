@@ -100,17 +100,61 @@ _LAST_MUTE_DOWN_STEPS: int | None = None
 
 # Register extended HID buttons in pymobiledevice3 at import time
 try:
-    from pymobiledevice3.remote.core_device.screen_stream import _NAMED_BUTTONS
-    _NAMED_BUTTONS["power"] = (12, 0x0030, 0.12)
-    _NAMED_BUTTONS["lock"] = (12, 0x0030, 0.12)
+    from pymobiledevice3.remote.core_device.screen_stream import (
+        _NAMED_BUTTONS,
+        ScreenStreamServer,
+        HID_BUTTON_STATE_DOWN,
+        HID_BUTTON_STATE_UP,
+    )
+    # Tahap 143: Precision 0.5s hold for power and lock matching iOS SpringBoard debounce standards
+    _NAMED_BUTTONS["power"] = (12, 0x0030, 0.5)
+    _NAMED_BUTTONS["lock"] = (12, 0x0030, 0.5)
     _NAMED_BUTTONS["home"] = (12, 0x0040, 0.05)
     _NAMED_BUTTONS["wake"] = (12, 0x0040, 0.05)
     _NAMED_BUTTONS["brightness-down"] = (12, 0x0070, 0.025)
     _NAMED_BUTTONS["brightness-up"] = (12, 0x006F, 0.025)
     _NAMED_BUTTONS["volume-up"] = (12, 0x00E9, 0.025)
     _NAMED_BUTTONS["volume-down"] = (12, 0x00EA, 0.025)
+    _NAMED_BUTTONS["keyboard-toggle"] = (12, 0x00B8, 0.05)
     _NAMED_BUTTONS["eject"] = (12, 0x00B8, 0.05)
-    _NAMED_BUTTONS.pop("keyboard-toggle", None)
+
+    if not hasattr(ScreenStreamServer, "_send_button"):
+        async def _screen_stream_send_button(self_s, page: int, usage: int, down: bool):
+            await self_s._ensure_hid()
+            assert self_s._indigo is not None
+            state = HID_BUTTON_STATE_DOWN if down else HID_BUTTON_STATE_UP
+            await self_s._indigo.send_button(page, usage, state)
+        ScreenStreamServer._send_button = _screen_stream_send_button
+
+    if not hasattr(ScreenStreamServer, "press_button"):
+        async def _screen_stream_press_button(self_s, name: str, hold_seconds: float | None = None):
+            if name not in _NAMED_BUTTONS:
+                return False
+            page, usage, default_hold = _NAMED_BUTTONS[name]
+            dur = float(hold_seconds) if hold_seconds is not None else float(default_hold)
+            await self_s._ensure_hid()
+            assert self_s._indigo is not None
+            if hasattr(self_s, "_send_button") and callable(self_s._send_button):
+                await self_s._send_button(page, usage, True)
+                await asyncio.sleep(dur)
+                await self_s._send_button(page, usage, False)
+            else:
+                await self_s._indigo.send_button(page, usage, HID_BUTTON_STATE_DOWN)
+                await asyncio.sleep(dur)
+                await self_s._indigo.send_button(page, usage, HID_BUTTON_STATE_UP)
+            return True
+        ScreenStreamServer.press_button = _screen_stream_press_button
+
+    if not hasattr(ScreenStreamServer, "_tahap143_touch_patched"):
+        ScreenStreamServer._tahap143_touch_patched = True
+        orig_handle_touch = ScreenStreamServer._handle_touch
+        async def _screen_stream_handle_touch(self_s, body: bytes) -> tuple[int, bytes]:
+            global _DEVICE_INTENTIONALLY_LOCKED
+            if _DEVICE_INTENTIONALLY_LOCKED:
+                _DEVICE_INTENTIONALLY_LOCKED = False
+            record_user_input_activity()
+            return await orig_handle_touch(self_s, body)
+        ScreenStreamServer._handle_touch = _screen_stream_handle_touch
 except Exception:
     pass
 
@@ -1057,51 +1101,68 @@ def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
         return False
 
 
-def send_button_direct(name: str, state: str = "press", timeout: float = 0.5, hold_seconds: float | None = None) -> bool:
+def send_button_direct(name: str, state: str = "press", timeout: float = 2.5, hold_seconds: float | None = None) -> bool:
     """Send named button event directly to active server or fallback to loopback HTTP."""
     record_user_input_activity()
+    from pymobiledevice3.remote.core_device.screen_stream import _NAMED_BUTTONS
+    btn_tuple = _NAMED_BUTTONS.get(name, (12, 0x0040, 0.05))
+    btn_hold = float(hold_seconds) if hold_seconds is not None else float(btn_tuple[2])
+    effective_timeout = max(float(timeout), btn_hold + 2.0)
+
     global _ACTIVE_SERVER, _CURRENT_LOOP
     server = _ACTIVE_SERVER
     loop = _CURRENT_LOOP
+
     if server is not None and loop is not None and loop.is_running():
-        async def _send():
-            from pymobiledevice3.remote.core_device.screen_stream import (
-                _NAMED_BUTTONS,
-                HID_BUTTON_STATE_DOWN,
-                HID_BUTTON_STATE_UP,
-            )
-            if name not in _NAMED_BUTTONS:
-                return
-            usage_page, usage_code, default_hold = _NAMED_BUTTONS[name]
-            dur = hold_seconds if hold_seconds is not None else default_hold
-            if name in ("power", "lock") and hold_seconds is None:
-                dur = 0.12
-            await server._ensure_hid()
-            assert server._indigo is not None
-            if hasattr(server._indigo, "_service") and hasattr(server._indigo._service, "_writer") and server._indigo._service._writer is not None:
-                try:
-                    import socket
-                    sock = server._indigo._service._writer.get_extra_info("socket")
-                    if sock is not None:
-                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                except Exception:
-                    pass
-            if state == "press":
-                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
-                await asyncio.sleep(dur)
-                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
-            elif state == "down":
-                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
-            elif state == "up":
-                await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
         try:
-            future = asyncio.run_coroutine_threadsafe(_send(), loop)
-            future.result(timeout=timeout)
-            if state in ("press", "up"):
+            if state == "press" and hasattr(server, "press_button") and callable(server.press_button):
+                future = asyncio.run_coroutine_threadsafe(server.press_button(name, hold_seconds=hold_seconds), loop)
+                res = future.result(timeout=effective_timeout)
                 trigger_motion_keyframe_boost()
-            return True
+                return bool(res)
+            else:
+                async def _send():
+                    from pymobiledevice3.remote.core_device.screen_stream import (
+                        HID_BUTTON_STATE_DOWN,
+                        HID_BUTTON_STATE_UP,
+                    )
+                    usage_page, usage_code, _ = btn_tuple
+                    await server._ensure_hid()
+                    assert server._indigo is not None
+                    if hasattr(server._indigo, "_service") and hasattr(server._indigo._service, "_writer") and server._indigo._service._writer is not None:
+                        try:
+                            import socket
+                            sock = server._indigo._service._writer.get_extra_info("socket")
+                            if sock is not None:
+                                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        except Exception:
+                            pass
+                    if state == "press":
+                        if hasattr(server, "_send_button") and callable(server._send_button):
+                            await server._send_button(usage_page, usage_code, True)
+                            await asyncio.sleep(btn_hold)
+                            await server._send_button(usage_page, usage_code, False)
+                        else:
+                            await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
+                            await asyncio.sleep(btn_hold)
+                            await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
+                    elif state == "down":
+                        if hasattr(server, "_send_button") and callable(server._send_button):
+                            await server._send_button(usage_page, usage_code, True)
+                        else:
+                            await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
+                    elif state == "up":
+                        if hasattr(server, "_send_button") and callable(server._send_button):
+                            await server._send_button(usage_page, usage_code, False)
+                        else:
+                            await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
+                future = asyncio.run_coroutine_threadsafe(_send(), loop)
+                future.result(timeout=effective_timeout)
+                if state in ("press", "up"):
+                    trigger_motion_keyframe_boost()
+                return True
         except Exception:
-            pass
+            return False
 
     with _LOCK:
         if _STATE.get("phase") != "running":
@@ -1109,7 +1170,7 @@ def send_button_direct(name: str, state: str = "press", timeout: float = 0.5, ho
 
     try:
         import http.client, json
-        conn = http.client.HTTPConnection("127.0.0.1", 8766, timeout=timeout)
+        conn = http.client.HTTPConnection("127.0.0.1", 8766, timeout=effective_timeout)
         conn.request("POST", "/button", body=json.dumps({"name": name, "state": state}).encode("utf-8"), headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
         resp.read()
@@ -1123,6 +1184,9 @@ def send_button_direct(name: str, state: str = "press", timeout: float = 0.5, ho
 
 def send_touch_direct(touch_type: str, x: int, y: int, timeout: float = 0.5) -> bool:
     """Send touch event (contact, release, tap) directly to active server or fallback to loopback HTTP."""
+    global _DEVICE_INTENTIONALLY_LOCKED
+    if _DEVICE_INTENTIONALLY_LOCKED:
+        _DEVICE_INTENTIONALLY_LOCKED = False
     record_user_input_activity(is_drag=(touch_type == "contact"))
     global _ACTIVE_SERVER, _CURRENT_LOOP
     server = _ACTIVE_SERVER
@@ -1338,24 +1402,20 @@ def set_iphone_physical_speaker_mute(
 
 
 def lock_iphone_screen() -> dict:
-    """Lock and turn off iPhone physical screen. Restores brightness and physical speaker volume first."""
+    """Lock and turn off iPhone physical screen. If stealth dim was active, restores brightness to ~25% first."""
     global _DEVICE_INTENTIONALLY_LOCKED, _STEALTH_DIM_ACTIVE
     record_user_input_activity()
     if _STEALTH_DIM_ACTIVE:
         set_iphone_physical_brightness("restore", steps=4)
+        time.sleep(0.15)
     try:
         set_iphone_physical_speaker_mute(False)
     except Exception:
         pass
     with _HID_ACTION_LOCK:
-        try:
-            send_keys_direct([], timeout=0.10)
-        except Exception:
-            pass
-        send_button_direct("power")
-        _DEVICE_INTENTIONALLY_LOCKED = True
-        trigger_motion_keyframe_boost()
-    return {"ok": True, "locked": True}
+        ok = send_button_direct("power", timeout=2.5)
+        _DEVICE_INTENTIONALLY_LOCKED = bool(ok)
+    return {"ok": bool(ok), "locked": bool(ok)}
 
 
 def wake_and_unlock_iphone(passcode: str = "") -> dict:
