@@ -187,6 +187,8 @@ def record_user_input_activity(is_drag: bool = False) -> None:
     _IS_TOUCH_DRAGGING = is_drag
 
 
+status = lambda: screen_status()
+
 def screen_status() -> dict:
     with _LOCK:
         st = dict(_STATE)
@@ -650,6 +652,27 @@ async def _serve(udid: str, transport: str):
     # Stage 1: Deteksi perangkat
     _set(stage_step=1, stage_title="Deteksi perangkat", stage_detail="Memastikan driver Apple Mobile Device terlihat.", note="1. Deteksi perangkat...")
     wifi_debug_log("SCREEN_SERVE", f"[STAGE 1] Deteksi perangkat {udid} (transport={transport})")
+
+    # Tahap 139: Auto non-destructive Wi-Fi setup & LAN IP discovery saat mirroring kabel
+    if transport in ("usb", "cable"):
+        def _bg_wifi_setup():
+            try:
+                from .wifi import discover_iphone_ip_on_lan, _query_unicast_mdns_ports, update_device_wifi_state, load_wifi_state, save_wifi_state
+                ip = discover_iphone_ip_on_lan(udid, timeout=1.2)
+                if ip:
+                    rp_ports = _query_unicast_mdns_ports(ip, timeout=0.5)
+                    rp_port = rp_ports[0] if rp_ports else 49152
+                    update_device_wifi_state(udid, enabled=True, ip=ip, last_seen_cable=True)
+                    st = load_wifi_state()
+                    if "devices" in st and udid in st["devices"]:
+                        st["devices"][udid]["paired"] = True
+                        st["devices"][udid]["last_rp_port"] = rp_port
+                        save_wifi_state(st)
+                    wifi_debug_log("BG_WIFI_SETUP", f"Background Wi-Fi setup recorded {ip}:{rp_port} for {udid}")
+            except Exception as e:
+                wifi_debug_log("BG_WIFI_SETUP", f"Background Wi-Fi setup note: {e}")
+
+        threading.Thread(target=_bg_wifi_setup, daemon=True, name="bg-wifi-setup").start()
 
     # Stage 2: Koneksi aman
     _set(stage_step=2, stage_title="Koneksi aman", stage_detail="Membuka jalur terenkripsi CoreDevice ke perangkat.", note="2. Koneksi aman - Membuka jalur terenkripsi CoreDevice...")

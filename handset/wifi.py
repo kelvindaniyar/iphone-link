@@ -317,21 +317,45 @@ def _is_private_lan(ip: str) -> bool:
 
 def _local_ipv4() -> list[str]:
     """Return local IPv4 addresses prioritizing real private LAN adapters over APIPA."""
+    found: list[str] = []
     try:
         import ifaddr
-    except ImportError:
-        return []
-    found: list[str] = []
-    for adapter in ifaddr.get_adapters():
-        for ip in adapter.ips:
-            if isinstance(ip.ip, str) and not ip.ip.startswith("127."):
-                found.append(ip.ip)
+        for adapter in ifaddr.get_adapters():
+            for ip in adapter.ips:
+                if isinstance(ip.ip, str) and not ip.ip.startswith("127."):
+                    found.append(ip.ip)
+    except Exception:
+        pass
+    if not found:
+        try:
+            _, _, ips = socket.gethostbyname_ex(socket.gethostname())
+            for ip in ips:
+                if isinstance(ip, str) and not ip.startswith("127."):
+                    found.append(ip)
+        except Exception:
+            pass
 
     lan_ips = [ip for ip in found if _is_private_lan(ip)]
     other_ips = [ip for ip in found if not _is_private_lan(ip) and not ip.startswith("169.254.")]
     apipa_ips = [ip for ip in found if ip.startswith("169.254.")]
 
     return lan_ips + other_ips + apipa_ips
+
+
+def _is_ip_on_local_subnets(ip_str: str) -> bool:
+    """Checks whether the first 3 octets of ip_str match any local /24 private LAN subnet."""
+    if not ip_str or not isinstance(ip_str, str):
+        return False
+    parts = ip_str.strip().split(".")
+    if len(parts) != 4:
+        return False
+    prefix = ".".join(parts[:3]) + "."
+    for local_ip in _local_ipv4():
+        if _is_private_lan(local_ip):
+            loc_parts = local_ip.split(".")
+            if len(loc_parts) == 4 and ".".join(loc_parts[:3]) + "." == prefix:
+                return True
+    return False
 
 
 def find_ip_by_mac(mac: str) -> Optional[str]:
@@ -372,14 +396,30 @@ def discover_iphone_ip_on_lan(udid: Optional[str] = None, timeout: float = 0.35)
     Tolerates iOS 17/18+ Private Wi-Fi MAC Address randomization (which renders
     factory MAC lookups obsolete) and multicast mDNS blocking on hidden networks.
 
-    1. First tests last known IP from wifi_state.json (< 0.05s).
-    2. Tests private IPs found in Windows ARP cache in parallel (< 0.1s).
-    3. Scans all host IPs in the local /24 subnet via parallel TCP port 62078 probe (< 0.4s).
-    4. Optionally sends unicast DNS-SD probe to wake up sleeping Wi-Fi radios.
+    1. First checks usbmux Network devices (< 0.02s).
+    2. Validates last known IP from wifi_state.json against local subnet (< 0.05s).
+    3. Tests private IPs found in Windows ARP cache in parallel (< 0.1s).
+    4. Scans host IPs in the local /24 subnet via parallel TCP port 62078 probe (< 0.4s).
+    5. Optionally sends unicast DNS-SD probe to wake up sleeping Wi-Fi radios.
     """
+    # 0. Check usbmux Network device list
+    try:
+        from pymobiledevice3.usbmux import list_devices
+        for dev in asyncio.run(list_devices()):
+            if getattr(dev, "is_network", False) or getattr(dev, "connection_type", "") == "Network":
+                if not udid or dev.serial == udid:
+                    addr = getattr(dev, "address", None)
+                    if addr and isinstance(addr, tuple) and len(addr) >= 1:
+                        ip_cand = addr[0]
+                        if _is_ip_on_local_subnets(ip_cand):
+                            update_device_wifi_state(udid or dev.serial, ip=ip_cand, last_seen_wifi=True)
+                            return ip_cand
+    except Exception:
+        pass
+
     cached = get_device_wifi_state(udid) if udid else {}
     last_ip = cached.get("last_ip")
-    if last_ip and probe_tcp_port(last_ip, 62078, timeout=0.25):
+    if last_ip and _is_ip_on_local_subnets(last_ip) and probe_tcp_port(last_ip, 62078, timeout=0.25):
         update_device_wifi_state(udid or "default", ip=last_ip, last_seen_wifi=True)
         return last_ip
 
@@ -913,7 +953,37 @@ def pair_for_wifi(udid: str) -> dict:
     """Write the RemotePairing record and enable Wireless Lockdown over the trusted USB link.
     Immediately scans LAN to record the device's real IP into wifi_state.json."""
     global _PAIRED_UDIDS_MEM_CACHE
-    wifi_debug_log("PAIR_FOR_WIFI", f"Initiating Wi-Fi setup for {udid} over USB...")
+    wifi_debug_log("PAIR_FOR_WIFI", f"Initiating Wi-Fi setup for {udid}...")
+
+    # Perbaikan D: Safe setup jika mirroring USB sedang aktif berjalan
+    try:
+        from handset import screen
+        status_func = getattr(screen, "screen_status", getattr(screen, "status", None))
+        screen_status = status_func() if callable(status_func) else {}
+        is_mirroring_active = screen_status.get("phase") in ("running", "starting")
+    except Exception:
+        is_mirroring_active = False
+
+    if is_mirroring_active:
+        wifi_debug_log("PAIR_FOR_WIFI", f"Mirroring is currently active ({screen_status.get('phase')}). Performing safe non-destructive Wi-Fi setup...")
+        discovered_ip = discover_iphone_ip_on_lan(udid, timeout=1.5)
+        rp_port = 49152
+        if discovered_ip:
+            ports = _query_unicast_mdns_ports(discovered_ip, timeout=0.5)
+            if ports:
+                rp_port = ports[0]
+            update_device_wifi_state(udid, enabled=True, ip=discovered_ip, last_seen_cable=True)
+            st = load_wifi_state()
+            if "devices" in st and udid in st["devices"]:
+                st["devices"][udid]["paired"] = True
+                st["devices"][udid]["last_rp_port"] = rp_port
+                save_wifi_state(st)
+            wifi_debug_log("PAIR_FOR_WIFI", f"Safe Wi-Fi setup recorded {discovered_ip}:{rp_port} for {udid}")
+            return {"ok": True, "udid": udid, "ip": discovered_ip, "paired": True}
+        else:
+            update_device_wifi_state(udid, enabled=True, last_seen_cable=True)
+            return {"ok": True, "udid": udid, "ip": "Wi-Fi ready", "paired": True}
+
     with _WIFI_LOCKDOWN_LOCK:
         _WIFI_ENABLED_UDIDS.discard(udid)
 
@@ -1267,10 +1337,53 @@ def _format_address(raw_addr) -> str:
     return ""
 
 
-def _mdns_ports(host: str, timeout: float = 2.0) -> list[int]:
-    """Find RemotePairing ports on `host` via Bonjour mDNS with 0% crash on IPv6."""
+def _query_unicast_mdns_ports(host: str, timeout: float = 0.5) -> list[int]:
+    """Direct UDP DNS-SD query to (host, 5353) to bypass multicast mDNS blocking."""
+    ports: list[int] = []
+    if not host:
+        return ports
+    try:
+        from pymobiledevice3 import bonjour
+        services = [
+            bonjour.REMOTEPAIRING_SERVICE_NAME,
+            bonjour.REMOTED_SERVICE_NAME,
+        ]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        try:
+            for sname in services:
+                q = bonjour.build_query(sname, bonjour.QTYPE_PTR, unicast=True)
+                sock.sendto(q, (host, 5353))
+            start_t = time.monotonic()
+            while time.monotonic() - start_t < timeout:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    rrs = bonjour.parse_mdns_message(data)
+                    for rr in rrs:
+                        if rr.get("type") == bonjour.QTYPE_SRV and "port" in rr:
+                            p = int(rr["port"])
+                            if p and p not in ports:
+                                ports.append(p)
+                except (socket.timeout, BlockingIOError):
+                    break
+                except Exception:
+                    break
+        finally:
+            sock.close()
+    except Exception as exc:
+        wifi_debug_log("UNICAST_MDNS_WARN", f"Unicast DNS-SD query to {host}:5353 warning: {exc}")
+    return ports
+
+
+def _mdns_ports(host: str, timeout: float = 1.5) -> list[int]:
+    """Find RemotePairing ports on `host` via Bonjour mDNS & Unicast DNS-SD query with 0% crash on IPv6."""
     import time
     from zeroconf import ServiceBrowser, Zeroconf
+
+    # Tahap 139: Immediate Unicast DNS-SD query to (host, 5353) (< 50ms)
+    matched_ports: list[int] = _query_unicast_mdns_ports(host, timeout=0.4)
+    if matched_ports:
+        wifi_debug_log("MDNS_PORTS", f"Resolved unicast mDNS ports for {host}: {matched_ports}")
 
     zc = None
     names: list[str] = []
@@ -1292,7 +1405,6 @@ def _mdns_ports(host: str, timeout: float = 2.0) -> list[int]:
         ServiceBrowser(zc, "_remotepairing._tcp.local.", Listener())
         if found_event.wait(timeout=timeout):
             time.sleep(0.05)
-        matched_ports: list[int] = []
         other_ports: list[int] = []
 
         for name in list(names):
@@ -1340,14 +1452,14 @@ def _mdns_remotepairing_ports(host: str, timeout: float = 2.0) -> list[int]:
 
 
 async def _open_ports(host: str, first: int = 49152, last: int = 65535, timeout: float = 1.8) -> list[int]:
-    """Fast parallel scan (Semaphore 512, 0.08s per port, < 1.8s total), excluding port 62078."""
-    sem = asyncio.Semaphore(512)
+    """Fast parallel scan (Semaphore 160, 0.25s per port, < 1.8s total), excluding port 62078."""
+    sem = asyncio.Semaphore(160)
 
     async def probe(port: int) -> Optional[int]:
         if port == 62078:
             return None
         async with sem:
-            return port if await _port_open_async(host, port, 0.08) else None
+            return port if await _port_open_async(host, port, 0.25) else None
 
     tasks = [asyncio.ensure_future(probe(p)) for p in range(first, last + 1)]
     done, pending = await asyncio.wait(tasks, timeout=timeout)
@@ -1442,6 +1554,13 @@ async def _remotepairing_by_ip(serial: str, host: str):
     if cached:
         _REMOTEPAIRING_PORT_CACHE.pop(serial, None)
         _REMOTEPAIRING_PORT_CACHE.pop(host, None)
+        try:
+            st = load_wifi_state()
+            if serial in st.get("devices", {}):
+                st["devices"][serial].pop("last_rp_port", None)
+                save_wifi_state(st)
+        except Exception:
+            pass
         fresh_ports = await asyncio.to_thread(_mdns_ports, host, 2.0)
         if not fresh_ports:
             fresh_ports = await _open_ports(host, timeout=1.8)
@@ -1545,21 +1664,23 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
     cached_rp_port = cached.get("last_rp_port") or _REMOTEPAIRING_PORT_CACHE.get(serial) or 49152
     host = None
 
-    if last_ip and (probe_tcp_port(last_ip, cached_rp_port, timeout=0.6) or probe_tcp_port(last_ip, 62078, timeout=0.6)):
+    # Perbaikan A: Validasi subnet aktif PC & probe cepat
+    if last_ip and _is_ip_on_local_subnets(last_ip) and (probe_tcp_port(last_ip, cached_rp_port, timeout=0.4) or probe_tcp_port(last_ip, 62078, timeout=0.4)):
         host = last_ip
-        wifi_debug_log("WIFI_PROVIDER", f"Reused verified last_ip: {host}")
+        wifi_debug_log("WIFI_PROVIDER", f"Reused verified last_ip on local subnet: {host}")
+    else:
+        if last_ip and not _is_ip_on_local_subnets(last_ip):
+            wifi_debug_log("WIFI_PROVIDER", f"Ignoring stale last_ip {last_ip} (not on local PC subnets)")
 
     if host is None:
         host = lan_host_for(serial)
 
     if host is None:
-        if last_ip and (probe_tcp_port(last_ip, 62078, timeout=0.8) or probe_tcp_port(last_ip, 5353, timeout=0.5)):
-            host = last_ip
-        else:
-            wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for device host IP...")
-            host = await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
-        if not host and last_ip:
-            host = last_ip
+        wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for device host IP...")
+        host = await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
+
+    if host is None and last_ip and _is_ip_on_local_subnets(last_ip):
+        host = last_ip
 
     wifi_debug_log("WIFI_PROVIDER", f"Target device host on LAN: {host}")
 

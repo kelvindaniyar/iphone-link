@@ -3696,24 +3696,39 @@ body[data-theme="light"],
   align-items: center !important;
   justify-content: center !important;
   background: radial-gradient(
-    circle at 50% 46%,
-    rgba(14, 22, 42, 0.58) 0%,
-    rgba(9, 13, 24, 0.42) 55%,
-    rgba(9, 13, 24, 0.18) 100%
+    circle at 50% 42%,
+    rgba(15, 23, 42, 0.86) 0%,
+    rgba(11, 16, 30, 0.91) 55%,
+    rgba(8, 12, 22, 0.95) 100%
   ) !important;
+  -webkit-backdrop-filter: blur(48px) brightness(0.52) saturate(130%) !important;
+  backdrop-filter: blur(48px) brightness(0.52) saturate(130%) !important;
   border: none !important;
   box-shadow: none !important;
   padding: 16px !important;
   box-sizing: border-box !important;
+  z-index: 10 !important;
 }
 
 [data-theme="light"] #screen-empty {
   background: radial-gradient(
-    circle at 50% 46%,
-    rgba(255, 255, 255, 0.62) 0%,
-    rgba(241, 245, 249, 0.42) 55%,
-    rgba(241, 245, 249, 0.15) 100%
+    circle at 50% 42%,
+    rgba(255, 255, 255, 0.90) 0%,
+    rgba(241, 245, 249, 0.94) 55%,
+    rgba(226, 232, 240, 0.97) 100%
   ) !important;
+  -webkit-backdrop-filter: blur(48px) brightness(1.04) saturate(125%) !important;
+  backdrop-filter: blur(48px) brightness(1.04) saturate(125%) !important;
+}
+
+.workspace:not(.is-live) #screen-view,
+.workspace:not(.is-live) #phone-screen {
+  background: transparent !important;
+}
+
+[data-theme="light"] .workspace:not(.is-live) #phone-screen,
+[data-theme="light"] .workspace:not(.is-live) #screen-view {
+  background: transparent !important;
 }
 
 .launchpad-shell,
@@ -3799,27 +3814,44 @@ body[data-theme="light"],
 /* ZenLink Sleek Device Status Card Pill */
 .launchpad-device-card,
 #launchpad-device-card {
-  display: inline-flex !important;
+  display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
   gap: 8px !important;
-  width: auto !important;
-  min-width: 236px !important;
-  max-width: 284px !important;
-  padding: 7px 10px 7px 14px !important;
+  width: 256px !important;
+  max-width: calc(100% - 12px) !important;
+  padding: 7px 8px 7px 14px !important;
   margin: 0 auto 12px !important;
   border-radius: 999px !important;
-  background: rgba(15, 23, 42, 0.52) !important;
+  background: rgba(15, 23, 42, 0.68) !important;
   border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
   box-sizing: border-box !important;
+  overflow: hidden !important;
 }
 
 [data-theme="light"] .launchpad-device-card,
 [data-theme="light"] #launchpad-device-card {
-  background: rgba(255, 255, 255, 0.75) !important;
+  background: rgba(255, 255, 255, 0.86) !important;
   border: 1px solid rgba(15, 23, 42, 0.12) !important;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06) !important;
+}
+
+#launchpad-device-card > *:not(#launchpad-scan-btn):not(.launchpad-status-dot):not(.device-dot) {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  max-width: calc(100% - 42px) !important;
+  overflow: hidden !important;
+  text-align: left !important;
+}
+
+#launchpad-device-card .launchpad-card-text,
+#launchpad-device-card .launchpad-device-text,
+#launchpad-device-card .device-info {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  margin-right: 4px !important;
 }
 
 .launchpad-status-dot,
@@ -3888,13 +3920,16 @@ body[data-theme="light"],
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
   color: var(--text-muted, #94a3b8) !important;
   cursor: pointer !important;
-  width: 24px !important;
-  height: 24px !important;
+  position: static !important;
+  flex: 0 0 26px !important;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  margin: 0 0 0 4px !important;
   padding: 0 !important;
   border-radius: 999px !important;
   line-height: 1 !important;
   transition: all 0.15s ease !important;
-  flex-shrink: 0 !important;
 }
 
 [data-theme="light"] .launchpad-icon-btn,

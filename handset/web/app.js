@@ -262,6 +262,9 @@ function toggleSettings(open) {
 
   // Tahap 91: Dispatch resize to mirror iframe & window so layout updates smoothly
   window.dispatchEvent(new Event("resize"));
+  if (typeof checkWallpaperSig === "function") {
+    checkWallpaperSig();
+  }
   const iframe = document.getElementById("screen-view");
   if (iframe && iframe.contentWindow) {
     [0, 60, 150].forEach((ms) => {
@@ -873,7 +876,9 @@ function applyFitMode(mode) {
     btn.setAttribute("aria-checked", String(active));
   });
   if (currentFitMode === "autofit" && lastDeviceDimensions) {
-    handleDeviceDimensions(lastDeviceDimensions.width, lastDeviceDimensions.height);
+    if (workspace && workspace.classList.contains("is-live")) {
+      handleDeviceDimensions(lastDeviceDimensions.width, lastDeviceDimensions.height);
+    }
   }
   try {
     screenView?.contentWindow?.postMessage({ type: "set-fit-mode", mode: currentFitMode }, "*");
@@ -2249,13 +2254,19 @@ function updateLaunchpadState(passedState) {
 
   if (launchpadDeviceSub) {
     if (transport === "wifi") {
-      const ipStr = wifiObj.ip || "192.168.100.41";
-      launchpadDeviceSub.textContent = `${modelName} · Wi-Fi ${ipStr}`;
+      const ipStr = (wifiObj && wifiObj.ip) || (currentWifiState && currentWifiState.ip);
+      if (ipStr) {
+        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi ${ipStr}`;
+      } else if (wifiReady) {
+        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi siap`;
+      } else {
+        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi (Klik Scan)`;
+      }
     } else {
       if (hasCableDevice) {
         launchpadDeviceSub.textContent = `${modelName} · USB siap`;
       } else {
-        launchpadDeviceSub.textContent = `${modelName} · Kabel belum terhubung — pilih Wi-Fi`;
+        launchpadDeviceSub.textContent = `${modelName} · USB terputus`;
       }
     }
   }
@@ -2666,6 +2677,11 @@ async function showPhone() {
       screenErrorBanner.textContent = error.message;
       screenErrorBanner.style.display = "block";
     }
+    if (launchpadError) {
+      launchpadError.hidden = false;
+      launchpadError.classList.remove("is-hidden");
+      launchpadError.textContent = error.message;
+    }
     showScreen.textContent = "Start mirroring";
     showScreen.classList.remove("is-disconnect");
     showScreen.disabled = false;
@@ -2696,9 +2712,16 @@ function watchScreen() {
         window.clearInterval(screenTimer);
         const lastErr = screen.error;
         await load();
-        if (lastErr && screenErrorBanner) {
-          screenErrorBanner.textContent = lastErr;
-          screenErrorBanner.style.display = "block";
+        if (lastErr) {
+          if (screenErrorBanner) {
+            screenErrorBanner.textContent = lastErr;
+            screenErrorBanner.style.display = "block";
+          }
+          if (launchpadError) {
+            launchpadError.hidden = false;
+            launchpadError.classList.remove("is-hidden");
+            launchpadError.textContent = lastErr;
+          }
         }
       }
     } catch (error) {
