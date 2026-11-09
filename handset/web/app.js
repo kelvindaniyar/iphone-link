@@ -1542,19 +1542,24 @@ function resolveFriendlyDeviceModel(dev) {
 window.resolveFriendlyDeviceModel = resolveFriendlyDeviceModel;
 window.APPLE_PRODUCT_MAP = APPLE_PRODUCT_MAP;
 function setTransport(value, reload = true) {
-  transport = value === "wifi" ? "wifi" : "usb";
+  transport = (value === "wifi") ? "wifi" : "usb";
   if (launchpadError) {
     launchpadError.hidden = true;
     launchpadError.classList.add("is-hidden");
     launchpadError.textContent = "";
   }
-  updateLaunchpadState();
+  if (screenErrorBanner) {
+    screenErrorBanner.style.display = "none";
+    screenErrorBanner.textContent = "";
+  }
   localStorage.setItem("handset-transport", transport);
   document.querySelectorAll("[data-transport]").forEach((btn) => {
-    const active = btn.dataset.transport === transport;
+    const active = (btn.dataset.transport === transport) || (transport === "usb" && btn.dataset.transport === "cable");
     btn.classList.toggle("is-active", active);
+    btn.classList.toggle("active", active);
     btn.setAttribute("aria-checked", String(active));
   });
+  updateLaunchpadState();
   if (transport === "wifi" && (selectedUdid || (currentWifiState?.paired || []).length)) {
     triggerWifiScan(selectedUdid || currentWifiState.paired[0]);
   }
@@ -1569,7 +1574,10 @@ function setTransport(value, reload = true) {
 
 function initTransportControls() {
   document.querySelectorAll("[data-transport]").forEach((btn) => {
-    btn.onclick = () => setTransport(btn.dataset.transport);
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      setTransport(btn.dataset.transport);
+    };
   });
   if (wifiPair) wifiPair.onclick = () => setUpWifi();
 
@@ -1906,9 +1914,7 @@ function initDeviceActionControls() {
 
   // screenEmpty already declared above
   const placeholder = screenEmpty;
-  screenEmpty?.addEventListener("click", () => {
-    if (!showScreen.disabled && !showScreen.classList.contains("is-disconnect")) showPhone();
-  });
+  // Tahap 140: Do NOT call showPhone() on generic screenEmpty click (only via Mulai mirroring button)
 
   refresh?.addEventListener("click", () => load());
   showScreen?.addEventListener("click", () => {
@@ -2145,9 +2151,7 @@ async function load() {
     stateDevicesList = state.devices || [];
     const wifiObj = state.wifi || currentWifiState || {};
     const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
-    if (!hasCableDevice && wifiReady && transport === "usb" && (!state.screen || state.screen.phase === "idle" || state.screen.phase === "stopped")) {
-      setTransport("wifi", false);
-    }
+    // Tahap 140: User choice is respected! Do NOT auto-switch transport back to wifi when user clicked Cable tab.
     renderStatus(state);
     try {
       if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
@@ -2476,7 +2480,9 @@ function renderScreen(screen) {
     updateStealthDimUI(screen.stealth_dim);
   }
   const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
+  const appContainer = document.querySelector(".app") || document.body;
   if (mirroring) {
+    appContainer.classList.add("is-streaming");
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
     remotePanel.hidden = false;
@@ -2540,6 +2546,7 @@ function renderScreen(screen) {
     return;
   }
 
+  appContainer.classList.remove("is-streaming");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
   remotePanel.hidden = true;
@@ -2666,6 +2673,39 @@ async function showPhone() {
   showScreen.disabled = true;
   showScreen.textContent = "Connecting…";
   if (screenErrorBanner) screenErrorBanner.style.display = "none";
+  if (launchpadError) {
+    launchpadError.hidden = true;
+    launchpadError.classList.add("is-hidden");
+    launchpadError.textContent = "";
+  }
+
+  // Tahap 140: Live pre-check for USB connection when transport === "usb"
+  if (transport === "usb") {
+    try {
+      const liveStatus = await getJson("/api/status");
+      const hasCable = (liveStatus.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
+      if (!hasCable) {
+        const msg = "Hubungkan kabel USB iPhone terlebih dahulu, atau pilih tab Wi-Fi.";
+        if (launchpadError) {
+          launchpadError.hidden = false;
+          launchpadError.classList.remove("is-hidden");
+          launchpadError.textContent = msg;
+        }
+        if (screenErrorBanner) {
+          screenErrorBanner.textContent = msg;
+          screenErrorBanner.style.display = "block";
+        }
+        showScreen.textContent = "Start mirroring";
+        showScreen.classList.remove("is-disconnect");
+        showScreen.disabled = false;
+        return;
+      }
+      if (liveStatus.udid) {
+        selectedUdid = liveStatus.udid;
+      }
+    } catch (_) { }
+  }
+
   try {
     renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport }));
     watchScreen();

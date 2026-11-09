@@ -627,17 +627,22 @@ class Handler(BaseHTTPRequestHandler):
             payload = snapshot()
             payload["screen"] = screen_status()
             devices = payload.get("devices") or []
+            usb_devices = [d for d in devices if str(d.get("connection", "")).upper() == "USB" and d.get("udid")]
+            has_usb = len(usb_devices) > 0
             selected_udid = None
-            for d in devices:
-                if str(d.get("connection", "")).upper() == "USB" and d.get("udid"):
-                    ensure_wifi_enabled_on_usb(d["udid"])
-                    if not selected_udid:
-                        selected_udid = d["udid"]
-                    break
-            if not selected_udid:
+            if has_usb:
+                selected_udid = usb_devices[0]["udid"]
+                ensure_wifi_enabled_on_usb(selected_udid)
+                payload["connected"] = True
+                payload["udid"] = selected_udid
+                payload["connectionType"] = "USB"
+            else:
                 paired_list = wifi_paired_udids()
                 if paired_list:
                     selected_udid = paired_list[0]
+                payload["connected"] = False
+                payload["udid"] = selected_udid
+                payload["connectionType"] = "Network" if selected_udid else None
             # Zero network / ARP / TCP scan on routine /api/status polls!
             payload["wifi"] = get_wifi_status(selected_udid, probe_network=False)
             payload["audio"] = audio_manager.status()

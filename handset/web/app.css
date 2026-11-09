@@ -3695,30 +3695,56 @@ body[data-theme="light"],
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  background: radial-gradient(
-    circle at 50% 42%,
-    rgba(15, 23, 42, 0.86) 0%,
-    rgba(11, 16, 30, 0.91) 55%,
-    rgba(8, 12, 22, 0.95) 100%
+  background: linear-gradient(
+    180deg,
+    rgba(15, 20, 32, 0.56) 0%,
+    rgba(12, 16, 26, 0.62) 100%
   ) !important;
-  -webkit-backdrop-filter: blur(48px) brightness(0.52) saturate(130%) !important;
-  backdrop-filter: blur(48px) brightness(0.52) saturate(130%) !important;
+  backdrop-filter: blur(40px) brightness(0.78) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(40px) brightness(0.78) saturate(140%) !important;
   border: none !important;
   box-shadow: none !important;
   padding: 16px !important;
   box-sizing: border-box !important;
-  z-index: 10 !important;
+  z-index: 5 !important;
 }
 
 [data-theme="light"] #screen-empty {
-  background: radial-gradient(
-    circle at 50% 42%,
-    rgba(255, 255, 255, 0.90) 0%,
-    rgba(241, 245, 249, 0.94) 55%,
-    rgba(226, 232, 240, 0.97) 100%
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.62) 0%,
+    rgba(241, 245, 249, 0.68) 100%
   ) !important;
-  -webkit-backdrop-filter: blur(48px) brightness(1.04) saturate(125%) !important;
-  backdrop-filter: blur(48px) brightness(1.04) saturate(125%) !important;
+  backdrop-filter: blur(40px) brightness(1.02) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(40px) brightness(1.02) saturate(140%) !important;
+}
+
+/* Tahap 140: True Liquid Glass - Non-streaming transparent background rules */
+.app:not(.is-streaming) .display-col,
+.app:not(.is-streaming) .workspace,
+.app:not(.is-streaming) .stage,
+.app:not(.is-streaming) #phone-shell,
+.app:not(.is-streaming) #phone-screen {
+  background: transparent !important;
+}
+
+.app:not(.is-streaming) #screen-view,
+.app:not(.is-streaming) #mirror-frame {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+}
+
+/* When streaming (phase === "running"): */
+.app.is-streaming #phone-screen,
+.app.is-streaming #screen-view {
+  background: #000000 !important;
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.app.is-streaming #screen-empty {
+  display: none !important;
 }
 
 .workspace:not(.is-live) #screen-view,

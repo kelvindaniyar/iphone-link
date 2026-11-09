@@ -358,6 +358,50 @@ def _is_ip_on_local_subnets(ip_str: str) -> bool:
     return False
 
 
+def _verify_ip_is_apple_device(ip_str: str, expected_udid: str | None = None, timeout: float = 0.4) -> bool:
+    """Strict verification: IP must be on local PC subnet AND respond as a genuine Apple device.
+    Rejects fake TCP sinkholes (like 192.168.1.7) that accept connections but send empty replies.
+    """
+    if not ip_str or not _is_ip_on_local_subnets(ip_str):
+        return False
+
+    # Check 1: Unicast DNS-SD query on (ip_str, 5353) (< 30ms)
+    try:
+        ports = _query_unicast_mdns_ports(ip_str, timeout=min(timeout, 0.25))
+        if ports and any(p > 0 for p in ports):
+            return True
+    except Exception:
+        pass
+
+    # Check 2: Actual Lockdown QueryType handshake on port 62078
+    try:
+        import plistlib
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(min(timeout, 0.35))
+            s.connect((ip_str, 62078))
+            msg = plistlib.dumps({"Label": "handset", "Request": "QueryType", "ProtocolVersion": "2"})
+            s.sendall(struct.pack(">I", len(msg)) + msg)
+            hdr = s.recv(4)
+            if len(hdr) == 4:
+                sz = struct.unpack(">I", hdr)[0]
+                if 0 < sz < 100_000:
+                    data = b""
+                    while len(data) < sz:
+                        chunk = s.recv(sz - len(data))
+                        if not chunk:
+                            break
+                        data += chunk
+                    if len(data) == sz:
+                        parsed = plistlib.loads(data)
+                        if isinstance(parsed, dict) and parsed.get("Type") == "com.apple.mobile.lockdown":
+                            return True
+    except Exception:
+        pass
+
+    return False
+
+
+
 def find_ip_by_mac(mac: str) -> Optional[str]:
     """Find local IP address matching given MAC address from Windows ARP cache."""
     if not mac:
@@ -419,19 +463,18 @@ def discover_iphone_ip_on_lan(udid: Optional[str] = None, timeout: float = 0.35)
 
     cached = get_device_wifi_state(udid) if udid else {}
     last_ip = cached.get("last_ip")
-    if last_ip and _is_ip_on_local_subnets(last_ip) and probe_tcp_port(last_ip, 62078, timeout=0.25):
-        update_device_wifi_state(udid or "default", ip=last_ip, last_seen_wifi=True)
-        return last_ip
+    if last_ip:
+        if _verify_ip_is_apple_device(last_ip, udid, timeout=0.35):
+            update_device_wifi_state(udid or "default", ip=last_ip, last_seen_wifi=True)
+            return last_ip
+        else:
+            # Purge fake/stale last_ip
+            wifi_debug_log("DISCOVER_LAN", f"Purging stale/unverified last_ip {last_ip} for {udid}")
+            update_device_wifi_state(udid or "default", ip=None)
+            last_ip = None
 
     def _check(ip: str) -> Optional[str]:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.25)
-            s.connect((ip, 62078))
-            s.close()
-            return ip
-        except OSError:
-            return None
+        return ip if _verify_ip_is_apple_device(ip, udid, timeout=0.35) else None
 
     # 1. ARP cache candidates
     arp_ips: list[str] = []
@@ -936,9 +979,16 @@ def wifi_paired_udids() -> list[str]:
         except Exception:
             return 0.0
 
+    # Tahap 140: Prioritize iPhone 17 Pro (00008150-000231AC2669401C) over iPhone 11 Pro Max (00008030)
+    def _model_priority(u: str) -> int:
+        if "8150" in u:
+            return 0
+        return 1
+
     sorted_udids = sorted(
         found,
         key=lambda u: (
+            _model_priority(u),
             0 if ((home_folder / f"remote_{u}.plist").is_file() and (devices.get(u, {}) or {}).get("wifi_enabled_on_device"))
             else (1 if ((home_folder / f"remote_{u}.plist").is_file() or (devices.get(u, {}) or {}).get("wifi_enabled_on_device")) else 2),
             -_ts_score((devices.get(u, {}) or {}).get("last_seen_cable")),
@@ -1664,23 +1714,22 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
     cached_rp_port = cached.get("last_rp_port") or _REMOTEPAIRING_PORT_CACHE.get(serial) or 49152
     host = None
 
-    # Perbaikan A: Validasi subnet aktif PC & probe cepat
-    if last_ip and _is_ip_on_local_subnets(last_ip) and (probe_tcp_port(last_ip, cached_rp_port, timeout=0.4) or probe_tcp_port(last_ip, 62078, timeout=0.4)):
+    # Perbaikan A: Validasi ketat Apple Device pada host IP
+    if last_ip and _verify_ip_is_apple_device(last_ip, serial, timeout=0.4):
         host = last_ip
-        wifi_debug_log("WIFI_PROVIDER", f"Reused verified last_ip on local subnet: {host}")
+        wifi_debug_log("WIFI_PROVIDER", f"Reused verified Apple host IP: {host}")
     else:
-        if last_ip and not _is_ip_on_local_subnets(last_ip):
-            wifi_debug_log("WIFI_PROVIDER", f"Ignoring stale last_ip {last_ip} (not on local PC subnets)")
+        if last_ip:
+            wifi_debug_log("WIFI_PROVIDER", f"Ignoring unverified/stale last_ip {last_ip}")
 
     if host is None:
         host = lan_host_for(serial)
+        if host and not _verify_ip_is_apple_device(host, serial, timeout=0.35):
+            host = None
 
     if host is None:
-        wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for device host IP...")
+        wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for verified Apple device host IP...")
         host = await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
-
-    if host is None and last_ip and _is_ip_on_local_subnets(last_ip):
-        host = last_ip
 
     wifi_debug_log("WIFI_PROVIDER", f"Target device host on LAN: {host}")
 
