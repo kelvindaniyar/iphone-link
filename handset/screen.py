@@ -300,7 +300,10 @@ def stop_screen() -> dict:
                     _CURRENT_LOOP.call_soon_threadsafe(_CURRENT_TASK.cancel)
                 except Exception:
                     pass
+            _CURRENT_TASK = None
+            _CURRENT_LOOP = None
             _ACTIVE_SERVER = None
+            _ensure_local_stream_port_free(8766, timeout=1.0)
             _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
 
     try:
@@ -499,7 +502,10 @@ def _run(udid: str, transport: str) -> None:
         outcome = asyncio.run(_serve(udid, transport))
         if outcome == "airplay":
             return  # CoreDevice Wi-Fi unavailable: the AirPlay receiver owns the session now
-        _set(phase="idle", udid=udid, url=None, error="The screen stream stopped.")
+        with _LOCK:
+            curr_phase = _STATE.get("phase")
+        if curr_phase != "error":
+            _set(phase="idle", udid=udid, url=None, error=None, note="The screen stream stopped.")
     except Exception as error:
         _set(phase="error", udid=udid, url=None, error=_plain(error))
     finally:

@@ -630,21 +630,100 @@ def on_usb_devices_changed(active_usb_udids: set[str]) -> None:
 # Wi-Fi Pairing & Reachability Probing
 # -----------------------------------------------------------------------------
 
-def wifi_paired_udids() -> list[str]:
-    global _PAIRED_UDIDS_MEM_CACHE
-    import time as _time
+def has_remote_record(udid: str) -> bool:
+    """Check whether a valid RemotePairing record exists for `udid` (ZenLink 1:1 parity)."""
+    if not udid:
+        return False
+    # 1. Direct pymobiledevice3 pair record lookup (ZenLink bytecode parity)
+    try:
+        from pymobiledevice3.pair_records import iter_remote_pair_records_by_identifier
 
-    now = _time.monotonic()
-    if _PAIRED_UDIDS_MEM_CACHE is not None and (now - _PAIRED_UDIDS_MEM_CACHE[0]) < 15.0:
-        return list(_PAIRED_UDIDS_MEM_CACHE[1])
+        if any(identifier == udid for identifier, _path, _record in iter_remote_pair_records_by_identifier()):
+            return True
+    except Exception:
+        pass
+    # 2. Filesystem check in ~/.pymobiledevice3/remote_<udid>.plist
+    try:
+        import os
+        from pathlib import Path
+
+        home_folder = Path(os.path.expanduser("~")) / ".pymobiledevice3"
+        rec = home_folder / f"remote_{udid}.plist"
+        if rec.is_file() and rec.stat().st_size > 0:
+            return True
+    except Exception:
+        pass
+    # 3. Lockdown folder check in C:\ProgramData\Apple\Lockdown\<udid>.plist
+    try:
+        from pathlib import Path
+
+        lockdown_rec = Path(r"C:\ProgramData\Apple\Lockdown") / f"{udid}.plist"
+        if lockdown_rec.is_file() and lockdown_rec.stat().st_size > 0:
+            return True
+    except Exception:
+        pass
+    # 4. State database check in wifi_state.json
+    try:
+        st = get_device_wifi_state(udid)
+        if st.get("wifi_enabled_on_device") or st.get("last_ip"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def wifi_paired_udids() -> list[str]:
+    """Return all known paired iPhone UDIDs from all trusted stores (0% stale cache drop)."""
+    found: set[str] = set()
+
+    # 1. Pymobiledevice3 RemotePairing records
     try:
         from pymobiledevice3.pair_records import iter_remote_paired_identifiers
 
-        paired = sorted(set(iter_remote_paired_identifiers()))
-        _PAIRED_UDIDS_MEM_CACHE = (now, paired)
-        return list(paired)
+        for ident in iter_remote_paired_identifiers():
+            if ident:
+                found.add(ident)
     except Exception:
-        return []
+        pass
+
+    # 2. Direct glob on ~/.pymobiledevice3/remote_*.plist
+    try:
+        import os
+        from pathlib import Path
+
+        home_folder = Path(os.path.expanduser("~")) / ".pymobiledevice3"
+        if home_folder.is_dir():
+            for p in home_folder.glob("remote_*.plist"):
+                name = p.stem
+                if name.startswith("remote_"):
+                    ident = name[len("remote_") :]
+                    if ident:
+                        found.add(ident)
+    except Exception:
+        pass
+
+    # 3. Known devices from wifi_state.json
+    try:
+        state = load_wifi_state()
+        for u, dev in state.get("devices", {}).items():
+            if isinstance(dev, dict) and (dev.get("wifi_enabled_on_device") or dev.get("last_ip")):
+                found.add(u)
+    except Exception:
+        pass
+
+    # 4. Lockdown records in C:\ProgramData\Apple\Lockdown
+    try:
+        from pathlib import Path
+
+        lockdown_dir = Path(r"C:\ProgramData\Apple\Lockdown")
+        if lockdown_dir.is_dir():
+            for p in lockdown_dir.glob("*.plist"):
+                if p.stem not in ("SystemConfiguration", "") and len(p.stem) >= 8:
+                    found.add(p.stem)
+    except Exception:
+        pass
+
+    return sorted(found)
 
 
 def pair_for_wifi(udid: str) -> dict:
@@ -715,7 +794,7 @@ def pair_for_wifi(udid: str) -> dict:
 
     _PAIRED_UDIDS_MEM_CACHE = None
     paired_list = wifi_paired_udids()
-    is_paired = udid in paired_list
+    is_paired = (udid in paired_list) or has_remote_record(udid)
     msg = f"✓ Wi-Fi Ready (Connected on LAN: {discovered_ip})" if discovered_ip else "✓ Wi-Fi Paired"
     return {
         "ok": is_paired,
@@ -858,34 +937,22 @@ def get_wifi_status(selected_udid: Optional[str] = None, *, probe_network: bool 
     if not probe_network:
         cached = get_device_wifi_state(target)
         last_ip = cached.get("last_ip")
-        is_paired = target in paired_list
-        wifi_enabled = bool(cached.get("wifi_enabled_on_device", False))
+        is_paired = (target in paired_list) or has_remote_record(target)
+        wifi_enabled = bool(cached.get("wifi_enabled_on_device", False)) or is_paired
         if is_paired:
-            # Tahap 132: refresh the LAN cache in the background (never blocks this poll).
+            # Tahap 132 & 134: refresh the LAN cache in the background (never blocks this poll).
             lan_scan_async(target)
-            live_ip = lan_recently_seen(target)
-            ip_note = f" (IP: {live_ip or last_ip})" if (live_ip or last_ip) else ""
-            if wifi_enabled and live_ip:
-                return {
-                    "paired": paired_list,
-                    "enabled": True,
-                    "reachable": True,
-                    "ip": live_ip,
-                    "method": "lan-identified",
-                    "statusText": "✓ Wi‑Fi siap (Terhubung di LAN)",
-                    "statusTone": "ok",
-                    "note": f"Mirroring CoreDevice via Wi‑Fi tanpa kabel siap{ip_note}.",
-                    "udid": target,
-                }
+            live_ip = lan_recently_seen(target) or last_ip
+            ip_note = f" (IP: {live_ip})" if live_ip else ""
             return {
                 "paired": paired_list,
-                "enabled": wifi_enabled,
-                "reachable": False,
-                "ip": last_ip,
-                "method": "cached",
-                "statusText": "✓ Wi‑Fi siap" if wifi_enabled else "📶 Colok kabel sekali untuk aktifkan Wi‑Fi",
-                "statusTone": "ok" if wifi_enabled else "warn",
-                "note": f"Wi‑Fi CoreDevice dipasangkan. Pastikan iPhone menyala di jaringan yang sama{ip_note}.",
+                "enabled": True,
+                "reachable": bool(live_ip),
+                "ip": live_ip,
+                "method": "lan-identified" if live_ip else "cached",
+                "statusText": "✓ Wi‑Fi siap (Terhubung di LAN)" if live_ip else "✓ Wi‑Fi siap",
+                "statusTone": "ok",
+                "note": f"Mirroring CoreDevice via Wi‑Fi tanpa kabel siap{ip_note}.",
                 "udid": target,
             }
         return {
@@ -1002,54 +1069,54 @@ def sync_force_reset_userspace_tunnel() -> None:
         logger.debug("sync_force_reset_userspace_tunnel exception: %s", exc)
 
 
-def _mdns_remotepairing_ports(host: str, timeout: float = 2.5) -> list[int]:
-    """RemotePairing ports `host` advertises (zeroconf receives Bonjour on Windows where pmd3's browser may not)."""
-    import time as _time
-
-    ports: list[int] = []
-    try:
-        from zeroconf import ServiceBrowser, Zeroconf
-    except Exception:
-        return ports
-
-    names: list[str] = []
-    service_type = "_remotepairing._tcp.local."
-
-    class Listener:
-        def add_service(self, _zc, _type, name):  # noqa: ANN001
-            names.append(name)
-
-        def update_service(self, *_args):  # noqa: ANN002
-            return None
-
-        def remove_service(self, *_args):  # noqa: ANN002
-            return None
+def _mdns_ports(host: str, timeout: float = 1.0) -> list[int]:
+    """Find RemotePairing ports on `host` via Bonjour mDNS (_remotepairing._tcp.local. - 1:1 ZenLink parity)."""
+    import time
+    from zeroconf import ServiceBrowser, Zeroconf
 
     zc = None
+    names: list[str] = []
+
+    class Listener:
+        def add_service(self, zc, type_, name):
+            names.append(name)
+
+        def update_service(self, zc, type_, name):
+            pass
+
+        def remove_service(self, zc, type_, name):
+            pass
+
     try:
         zc = Zeroconf()
-        ServiceBrowser(zc, service_type, Listener())
-        _time.sleep(timeout)
+        ServiceBrowser(zc, "_remotepairing._tcp.local.", Listener())
+        time.sleep(timeout)
+        ports: list[int] = []
         for name in list(names):
-            info = zc.get_service_info(service_type, name, timeout=1500)
+            info = zc.get_service_info("_remotepairing._tcp.local.", name, timeout=1500)
             if info and host in info.parsed_addresses() and info.port:
                 ports.append(int(info.port))
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("zeroconf RemotePairing browse failed: %s", exc)
+        return ports
+    except Exception as exc:
+        logger.debug("mDNS port resolution failed on %s: %s", host, exc)
+        return []
     finally:
         if zc is not None:
             with contextlib.suppress(Exception):
                 zc.close()
-    return ports
 
 
-async def _open_ports(host: str, first: int = 49152, last: int = 65535, timeout: float = 12.0) -> list[int]:
+def _mdns_remotepairing_ports(host: str, timeout: float = 1.5) -> list[int]:
+    return _mdns_ports(host, timeout=timeout)
+
+
+async def _open_ports(host: str, first: int = 49152, last: int = 65535, timeout: float = 8.0) -> list[int]:
     """The RemotePairing port is dynamic: find the device's listening ports (ZenLink range scan)."""
     sem = asyncio.Semaphore(1500)
 
     async def probe(port: int) -> Optional[int]:
         async with sem:
-            return port if await _port_open_async(host, port, 0.8) else None
+            return port if await _port_open_async(host, port, 0.5) else None
 
     tasks = [asyncio.ensure_future(probe(p)) for p in range(first, last + 1)]
     done, pending = await asyncio.wait(tasks, timeout=timeout)
@@ -1066,13 +1133,49 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
             tunnel_service.create_core_device_tunnel_service_using_remotepairing(serial or "", ip, port, autopair=False),
             timeout=timeout,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("wifi: %s:%s is not RemotePairing (%r)", ip, port, exc)
-        _REMOTEPAIRING_PORT_CACHE.pop(ip, None)
-        return None
+    except Exception as exc:
+        # Fallback to autopair=True to guarantee no instant failure if pairing handshake is required
+        try:
+            svc = await asyncio.wait_for(
+                tunnel_service.create_core_device_tunnel_service_using_remotepairing(serial or "", ip, port, autopair=True),
+                timeout=timeout,
+            )
+        except Exception as exc2:
+            logger.debug("wifi: %s:%s is not RemotePairing (%r, %r)", ip, port, exc, exc2)
+            _REMOTEPAIRING_PORT_CACHE.pop(ip, None)
+            if serial:
+                _REMOTEPAIRING_PORT_CACHE.pop(serial, None)
+            return None
     _REMOTEPAIRING_PORT_CACHE[ip] = port
+    if serial:
+        _REMOTEPAIRING_PORT_CACHE[serial] = port
     logger.info("wifi: RemotePairing at %s:%s", ip, port)
     return svc
+
+
+async def _remotepairing_by_ip(serial: str, host: str):
+    """Open RemotePairing tunnel service by IP (1:1 ZenLink bytecode parity)."""
+    cached = _REMOTEPAIRING_PORT_CACHE.get(serial) or _REMOTEPAIRING_PORT_CACHE.get(host)
+    if cached:
+        ports = [cached]
+    else:
+        ports = await asyncio.to_thread(_mdns_ports, host)
+        if not ports:
+            ports = await _open_ports(host)
+
+    for attempt in range(2):
+        for port in ports:
+            svc = await _try_remotepairing(serial, host, port, timeout=10.0)
+            if svc is not None:
+                wifi_debug_log("WIFI", f"RemotePairing connected at {host}:{port}")
+                return svc
+        if attempt == 0 and cached:
+            _REMOTEPAIRING_PORT_CACHE.pop(serial, None)
+            _REMOTEPAIRING_PORT_CACHE.pop(host, None)
+            ports = await asyncio.to_thread(_mdns_ports, host)
+            if not ports:
+                ports = await _open_ports(host)
+    return None
 
 
 async def resolve_remote_pairing_service(serial: Optional[str], ip: str, timeout: float = 1.5):
@@ -1162,14 +1265,16 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
 
     # 1. Resolve host IP on LAN
     host = lan_host_for(serial)
+    cached = get_device_wifi_state(serial)
+    last_ip = cached.get("last_ip")
     if host is None:
-        cached = get_device_wifi_state(serial)
-        last_ip = cached.get("last_ip")
-        if last_ip and probe_tcp_port(last_ip, 62078, timeout=0.8):
+        if last_ip and (probe_tcp_port(last_ip, 62078, timeout=0.8) or probe_tcp_port(last_ip, 5353, timeout=0.5)):
             host = last_ip
         else:
             wifi_debug_log("WIFI_PROVIDER", "Scanning LAN for device host IP...")
             host = await asyncio.to_thread(discover_iphone_ip_on_lan, serial)
+        if not host and last_ip:
+            host = last_ip
 
     wifi_debug_log("WIFI_PROVIDER", f"Target device host on LAN: {host}")
 

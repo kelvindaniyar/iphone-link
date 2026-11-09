@@ -135,12 +135,19 @@ def clear_device_caches(udid: str | None = None) -> None:
 
 
 def _prune_disconnected_udids(active_udids: set[str], usb_udids: set[str]) -> None:
+    # Preserve paired Wi-Fi devices in metadata cache
+    paired_wifi: set[str] = set()
+    with contextlib.suppress(Exception):
+        from handset.wifi import wifi_paired_udids
+        paired_wifi = set(wifi_paired_udids())
+
+    keep_udids = active_udids | paired_wifi
     with _DEVICE_CACHE_LOCK:
         for cached_udid in list(_HANDSET_METADATA_CACHE.keys()):
-            if cached_udid not in active_udids:
+            if cached_udid not in keep_udids:
                 _HANDSET_METADATA_CACHE.pop(cached_udid, None)
         for cached_udid in list(_DEVELOPER_MODE_CACHE.keys()):
-            if cached_udid not in active_udids:
+            if cached_udid not in keep_udids:
                 _DEVELOPER_MODE_CACHE.pop(cached_udid, None)
                 _DEV_MODE_RETRY_AFTER.pop(cached_udid, None)
     with contextlib.suppress(Exception):
@@ -191,6 +198,23 @@ def snapshot() -> dict:
         for d in devices
         if d.get("udid") and str(d.get("connection", "USB")).upper() == "USB"
     }
+
+    # Tahap 134 (ZenLink parity): if device is unplugged from USB but paired on Wi-Fi,
+    # present it as a Network device in snapshot so UI never shows "No devices" on Wi-Fi tab!
+    with contextlib.suppress(Exception):
+        from handset.wifi import wifi_paired_udids, get_device_wifi_state
+        for p_udid in wifi_paired_udids():
+            if p_udid not in active_udids:
+                cached_dev = get_device_wifi_state(p_udid)
+                devices.append({
+                    "deviceId": 0,
+                    "udid": p_udid,
+                    "connection": "Network",
+                    "connectionType": "Network",
+                    "deviceName": cached_dev.get("name") or "iPhone",
+                })
+                active_udids.add(p_udid)
+
     _prune_disconnected_udids(active_udids, usb_udids)
 
     developer_mode = developer_mode_enabled(devices[0]["udid"]) if len(devices) == 1 else None
