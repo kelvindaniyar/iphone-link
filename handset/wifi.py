@@ -1540,6 +1540,14 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
                     save_wifi_state(st)
             except Exception:
                 pass
+        if hasattr(svc, "_writer") and svc._writer is not None:
+            try:
+                import socket
+                sock = svc._writer.get_extra_info("socket")
+                if sock is not None:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except Exception:
+                pass
         wifi_debug_log("WIFI", f"RemotePairing connected (autopair=False) at {ip}:{port}")
         return svc
     except Exception as exc:
@@ -1560,6 +1568,14 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
                     st["devices"][serial]["last_rp_port"] = port
                     st["devices"][serial]["last_ip"] = ip
                     save_wifi_state(st)
+            except Exception:
+                pass
+        if hasattr(svc, "_writer") and svc._writer is not None:
+            try:
+                import socket
+                sock = svc._writer.get_extra_info("socket")
+                if sock is not None:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             except Exception:
                 pass
         wifi_debug_log("WIFI", f"RemotePairing connected (autopair=True) at {ip}:{port}")

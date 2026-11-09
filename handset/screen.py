@@ -101,8 +101,8 @@ _LAST_MUTE_DOWN_STEPS: int | None = None
 # Register extended HID buttons in pymobiledevice3 at import time
 try:
     from pymobiledevice3.remote.core_device.screen_stream import _NAMED_BUTTONS
-    _NAMED_BUTTONS["power"] = (12, 0x0030, 0.5)
-    _NAMED_BUTTONS["lock"] = (12, 0x0030, 0.5)
+    _NAMED_BUTTONS["power"] = (12, 0x0030, 0.12)
+    _NAMED_BUTTONS["lock"] = (12, 0x0030, 0.12)
     _NAMED_BUTTONS["home"] = (12, 0x0040, 0.05)
     _NAMED_BUTTONS["wake"] = (12, 0x0040, 0.05)
     _NAMED_BUTTONS["brightness-down"] = (12, 0x0070, 0.025)
@@ -778,6 +778,17 @@ async def _stream(rsd, udid: str, ScreenStreamServer) -> None:
                 "eager video start failed (will retry on /codec)",
                 exc_info=True,
             )
+        # Tahap 142: Asynchronously pre-warm HID & keyboard so lock/unlock/buttons execute instantly
+        async def _prewarm_hid():
+            try:
+                await server._ensure_hid()
+            except Exception:
+                pass
+            try:
+                await server._ensure_keyboard()
+            except Exception:
+                pass
+        asyncio.create_task(_prewarm_hid())
 
     server._eager_stream_start = _eager_video_only
     global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER
@@ -1014,6 +1025,14 @@ def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
         async def _send():
             await server._ensure_keyboard()
             assert server._uhs is not None and server._kb_service_id is not None
+            if hasattr(server._uhs, "_service") and hasattr(server._uhs._service, "_writer") and server._uhs._service._writer is not None:
+                try:
+                    import socket
+                    sock = server._uhs._service._writer.get_extra_info("socket")
+                    if sock is not None:
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except Exception:
+                    pass
             await server._uhs.send_keyboard(server._kb_service_id, usages)
         try:
             future = asyncio.run_coroutine_threadsafe(_send(), loop)
@@ -1038,7 +1057,7 @@ def send_keys_direct(usages: list[int], timeout: float = 0.5) -> bool:
         return False
 
 
-def send_button_direct(name: str, state: str = "press", timeout: float = 0.5) -> bool:
+def send_button_direct(name: str, state: str = "press", timeout: float = 0.5, hold_seconds: float | None = None) -> bool:
     """Send named button event directly to active server or fallback to loopback HTTP."""
     record_user_input_activity()
     global _ACTIVE_SERVER, _CURRENT_LOOP
@@ -1053,12 +1072,23 @@ def send_button_direct(name: str, state: str = "press", timeout: float = 0.5) ->
             )
             if name not in _NAMED_BUTTONS:
                 return
-            usage_page, usage_code, hold_seconds = _NAMED_BUTTONS[name]
+            usage_page, usage_code, default_hold = _NAMED_BUTTONS[name]
+            dur = hold_seconds if hold_seconds is not None else default_hold
+            if name in ("power", "lock") and hold_seconds is None:
+                dur = 0.12
             await server._ensure_hid()
             assert server._indigo is not None
+            if hasattr(server._indigo, "_service") and hasattr(server._indigo._service, "_writer") and server._indigo._service._writer is not None:
+                try:
+                    import socket
+                    sock = server._indigo._service._writer.get_extra_info("socket")
+                    if sock is not None:
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except Exception:
+                    pass
             if state == "press":
                 await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
-                await asyncio.sleep(hold_seconds)
+                await asyncio.sleep(dur)
                 await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_UP)
             elif state == "down":
                 await server._indigo.send_button(usage_page, usage_code, HID_BUTTON_STATE_DOWN)
@@ -1318,8 +1348,13 @@ def lock_iphone_screen() -> dict:
     except Exception:
         pass
     with _HID_ACTION_LOCK:
+        try:
+            send_keys_direct([], timeout=0.10)
+        except Exception:
+            pass
         send_button_direct("power")
         _DEVICE_INTENTIONALLY_LOCKED = True
+        trigger_motion_keyframe_boost()
     return {"ok": True, "locked": True}
 
 
@@ -1367,10 +1402,10 @@ def wake_and_unlock_iphone(passcode: str = "") -> dict:
             for digit in clean_pin:
                 code = digit_map.get(digit)
                 if code:
-                    send_keys_direct([code])
-                    time.sleep(0.04)
-                    send_keys_direct([])
-                    time.sleep(0.06)
+                    send_keys_direct([code], timeout=0.25)
+                    time.sleep(0.040)
+                    send_keys_direct([], timeout=0.25)
+                    time.sleep(0.045)
 
         trigger_motion_keyframe_boost()
     return {"ok": True, "unlocked": bool(passcode and passcode.strip()), "woken": True}

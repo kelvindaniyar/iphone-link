@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap141_consistent_transparent_launchpad">
+  <link rel="stylesheet" href="/app.css?v=tahap142_wifi_lock_and_pin_icon_precision">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -723,14 +723,14 @@
               <label for="input-unlock-pin" class="setting-label" style="display: block; font-size: 12px; margin-bottom: 4px;">
                 Auto-Unlock PIN (Opsional):
               </label>
-              <div class="pin-input-wrap" style="display: flex; gap: 6px;">
-                <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric" style="flex: 1; font-family: monospace; font-size: 14px; letter-spacing: 2px;">
-                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN" style="width: 36px; padding: 0;">
-                  <svg class="fluent-icon svg-state-off" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <div class="pin-input-wrap">
+                <input type="password" id="input-unlock-pin" autocomplete="new-password" value="" placeholder="4 atau 6 digit PIN" maxlength="6" inputmode="numeric">
+                <button type="button" class="ctl ctl-sm" id="btn-toggle-pin-visibility" title="Show/Hide PIN">
+                  <svg class="fluent-icon svg-state-off pin-eye-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
                     <circle cx="12" cy="12" r="3"></circle>
                   </svg>
-                  <svg class="fluent-icon svg-state-on" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                  <svg class="fluent-icon svg-state-on pin-eye-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
                     <line x1="1" y1="1" x2="23" y2="23"></line>
                   </svg>
@@ -911,6 +911,6 @@
   </div>
 
   <script src="/keys.js?v=tahap139_perfect_glass_and_wifi"></script>
-  <script src="/app.js?v=tahap141_consistent_transparent_launchpad"></script>
+  <script src="/app.js?v=tahap142_wifi_lock_and_pin_icon_precision"></script>
 </body>
 </html>

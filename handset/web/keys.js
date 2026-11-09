@@ -395,7 +395,7 @@
               return;
             }
 
-            // Alt + U: Wake / Unlock iPhone (Tahap 47)
+            // Alt + U: Wake / Unlock iPhone (Tahap 47 / Tahap 142)
             if (e.code === "KeyU") {
               e.preventDefault();
               e.stopPropagation();
@@ -406,11 +406,15 @@
                 window.top.triggerWakeUnlockIphone();
               } else if (typeof window.triggerWakeUnlockIphone === "function") {
                 window.triggerWakeUnlockIphone();
+              } else {
+                try {
+                  (window.top || window.parent)?.postMessage({ type: "trigger-wake-unlock" }, "*");
+                } catch (_) {}
               }
               return;
             }
 
-            // Alt + L: Lock iPhone (Tahap 47)
+            // Alt + L: Lock iPhone (Tahap 47 / Tahap 142)
             if (e.code === "KeyL") {
               e.preventDefault();
               e.stopPropagation();
@@ -421,11 +425,15 @@
                 window.top.triggerLockIphone();
               } else if (typeof window.triggerLockIphone === "function") {
                 window.triggerLockIphone();
+              } else {
+                try {
+                  (window.top || window.parent)?.postMessage({ type: "trigger-lock-iphone" }, "*");
+                } catch (_) {}
               }
               return;
             }
 
-            // Alt + D: Toggle Stealth Dim Mode (Tahap 47)
+            // Alt + D: Toggle Stealth Dim Mode (Tahap 47 / Tahap 142)
             if (e.code === "KeyD") {
               e.preventDefault();
               e.stopPropagation();
@@ -436,6 +444,10 @@
                 window.top.triggerToggleStealthDim();
               } else if (typeof window.triggerToggleStealthDim === "function") {
                 window.triggerToggleStealthDim();
+              } else {
+                try {
+                  (window.top || window.parent)?.postMessage({ type: "trigger-stealth-dim" }, "*");
+                } catch (_) {}
               }
               return;
             }

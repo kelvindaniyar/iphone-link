@@ -1513,25 +1513,29 @@ function resolveFriendlyDeviceModel(dev) {
     rawName = dev.name || dev.deviceName || "";
   }
 
-  // 1. Strict Priority for iPhone 17 Pro (UWE UH / 00008150 / iPhone18,1)
-  if (
-    udid.startsWith("00008150") ||
-    udid.includes("00008150") ||
-    pType === "iPhone18,1" ||
-    rawName === "UWE UH" ||
-    rawName.includes("iPhone 17")
-  ) {
+  // Tahap 142: Priority hierarchy - Hardware UDID -> ProductType -> Nickname / rawName
+  // 1. Strict Hardware UDID Check
+  if (udid.startsWith("00008150") || udid.includes("00008150")) {
     return "iPhone 17 Pro";
   }
-
-  // 2. iPhone 11 Pro Max (00008030 / iPhone12,5)
-  if (
-    udid.startsWith("00008030") ||
-    udid.includes("00008030") ||
-    pType === "iPhone12,5" ||
-    rawName.includes("iPhone 11 Pro Max")
-  ) {
+  if (udid.startsWith("00008030") || udid.includes("00008030")) {
     return "iPhone 11 Pro Max";
+  }
+
+  // 2. Strict Product Type Check
+  if (pType === "iPhone18,1") {
+    return "iPhone 17 Pro";
+  }
+  if (pType === "iPhone12,5") {
+    return "iPhone 11 Pro Max";
+  }
+
+  // 3. Device Name / Nickname Fallback
+  if (rawName.includes("iPhone 11 Pro Max")) {
+    return "iPhone 11 Pro Max";
+  }
+  if (rawName === "UWE UH" || rawName.includes("iPhone 17")) {
+    return "iPhone 17 Pro";
   }
 
   // 3. Known product types in APPLE_PRODUCT_MAP
@@ -1768,14 +1772,22 @@ function updateStealthDimUI(active) {
 async function triggerWakeUnlockIphone() {
   if (btnWakeUnlock) {
     btnWakeUnlock.disabled = true;
-    btnWakeUnlock.textContent = "🔓 Waking…";
+    setButtonLabel(btnWakeUnlock, "Waking...");
   }
   try {
     const pin = (inputUnlockPin?.value || "").trim();
-    const res = await postJson("/api/device/wake-unlock", { passcode: pin });
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch("/api/device/wake-unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode: pin }),
+      signal: controller.signal
+    }).then(r => r.json()).finally(() => clearTimeout(tid));
+
     if (res?.ok) {
       if (screenNote) {
-        screenNote.textContent = pin ? "🔓 Layar iPhone dibangunkan & PIN diinjeksi." : "🔓 Layar iPhone telah dibangunkan.";
+        screenNote.textContent = pin ? "Layar iPhone dibangunkan & PIN diinjeksi." : "Layar iPhone telah dibangunkan.";
         screenNote.className = "ok";
       }
       // Tahap 53: Do NOT break the active stream! Send wake-stream-pli to request keyframes cleanly
@@ -1793,7 +1805,7 @@ async function triggerWakeUnlockIphone() {
   } finally {
     if (btnWakeUnlock) {
       btnWakeUnlock.disabled = false;
-      btnWakeUnlock.textContent = "🔓 Wake / Unlock (Alt+U)";
+      setButtonLabel(btnWakeUnlock, "Wake / Unlock (Alt+U)");
     }
   }
 }
@@ -1801,13 +1813,21 @@ async function triggerWakeUnlockIphone() {
 async function triggerLockIphone() {
   if (btnLockIphone) {
     btnLockIphone.disabled = true;
-    btnLockIphone.textContent = "🔒 Locking…";
+    setButtonLabel(btnLockIphone, "Locking...");
   }
   try {
-    const res = await postJson("/api/device/lock", {});
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch("/api/device/lock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+      signal: controller.signal
+    }).then(r => r.json()).finally(() => clearTimeout(tid));
+
     if (res?.ok) {
       if (screenNote) {
-        screenNote.textContent = '🔒 iPhone Terkunci (Standby) — Layar fisik dimatikan. Klik "🔓 Wake / Unlock (Alt+U)" untuk membuka kembali.';
+        screenNote.textContent = 'iPhone Terkunci (Standby) - Layar fisik dimatikan. Klik "Wake / Unlock (Alt+U)" untuk membuka kembali.';
         screenNote.className = "calm-standby";
       }
       // Tahap 53: Inform mirror iframe to hide status pill completely during locked mode
@@ -1825,7 +1845,7 @@ async function triggerLockIphone() {
   } finally {
     if (btnLockIphone) {
       btnLockIphone.disabled = false;
-      btnLockIphone.textContent = "🔒 Lock iPhone (Alt+L)";
+      setButtonLabel(btnLockIphone, "Lock iPhone (Alt+L)");
     }
   }
 }
@@ -1968,6 +1988,41 @@ function initWindowAndBarControls() {
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !controlPane?.hidden) {
       toggleSettings(false);
+    }
+  });
+
+  // Tahap 142: Global Parent Window Shortcut Handler (Alt+L, Alt+U, Alt+D) & Iframe PostMessage Bridge
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (e.code === "KeyL" || e.key === "l" || e.key === "L") {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerLockIphone();
+        return;
+      }
+      if (e.code === "KeyU" || e.key === "u" || e.key === "U") {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerWakeUnlockIphone();
+        return;
+      }
+      if (e.code === "KeyD" || e.key === "d" || e.key === "D") {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerToggleStealthDim();
+        return;
+      }
+    }
+  }, true);
+
+  window.addEventListener("message", (e) => {
+    if (!e.data || typeof e.data !== "object") return;
+    if (e.data.type === "trigger-lock-iphone") {
+      triggerLockIphone();
+    } else if (e.data.type === "trigger-wake-unlock") {
+      triggerWakeUnlockIphone();
+    } else if (e.data.type === "trigger-stealth-dim") {
+      triggerToggleStealthDim();
     }
   });
 

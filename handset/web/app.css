@@ -4387,3 +4387,68 @@ body[data-theme="light"],
   transform: none !important;
   transition: none !important;
 }
+
+/* ==========================================================================
+   Tahap 142: Precision Symmetrical PIN Toggle Icon & Input Alignment
+   - Height locked at exactly 36px on both input and toggle button
+   - Flex center alignment guarantees sub-pixel delta <= 1.0px
+   - No emoji fallback shifts; 16x16 Fluent UI SVG icon
+   ========================================================================== */
+.pin-input-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+#input-unlock-pin {
+  flex: 1 1 auto !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  box-sizing: border-box !important;
+  padding: 0 10px !important;
+  font-family: monospace !important;
+  font-size: 14px !important;
+  letter-spacing: 2px !important;
+  line-height: 34px !important;
+  border-radius: 6px !important;
+  vertical-align: middle !important;
+}
+
+#btn-toggle-pin-visibility {
+  flex: 0 0 36px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+}
+
+#btn-toggle-pin-visibility {
+  gap: 0 !important;
+}
+
+#btn-toggle-pin-visibility svg,
+#btn-toggle-pin-visibility .fluent-icon {
+  display: block !important;
+  width: 16px !important;
+  height: 16px !important;
+  margin: auto !important;
+  flex-shrink: 0 !important;
+}
+
+#btn-toggle-pin-visibility svg[hidden],
+#btn-toggle-pin-visibility .fluent-icon[hidden] {
+  display: none !important;
+}
