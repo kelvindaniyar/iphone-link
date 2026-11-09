@@ -1474,7 +1474,7 @@ function initTransportControls() {
       try {
         const res = await setUpWifi();
         if (res && res.ok && launchpadWifiFeedback) {
-          launchpadWifiFeedback.textContent = "✓ Wi-Fi siap. Sekarang bisa tanpa kabel.";
+          launchpadWifiFeedback.textContent = "Wi-Fi siap. Sekarang bisa tanpa kabel.";
           launchpadWifiFeedback.style.color = "#10b981";
         }
       } catch (err) {
@@ -1698,9 +1698,10 @@ function renderWifi() {
     wifiState.className = "wifi-state" + (ready ? " ok" : "");
   }
   const isPairedAndEnabled = Boolean(wifi.paired && wifi.paired.length > 0 && wifi.enabled);
-  wifiPair.hidden = Boolean(wifi.reachable || isPairedAndEnabled);
-  wifiPair.disabled = !usbConnected;
-  wifiPair.title = usbConnected ? "One-time setup over the cable" : "Plug in the cable once to set up Wi‑Fi";
+  const hasUsb = Boolean(usbConnected);
+  wifiPair.hidden = Boolean((wifi.reachable || isPairedAndEnabled) && !hasUsb);
+  wifiPair.disabled = !hasUsb;
+  wifiPair.title = hasUsb ? "Atur atau perbarui Wi-Fi melalui kabel USB" : "Plug in the cable once to set up Wi‑Fi";
 }
 
 async function setUpWifi() {
@@ -2129,6 +2130,16 @@ function renderStatus(state) {
       launchpadDeviceName.textContent = "iPhone";
       launchpadDeviceSub.textContent = "Belum terhubung";
       launchpadStatusDot.className = "launchpad-status-dot warn";
+    }
+    if (launchpadSetupWifiBtn) {
+      const hasUsb = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB") || (usbConnected && transport === "usb");
+      if (hasUsb) {
+        launchpadSetupWifiBtn.disabled = false;
+        launchpadSetupWifiBtn.title = "Atur atau perbarui Wi-Fi melalui kabel USB";
+      } else {
+        launchpadSetupWifiBtn.disabled = true;
+        launchpadSetupWifiBtn.title = "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi";
+      }
     }
   }
 }

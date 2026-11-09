@@ -3694,12 +3694,18 @@ body[data-theme="light"],
   max-width: 306px !important;
   box-sizing: border-box !important;
   margin: 0 auto !important;
-  padding: 0 !important;
+  padding: 16px 14px !important;
   display: flex !important;
   flex-direction: column !important;
   align-items: stretch !important;
   user-select: none;
   cursor: default;
+  background: rgba(11, 15, 25, 0.84) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
 }
 
 .launchpad-idle-view,
@@ -3821,6 +3827,9 @@ body[data-theme="light"],
 }
 
 .launchpad-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--text-muted, #94a3b8);
@@ -3830,6 +3839,11 @@ body[data-theme="light"],
   border-radius: 6px;
   line-height: 1;
   transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.launchpad-icon-btn svg {
+  display: block;
   flex-shrink: 0;
 }
 
@@ -3878,8 +3892,30 @@ body[data-theme="light"],
 }
 
 .launchpad-pill-icon {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
+  flex-shrink: 0;
+}
+
+.launchpad-pill-icon svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.launchpad-setup-wifi-btn .btn-icon,
+.launchpad-start-btn .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.launchpad-setup-wifi-btn .btn-icon svg,
+.launchpad-start-btn .btn-icon svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 /* Action Buttons */
@@ -4129,6 +4165,15 @@ body[data-theme="light"],
 }
 
 /* Light Theme Adaptations */
+[data-theme="light"] .launchpad-shell {
+  background: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.7) inset !important;
+}
+
 [data-theme="light"] .launchpad-title {
   color: #0f172a;
 }

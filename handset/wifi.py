@@ -83,6 +83,135 @@ _WIFI_LOCKDOWN_LOCK = threading.Lock()
 _WIFI_STATE_MEM_CACHE: tuple[str, float, dict] | None = None
 _PAIRED_UDIDS_MEM_CACHE: tuple[float, list[str]] | None = None
 
+# -----------------------------------------------------------------------------
+# Tahap 136: Native OpenSSL 3 SSLPSKContext ctypes Bridge for Python < 3.13
+# -----------------------------------------------------------------------------
+_SSLPSK_INITIALIZED = False
+_SSLPSK_LOCK = threading.Lock()
+_libssl = None
+_PSK_CLIENT_CB = None
+
+
+def _find_libssl_path() -> Optional[str]:
+    import _ssl
+    from pathlib import Path
+    candidates = []
+    if hasattr(_ssl, "__file__") and _ssl.__file__:
+        candidates.append(Path(_ssl.__file__).parent / "libssl-3.dll")
+        candidates.append(Path(_ssl.__file__).parent / "libssl-3-x64.dll")
+    if hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "libssl-3.dll")
+        candidates.append(Path(sys._MEIPASS) / "libssl-3-x64.dll")
+    candidates.extend([
+        Path(sys.base_prefix) / "DLLs" / "libssl-3.dll",
+        Path(sys.prefix) / "DLLs" / "libssl-3.dll",
+        Path(sys.executable).parent / "DLLs" / "libssl-3.dll",
+        Path(sys.executable).parent / "libssl-3.dll",
+    ])
+    for c in candidates:
+        if c.is_file():
+            return str(c.resolve())
+    return None
+
+
+def _ensure_sslpsk_support() -> bool:
+    global _SSLPSK_INITIALIZED, _libssl, _PSK_CLIENT_CB
+    if _SSLPSK_INITIALIZED:
+        return True
+    with _SSLPSK_LOCK:
+        if _SSLPSK_INITIALIZED:
+            return True
+        try:
+            import ctypes, ssl, types
+            dll_path = _find_libssl_path()
+            if not dll_path:
+                wifi_debug_log("SSLPSK_INIT", "libssl-3.dll not found on disk")
+                return False
+            _libssl = ctypes.CDLL(dll_path)
+            if not hasattr(_libssl, "SSL_CTX_set_psk_client_callback"):
+                wifi_debug_log("SSLPSK_INIT", "SSL_CTX_set_psk_client_callback missing in libssl")
+                return False
+
+            _PSK_CLIENT_CB = ctypes.CFUNCTYPE(
+                ctypes.c_uint,
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_uint,
+            )
+
+            class CtypesSSLPSKContext(ssl.SSLContext):
+                def __new__(cls, protocol=ssl.PROTOCOL_TLS_CLIENT, *args, **kwargs):
+                    return super().__new__(cls, protocol)
+
+                def __init__(self, *args, **kwargs):
+                    super().__init__()
+                    self.check_hostname = False
+                    self.verify_mode = ssl.CERT_NONE
+                    self._psk = None
+                    self._c_cb = None
+                    try:
+                        self.maximum_version = ssl.TLSVersion.TLSv1_2
+                        self.minimum_version = ssl.TLSVersion.TLSv1_2
+                    except Exception:
+                        pass
+
+                @property
+                def psk(self):
+                    return self._psk
+
+                @psk.setter
+                def psk(self, val):
+                    self._psk = val
+                    if val is None:
+                        return
+                    key_bytes = val if isinstance(val, (bytes, bytearray)) else bytes(val)
+
+                    @_PSK_CLIENT_CB
+                    def _cb(ssl_ptr, hint, identity_buf, max_id_len, psk_buf, max_psk_len):
+                        to_copy = min(len(key_bytes), max_psk_len)
+                        for i in range(to_copy):
+                            psk_buf[i] = key_bytes[i]
+                        return to_copy
+
+                    self._c_cb = _cb
+                    ctx_ptr = ctypes.c_void_p.from_address(id(self) + 16).value
+                    _libssl.SSL_CTX_set_psk_client_callback(ctypes.c_void_p(ctx_ptr), self._c_cb)
+
+                @property
+                def hint(self):
+                    return getattr(self, "_hint", None)
+
+                @hint.setter
+                def hint(self, hint):
+                    self._hint = hint
+
+            # Shim sys.modules['sslpsk_pmd3.sslpsk']
+            shim = types.ModuleType("sslpsk_pmd3.sslpsk")
+            shim.SSLPSKContext = CtypesSSLPSKContext
+            sys.modules["sslpsk_pmd3"] = types.ModuleType("sslpsk_pmd3")
+            sys.modules["sslpsk_pmd3.sslpsk"] = shim
+
+            # Inject directly into pymobiledevice3.remote.tunnel_service
+            try:
+                import pymobiledevice3.remote.tunnel_service as ts
+                ts.SSLPSKContext = CtypesSSLPSKContext
+            except Exception:
+                pass
+
+            _SSLPSK_INITIALIZED = True
+            wifi_debug_log("SSLPSK_INIT", "Native OpenSSL 3 SSLPSKContext bridge initialized successfully.")
+            return True
+        except Exception as exc:
+            wifi_debug_log("SSLPSK_INIT_ERR", f"Failed to initialize SSLPSKContext bridge: {exc}", exc)
+            return False
+
+
+_ensure_sslpsk_support()
+
+
 from handset import get_app_root; WIFI_STATE_PATH = get_app_root() / "wifi_state.json"
 
 
@@ -473,10 +602,25 @@ def _run_lan_scan(udid: Optional[str] = None) -> None:
     global _LAN_LAST_SCAN
     import time as _time
 
+    def _worker():
+        try:
+            asyncio.run(_lan_scan(udid))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("lan scan failed: %s", exc)
+
     try:
-        asyncio.run(_lan_scan(udid))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("lan scan failed: %s", exc)
+        try:
+            asyncio.get_running_loop()
+            in_loop = True
+        except RuntimeError:
+            in_loop = False
+
+        if in_loop:
+            t = threading.Thread(target=_worker, name="lan-scan-worker", daemon=True)
+            t.start()
+            t.join(timeout=3.0)
+        else:
+            _worker()
     finally:
         _LAN_LAST_SCAN = _time.monotonic()
         _LAN_SCANNING.clear()
@@ -1130,10 +1274,12 @@ def _mdns_ports(host: str, timeout: float = 2.0) -> list[int]:
 
     zc = None
     names: list[str] = []
+    found_event = threading.Event()
 
     class Listener:
         def add_service(self, zc, type_, name):
             names.append(name)
+            found_event.set()
 
         def update_service(self, zc, type_, name):
             pass
@@ -1144,7 +1290,8 @@ def _mdns_ports(host: str, timeout: float = 2.0) -> list[int]:
     try:
         zc = Zeroconf()
         ServiceBrowser(zc, "_remotepairing._tcp.local.", Listener())
-        time.sleep(timeout)
+        if found_event.wait(timeout=timeout):
+            time.sleep(0.05)
         matched_ports: list[int] = []
         other_ports: list[int] = []
 
@@ -1210,7 +1357,10 @@ async def _open_ports(host: str, first: int = 49152, last: int = 65535, timeout:
 
 
 async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout: float = 3.0):
+    _ensure_sslpsk_support()
     from pymobiledevice3.remote import tunnel_service
+    if hasattr(sys.modules.get("sslpsk_pmd3.sslpsk"), "SSLPSKContext"):
+        tunnel_service.SSLPSKContext = sys.modules["sslpsk_pmd3.sslpsk"].SSLPSKContext
 
     try:
         svc = await asyncio.wait_for(
@@ -1220,6 +1370,14 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
         _REMOTEPAIRING_PORT_CACHE[ip] = port
         if serial:
             _REMOTEPAIRING_PORT_CACHE[serial] = port
+            try:
+                st = load_wifi_state()
+                if "devices" in st and serial in st["devices"]:
+                    st["devices"][serial]["last_rp_port"] = port
+                    st["devices"][serial]["last_ip"] = ip
+                    save_wifi_state(st)
+            except Exception:
+                pass
         wifi_debug_log("WIFI", f"RemotePairing connected (autopair=False) at {ip}:{port}")
         return svc
     except Exception as exc:
@@ -1234,6 +1392,14 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
         _REMOTEPAIRING_PORT_CACHE[ip] = port
         if serial:
             _REMOTEPAIRING_PORT_CACHE[serial] = port
+            try:
+                st = load_wifi_state()
+                if "devices" in st and serial in st["devices"]:
+                    st["devices"][serial]["last_rp_port"] = port
+                    st["devices"][serial]["last_ip"] = ip
+                    save_wifi_state(st)
+            except Exception:
+                pass
         wifi_debug_log("WIFI", f"RemotePairing connected (autopair=True) at {ip}:{port}")
         return svc
     except Exception as exc2:
@@ -1247,10 +1413,17 @@ async def _try_remotepairing(serial: Optional[str], ip: str, port: int, timeout:
 async def _remotepairing_by_ip(serial: str, host: str):
     """Open RemotePairing tunnel service by IP (1:1 ZenLink bytecode parity)."""
     cached = _REMOTEPAIRING_PORT_CACHE.get(serial) or _REMOTEPAIRING_PORT_CACHE.get(host)
+    if not cached and serial:
+        st = load_wifi_state()
+        dev_info = st.get("devices", {}).get(serial, {})
+        if dev_info.get("last_rp_port"):
+            cached = int(dev_info["last_rp_port"])
+            _REMOTEPAIRING_PORT_CACHE[serial] = cached
+            _REMOTEPAIRING_PORT_CACHE[host] = cached
     candidate_ports: list[int] = []
     if cached:
         candidate_ports.append(cached)
-    mdns_candidates = await asyncio.to_thread(_mdns_ports, host, 2.0)
+    mdns_candidates = await asyncio.to_thread(_mdns_ports, host, 1.5)
     for p in mdns_candidates:
         if p not in candidate_ports:
             candidate_ports.append(p)
@@ -1367,9 +1540,18 @@ async def _wifi_provider(serial: Optional[str], autopair: bool, remotepairing_fa
         )
 
     # 1. Resolve host IP on LAN
-    host = lan_host_for(serial)
     cached = get_device_wifi_state(serial)
     last_ip = cached.get("last_ip")
+    cached_rp_port = cached.get("last_rp_port") or _REMOTEPAIRING_PORT_CACHE.get(serial) or 49152
+    host = None
+
+    if last_ip and (probe_tcp_port(last_ip, cached_rp_port, timeout=0.6) or probe_tcp_port(last_ip, 62078, timeout=0.6)):
+        host = last_ip
+        wifi_debug_log("WIFI_PROVIDER", f"Reused verified last_ip: {host}")
+
+    if host is None:
+        host = lan_host_for(serial)
+
     if host is None:
         if last_ip and (probe_tcp_port(last_ip, 62078, timeout=0.8) or probe_tcp_port(last_ip, 5353, timeout=0.5)):
             host = last_ip

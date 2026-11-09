@@ -6,7 +6,7 @@
   <meta name="description" content="Mirror and control your iPhone screen on Windows over USB or Wi-Fi.">
   <title>iPhone Link — iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
-  <link rel="stylesheet" href="/app.css?v=tahap135">
+  <link rel="stylesheet" href="/app.css?v=tahap136">
 </head>
 <body>
   <div class="app" id="app-root">
@@ -124,28 +124,59 @@
                         <div class="launchpad-card-title" id="launchpad-device-name">iPhone</div>
                         <div class="launchpad-card-sub" id="launchpad-device-sub">USB · siap</div>
                       </div>
-                      <button type="button" class="launchpad-icon-btn" id="launchpad-scan-btn" title="Pindai ulang perangkat" aria-label="Refresh">↻</button>
+                      <button type="button" class="launchpad-icon-btn" id="launchpad-scan-btn" title="Pindai ulang perangkat" aria-label="Refresh">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M21 2v6h-6"></path>
+                          <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                          <path d="M3 22v-6h6"></path>
+                          <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                        </svg>
+                      </button>
                     </div>
 
                     <!-- Transport Pills Row -->
                     <div class="launchpad-transport-row" id="launchpad-transport-row">
                       <button type="button" class="launchpad-pill is-active" id="launchpad-transport-cable" data-transport="usb" aria-checked="true">
-                        <span class="launchpad-pill-icon">🔌</span> Kabel (USB)
+                        <span class="launchpad-pill-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v6"></path>
+                            <path d="M6 8h12v4a6 6 0 0 1-12 0Z"></path>
+                            <path d="M12 18v4"></path>
+                          </svg>
+                        </span>
+                        <span class="pill-label">Kabel (USB)</span>
                       </button>
                       <button type="button" class="launchpad-pill" id="launchpad-transport-wifi" data-transport="wifi" aria-checked="false">
-                        <span class="launchpad-pill-icon">📡</span> Wi-Fi
+                        <span class="launchpad-pill-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                            <path d="M8.5 16.5a6 6 0 0 1 7 0"></path>
+                            <circle cx="12" cy="20" r="1.2" fill="currentColor"></circle>
+                          </svg>
+                        </span>
+                        <span class="pill-label">Wi-Fi</span>
                       </button>
                     </div>
 
                     <!-- Quick Wi-Fi Setup Button -->
                     <button type="button" class="launchpad-setup-wifi-btn" id="launchpad-setup-wifi-btn">
-                      <span class="btn-icon">⚡</span> Atur Wi-Fi Sekarang
+                      <span class="btn-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                        </svg>
+                      </span>
+                      <span class="btn-label">Atur Wi-Fi Sekarang</span>
                     </button>
                     <div class="launchpad-wifi-feedback" id="launchpad-wifi-feedback" hidden></div>
 
                     <!-- Primary Action Button -->
                     <button type="button" class="launchpad-start-btn" id="launchpad-start-btn">
-                      <span class="btn-icon">▷</span> Mulai mirroring
+                      <span class="btn-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                          <polygon points="6 4 20 12 6 20 6 4"></polygon>
+                        </svg>
+                      </span>
+                      <span class="btn-label">Mulai mirroring</span>
                     </button>
                     <div class="launchpad-error" id="launchpad-error" hidden></div>
                   </div>
@@ -875,7 +906,7 @@
     <div id="run-guide" hidden aria-hidden="true"></div>
   </div>
 
-  <script src="/keys.js?v=tahap135"></script>
-  <script src="/app.js?v=tahap135"></script>
+  <script src="/keys.js?v=tahap136"></script>
+  <script src="/app.js?v=tahap136"></script>
 </body>
 </html>
