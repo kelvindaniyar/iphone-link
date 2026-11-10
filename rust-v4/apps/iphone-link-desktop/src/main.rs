@@ -1,5 +1,11 @@
 //! iPhone Link v4.0 Native Rust Desktop Engine Entry Point.
 
+pub mod i18n;
+pub mod link_grabber;
+pub mod ocr_engine;
+pub mod updater;
+pub mod window_dwm;
+
 use std::env;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
@@ -18,10 +24,24 @@ use iphone_link_apple::wifi_discovery::{
 use iphone_link_audio::jitter_buffer::AdaptiveAudioBuffer;
 use iphone_link_audio::wasapi_output::probe_wasapi_and_mmcss;
 use iphone_link_audio::{probe_zlaac_dll, AudioBufferPreset};
-use iphone_link_video::autorotate::{evaluate_auto_rotate, AppProfile, OrientationMode};
+use iphone_link_video::autorotate::{
+    evaluate_auto_rotate, run_32_autorotate_scenarios_self_test, AppProfile, OrientationMode,
+};
 use iphone_link_video::d3d11_context::{probe_d3d11_hardware_device, D3d11HardwareInfo, SharedFrameRing};
-use iphone_link_video::decoder::H265Trim;
 use iphone_link_video::mf_decoder::{probe_media_foundation, DownscaleFactor, HevcPipelineConfig};
+
+use crate::i18n::{get_text, translate_dynamic_status, Lang};
+use crate::link_grabber::extract_and_normalize_links;
+use crate::ocr_engine::{
+    auto_correct_ocr_text, clear_copy_cache, get_clipboard_sequence_number,
+    is_balloon_popup_text, is_notes_folder_list_frame, stitch_multiline_ocr_frames,
+};
+use crate::updater::{is_protected_config_file, verify_sha256, Semver};
+use crate::window_dwm::{
+    probe_dwm_acrylic_offscreen, WindowGeometryManager, LANDSCAPE_HEIGHT,
+    LANDSCAPE_WIDTH_CLOSED, LANDSCAPE_WIDTH_OPEN, PORTRAIT_HEIGHT, PORTRAIT_WIDTH_CLOSED,
+    PORTRAIT_WIDTH_OPEN, RECT, TRAY_MENU_ITEMS,
+};
 
 fn find_zlaac_dll() -> Option<PathBuf> {
     let mut candidates = Vec::new();
@@ -56,7 +76,7 @@ fn find_zlaac_dll() -> Option<PathBuf> {
 }
 
 fn run_self_test() -> i32 {
-    println!("=== iPhone Link v4.0 Native Rust Self-Test (Tahap 153) ===");
+    println!("=== iPhone Link v4.0 Native Rust Self-Test (Tahap 154) ===");
 
     // 1. Model Resolution & Screen Type Detection
     let model_18_1 = resolve_apple_model("iPhone18,1");
@@ -136,19 +156,7 @@ fn run_self_test() -> i32 {
         eprintln!("zlaac.dll could not be located in candidates");
     }
 
-    // 6. Auto-Rotate State Machine & H.265 Macroblock Trim Evaluation
-    let trim = H265Trim::default();
-    let (clean_w, clean_h) = trim.trim_dimensions(1216, 2656);
-    let trim_test_passed = clean_w == 1202 && clean_h == 2598;
-
-    let efootball_decision = evaluate_auto_rotate(AppProfile::EFootball, clean_w, clean_h, 0);
-    let instagram_decision = evaluate_auto_rotate(AppProfile::Instagram, clean_w, clean_h, 270);
-    let autorotate_passed = efootball_decision.orientation == OrientationMode::Landscape270
-        && efootball_decision.is_locked
-        && instagram_decision.orientation == OrientationMode::Portrait0
-        && instagram_decision.is_locked;
-
-    // 7. Direct3D 11 Hardware Context & Media Foundation Probe (Tahap 153)
+    // 6. Direct3D 11 Hardware Context & Media Foundation Probe
     let d3d11_res = probe_d3d11_hardware_device();
     let d3d11_passed = d3d11_res.is_ok();
     let d3d11_info = d3d11_res.unwrap_or_else(|_| D3d11HardwareInfo {
@@ -178,7 +186,7 @@ fn run_self_test() -> i32 {
     let pipeline_passed = pipe_clean_w == 1202 && pipe_clean_h == 2598 && pipe_ds_w == 912 && pipe_ds_h == 1992;
     let d3d11_and_mf_passed = d3d11_passed && mf_passed && ring_passed && pipeline_passed;
 
-    // 8. WASAPI Output & MMCSS Pro Audio Probe + Jitter Buffer (Tahap 153)
+    // 7. WASAPI Output & MMCSS Pro Audio Probe + Jitter Buffer
     let mmcss_res = probe_wasapi_and_mmcss();
     let mmcss_passed = mmcss_res.as_ref().map(|r| r.mmcss_enabled && r.bypass_ecoqos).unwrap_or(false);
     let mmcss_info = mmcss_res.unwrap_or_else(|_| iphone_link_audio::wasapi_output::MmcssProbeResult {
@@ -194,23 +202,158 @@ fn run_self_test() -> i32 {
     let pulled = jbuf.pull_samples(4);
     let limiter_verified = pulled.len() == 4 && pulled[0] > 10000 && pulled[0] < 32767;
 
-    // Underrun comfort silence verification
     let underrun_pulled = jbuf.pull_samples(8);
     let underrun_verified = underrun_pulled.len() == 8 && jbuf.underrun_count() == 1 && underrun_pulled[7] == 0;
-
     let wasapi_audio_passed = mmcss_passed && limiter_verified && underrun_verified;
+
+    // 8. Auto-Rotate 32 Scenarios Self-Test (Tahap 154 Pilar 1)
+    let (scenarios_passed, scenarios_total) = run_32_autorotate_scenarios_self_test();
+    let autorotate_32_passed = scenarios_passed == 32 && scenarios_total == 32;
+
+    let efootball_decision = evaluate_auto_rotate(AppProfile::EFootball, 1920, 1080, 0);
+    let instagram_decision = evaluate_auto_rotate(AppProfile::Instagram, 1920, 1080, 270);
+    let profiles_passed = efootball_decision.orientation == OrientationMode::Landscape270
+        && efootball_decision.is_locked
+        && instagram_decision.orientation == OrientationMode::Portrait0
+        && instagram_decision.is_locked;
+    let autorotate_suite_passed = autorotate_32_passed && profiles_passed;
+
+    // 9. WinRT Multi-Frame OCR & Stitcher (Tahap 154 Pilar 2)
+    let ocr_dirty = "Momen diabadil<an oleh @eril<l<ristian di !olom komentar kapal Baturnandi menuju Dapua dengan hincfia (Al Generated Content) #cilegon] aksi _heroik @andriboto<";
+    let ocr_clean = auto_correct_ocr_text(ocr_dirty);
+    let ocr_optical_passed = ocr_clean.contains("diabadikan")
+        && ocr_clean.contains("@erikkristian")
+        && ocr_clean.contains("kolom")
+        && ocr_clean.contains("Batumandi")
+        && ocr_clean.contains("papua")
+        && ocr_clean.contains("hindia")
+        && ocr_clean.contains("(AI Generated Content)")
+        && ocr_clean.contains("#cilegon")
+        && !ocr_clean.contains("#cilegon]")
+        && ocr_clean.contains("heroik")
+        && !ocr_clean.contains("_heroik")
+        && ocr_clean.contains("@andribotox");
+
+    let short_snippet = "Judul Singkat\r\n\r\nParagraf pendek.".to_string();
+    let short_stitched = stitch_multiline_ocr_frames(&[short_snippet.clone()]);
+    let golden_rule_1_passed = short_stitched == short_snippet;
+
+    let batumandi_p1 = "Paragraf 1: Penyelamatan KMP Batumandi\r\nParagraf 2: Evakuasi lancar\r\nParagraf 3: Semua selamat";
+    let batumandi_p2 = "Paragraf 2: Evakuasi lancar\r\nParagraf 3: Semua selamat\r\nParagraf 4: Petugas sigap";
+    let batumandi_p3 = "Paragraf 4: Petugas sigap\r\nParagraf 5: Cuaca membaik\r\nParagraf 6: Penyelidikan selesai";
+    let batumandi_stitched = stitch_multiline_ocr_frames(&[
+        batumandi_p1.to_string(),
+        batumandi_p2.to_string(),
+        batumandi_p3.to_string(),
+    ]);
+    let batumandi_passed = batumandi_stitched.contains("Paragraf 1")
+        && batumandi_stitched.contains("Paragraf 6")
+        && !batumandi_stitched.contains("<<<NOTES_LIST_VIEW>>>");
+
+    let balloon_rejection_passed = is_balloon_popup_text("1Q0 1O0O")
+        && is_balloon_popup_text("Cut | Copy | Paste")
+        && is_balloon_popup_text("Select All")
+        && !is_balloon_popup_text("Teks biasa");
+    let folder_rejection_passed = is_notes_folder_list_frame("<<<NOTES_LIST_VIEW>>>")
+        && is_notes_folder_list_frame("Folders")
+        && !is_notes_folder_list_frame("Catatan harian");
+
+    clear_copy_cache();
+    let _clip_seq = get_clipboard_sequence_number();
+    let ocr_suite_passed = ocr_optical_passed
+        && golden_rule_1_passed
+        && batumandi_passed
+        && balloon_rejection_passed
+        && folder_rejection_passed;
+
+    // 10. Social Link Grabber & Normalizer (Tahap 154 Pilar 2)
+    let dirty_link_text = "Lihat |•https://www.instagram.com/p/DVijpJIiPqN/?igsh=Mm53anAveGk3azdoWGo= •| - Ask Siri dan tonton http5://vt.tiktok.com/ZSjX9k2Lm/ serta https://youtubc.com/watch?v=dQw4w9WgXcQ atau https://www.threads.net/@user/post/DA123456789";
+    let extracted_links = extract_and_normalize_links(dirty_link_text);
+    let link_grabber_passed = extracted_links.len() == 4
+        && extracted_links[0] == "https://www.instagram.com/p/DVijpJIiPqN/?igsh=Mm53anAveGk3azdoWGo="
+        && extracted_links[1] == "https://vt.tiktok.com/ZSjX9k2Lm/"
+        && extracted_links[2] == "https://youtube.com/watch?v=dQw4w9WgXcQ"
+        && extracted_links[3] == "https://www.threads.net/@user/post/DA123456789";
+
+    // 11. Bilingual Localization Engine (Tahap 154 Pilar 2)
+    let status_en_1 = translate_dynamic_status("Wi-Fi siap", Lang::En);
+    let status_en_2 = translate_dynamic_status("Kabel terputus", Lang::En);
+    let status_en_3 = translate_dynamic_status("Terhubung (USB)", Lang::En);
+    let status_id_1 = translate_dynamic_status("Wi-Fi siap", Lang::Id);
+
+    let tab_summary_en = get_text("tab_summary", Lang::En);
+    let tab_summary_id = get_text("tab_summary", Lang::Id);
+    let btn_notif_en = get_text("btn_notifications", Lang::En);
+
+    let bilingual_passed = status_en_1 == "Wi-Fi ready"
+        && status_en_2 == "Cable disconnected"
+        && status_en_3 == "Connected (USB)"
+        && status_id_1 == "Wi-Fi siap"
+        && tab_summary_en == "Summary"
+        && tab_summary_id == "Ringkasan"
+        && btn_notif_en == "Notifications";
+
+    // 12. True DWM Acrylic Blur & Precision Geometry (Tahap 154 Pilar 3)
+    let dwm_probe_res = probe_dwm_acrylic_offscreen();
+    let dwm_probe_passed = dwm_probe_res.is_ok();
+    let dwm_info = dwm_probe_res.unwrap_or_else(|_| crate::window_dwm::DwmProbeResult {
+        acrylic_status: crate::window_dwm::DwmBackdropStatus::NativeTransientAcrylic,
+        portrait_closed_rect: RECT { left: 0, top: 0, right: PORTRAIT_WIDTH_CLOSED, bottom: PORTRAIT_HEIGHT },
+        portrait_open_rect: RECT { left: 0, top: 0, right: PORTRAIT_WIDTH_OPEN, bottom: PORTRAIT_HEIGHT },
+        landscape_closed_rect: RECT { left: 0, top: 0, right: LANDSCAPE_WIDTH_CLOSED, bottom: LANDSCAPE_HEIGHT },
+        landscape_open_rect: RECT { left: 0, top: 0, right: LANDSCAPE_WIDTH_OPEN, bottom: LANDSCAPE_HEIGHT },
+        fullscreen_rect: RECT { left: 0, top: 38, right: 1920, bottom: 1080 },
+        restored_rect: RECT { left: 0, top: 0, right: LANDSCAPE_WIDTH_OPEN, bottom: LANDSCAPE_HEIGHT },
+        elapsed_ms: 1,
+    });
+
+    let mut geom = WindowGeometryManager::new(1.0);
+    let geom_p_closed = geom.current_rect.width() == PORTRAIT_WIDTH_CLOSED && geom.current_rect.height() == PORTRAIT_HEIGHT;
+    let geom_p_open = geom.toggle_drawer().width() == PORTRAIT_WIDTH_OPEN;
+    let _ = geom.toggle_drawer();
+    let geom_l_closed = geom.set_orientation(true).width() == LANDSCAPE_WIDTH_CLOSED && geom.current_rect.height() == LANDSCAPE_HEIGHT;
+    let geom_l_open = geom.toggle_drawer().width() == LANDSCAPE_WIDTH_OPEN;
+    let mock_work = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+    let geom_fs = geom.toggle_fullscreen(mock_work).width() > 1200;
+    let geom_restored = geom.toggle_fullscreen(mock_work).width() == LANDSCAPE_WIDTH_OPEN;
+    let tray_menu_valid = TRAY_MENU_ITEMS.len() == 5 && TRAY_MENU_ITEMS[0] == "Show iPhone Link";
+
+    let dwm_suite_passed = dwm_probe_passed
+        && geom_p_closed
+        && geom_p_open
+        && geom_l_closed
+        && geom_l_open
+        && geom_fs
+        && geom_restored
+        && tray_menu_valid
+        && dwm_info.elapsed_ms < 150;
+
+    // OTA Updater verification
+    let v4 = Semver::parse("v4.0.0").unwrap();
+    let v3 = Semver::parse("v3.0.0").unwrap();
+    let semver_passed = v4.is_newer_than(&v3);
+    let hash_passed = verify_sha256(b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    let config_protect_passed = is_protected_config_file("user_settings.json")
+        && is_protected_config_file("wifi_state.json")
+        && is_protected_config_file("typed_history.json")
+        && !is_protected_config_file("iphone-link-v4.exe");
+    let updater_passed = semver_passed && hash_passed && config_protect_passed;
 
     let all_passed = model_test_passed
         && usbmux_passed
         && wifi_discovery_passed
         && hid_passed
         && ffi_test_passed
-        && trim_test_passed
-        && autorotate_passed
         && d3d11_and_mf_passed
-        && wasapi_audio_passed;
+        && wasapi_audio_passed
+        && autorotate_suite_passed
+        && ocr_suite_passed
+        && link_grabber_passed
+        && bilingual_passed
+        && dwm_suite_passed
+        && updater_passed;
 
-    // 9. Print structured JSON result
+    // Structured JSON result
     println!("{{");
     println!("  \"status\": \"{}\",", if all_passed { "PASS" } else { "FAIL" });
     println!("  \"suite\": \"iphone_link_v4_native_rust\",");
@@ -237,7 +380,6 @@ fn run_self_test() -> i32 {
     println!("      \"passed\": {},", hid_passed);
     println!("      \"lock_duration_ms\": {},", lock_duration_ms);
     println!("      \"lock_event_count\": {},", lock_events.len());
-    println!("      \"lock_keyboard_events\": 0,");
     println!("      \"shift_latching_steps_count\": {},", shift_steps.len());
     println!("      \"stealth_dim_idempotent_passed\": {},", stealth_dim_passed);
     println!("      \"auto_unlock_pin_passed\": {}", pin_passed);
@@ -246,17 +388,7 @@ fn run_self_test() -> i32 {
     println!("      \"passed\": {},", ffi_test_passed);
     println!("      \"dll_path\": \"{}\",", zlaac_resolved_path.replace('\\', "\\\\"));
     println!("      \"avcodec_version_raw\": {},", avcodec_ver_raw);
-    println!("      \"avcodec_version\": \"{}\",", avcodec_ver_str);
-    println!("      \"decoder_open_close\": {}", ffi_test_passed);
-    println!("    }},");
-    println!("    \"video_pipeline\": {{");
-    println!("      \"passed\": {},", trim_test_passed && autorotate_passed);
-    println!("      \"h265_trim_passed\": {},", trim_test_passed);
-    println!("      \"raw_resolution\": \"1216x2656\",");
-    println!("      \"clean_resolution\": \"{}x{}\",", clean_w, clean_h);
-    println!("      \"autorotate_passed\": {},", autorotate_passed);
-    println!("      \"efootball_lock\": \"{:?}\",", efootball_decision.orientation);
-    println!("      \"instagram_guard\": \"{:?}\"", instagram_decision.orientation);
+    println!("      \"avcodec_version\": \"{}\"", avcodec_ver_str);
     println!("    }},");
     println!("    \"d3d11_and_mf_hardware_probe\": {{");
     println!("      \"passed\": {},", d3d11_and_mf_passed);
@@ -264,9 +396,7 @@ fn run_self_test() -> i32 {
     println!("      \"dedicated_vram_mb\": {},", d3d11_info.dedicated_vram_mb);
     println!("      \"feature_level\": \"{}\",", d3d11_info.feature_level);
     println!("      \"media_foundation_startup\": {},", mf_passed);
-    println!("      \"triple_buffer_ring_verified\": {},", ring_passed);
-    println!("      \"hevc_clean_resolution\": \"{}x{}\",", pipe_clean_w, pipe_clean_h);
-    println!("      \"hevc_downscaled_resolution\": \"{}x{}\"", pipe_ds_w, pipe_ds_h);
+    println!("      \"triple_buffer_ring_verified\": {}", ring_passed);
     println!("    }},");
     println!("    \"wasapi_and_jitter_buffer_probe\": {{");
     println!("      \"passed\": {},", wasapi_audio_passed);
@@ -274,9 +404,54 @@ fn run_self_test() -> i32 {
     println!("      \"task_name\": \"{}\",", mmcss_info.task_name);
     println!("      \"bypass_ecoqos\": {},", mmcss_info.bypass_ecoqos);
     println!("      \"wasapi_format\": \"{}\",", mmcss_info.wasapi_format);
-    println!("      \"jitter_buffer_preset\": \"Normal (60ms)\",");
     println!("      \"volume_limiter_verified\": {},", limiter_verified);
     println!("      \"comfort_silence_underrun_verified\": {}", underrun_verified);
+    println!("    }},");
+    println!("    \"autorotate_32_scenarios\": {{");
+    println!("      \"passed\": {},", autorotate_suite_passed);
+    println!("      \"scenarios_passed\": {},", scenarios_passed);
+    println!("      \"scenarios_total\": {},", scenarios_total);
+    println!("      \"efootball_lock\": \"{:?}\",", efootball_decision.orientation);
+    println!("      \"instagram_guard\": \"{:?}\"", instagram_decision.orientation);
+    println!("    }},");
+    println!("    \"winrt_ocr_stitcher\": {{");
+    println!("      \"passed\": {},", ocr_suite_passed);
+    println!("      \"optical_corrections_verified\": {},", ocr_optical_passed);
+    println!("      \"golden_rule_1_short_text\": {},", golden_rule_1_passed);
+    println!("      \"batumandi_6_paragraphs_stitched\": {},", batumandi_passed);
+    println!("      \"balloon_filter_passed\": {},", balloon_rejection_passed);
+    println!("      \"folder_filter_passed\": {}", folder_rejection_passed);
+    println!("    }},");
+    println!("    \"social_link_grabber\": {{");
+    println!("      \"passed\": {},", link_grabber_passed);
+    println!("      \"extracted_count\": {},", extracted_links.len());
+    println!("      \"instagram_normalized\": {},", extracted_links.get(0).map(|s| s.contains("instagram.com")).unwrap_or(false));
+    println!("      \"tiktok_normalized\": {},", extracted_links.get(1).map(|s| s.contains("tiktok.com")).unwrap_or(false));
+    println!("      \"youtube_normalized\": {},", extracted_links.get(2).map(|s| s.contains("youtube.com")).unwrap_or(false));
+    println!("      \"threads_normalized\": {}", extracted_links.get(3).map(|s| s.contains("threads.net")).unwrap_or(false));
+    println!("    }},");
+    println!("    \"bilingual_i18n\": {{");
+    println!("      \"passed\": {},", bilingual_passed);
+    println!("      \"status_en\": \"{}\",", status_en_1);
+    println!("      \"status_id\": \"{}\",", status_id_1);
+    println!("      \"tab_summary_en\": \"{}\",", tab_summary_en);
+    println!("      \"tab_summary_id\": \"{}\"", tab_summary_id);
+    println!("    }},");
+    println!("    \"dwm_acrylic_and_geometry\": {{");
+    println!("      \"passed\": {},", dwm_suite_passed);
+    println!("      \"backdrop_status\": \"{:?}\",", dwm_info.acrylic_status);
+    println!("      \"portrait_geometry\": \"{}x{}\",", PORTRAIT_WIDTH_CLOSED, PORTRAIT_HEIGHT);
+    println!("      \"portrait_open_geometry\": \"{}x{}\",", PORTRAIT_WIDTH_OPEN, PORTRAIT_HEIGHT);
+    println!("      \"landscape_geometry\": \"{}x{}\",", LANDSCAPE_WIDTH_CLOSED, LANDSCAPE_HEIGHT);
+    println!("      \"landscape_open_geometry\": \"{}x{}\",", LANDSCAPE_WIDTH_OPEN, LANDSCAPE_HEIGHT);
+    println!("      \"offscreen_probe_elapsed_ms\": {},", dwm_info.elapsed_ms);
+    println!("      \"system_tray_menu_items\": {}", TRAY_MENU_ITEMS.len());
+    println!("    }},");
+    println!("    \"ota_updater\": {{");
+    println!("      \"passed\": {},", updater_passed);
+    println!("      \"semver_comparison\": {},", semver_passed);
+    println!("      \"sha256_verification\": {},", hash_passed);
+    println!("      \"config_files_protected\": {}", config_protect_passed);
     println!("    }}");
     println!("  }}");
     println!("}}");
@@ -295,6 +470,6 @@ fn main() {
         std::process::exit(code);
     }
 
-    println!("iPhone Link v4.0 Native Rust Engine (Tahap 153)");
+    println!("iPhone Link v4.0 Native Rust Engine (Tahap 154)");
     println!("Usage: iphone-link-v4.exe [--self-test]");
 }
