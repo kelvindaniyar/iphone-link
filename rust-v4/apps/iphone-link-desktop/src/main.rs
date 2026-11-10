@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 //! iPhone Link v4.0 Native Rust Desktop Engine Entry Point.
 
 pub mod i18n;
@@ -9,8 +10,7 @@ pub mod window_dwm;
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -357,107 +357,180 @@ fn run_self_test() -> i32 {
         && updater_passed;
 
     // Structured JSON result
-    println!("{{");
-    println!("  \"status\": \"{}\",", if all_passed { "PASS" } else { "FAIL" });
-    println!("  \"suite\": \"iphone_link_v4_native_rust\",");
-    println!("  \"tests\": {{");
-    println!("    \"model_resolution\": {{");
-    println!("      \"passed\": {},", model_test_passed);
-    println!("      \"iPhone18_1\": \"{}\",", model_18_1.unwrap_or(""));
-    println!("      \"iPhone12_5\": \"{}\",", model_12_5.unwrap_or(""));
-    println!("      \"screen_iPhone18_1\": \"{:?}\",", screen_18_1);
-    println!("      \"screen_iPhone12_5\": \"{:?}\"", screen_12_5);
-    println!("    }},");
-    println!("    \"usbmux_probe\": {{");
-    println!("      \"passed\": {},", usbmux_passed);
-    println!("      \"service_port\": 27015,");
-    println!("      \"connected_devices_count\": {}", connected_count);
-    println!("    }},");
-    println!("    \"wifi_discovery_engine\": {{");
-    println!("      \"passed\": {},", wifi_discovery_passed);
-    println!("      \"unicast_mdns_service\": \"{}\",", REMOTEPAIRING_SERVICE);
-    println!("      \"fake_ip_rejected\": {},", fake_rejected);
-    println!("      \"local_subnet_verified\": {}", loopback_rejected);
-    println!("    }},");
-    println!("    \"hid_sequences\": {{");
-    println!("      \"passed\": {},", hid_passed);
-    println!("      \"lock_duration_ms\": {},", lock_duration_ms);
-    println!("      \"lock_event_count\": {},", lock_events.len());
-    println!("      \"shift_latching_steps_count\": {},", shift_steps.len());
-    println!("      \"stealth_dim_idempotent_passed\": {},", stealth_dim_passed);
-    println!("      \"auto_unlock_pin_passed\": {}", pin_passed);
-    println!("    }},");
-    println!("    \"ffi_zlaac_probe\": {{");
-    println!("      \"passed\": {},", ffi_test_passed);
-    println!("      \"dll_path\": \"{}\",", zlaac_resolved_path.replace('\\', "\\\\"));
-    println!("      \"avcodec_version_raw\": {},", avcodec_ver_raw);
-    println!("      \"avcodec_version\": \"{}\"", avcodec_ver_str);
-    println!("    }},");
-    println!("    \"d3d11_and_mf_hardware_probe\": {{");
-    println!("      \"passed\": {},", d3d11_and_mf_passed);
-    println!("      \"gpu_name\": \"{}\",", d3d11_info.adapter_name);
-    println!("      \"dedicated_vram_mb\": {},", d3d11_info.dedicated_vram_mb);
-    println!("      \"feature_level\": \"{}\",", d3d11_info.feature_level);
-    println!("      \"media_foundation_startup\": {},", mf_passed);
-    println!("      \"triple_buffer_ring_verified\": {}", ring_passed);
-    println!("    }},");
-    println!("    \"wasapi_and_jitter_buffer_probe\": {{");
-    println!("      \"passed\": {},", wasapi_audio_passed);
-    println!("      \"mmcss_enabled\": {},", mmcss_info.mmcss_enabled);
-    println!("      \"task_name\": \"{}\",", mmcss_info.task_name);
-    println!("      \"bypass_ecoqos\": {},", mmcss_info.bypass_ecoqos);
-    println!("      \"wasapi_format\": \"{}\",", mmcss_info.wasapi_format);
-    println!("      \"volume_limiter_verified\": {},", limiter_verified);
-    println!("      \"comfort_silence_underrun_verified\": {}", underrun_verified);
-    println!("    }},");
-    println!("    \"autorotate_32_scenarios\": {{");
-    println!("      \"passed\": {},", autorotate_suite_passed);
-    println!("      \"scenarios_passed\": {},", scenarios_passed);
-    println!("      \"scenarios_total\": {},", scenarios_total);
-    println!("      \"efootball_lock\": \"{:?}\",", efootball_decision.orientation);
-    println!("      \"instagram_guard\": \"{:?}\"", instagram_decision.orientation);
-    println!("    }},");
-    println!("    \"winrt_ocr_stitcher\": {{");
-    println!("      \"passed\": {},", ocr_suite_passed);
-    println!("      \"optical_corrections_verified\": {},", ocr_optical_passed);
-    println!("      \"golden_rule_1_short_text\": {},", golden_rule_1_passed);
-    println!("      \"batumandi_6_paragraphs_stitched\": {},", batumandi_passed);
-    println!("      \"balloon_filter_passed\": {},", balloon_rejection_passed);
-    println!("      \"folder_filter_passed\": {}", folder_rejection_passed);
-    println!("    }},");
-    println!("    \"social_link_grabber\": {{");
-    println!("      \"passed\": {},", link_grabber_passed);
-    println!("      \"extracted_count\": {},", extracted_links.len());
-    println!("      \"instagram_normalized\": {},", extracted_links.get(0).map(|s| s.contains("instagram.com")).unwrap_or(false));
-    println!("      \"tiktok_normalized\": {},", extracted_links.get(1).map(|s| s.contains("tiktok.com")).unwrap_or(false));
-    println!("      \"youtube_normalized\": {},", extracted_links.get(2).map(|s| s.contains("youtube.com")).unwrap_or(false));
-    println!("      \"threads_normalized\": {}", extracted_links.get(3).map(|s| s.contains("threads.net")).unwrap_or(false));
-    println!("    }},");
-    println!("    \"bilingual_i18n\": {{");
-    println!("      \"passed\": {},", bilingual_passed);
-    println!("      \"status_en\": \"{}\",", status_en_1);
-    println!("      \"status_id\": \"{}\",", status_id_1);
-    println!("      \"tab_summary_en\": \"{}\",", tab_summary_en);
-    println!("      \"tab_summary_id\": \"{}\"", tab_summary_id);
-    println!("    }},");
-    println!("    \"dwm_acrylic_and_geometry\": {{");
-    println!("      \"passed\": {},", dwm_suite_passed);
-    println!("      \"backdrop_status\": \"{:?}\",", dwm_info.acrylic_status);
-    println!("      \"portrait_geometry\": \"{}x{}\",", PORTRAIT_WIDTH_CLOSED, PORTRAIT_HEIGHT);
-    println!("      \"portrait_open_geometry\": \"{}x{}\",", PORTRAIT_WIDTH_OPEN, PORTRAIT_HEIGHT);
-    println!("      \"landscape_geometry\": \"{}x{}\",", LANDSCAPE_WIDTH_CLOSED, LANDSCAPE_HEIGHT);
-    println!("      \"landscape_open_geometry\": \"{}x{}\",", LANDSCAPE_WIDTH_OPEN, LANDSCAPE_HEIGHT);
-    println!("      \"offscreen_probe_elapsed_ms\": {},", dwm_info.elapsed_ms);
-    println!("      \"system_tray_menu_items\": {}", TRAY_MENU_ITEMS.len());
-    println!("    }},");
-    println!("    \"ota_updater\": {{");
-    println!("      \"passed\": {},", updater_passed);
-    println!("      \"semver_comparison\": {},", semver_passed);
-    println!("      \"sha256_verification\": {},", hash_passed);
-    println!("      \"config_files_protected\": {}", config_protect_passed);
-    println!("    }}");
-    println!("  }}");
-    println!("}}");
+    let json_output = format!(r#"{{
+  "status": "{}",
+  "suite": "iphone_link_v4_native_rust",
+  "tests": {{
+    "model_resolution": {{
+      "passed": {},
+      "iPhone18_1": "{}",
+      "iPhone12_5": "{}",
+      "screen_iPhone18_1": "{:?}",
+      "screen_iPhone12_5": "{:?}"
+    }},
+    "usbmux_probe": {{
+      "passed": {},
+      "service_port": 27015,
+      "connected_devices_count": {}
+    }},
+    "wifi_discovery_engine": {{
+      "passed": {},
+      "unicast_mdns_service": "{}",
+      "fake_ip_rejected": {},
+      "local_subnet_verified": {}
+    }},
+    "hid_sequences": {{
+      "passed": {},
+      "lock_duration_ms": {},
+      "lock_event_count": {},
+      "shift_latching_steps_count": {},
+      "stealth_dim_idempotent_passed": {},
+      "auto_unlock_pin_passed": {}
+    }},
+    "ffi_zlaac_probe": {{
+      "passed": {},
+      "dll_path": "{}",
+      "avcodec_version_raw": {},
+      "avcodec_version": "{}"
+    }},
+    "d3d11_and_mf_hardware_probe": {{
+      "passed": {},
+      "gpu_name": "{}",
+      "dedicated_vram_mb": {},
+      "feature_level": "{}",
+      "media_foundation_startup": {},
+      "triple_buffer_ring_verified": {}
+    }},
+    "wasapi_and_jitter_buffer_probe": {{
+      "passed": {},
+      "mmcss_enabled": {},
+      "task_name": "{}",
+      "bypass_ecoqos": {},
+      "wasapi_format": "{}",
+      "volume_limiter_verified": {},
+      "comfort_silence_underrun_verified": {}
+    }},
+    "autorotate_32_scenarios": {{
+      "passed": {},
+      "scenarios_passed": {},
+      "scenarios_total": {},
+      "efootball_lock": "{:?}",
+      "instagram_guard": "{:?}"
+    }},
+    "winrt_ocr_stitcher": {{
+      "passed": {},
+      "optical_corrections_verified": {},
+      "golden_rule_1_short_text": {},
+      "batumandi_6_paragraphs_stitched": {},
+      "balloon_filter_passed": {},
+      "folder_filter_passed": {}
+    }},
+    "social_link_grabber": {{
+      "passed": {},
+      "extracted_count": {},
+      "instagram_normalized": {},
+      "tiktok_normalized": {},
+      "youtube_normalized": {},
+      "threads_normalized": {}
+    }},
+    "bilingual_i18n": {{
+      "passed": {},
+      "status_en": "{}",
+      "status_id": "{}",
+      "tab_summary_en": "{}",
+      "tab_summary_id": "{}"
+    }},
+    "dwm_acrylic_and_geometry": {{
+      "passed": {},
+      "backdrop_status": "{:?}",
+      "portrait_geometry": "{}x{}",
+      "portrait_open_geometry": "{}x{}",
+      "landscape_geometry": "{}x{}",
+      "landscape_open_geometry": "{}x{}",
+      "offscreen_probe_elapsed_ms": {},
+      "system_tray_menu_items": {}
+    }},
+    "ota_updater": {{
+      "passed": {},
+      "semver_comparison": {},
+      "sha256_verification": {},
+      "config_files_protected": {}
+    }}
+  }}
+}}"#,
+        if all_passed { "PASS" } else { "FAIL" },
+        model_test_passed,
+        model_18_1.unwrap_or(""),
+        model_12_5.unwrap_or(""),
+        screen_18_1,
+        screen_12_5,
+        usbmux_passed,
+        connected_count,
+        wifi_discovery_passed,
+        REMOTEPAIRING_SERVICE,
+        fake_rejected,
+        loopback_rejected,
+        hid_passed,
+        lock_duration_ms,
+        lock_events.len(),
+        shift_steps.len(),
+        stealth_dim_passed,
+        pin_passed,
+        ffi_test_passed,
+        zlaac_resolved_path.replace('\\', "\\\\"),
+        avcodec_ver_raw,
+        avcodec_ver_str,
+        d3d11_and_mf_passed,
+        d3d11_info.adapter_name,
+        d3d11_info.dedicated_vram_mb,
+        d3d11_info.feature_level,
+        mf_passed,
+        ring_passed,
+        wasapi_audio_passed,
+        mmcss_info.mmcss_enabled,
+        mmcss_info.task_name,
+        mmcss_info.bypass_ecoqos,
+        mmcss_info.wasapi_format,
+        limiter_verified,
+        underrun_verified,
+        autorotate_suite_passed,
+        scenarios_passed,
+        scenarios_total,
+        efootball_decision.orientation,
+        instagram_decision.orientation,
+        ocr_suite_passed,
+        ocr_optical_passed,
+        golden_rule_1_passed,
+        batumandi_passed,
+        balloon_rejection_passed,
+        folder_rejection_passed,
+        link_grabber_passed,
+        extracted_links.len(),
+        extracted_links.get(0).map(|s| s.contains("instagram.com")).unwrap_or(false),
+        extracted_links.get(1).map(|s| s.contains("tiktok.com")).unwrap_or(false),
+        extracted_links.get(2).map(|s| s.contains("youtube.com")).unwrap_or(false),
+        extracted_links.get(3).map(|s| s.contains("threads.net")).unwrap_or(false),
+        bilingual_passed,
+        status_en_1,
+        status_id_1,
+        tab_summary_en,
+        tab_summary_id,
+        dwm_suite_passed,
+        dwm_info.acrylic_status,
+        PORTRAIT_WIDTH_CLOSED, PORTRAIT_HEIGHT,
+        PORTRAIT_WIDTH_OPEN, PORTRAIT_HEIGHT,
+        LANDSCAPE_WIDTH_CLOSED, LANDSCAPE_HEIGHT,
+        LANDSCAPE_WIDTH_OPEN, LANDSCAPE_HEIGHT,
+        dwm_info.elapsed_ms,
+        TRAY_MENU_ITEMS.len(),
+        updater_passed,
+        semver_passed,
+        hash_passed,
+        config_protect_passed,
+    );
+
+    println!("{}", json_output);
+    let _ = std::fs::write("self_test_cli_result.json", &json_output);
 
     if all_passed {
         0
@@ -522,6 +595,8 @@ fn main() {
                 println!("  \"version\": \"{}\",", res.version);
                 println!("  \"true_dwm_acrylic_active\": {},", res.true_dwm_acrylic_active);
                 println!("  \"static_wallpaper_disabled\": {},", res.static_wallpaper_disabled);
+                println!("  \"app_css_loaded\": {},", res.app_css_loaded);
+                println!("  \"app_js_loaded\": {},", res.app_js_loaded);
                 println!("  \"server_endpoints_ok\": {},", res.server_endpoints_ok);
                 println!("  \"window_geometry_ok\": {},", res.window_geometry_ok);
                 println!("  \"language_switching_ok\": {},", res.language_switching_ok);
@@ -537,33 +612,23 @@ fn main() {
         }
     }
 
-    // Normal interactive launch
+    // Normal interactive launch: Embedded WebView2 in single True Acrylic HWND
     let web_dir = find_web_dir();
     let state = Arc::new(Mutex::new(server_v4::AppState::default()));
-    let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765).expect("Failed to start Native Server");
+    let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)
+        .expect("Failed to start Native Server");
     let port = server.port;
 
-    let hwnd = window_dwm::create_main_interactive_window(true).expect("Failed to create main Win32 window");
+    let hwnd = window_dwm::create_main_interactive_window(true)
+        .expect("Failed to create main Win32 window");
     {
         let mut st = state.lock().unwrap();
         st.window_hwnd = hwnd as usize;
     }
 
     let url = format!("http://127.0.0.1:{}", port);
-    let edge_paths = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ];
-    for ep in &edge_paths {
-        if Path::new(ep).is_file() {
-            let _ = Command::new(ep)
-                .args(&[
-                    format!("--app={}", url),
-                    "--window-size=346,832".to_string(),
-                ])
-                .spawn();
-            break;
-        }
+    if let Err(e) = window_dwm::mount_embedded_webview2(hwnd, &url) {
+        eprintln!("Warning: Failed to mount embedded WebView2: {}", e);
     }
 
     window_dwm::run_message_pump();
