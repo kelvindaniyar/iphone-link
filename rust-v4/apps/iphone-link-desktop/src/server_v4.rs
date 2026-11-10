@@ -23,6 +23,10 @@ pub static APP_CSS_SERVED: AtomicUsize = AtomicUsize::new(0);
 pub static APP_JS_SERVED: AtomicUsize = AtomicUsize::new(0);
 pub static DOM_READY_BEACON: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_DEVICE_PIXEL_RATIO: AtomicUsize = AtomicUsize::new(100);
+pub static GLOBAL_APP_WIDTH: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_APP_HEIGHT: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_LAUNCHPAD_VISIBLE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -121,10 +125,20 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         try {
             var appEl = document.querySelector(".app") || document.body;
             var disp = window.getComputedStyle ? window.getComputedStyle(appEl).display : "block";
+            var appRect = appEl.getBoundingClientRect ? appEl.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
+            var launchpadTitle = document.getElementById("launchpad-title");
+            var launchpadHeight = (launchpadTitle && launchpadTitle.getBoundingClientRect) ? launchpadTitle.getBoundingClientRect().height : 0;
+            var startBtn = document.getElementById("launchpad-start-btn") || document.getElementById("show-screen") || document.querySelector(".launchpad-start-btn");
+            var startBtnWidth = (startBtn && startBtn.getBoundingClientRect) ? startBtn.getBoundingClientRect().width : 0;
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: window.innerWidth,
                 h: window.innerHeight,
+                appWidth: Math.round(appRect.width),
+                appHeight: Math.round(appRect.height),
+                launchpadVisible: Boolean(launchpadHeight > 10),
+                startBtnVisible: Boolean(startBtnWidth > 40),
                 dpr: window.devicePixelRatio || 1.0
             });
         } catch (_) {}
@@ -584,10 +598,14 @@ impl HttpResponse {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_bytes_with_conn("close")
+    }
+
+    pub fn to_bytes_with_conn(&self, conn: &str) -> Vec<u8> {
         let mut out = Vec::with_capacity(256 + self.body.len());
         let header = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store, no-cache, must-revalidate, max-age=0\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n",
-            self.status_code, self.status_text, self.content_type, self.body.len()
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store, no-cache, must-revalidate, max-age=0\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: {}\r\n\r\n",
+            self.status_code, self.status_text, self.content_type, self.body.len(), conn
         );
         out.extend_from_slice(header.as_bytes());
         out.extend_from_slice(&self.body);
@@ -818,10 +836,25 @@ fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
 }
 
 fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT)).ok()?;
+    use std::net::SocketAddr;
+    let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok()?;
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+
+    let is_heavy = req.path.starts_with("/api/keyboard/shortcut")
+        || req.path.starts_with("/api/social/grab-link")
+        || req.path.starts_with("/api/screen/start")
+        || req.path.starts_with("/api/wifi/scan")
+        || req.path.starts_with("/api/ocr/");
+
+    let timeout = if is_heavy {
+        Duration::from_secs(20)
+    } else {
+        Duration::from_millis(1500)
+    };
+
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
 
     let content_type = req
         .headers
@@ -940,14 +973,23 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     .replace("UNKW 0000", "iPhone")
                     .replace("UNKW", "iPhone");
 
-                if sanitized.contains(r#""screen""#) && !sanitized.contains(r#""url": "/mirror.html""#) {
-                    sanitized = sanitized.replace(
-                        r#""screen": {"#,
-                        r#""screen": {"url": "/mirror.html","#
-                    ).replace(
-                        r#""screen": { "#,
-                        r#""screen": {"url": "/mirror.html", "#
-                    );
+                let is_running = sanitized.contains(r#""phase":"running""#) || sanitized.contains(r#""phase": "running""#);
+                if is_running {
+                    if !sanitized.contains(r#""url": "/mirror.html""#) {
+                        sanitized = sanitized.replace(
+                            r#""screen": {"#,
+                            r#""screen": {"url": "/mirror.html","#
+                        ).replace(
+                            r#""screen": { "#,
+                            r#""screen": {"url": "/mirror.html", "#
+                        );
+                    }
+                } else {
+                    sanitized = sanitized
+                        .replace(r#""url": "/mirror.html","#, "")
+                        .replace(r#""url":"/mirror.html","#, "")
+                        .replace(r#""url": "/mirror.html""#, r#""url": """#)
+                        .replace(r#""url":"/mirror.html""#, r#""url":"""#);
                 }
 
                 // Sync language and status_text from AppState so bilingual ID/EN works consistently
@@ -968,14 +1010,23 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 }
 
                 let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
+                let app_w = GLOBAL_APP_WIDTH.load(Ordering::SeqCst);
+                let app_h = GLOBAL_APP_HEIGHT.load(Ordering::SeqCst);
+                let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
+                let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
+
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2}}}}}"#,
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{}}}}}"#,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
                         DOM_READY_BEACON.load(Ordering::SeqCst),
-                        dpr_float
+                        dpr_float,
+                        app_w,
+                        app_h,
+                        lp_vis,
+                        btn_vis
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -983,7 +1034,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 } else if !sanitized.contains("devicePixelRatio") {
                     sanitized = sanitized.replace(
                         r#""domReadyBeacon":"#,
-                        &format!(r#""devicePixelRatio": {:.2}, "domReadyBeacon":"#, dpr_float)
+                        &format!(
+                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "domReadyBeacon":"#,
+                            dpr_float, app_w, app_h, lp_vis, btn_vis
+                        )
                     );
                 }
 
@@ -1017,8 +1071,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             )
         };
         let screen_phase = if st_snap.is_streaming { "running" } else { "stopped" };
+        let mirror_url = if st_snap.is_streaming { "/mirror.html" } else { "" };
         let settings_json = build_settings_json(&st_snap);
         let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
+        let app_w = GLOBAL_APP_WIDTH.load(Ordering::SeqCst);
+        let app_h = GLOBAL_APP_HEIGHT.load(Ordering::SeqCst);
+        let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
+        let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
 
         let json = format!(
             r#"{{
@@ -1053,7 +1112,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "phase": "{}",
     "active": {},
     "transport": "{}",
-    "url": "/mirror.html",
+    "url": "{}",
     "fps": 60,
     "width": 1202,
     "height": 2598,
@@ -1085,7 +1144,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "appCssServed": {},
     "appJsServed": {},
     "domReadyBeacon": {},
-    "devicePixelRatio": {:.2}
+    "devicePixelRatio": {:.2},
+    "appWidth": {},
+    "appHeight": {},
+    "launchpadVisible": {},
+    "startBtnVisible": {}
   }},
   "version": "4.0.0"
 }}"#,
@@ -1102,6 +1165,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             screen_phase,
             st_snap.is_streaming,
             if st_snap.transport == "usb" { "cable" } else { "wifi" },
+            mirror_url,
             if st_snap.is_landscape { 270 } else { 0 },
             st_snap.stealth_dim,
             st_snap.intentionally_locked,
@@ -1120,7 +1184,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             APP_CSS_SERVED.load(Ordering::SeqCst),
             APP_JS_SERVED.load(Ordering::SeqCst),
             DOM_READY_BEACON.load(Ordering::SeqCst),
-            dpr_float
+            dpr_float,
+            app_w,
+            app_h,
+            lp_vis,
+            btn_vis
         );
         return HttpResponse::ok_json(&json);
     }
@@ -1559,6 +1627,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let dpr_int = (dpr_val * 100.0).round() as usize;
             GLOBAL_DEVICE_PIXEL_RATIO.store(dpr_int, Ordering::SeqCst);
         }
+        if let Some(w) = parse_int_param(&req.body, "appWidth") {
+            if w > 0 {
+                GLOBAL_APP_WIDTH.store(w as usize, Ordering::SeqCst);
+            }
+        }
+        if let Some(h) = parse_int_param(&req.body, "appHeight") {
+            if h > 0 {
+                GLOBAL_APP_HEIGHT.store(h as usize, Ordering::SeqCst);
+            }
+        }
+        let lp_vis = req.body.contains(r#""launchpadVisible":true"#) || req.body.contains(r#""launchpadVisible": true"#);
+        let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
+        GLOBAL_LAUNCHPAD_VISIBLE.store(lp_vis, Ordering::SeqCst);
+        GLOBAL_START_BTN_VISIBLE.store(btn_vis, Ordering::SeqCst);
         return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
     }
 
@@ -1833,57 +1915,85 @@ unsafe fn post_quit_message(hwnd: *mut std::ffi::c_void) {
 fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_dir: PathBuf) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(5000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(5000)));
 
-    let mut raw_buf = Vec::with_capacity(65536);
-    let mut chunk = [0u8; 16384];
+    let mut remaining_buf: Vec<u8> = Vec::with_capacity(16384);
 
     loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                raw_buf.extend_from_slice(&chunk[..n]);
-                if let Some(header_end) = raw_buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let header_str = String::from_utf8_lossy(&raw_buf[..header_end]);
-                    let mut content_len = 0usize;
-                    for line in header_str.lines() {
-                        if let Some(colon) = line.find(':') {
-                            if line[..colon].trim().eq_ignore_ascii_case("content-length") {
-                                content_len = line[colon + 1..].trim().parse::<usize>().unwrap_or(0);
+        let mut raw_buf: Vec<u8> = std::mem::take(&mut remaining_buf);
+        let mut temp = [0u8; 16384];
+        let mut header_end_pos: Option<usize> = None;
+        let mut expected_content_len: usize = 0;
+
+        loop {
+            if header_end_pos.is_none() {
+                if let Some(pos) = raw_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr_end = pos + 4;
+                    header_end_pos = Some(hdr_end);
+                    let hdr_str = String::from_utf8_lossy(&raw_buf[..hdr_end]);
+                    for line in hdr_str.lines() {
+                        if let Some((k, v)) = line.split_once(':') {
+                            if k.trim().eq_ignore_ascii_case("content-length") {
+                                expected_content_len = v.trim().parse::<usize>().unwrap_or(0);
                             }
                         }
                     }
-                    let body_received = raw_buf.len() - (header_end + 4);
-                    if body_received >= content_len {
-                        break;
-                    }
                 }
-                if raw_buf.len() >= 25 * 1024 * 1024 {
+            }
+            if let Some(hdr_end) = header_end_pos {
+                let body_received = raw_buf.len().saturating_sub(hdr_end);
+                if body_received >= expected_content_len {
+                    let total_req_len = hdr_end + expected_content_len;
+                    if raw_buf.len() > total_req_len {
+                        remaining_buf = raw_buf.split_off(total_req_len);
+                    }
                     break;
                 }
             }
-            Err(_) => break,
-        }
-    }
 
-    if !raw_buf.is_empty() {
+            match stream.read(&mut temp) {
+                Ok(0) => break,
+                Ok(n) => {
+                    raw_buf.extend_from_slice(&temp[..n]);
+                }
+                Err(_) => break,
+            }
+            if raw_buf.len() >= 25 * 1024 * 1024 {
+                break;
+            }
+        }
+
+        if raw_buf.is_empty() {
+            break;
+        }
+
         if let Some(req) = HttpRequest::parse(&raw_buf) {
+            let wants_close = req.headers.get("connection").map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false);
+
             let clean_path = req.path.split('?').next().unwrap_or("/").split('#').next().unwrap_or("/");
             if clean_path == "/mirror/live" || clean_path == "/stream.bin" {
                 let _ = stream.set_read_timeout(None);
                 let _ = stream.set_write_timeout(None);
                 if let Err(_) = stream_live_passthrough(&mut stream) {
-                    let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 21\r\n\r\nWorker not connected\n");
+                    let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\nWorker not connected\n");
                     let _ = stream.flush();
                 }
                 return;
             }
 
             let resp = handle_request(&req, &state, &web_dir);
-            let resp_bytes = resp.to_bytes();
-            let _ = stream.write_all(&resp_bytes);
-            let _ = stream.flush();
+            let conn_hdr = if wants_close { "close" } else { "keep-alive" };
+            let resp_bytes = resp.to_bytes_with_conn(conn_hdr);
+            if stream.write_all(&resp_bytes).is_err() || stream.flush().is_err() {
+                break;
+            }
+
+            if wants_close {
+                break;
+            }
+        } else {
+            break;
         }
     }
 }

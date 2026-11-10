@@ -720,6 +720,9 @@ unsafe extern "system" fn ctrl_completed_invoke(
         type NavigateFn = unsafe extern "system" fn(this: *mut c_void, uri: *const u16) -> i32;
         let navigate: NavigateFn = std::mem::transmute(*wv_vt.add(5));
         let _ = navigate(webview, url.as_ptr());
+
+        // Immediately sync WebView2 bounds with HWND client rect
+        PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
     }
 
     0
@@ -872,8 +875,11 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0083 => {
-            // WM_NCCALCSIZE: Return 0 unconditionally removes 100% of non-client borders/frames
-            0
+            // WM_NCCALCSIZE: Return 0 when wparam != 0 removes window title/frame while preserving composition
+            if wparam != 0 {
+                return 0;
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         0x0014 => {
             // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent in DWM acrylic blur)
@@ -1099,8 +1105,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = RegisterClassExW(&wnd_class);
 
         let window_title: Vec<u16> = "iPhone Link\0".encode_utf16().collect();
-        const STYLE: u32 = 0x80000000 | 0x02000000 | 0x04000000 | 0x00080000 | 0x00020000 | 0x10000000;
-        // WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE
+        const STYLE: u32 = 0x80000000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x02000000 | 0x04000000 | 0x10000000;
+        // WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE
 
         let dpi_scale = get_hwnd_dpi_scale(ptr::null_mut());
         let phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;

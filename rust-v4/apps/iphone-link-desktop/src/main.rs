@@ -596,35 +596,88 @@ extern "system" {
 
 fn spawn_coredevice_worker() {
     use std::os::windows::process::CommandExt;
-    let mut candidates = Vec::new();
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("engine").join("iPhone Link.exe"));
+
+    // Fast check: if 127.0.0.1:8767 is already responsive, no need to spawn
+    if let Ok(mut stream) = std::net::TcpStream::connect("127.0.0.1:8767") {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(120)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(120)));
+        use std::io::{Write, Read};
+        let _ = stream.write_all(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8767\r\nConnection: close\r\n\r\n");
+        let mut buf = [0u8; 128];
+        if let Ok(n) = stream.read(&mut buf) {
+            if n > 0 && String::from_utf8_lossy(&buf[..n]).contains("200 OK") {
+                return;
+            }
         }
     }
-    candidates.push(PathBuf::from(r"D:\DATA KELVIN\IPHONE LINK\iPhone-Link-Win64-Standalone-EXE-v2.0.0\iPhone Link.exe"));
-    candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\dist\iPhone Link\iPhone Link.exe"));
 
-    let mut target_exe = None;
-    for cand in candidates {
+    let mut repo_root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if dir.join("handset").is_dir() {
+                repo_root = dir.to_path_buf();
+            } else if let Some(p1) = dir.parent() {
+                if p1.join("handset").is_dir() {
+                    repo_root = p1.to_path_buf();
+                } else if let Some(p2) = p1.parent() {
+                    if p2.join("handset").is_dir() {
+                        repo_root = p2.to_path_buf();
+                    }
+                }
+            }
+        }
+    }
+
+    // 1. Check for standalone engine/iPhone Link.exe
+    let mut engine_candidates = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            engine_candidates.push(dir.join("engine").join("iPhone Link.exe"));
+            engine_candidates.push(dir.join("dist").join("iPhone Link").join("iPhone Link.exe"));
+        }
+    }
+    engine_candidates.push(repo_root.join("dist").join("iPhone Link").join("iPhone Link.exe"));
+
+    let mut target_engine = None;
+    for cand in engine_candidates {
         if cand.is_file() {
-            target_exe = Some(cand);
+            target_engine = Some(cand);
             break;
         }
     }
 
-    let mut cmd = if let Some(exe_path) = target_exe {
-        let mut c = std::process::Command::new(exe_path);
+    let mut cmd = if let Some(exe_path) = target_engine {
+        let mut c = std::process::Command::new(&exe_path);
+        if let Some(engine_dir) = exe_path.parent() {
+            c.current_dir(engine_dir);
+        }
         c.args(&["--server-child", "--host", "127.0.0.1", "--port", "8767"]);
+        c.env("PANE_HOST", "127.0.0.1");
+        c.env("PANE_PORT", "8767");
         c
     } else {
-        let python_path = if std::path::Path::new("venv/Scripts/python.exe").is_file() {
-            "venv/Scripts/python.exe"
-        } else {
-            "python.exe"
-        };
-        let mut c = std::process::Command::new(python_path);
-        c.args(&["-u", "-m", "handset.gui", "--server-child", "--host", "127.0.0.1", "--port", "8767"]);
+        // Fallback to Python venv or system python
+        let mut py_candidates = Vec::new();
+        py_candidates.push(repo_root.join("venv").join("Scripts").join("pythonw.exe"));
+        py_candidates.push(repo_root.join("venv").join("Scripts").join("python.exe"));
+        py_candidates.push(repo_root.join(".venv").join("Scripts").join("pythonw.exe"));
+        py_candidates.push(repo_root.join(".venv").join("Scripts").join("python.exe"));
+        py_candidates.push(PathBuf::from("venv/Scripts/pythonw.exe"));
+        py_candidates.push(PathBuf::from("venv/Scripts/python.exe"));
+        py_candidates.push(PathBuf::from("pythonw.exe"));
+        py_candidates.push(PathBuf::from("python.exe"));
+
+        let py_bin = py_candidates
+            .into_iter()
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| PathBuf::from("python.exe"));
+
+        let mut c = std::process::Command::new(py_bin);
+        c.current_dir(&repo_root);
+        c.env("PYTHONPATH", &repo_root);
+        c.env("PANE_HOST", "127.0.0.1");
+        c.env("PANE_PORT", "8767");
+        c.args(&["-u", "-m", "handset", "--server-child", "--host", "127.0.0.1", "--port", "8767"]);
         c
     };
 
@@ -696,6 +749,7 @@ fn main() {
             let _ = AttachConsole(0xFFFFFFFF);
             let _ = CoInitializeEx(std::ptr::null_mut(), 2);
         }
+        spawn_coredevice_worker();
         println!("=== iPhone Link v4.0 Native Rust UI Self-Test ===");
         let web_dir = find_web_dir();
         match window_dwm::run_ui_self_test(&web_dir) {
@@ -742,7 +796,7 @@ fn main() {
         st.window_hwnd = hwnd as usize;
     }
 
-    let url = format!("http://127.0.0.1:{}", port);
+    let url = format!("http://127.0.0.1:{}/", port);
     if let Err(e) = window_dwm::mount_embedded_webview2(hwnd, &url) {
         eprintln!("Warning: Failed to mount embedded WebView2: {}", e);
     }
