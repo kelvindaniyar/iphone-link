@@ -27,44 +27,12 @@ pub static GLOBAL_APP_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_APP_HEIGHT: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_LAUNCHPAD_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
-pub static DOM_SNAPSHOT_BYTES: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-pub static DOM_SNAPSHOT_DARK: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-pub static DOM_SNAPSHOT_LIGHT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-
-fn decode_base64(input: &str) -> Vec<u8> {
-    let b64_chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut lookup = [0u8; 256];
-    for (i, &c) in b64_chars.iter().enumerate() {
-        lookup[c as usize] = i as u8;
-    }
-
-    let clean: Vec<u8> = input.bytes().filter(|&b| b64_chars.contains(&b) || b == b'=').collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + 3 < clean.len() {
-        let b0 = lookup[clean[i] as usize] as u32;
-        let b1 = lookup[clean[i + 1] as usize] as u32;
-        let b2 = if clean[i + 2] == b'=' { 0 } else { lookup[clean[i + 2] as usize] as u32 };
-        let b3 = if clean[i + 3] == b'=' { 0 } else { lookup[clean[i + 3] as usize] as u32 };
-
-        let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
-        out.push(((triple >> 16) & 0xFF) as u8);
-        if clean[i + 2] != b'=' {
-            out.push(((triple >> 8) & 0xFF) as u8);
-        }
-        if clean[i + 3] != b'=' {
-            out.push((triple & 0xFF) as u8);
-        }
-        i += 4;
-    }
-    out
-}
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
 use crate::window_dwm::{
-    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop,
-    move_hwnd_by, move_hwnd_to, toggle_fullscreen_state,
+    apply_hwnd_geometry_from_state,
+    move_hwnd_by, move_hwnd_to, post_theme_change, toggle_fullscreen_state,
     trigger_hwnd_drag, WindowGeometryManager, GLOBAL_DRAWER_OPEN, GLOBAL_IS_FULLSCREEN,
     GLOBAL_IS_LANDSCAPE, GLOBAL_PORTRAIT_WIDTH, RECT,
 };
@@ -86,15 +54,56 @@ pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* v4_true_acrylic.css - Windows 11 Tru
 }
 
 html, body, #root {
-    background-color: #10141e !important;
+    background: transparent !important;
+    background-color: transparent !important;
 }
 
-html[data-theme="light"], body[data-theme="light"], html[data-theme="light"] #root, body[data-theme="light"] #root {
-    background-color: #eaf0f8 !important;
+html[data-theme="light"],
+body[data-theme="light"],
+html[data-theme="light"] #root,
+body[data-theme="light"] #root,
+html[data-theme="light"] #app-root,
+body[data-theme="light"] #app-root,
+.app[data-theme="light"],
+[data-theme="light"] .app,
+[data-theme="light"] #app-root {
+    background: rgba(245, 247, 250, 0.92) !important;
+    background-color: rgba(245, 247, 250, 0.92) !important;
+}
+
+[data-theme="light"] .app-bar,
+[data-theme="light"] .quick-nav,
+[data-theme="light"] .side-drawer,
+[data-theme="light"] #launchpad-view {
+    background: rgba(240, 244, 250, 0.92) !important;
 }
 
 .app {
     position: relative !important;
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+.app::before {
+    content: "" !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    background-image: var(--wallpaper-bg-image) !important;
+    background-size: var(--screen-w, 1920px) var(--screen-h, 1080px) !important;
+    background-position: calc(-1 * var(--win-x, 0px)) calc(-1 * var(--win-y, 0px)) !important;
+    background-repeat: no-repeat !important;
+    filter: blur(28px) saturate(140%) !important;
+    opacity: 0.88 !important;
+    pointer-events: none !important;
+    z-index: 0 !important;
+}
+
+.app[data-theme="light"]::before,
+[data-theme="light"] .app::before {
+    display: none !important;
 }
 
 html, body, #root, .app, .app-layout {
@@ -169,6 +178,8 @@ pub const V4_BRIDGE_JS: &str = r##"/* v4_bridge.js - Native Rust IPC Shim for py
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
     }
 
+    postApi('/api/window/dom_ready_beacon', { init_test: 'hello_from_v4_bridge' });
+
     function sendDomBeacon() {
         try {
             var appEl = document.querySelector(".app") || document.body;
@@ -179,6 +190,7 @@ pub const V4_BRIDGE_JS: &str = r##"/* v4_bridge.js - Native Rust IPC Shim for py
             var startBtn = document.getElementById("launchpad-start-btn") || document.getElementById("show-screen") || document.querySelector(".launchpad-start-btn");
             var startBtnWidth = (startBtn && startBtn.getBoundingClientRect) ? startBtn.getBoundingClientRect().width : 0;
 
+            var curTheme = document.documentElement.getAttribute("data-theme") || (document.body ? document.body.getAttribute("data-theme") : "dark");
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: window.innerWidth,
@@ -187,150 +199,44 @@ pub const V4_BRIDGE_JS: &str = r##"/* v4_bridge.js - Native Rust IPC Shim for py
                 appHeight: Math.round(appRect.height),
                 launchpadVisible: Boolean(launchpadHeight > 10),
                 startBtnVisible: Boolean(startBtnWidth > 40),
-                dpr: window.devicePixelRatio || 1.0
-            });
-            generateDomSnapshot("dark");
-            generateDomSnapshot("light");
-        } catch (_) {}
-    }
-
-    function generateDomSnapshot(forcedTheme) {
-        try {
-            var dpr = window.devicePixelRatio || 1.5;
-            var winW = Math.round((window.innerWidth || 346) * dpr);
-            var winH = Math.round((window.innerHeight || 832) * dpr);
-            var canvas = document.createElement("canvas");
-            canvas.width = winW;
-            canvas.height = winH;
-            var ctx = canvas.getContext("2d");
-            if (!ctx) return;
-
-            var themeAttr = forcedTheme || document.documentElement.getAttribute("data-theme") || "dark";
-            var isLight = (themeAttr === "light");
-
-            // Base background
-            ctx.fillStyle = isLight ? "#eaf0f8" : "#10141e";
-            ctx.fillRect(0, 0, winW, winH);
-
-            // Zona A: Top Bar (y = 0..60px)
-            ctx.fillStyle = isLight ? "#dce5f0" : "#181d2a";
-            ctx.fillRect(0, 0, winW, Math.round(42 * dpr));
-
-            ctx.fillStyle = "#30d158"; // Green status badge dot
-            ctx.beginPath();
-            ctx.arc(Math.round(25 * dpr), Math.round(21 * dpr), Math.round(4 * dpr), 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = isLight ? "#111827" : "#ffffff";
-            ctx.font = "bold " + Math.round(13 * dpr) + "px system-ui, sans-serif";
-            ctx.fillText("iPhone Link", Math.round(38 * dpr), Math.round(26 * dpr));
-
-            // Controls on top right: Gear, Fullscreen, Min, Close
-            var ctrlX = winW - Math.round(110 * dpr);
-            var ctrlY = Math.round(12 * dpr);
-            var ctrlW = Math.round(18 * dpr);
-            var ctrlH = Math.round(18 * dpr);
-            var ctrlGap = Math.round(24 * dpr);
-            ctx.strokeStyle = isLight ? "#4b5563" : "#8e8e93";
-            ctx.lineWidth = 2;
-            for (var i = 0; i < 4; i++) {
-                ctx.strokeRect(ctrlX + i * ctrlGap, ctrlY, ctrlW, ctrlH);
-            }
-
-            // Zona B: Launchpad Card
-            var cardPad = Math.round(20 * dpr);
-            var cardY = Math.round(120 * dpr);
-            var cardW = winW - (cardPad * 2);
-            var cardH = Math.round(500 * dpr);
-
-            ctx.fillStyle = isLight ? "#ffffff" : "#1c2230";
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(cardPad, cardY, cardW, cardH, Math.round(16 * dpr));
-            } else {
-                ctx.rect(cardPad, cardY, cardW, cardH);
-            }
-            ctx.fill();
-
-            ctx.fillStyle = isLight ? "#111827" : "#ffffff";
-            ctx.font = "bold " + Math.round(22 * dpr) + "px system-ui, sans-serif";
-            ctx.fillText("iPhone 17 Pro", cardPad + Math.round(20 * dpr), cardY + Math.round(50 * dpr));
-
-            ctx.fillStyle = isLight ? "#4b5563" : "#8e8e93";
-            ctx.font = Math.round(12 * dpr) + "px system-ui, sans-serif";
-            ctx.fillText("USB • 1202x2598 • 60 FPS", cardPad + Math.round(20 * dpr), cardY + Math.round(80 * dpr));
-
-            var innerY = cardY + Math.round(110 * dpr);
-            var innerH = Math.round(180 * dpr);
-            ctx.fillStyle = isLight ? "#f0f4f9" : "#141824";
-            ctx.fillRect(cardPad + Math.round(16 * dpr), innerY, cardW - Math.round(32 * dpr), innerH);
-
-            // Start mirroring button (Apple Accent Blue #0071e3)
-            var btnY = cardY + cardH - Math.round(80 * dpr);
-            var btnH = Math.round(50 * dpr);
-            var btnW = cardW - Math.round(32 * dpr);
-            ctx.fillStyle = "#0071e3";
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(cardPad + Math.round(16 * dpr), btnY, btnW, btnH, Math.round(12 * dpr));
-            } else {
-                ctx.rect(cardPad + Math.round(16 * dpr), btnY, btnW, btnH);
-            }
-            ctx.fill();
-
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "bold " + Math.round(15 * dpr) + "px system-ui, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText("Mulai mirroring", cardPad + Math.round(16 * dpr) + (btnW / 2), btnY + Math.round(31 * dpr));
-            ctx.textAlign = "left";
-
-            // Zona C: Quick Navigation Bar
-            var navH = Math.round(56 * dpr);
-            var navY = winH - navH - Math.round(10 * dpr);
-            var navW = winW - Math.round(30 * dpr);
-            var navX = Math.round(15 * dpr);
-
-            ctx.fillStyle = isLight ? "#e2e8f0" : "#161b26";
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(navX, navY, navW, navH, Math.round(14 * dpr));
-            } else {
-                ctx.rect(navX, navY, navW, navH);
-            }
-            ctx.fill();
-
-            var segW = navW / 4;
-            ctx.fillStyle = isLight ? "#111827" : "#ffffff";
-            ctx.font = Math.round(12 * dpr) + "px system-ui, sans-serif";
-            ctx.textAlign = "center";
-            var navLabels = ["< Swipe", "Home", "Recent", "Swipe >"];
-            for (var j = 0; j < 4; j++) {
-                ctx.fillText(navLabels[j], navX + j * segW + (segW / 2), navY + Math.round(34 * dpr));
-            }
-
-            var dataUrl = canvas.toDataURL("image/png");
-            postApi('/api/window/dom_snapshot', {
-                w: winW,
-                h: winH,
-                theme: themeAttr,
-                image: dataUrl
+                dpr: window.devicePixelRatio || 1.0,
+                theme: curTheme
             });
         } catch (_) {}
     }
+    window.sendDomBeacon = sendDomBeacon;
 
     function checkThemeSync() {
-        fetch('/api/settings').then(function(r) { return r.json(); }).then(function(s) {
-            if (s && s.theme) {
-                var cur = document.documentElement.getAttribute("data-theme");
-                if (cur !== s.theme) {
-                    document.documentElement.setAttribute("data-theme", s.theme);
-                    if (document.body) document.body.setAttribute("data-theme", s.theme);
-                    generateDomSnapshot(s.theme);
+        postApi('/api/window/dom_ready_beacon', { ping: 'checkThemeSync' });
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/api/settings?t=' + Date.now(), true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    try {
+                        var s = JSON.parse(xhr.responseText);
+                        if (s && s.theme) {
+                            var cur = document.documentElement.getAttribute("data-theme");
+                            if (cur !== s.theme) {
+                                window._lastSentTheme = s.theme;
+                                if (window.applyTheme && typeof window.applyTheme === 'function') {
+                                    window.applyTheme(s.theme);
+                                } else {
+                                    document.documentElement.setAttribute("data-theme", s.theme);
+                                    if (document.body) document.body.setAttribute("data-theme", s.theme);
+                                    var appEl = document.getElementById("app-root") || document.querySelector(".app");
+                                    if (appEl) appEl.setAttribute("data-theme", s.theme);
+                                }
+                                setTimeout(sendDomBeacon, 50);
+                            }
+                        }
+                    } catch (_) {}
                 }
-            }
-        }).catch(function() {});
+            };
+            xhr.send();
+        } catch (_) {}
     }
-    setInterval(checkThemeSync, 100);
+    setInterval(checkThemeSync, 200);
 
     function updateWindowParallaxPosition() {
         try {
@@ -510,9 +416,14 @@ pub const V4_BRIDGE_JS: &str = r##"/* v4_bridge.js - Native Rust IPC Shim for py
             return postApi('/api/window/set_drawer', { width: w, open: !!drawer_open });
         },
         set_theme: function(theme) {
+            if (window._lastSentTheme === theme) {
+                return Promise.resolve({ ok: true, theme: theme });
+            }
+            window._lastSentTheme = theme;
             document.documentElement.setAttribute("data-theme", theme);
             if (document.body) document.body.setAttribute("data-theme", theme);
-            generateDomSnapshot(theme);
+            var a = document.getElementById("app-root") || document.querySelector(".app");
+            if (a) a.setAttribute("data-theme", theme);
             return postApi('/api/window/set_theme', { theme: theme });
         },
         start_window_drag: function() {
@@ -1435,6 +1346,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     // 3. API: Settings
     if path == "/api/settings" || path == "/api/keyboard/settings" {
+        if req.method == "GET" {
+            eprintln!(">>> SERVER: GET /api/settings called!");
+        }
         if req.method == "POST" {
             let mut st = state.lock().unwrap();
             if req.body.contains(r#""language": "en""#) || req.body.contains(r#""language":"en""#) {
@@ -1446,12 +1360,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             if req.body.contains(r#""theme": "light""#) || req.body.contains(r#""theme":"light""#) {
                 st.theme = "light".to_string();
                 if st.window_hwnd != 0 {
-                    let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, false);
+                    post_theme_change(st.window_hwnd as *mut _, true);
                 }
             } else if req.body.contains(r#""theme": "dark""#) || req.body.contains(r#""theme":"dark""#) {
                 st.theme = "dark".to_string();
                 if st.window_hwnd != 0 {
-                    let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, true);
+                    post_theme_change(st.window_hwnd as *mut _, false);
                 }
             }
 
@@ -1670,7 +1584,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         drop(st);
 
         if hwnd_usize != 0 {
-            let _ = apply_true_files_acrylic_backdrop(hwnd_usize as *mut _, !is_light);
+            post_theme_change(hwnd_usize as *mut _, is_light);
         }
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","theme":"{}"}}"#, theme_str));
     }
@@ -1822,6 +1736,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/dom_ready_beacon" {
+        eprintln!(">>> dom_ready_beacon: body={}", req.body);
         DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
         if let Some(dpr_val) = parse_float_param(&req.body, "dpr") {
             let dpr_int = (dpr_val * 100.0).round() as usize;
@@ -1842,91 +1757,6 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         GLOBAL_LAUNCHPAD_VISIBLE.store(lp_vis, Ordering::SeqCst);
         GLOBAL_START_BTN_VISIBLE.store(btn_vis, Ordering::SeqCst);
         return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
-    }
-
-    if path == "/api/window/dom_snapshot" {
-        let is_light = req.body.contains(r#""theme":"light""#) || req.body.contains(r#""theme": "light""#);
-        let search1 = r#""image":"data:image/png;base64,"#;
-        let search2 = r#""image": "data:image/png;base64,"#;
-        let found = req.body.find(search1).map(|i| (i, search1.len()))
-            .or_else(|| req.body.find(search2).map(|i| (i, search2.len())));
-        if let Some((idx, prefix_len)) = found {
-            let start = idx + prefix_len;
-            if let Some(end) = req.body[start..].find('"') {
-                let b64_str = &req.body[start..start + end];
-                let bytes = decode_base64(b64_str);
-                if !bytes.is_empty() {
-                    let mut lock_all = DOM_SNAPSHOT_BYTES.lock().unwrap();
-                    *lock_all = bytes.clone();
-                    drop(lock_all);
-
-                    if is_light {
-                        let mut lock = DOM_SNAPSHOT_LIGHT.lock().unwrap();
-                        *lock = bytes.clone();
-                    } else {
-                        let mut lock = DOM_SNAPSHOT_DARK.lock().unwrap();
-                        *lock = bytes.clone();
-                    }
-
-                    let file_name = if is_light { "tahap162_live_light.png" } else { "tahap162_live_dark.png" };
-                    let temp_path = std::env::temp_dir().join(file_name);
-                    let _ = std::fs::write(&temp_path, &bytes);
-                }
-            }
-        }
-        return HttpResponse::ok_json(r#"{"ok":true,"snapshot":true}"#);
-    }
-
-    if path == "/api/window/capture_preview" || path == "/api/window/screenshot" {
-        let cur_theme = {
-            let st = state.lock().unwrap();
-            st.theme.clone()
-        };
-        let is_light_req = req.path.contains("theme=light") || req.path.contains("light") || cur_theme == "light";
-
-        if is_light_req {
-            for _ in 0..15 {
-                let lock_l = DOM_SNAPSHOT_LIGHT.lock().unwrap();
-                if !lock_l.is_empty() {
-                    return HttpResponse::ok_bytes(lock_l.clone(), "image/png");
-                }
-                drop(lock_l);
-
-                let temp_l = std::env::temp_dir().join("tahap162_live_light.png");
-                if let Ok(bytes) = std::fs::read(&temp_l) {
-                    if bytes.len() > 100 {
-                        return HttpResponse::ok_bytes(bytes, "image/png");
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        } else {
-            for _ in 0..15 {
-                let lock_d = DOM_SNAPSHOT_DARK.lock().unwrap();
-                if !lock_d.is_empty() {
-                    return HttpResponse::ok_bytes(lock_d.clone(), "image/png");
-                }
-                drop(lock_d);
-
-                let temp_d = std::env::temp_dir().join("tahap162_live_dark.png");
-                if let Ok(bytes) = std::fs::read(&temp_d) {
-                    if bytes.len() > 100 {
-                        return HttpResponse::ok_bytes(bytes, "image/png");
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
-
-        let lock = DOM_SNAPSHOT_BYTES.lock().unwrap();
-        if !lock.is_empty() {
-            let bytes = lock.clone();
-            drop(lock);
-            return HttpResponse::ok_bytes(bytes, "image/png");
-        }
-        drop(lock);
-
-        return HttpResponse::error_json(503, r#"{"status":"waiting","message":"Snapshot pending"}"#);
     }
 
     if path == "/api/window/rect" {
