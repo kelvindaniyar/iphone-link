@@ -15,9 +15,13 @@ use iphone_link_apple::wifi_discovery::{
     build_unicast_mdns_query, is_ip_on_local_subnets, verify_ip_is_apple_device,
     REMOTEPAIRING_SERVICE,
 };
-use iphone_link_audio::probe_zlaac_dll;
+use iphone_link_audio::jitter_buffer::AdaptiveAudioBuffer;
+use iphone_link_audio::wasapi_output::probe_wasapi_and_mmcss;
+use iphone_link_audio::{probe_zlaac_dll, AudioBufferPreset};
 use iphone_link_video::autorotate::{evaluate_auto_rotate, AppProfile, OrientationMode};
+use iphone_link_video::d3d11_context::{probe_d3d11_hardware_device, D3d11HardwareInfo, SharedFrameRing};
 use iphone_link_video::decoder::H265Trim;
+use iphone_link_video::mf_decoder::{probe_media_foundation, DownscaleFactor, HevcPipelineConfig};
 
 fn find_zlaac_dll() -> Option<PathBuf> {
     let mut candidates = Vec::new();
@@ -52,7 +56,7 @@ fn find_zlaac_dll() -> Option<PathBuf> {
 }
 
 fn run_self_test() -> i32 {
-    println!("=== iPhone Link v4.0 Native Rust Self-Test (Tahap 152) ===");
+    println!("=== iPhone Link v4.0 Native Rust Self-Test (Tahap 153) ===");
 
     // 1. Model Resolution & Screen Type Detection
     let model_18_1 = resolve_apple_model("iPhone18,1");
@@ -144,15 +148,69 @@ fn run_self_test() -> i32 {
         && instagram_decision.orientation == OrientationMode::Portrait0
         && instagram_decision.is_locked;
 
+    // 7. Direct3D 11 Hardware Context & Media Foundation Probe (Tahap 153)
+    let d3d11_res = probe_d3d11_hardware_device();
+    let d3d11_passed = d3d11_res.is_ok();
+    let d3d11_info = d3d11_res.unwrap_or_else(|_| D3d11HardwareInfo {
+        adapter_name: "Unknown".to_string(),
+        feature_level: "None".to_string(),
+        feature_level_raw: 0,
+        dedicated_vram_mb: 0,
+        hardware_device_created: false,
+    });
+
+    let mf_res = probe_media_foundation();
+    let mf_passed = mf_res.unwrap_or(false);
+
+    let frame_ring = SharedFrameRing::new();
+    frame_ring.push(1202, 2598, vec![0u8; 1024]);
+    let ring_pop = frame_ring.next();
+    let ring_passed = ring_pop.is_some() && frame_ring.total_dropped() == 0;
+
+    let pipe_config = HevcPipelineConfig::default();
+    let (pipe_clean_w, pipe_clean_h) = pipe_config.calculate_output_dimensions();
+
+    let mut pipe_downscale = HevcPipelineConfig::default();
+    pipe_downscale.macroblock_trim = (0, 0, 0, 0);
+    pipe_downscale.downscale = DownscaleFactor::Scale75;
+    let (pipe_ds_w, pipe_ds_h) = pipe_downscale.calculate_output_dimensions();
+
+    let pipeline_passed = pipe_clean_w == 1202 && pipe_clean_h == 2598 && pipe_ds_w == 912 && pipe_ds_h == 1992;
+    let d3d11_and_mf_passed = d3d11_passed && mf_passed && ring_passed && pipeline_passed;
+
+    // 8. WASAPI Output & MMCSS Pro Audio Probe + Jitter Buffer (Tahap 153)
+    let mmcss_res = probe_wasapi_and_mmcss();
+    let mmcss_passed = mmcss_res.as_ref().map(|r| r.mmcss_enabled && r.bypass_ecoqos).unwrap_or(false);
+    let mmcss_info = mmcss_res.unwrap_or_else(|_| iphone_link_audio::wasapi_output::MmcssProbeResult {
+        mmcss_enabled: false,
+        task_name: "Failed".to_string(),
+        bypass_ecoqos: false,
+        wasapi_format: "None".to_string(),
+    });
+
+    let mut jbuf = AdaptiveAudioBuffer::new(AudioBufferPreset::Normal);
+    jbuf.set_volume(150);
+    jbuf.push_samples(&[10000, -10000, 20000, -20000]);
+    let pulled = jbuf.pull_samples(4);
+    let limiter_verified = pulled.len() == 4 && pulled[0] > 10000 && pulled[0] < 32767;
+
+    // Underrun comfort silence verification
+    let underrun_pulled = jbuf.pull_samples(8);
+    let underrun_verified = underrun_pulled.len() == 8 && jbuf.underrun_count() == 1 && underrun_pulled[7] == 0;
+
+    let wasapi_audio_passed = mmcss_passed && limiter_verified && underrun_verified;
+
     let all_passed = model_test_passed
         && usbmux_passed
         && wifi_discovery_passed
         && hid_passed
         && ffi_test_passed
         && trim_test_passed
-        && autorotate_passed;
+        && autorotate_passed
+        && d3d11_and_mf_passed
+        && wasapi_audio_passed;
 
-    // 7. Print structured JSON result
+    // 9. Print structured JSON result
     println!("{{");
     println!("  \"status\": \"{}\",", if all_passed { "PASS" } else { "FAIL" });
     println!("  \"suite\": \"iphone_link_v4_native_rust\",");
@@ -192,12 +250,33 @@ fn run_self_test() -> i32 {
     println!("      \"decoder_open_close\": {}", ffi_test_passed);
     println!("    }},");
     println!("    \"video_pipeline\": {{");
+    println!("      \"passed\": {},", trim_test_passed && autorotate_passed);
     println!("      \"h265_trim_passed\": {},", trim_test_passed);
     println!("      \"raw_resolution\": \"1216x2656\",");
     println!("      \"clean_resolution\": \"{}x{}\",", clean_w, clean_h);
     println!("      \"autorotate_passed\": {},", autorotate_passed);
     println!("      \"efootball_lock\": \"{:?}\",", efootball_decision.orientation);
     println!("      \"instagram_guard\": \"{:?}\"", instagram_decision.orientation);
+    println!("    }},");
+    println!("    \"d3d11_and_mf_hardware_probe\": {{");
+    println!("      \"passed\": {},", d3d11_and_mf_passed);
+    println!("      \"gpu_name\": \"{}\",", d3d11_info.adapter_name);
+    println!("      \"dedicated_vram_mb\": {},", d3d11_info.dedicated_vram_mb);
+    println!("      \"feature_level\": \"{}\",", d3d11_info.feature_level);
+    println!("      \"media_foundation_startup\": {},", mf_passed);
+    println!("      \"triple_buffer_ring_verified\": {},", ring_passed);
+    println!("      \"hevc_clean_resolution\": \"{}x{}\",", pipe_clean_w, pipe_clean_h);
+    println!("      \"hevc_downscaled_resolution\": \"{}x{}\"", pipe_ds_w, pipe_ds_h);
+    println!("    }},");
+    println!("    \"wasapi_and_jitter_buffer_probe\": {{");
+    println!("      \"passed\": {},", wasapi_audio_passed);
+    println!("      \"mmcss_enabled\": {},", mmcss_info.mmcss_enabled);
+    println!("      \"task_name\": \"{}\",", mmcss_info.task_name);
+    println!("      \"bypass_ecoqos\": {},", mmcss_info.bypass_ecoqos);
+    println!("      \"wasapi_format\": \"{}\",", mmcss_info.wasapi_format);
+    println!("      \"jitter_buffer_preset\": \"Normal (60ms)\",");
+    println!("      \"volume_limiter_verified\": {},", limiter_verified);
+    println!("      \"comfort_silence_underrun_verified\": {}", underrun_verified);
     println!("    }}");
     println!("  }}");
     println!("}}");
@@ -216,6 +295,6 @@ fn main() {
         std::process::exit(code);
     }
 
-    println!("iPhone Link v4.0 Native Rust Engine (Tahap 152)");
+    println!("iPhone Link v4.0 Native Rust Engine (Tahap 153)");
     println!("Usage: iphone-link-v4.exe [--self-test]");
 }

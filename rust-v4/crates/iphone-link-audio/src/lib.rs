@@ -1,5 +1,13 @@
 //! AAC-ELD audio decoder FFI bindings for zlaac.dll, Zero Double Audio controller, and WASAPI jitter buffer.
 
+pub mod aac_decoder;
+pub mod jitter_buffer;
+pub mod wasapi_output;
+
+pub use aac_decoder::{AacEldDecoder, SharedAacDecoder};
+pub use jitter_buffer::AdaptiveAudioBuffer;
+pub use wasapi_output::{probe_wasapi_and_mmcss, MmcssProbeResult, WasapiStreamConfig};
+
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
