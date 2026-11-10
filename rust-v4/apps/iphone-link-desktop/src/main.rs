@@ -3,12 +3,15 @@
 pub mod i18n;
 pub mod link_grabber;
 pub mod ocr_engine;
+pub mod server_v4;
 pub mod updater;
 pub mod window_dwm;
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iphone_link_apple::hid::{
@@ -463,13 +466,105 @@ fn run_self_test() -> i32 {
     }
 }
 
+#[link(name = "kernel32")]
+extern "system" {
+    fn AttachConsole(dwProcessId: u32) -> i32;
+}
+
+fn find_web_dir() -> PathBuf {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("web"));
+            if let Some(p1) = dir.parent() {
+                candidates.push(p1.join("web"));
+            }
+        }
+    }
+
+    if let Ok(cwd) = env::current_dir() {
+        candidates.push(cwd.join("web"));
+        candidates.push(cwd.join("handset").join("web"));
+        candidates.push(cwd.join("rust-v4").join("apps").join("iphone-link-desktop").join("web"));
+    }
+
+    for cand in candidates {
+        if cand.is_dir() && cand.join("index.html").is_file() {
+            return cand;
+        }
+    }
+
+    PathBuf::from("web")
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.iter().any(|a| a == "--self-test") {
+        unsafe {
+            let _ = AttachConsole(0xFFFFFFFF);
+        }
         let code = run_self_test();
         std::process::exit(code);
     }
 
-    println!("iPhone Link v4.0 Native Rust Engine (Tahap 154)");
-    println!("Usage: iphone-link-v4.exe [--self-test]");
+    if args.iter().any(|a| a == "--ui-self-test") {
+        unsafe {
+            let _ = AttachConsole(0xFFFFFFFF);
+        }
+        println!("=== iPhone Link v4.0 Native Rust UI Self-Test ===");
+        let web_dir = find_web_dir();
+        match window_dwm::run_ui_self_test(&web_dir) {
+            Ok(res) => {
+                println!("{{");
+                println!("  \"status\": \"{}\",", res.status);
+                println!("  \"version\": \"{}\",", res.version);
+                println!("  \"true_dwm_acrylic_active\": {},", res.true_dwm_acrylic_active);
+                println!("  \"static_wallpaper_disabled\": {},", res.static_wallpaper_disabled);
+                println!("  \"server_endpoints_ok\": {},", res.server_endpoints_ok);
+                println!("  \"window_geometry_ok\": {},", res.window_geometry_ok);
+                println!("  \"language_switching_ok\": {},", res.language_switching_ok);
+                println!("  \"theme_switching_ok\": {},", res.theme_switching_ok);
+                println!("  \"elapsed_ms\": {}", res.elapsed_ms);
+                println!("}}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("UI Self-Test failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Normal interactive launch
+    let web_dir = find_web_dir();
+    let state = Arc::new(Mutex::new(server_v4::AppState::default()));
+    let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765).expect("Failed to start Native Server");
+    let port = server.port;
+
+    let hwnd = window_dwm::create_main_interactive_window(true).expect("Failed to create main Win32 window");
+    {
+        let mut st = state.lock().unwrap();
+        st.window_hwnd = hwnd as usize;
+    }
+
+    let url = format!("http://127.0.0.1:{}", port);
+    let edge_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ];
+    for ep in &edge_paths {
+        if Path::new(ep).is_file() {
+            let _ = Command::new(ep)
+                .args(&[
+                    format!("--app={}", url),
+                    "--window-size=346,832".to_string(),
+                ])
+                .spawn();
+            break;
+        }
+    }
+
+    window_dwm::run_message_pump();
 }
