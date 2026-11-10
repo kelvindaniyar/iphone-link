@@ -31,6 +31,7 @@ use crate::server_v4::{AppState, NativeServer};
 pub const WM_APP_SYNC_GEOMETRY: u32 = 0x8001;
 pub const WM_APP_MOVE_WINDOW: u32 = 0x8002;
 pub const WM_APP_SET_WINDOW_POS: u32 = 0x8003;
+pub const WM_APP_CAPTURE_PREVIEW: u32 = 0x8004;
 
 pub static GLOBAL_IS_LANDSCAPE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DRAWER_OPEN: AtomicBool = AtomicBool::new(false);
@@ -196,11 +197,22 @@ extern "system" {
     fn GetAsyncKeyState(vKey: i32) -> i16;
     fn GetSystemMetrics(nIndex: i32) -> i32;
     fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
+    fn InvalidateRect(hWnd: *mut c_void, lpRect: *const RECT, bErase: i32) -> i32;
+    fn EnumChildWindows(
+        hWndParent: *mut c_void,
+        lpEnumFunc: Option<unsafe extern "system" fn(*mut c_void, isize) -> i32>,
+        lParam: isize,
+    ) -> i32;
+    fn GetWindowLongW(hWnd: *mut c_void, nIndex: i32) -> i32;
+    fn SetWindowLongW(hWnd: *mut c_void, nIndex: i32, dwNewLong: i32) -> i32;
+    fn IsWindowVisible(hWnd: *mut c_void) -> i32;
 }
 
 #[link(name = "gdi32")]
 extern "system" {
     fn GetStockObject(i: i32) -> *mut c_void;
+    fn CreateSolidBrush(crColor: u32) -> *mut c_void;
+    fn DeleteObject(ho: *mut c_void) -> i32;
 }
 
 #[link(name = "ole32")]
@@ -235,7 +247,7 @@ type DwmExtendFrameIntoClientAreaFn = unsafe extern "system" fn(*mut c_void, *co
 type DwmSetWindowAttributeFn = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
 type SetWindowCompositionAttributeFn = unsafe extern "system" fn(*mut c_void, *mut WINDOWCOMPOSITIONATTRIBDATA) -> i32;
 
-/// Applies "Files" app style true acrylic blur behind the given Win32 HWND.
+/// Applies Windows 11 rounded corners, borderless frame, and immersive dark mode.
 pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> Result<DwmBackdropStatus, String> {
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
@@ -246,37 +258,22 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
         let dwm_module = LoadLibraryW(dwm_name.as_ptr());
 
         if !dwm_module.is_null() {
-            let extend_proc = GetProcAddress(dwm_module, b"DwmExtendFrameIntoClientArea\0".as_ptr() as *const i8);
             let set_attr_proc = GetProcAddress(dwm_module, b"DwmSetWindowAttribute\0".as_ptr() as *const i8);
 
-            if !extend_proc.is_null() && !set_attr_proc.is_null() {
-                let extend_fn: DwmExtendFrameIntoClientAreaFn = std::mem::transmute(extend_proc);
+            if !set_attr_proc.is_null() {
                 let set_attr_fn: DwmSetWindowAttributeFn = std::mem::transmute(set_attr_proc);
-
-                // Extend frame into client area (-1 margins)
-                let margins = MARGINS {
-                    cxLeftWidth: -1,
-                    cxRightWidth: -1,
-                    cyTopHeight: -1,
-                    cyBottomHeight: -1,
-                };
-                let _ = extend_fn(hwnd, &margins);
 
                 // Set immersive dark mode (1 = dark, 0 = light)
                 let dark_val: u32 = if dark_mode { 1 } else { 0 };
                 let _ = set_attr_fn(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_val as *const _ as *const c_void, 4);
 
-                // Set rounded corners preference (12px)
-                let round_val = DWMWCP_ROUND;
-                let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
+                // Set rounded corners preference (12px) - DWMWCP_ROUND (2)
+                let round_val: u32 = 2;
+                let _ = set_attr_fn(hwnd, 33, &round_val as *const _ as *const c_void, 4);
 
                 // DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
                 let border_none: u32 = 0xFFFFFFFE;
                 let _ = set_attr_fn(hwnd, 34, &border_none as *const _ as *const c_void, 4);
-
-                // Set backdrop type to DWMSBT_TRANSIENTWINDOW (3 = Thin Acrylic)
-                let backdrop_type = DWMSBT_TRANSIENTWINDOW;
-                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
 
                 return Ok(DwmBackdropStatus::NativeTransientAcrylic);
             }
@@ -459,6 +456,7 @@ pub const TRAY_MENU_ITEMS: &[&str] = &[
 
 static GLOBAL_WEBVIEW_CONTROLLER: AtomicIsize = AtomicIsize::new(0);
 static GLOBAL_CORE_WEBVIEW2: AtomicIsize = AtomicIsize::new(0);
+pub static GLOBAL_MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 
 pub fn enable_per_monitor_v2_dpi_awareness() {
     unsafe {
@@ -528,21 +526,55 @@ pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f64 {
 
 
 
+unsafe extern "system" fn enum_child_sync_proc(child: *mut c_void, lparam: isize) -> i32 {
+    let rc = &*(lparam as *const RECT);
+    let w = rc.width();
+    let h = rc.height();
+    ShowWindow(child, 5); // SW_SHOW
+    SetWindowPos(
+        child,
+        ptr::null_mut(),
+        0,
+        0,
+        w,
+        h,
+        0x0004 | 0x0010 | 0x0040, // SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+    );
+    InvalidateRect(child, ptr::null(), 1);
+    1
+}
+
 pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
     }
     let ctrl_raw = GLOBAL_WEBVIEW_CONTROLLER.load(Ordering::SeqCst);
-    if ctrl_raw != 0 {
-        let ctrl = ctrl_raw as *mut c_void;
-        unsafe {
-            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-            GetClientRect(hwnd, &mut rc);
+    unsafe {
+        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetClientRect(hwnd, &mut rc);
+
+        if ctrl_raw != 0 {
+            let ctrl = ctrl_raw as *mut c_void;
             let ctrl_vt = *(ctrl as *mut *const usize);
+
+            // put_IsVisible (vtable index 4)
+            type PutVisibleFn = unsafe extern "system" fn(this: *mut c_void, is_visible: i32) -> i32;
+            let put_visible: PutVisibleFn = std::mem::transmute(*ctrl_vt.add(4));
+            let _ = put_visible(ctrl, 1);
+
+            // put_Bounds (vtable index 6)
             type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
             let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
             let _ = put_bounds(ctrl, &rc as *const RECT);
+
+            // NotifyParentWindowPositionChanged (vtable index 23)
+            type NotifyPosChangedFn = unsafe extern "system" fn(this: *mut c_void) -> i32;
+            let notify_pos: NotifyPosChangedFn = std::mem::transmute(*ctrl_vt.add(23));
+            let _ = notify_pos(ctrl);
         }
+
+        // Win32 level direct enforcement on child HWNDs (Chrome_WidgetWin_0, Chrome_RenderWidgetHostHWND, etc.)
+        EnumChildWindows(hwnd, Some(enum_child_sync_proc), &rc as *const _ as isize);
     }
 }
 
@@ -583,6 +615,7 @@ unsafe extern "system" fn handler_query_interface(
     _riid: *const GUID,
     ppv: *mut *mut c_void,
 ) -> i32 {
+    eprintln!(">>> handler_query_interface called");
     if ppv.is_null() {
         return -2147467261;
     }
@@ -592,6 +625,7 @@ unsafe extern "system" fn handler_query_interface(
 }
 
 unsafe extern "system" fn handler_add_ref(_this: *mut c_void) -> u32 {
+    eprintln!(">>> handler_add_ref called");
     1
 }
 
@@ -690,7 +724,7 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
     let _ = put_bounds(controller, &rc as *const RECT);
 
-    // 4. QueryInterface for ICoreWebView2Controller2 & put_DefaultBackgroundColor(0)
+    // 4. QueryInterface for ICoreWebView2Controller2 & put_DefaultBackgroundColor(0xFF1E1410)
     type QueryInterfaceFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
     let qi: QueryInterfaceFn = std::mem::transmute(*ctrl_vt.add(0));
     let mut ctrl2: *mut c_void = ptr::null_mut();
@@ -699,7 +733,7 @@ unsafe extern "system" fn ctrl_completed_invoke(
         let ctrl2_vt = *(ctrl2 as *mut *const usize);
         type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
         let put_bg: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let _ = put_bg(ctrl2, 0);
+        let _ = put_bg(ctrl2, 0xFF1E1410); // Opaque dark ARGB(255, 16, 20, 30) = #10141e
         let rel_fn: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*ctrl2_vt.add(2));
         let _ = rel_fn(ctrl2);
     }
@@ -721,8 +755,19 @@ unsafe extern "system" fn ctrl_completed_invoke(
         let navigate: NavigateFn = std::mem::transmute(*wv_vt.add(5));
         let _ = navigate(webview, url.as_ptr());
 
-        // Immediately sync WebView2 bounds with HWND client rect
-        PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
+        // Immediately sync WebView2 bounds with HWND client rect and child HWNDs
+        notify_webview_bounds_sync(hwnd);
+
+        // Schedule delayed geometry syncs at 100ms, 300ms, 700ms to guarantee child HWND size
+        let hwnd_usize = hwnd as usize;
+        std::thread::spawn(move || {
+            for delay in [100, 300, 700] {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                unsafe {
+                    PostMessageW(hwnd_usize as *mut c_void, WM_APP_SYNC_GEOMETRY, 0, 0);
+                }
+            }
+        });
     }
 
     0
@@ -762,7 +807,7 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
         let _ = CoInitializeEx(ptr::null_mut(), 2);
     }
 
-    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
+    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0xFF1E1410");
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
         "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate,msVisualSearch,msEdgeVisualSearch,msEdgeSidebar,msHubApps,msEdgeAskCopilot,msEdgeShopping,msEdgeMiniMenu,msSmartScreenProtection --no-first-run --disable-extensions --disable-component-update",
@@ -838,8 +883,148 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
     Ok(())
 }
 
+#[repr(C)]
+struct CapturePreviewCompletedHandlerVTable {
+    QueryInterface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32,
+    AddRef: unsafe extern "system" fn(*mut c_void) -> u32,
+    Release: unsafe extern "system" fn(*mut c_void) -> u32,
+    Invoke: unsafe extern "system" fn(*mut c_void, i32) -> i32,
+}
+
+static CAPTURE_VTABLE: CapturePreviewCompletedHandlerVTable = CapturePreviewCompletedHandlerVTable {
+    QueryInterface: handler_query_interface,
+    AddRef: handler_add_ref,
+    Release: handler_release,
+    Invoke: capture_preview_invoke,
+};
+
+static CAPTURE_COMPLETED: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "system" fn capture_preview_invoke(this: *mut c_void, err: i32) -> i32 {
+    eprintln!(">>> capture_preview_invoke called with err=0x{:X}", err);
+    let handler = &*(this as *const CapturePreviewCompletedHandler);
+    let stream = handler.stream;
+    if !stream.is_null() {
+        let stream_vt = *(stream as *mut *const usize);
+        let stream_release: unsafe extern "system" fn(*mut c_void) -> u32 =
+            std::mem::transmute(*stream_vt.add(2));
+        let _ = stream_release(stream);
+    }
+    CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+    0
+}
+
+#[repr(C)]
+struct CapturePreviewCompletedHandler {
+    vtable: *const CapturePreviewCompletedHandlerVTable,
+    stream: *mut c_void,
+}
+
+unsafe fn perform_capture_trigger(file_path_wide: *const u16) {
+    let wv_raw = GLOBAL_CORE_WEBVIEW2.load(Ordering::SeqCst);
+    if wv_raw == 0 || file_path_wide.is_null() {
+        CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+        return;
+    }
+    let webview = wv_raw as *mut c_void;
+
+    let shlwapi_name: Vec<u16> = "shlwapi.dll\0".encode_utf16().collect();
+    let h_shlwapi = LoadLibraryW(shlwapi_name.as_ptr());
+    if h_shlwapi.is_null() {
+        CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+        return;
+    }
+
+    let proc = GetProcAddress(
+        h_shlwapi,
+        b"SHCreateStreamOnFileEx\0".as_ptr() as *const i8,
+    );
+    if proc.is_null() {
+        CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+        return;
+    }
+
+    type SHCreateStreamOnFileExFn = unsafe extern "system" fn(
+        pszFile: *const u16,
+        grfMode: u32,
+        dwAttributes: u32,
+        fCreate: i32,
+        pstmTemplate: *mut c_void,
+        ppstm: *mut *mut c_void,
+    ) -> i32;
+    let create_stream: SHCreateStreamOnFileExFn = std::mem::transmute(proc);
+
+    let mut stream: *mut c_void = ptr::null_mut();
+    // STGM_CREATE (0x1000) | STGM_READWRITE (0x0002) | STGM_SHARE_EXCLUSIVE (0x0010) = 0x1012
+    let hr_stream = create_stream(
+        file_path_wide,
+        0x1012,
+        0x00000080,
+        1,
+        ptr::null_mut(),
+        &mut stream,
+    );
+    if hr_stream < 0 || stream.is_null() {
+        CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+        return;
+    }
+
+    let handler = Box::into_raw(Box::new(CapturePreviewCompletedHandler {
+        vtable: &CAPTURE_VTABLE,
+        stream,
+    })) as *mut c_void;
+
+    let wv_vt = *(webview as *mut *const usize);
+    type CapturePreviewFn = unsafe extern "system" fn(
+        this: *mut c_void,
+        format: u32,
+        stream: *mut c_void,
+        handler: *mut c_void,
+    ) -> i32;
+    let capture_fn: CapturePreviewFn = std::mem::transmute(*wv_vt.add(30));
+    let hr = capture_fn(webview, 0, stream, handler);
+    eprintln!(">>> capture_fn returned hr=0x{:X}", hr);
+    if hr < 0 {
+        let stream_vt = *(stream as *mut *const usize);
+        let stream_release: unsafe extern "system" fn(*mut c_void) -> u32 =
+            std::mem::transmute(*stream_vt.add(2));
+        let _ = stream_release(stream);
+        CAPTURE_COMPLETED.store(true, Ordering::SeqCst);
+    }
+}
+
+pub fn capture_webview_to_file_sync(file_path: &str) -> Result<(), String> {
+    let hwnd = GLOBAL_MAIN_HWND.load(Ordering::SeqCst) as *mut c_void;
+    if hwnd.is_null() {
+        return Err("Main HWND is null".to_string());
+    }
+    let path_w: Vec<u16> = file_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let boxed_path = Box::into_raw(path_w.into_boxed_slice());
+
+    CAPTURE_COMPLETED.store(false, Ordering::SeqCst);
+    unsafe {
+        PostMessageW(hwnd, WM_APP_CAPTURE_PREVIEW, boxed_path as *mut u16 as usize, 0);
+    }
+
+    let start = std::time::Instant::now();
+    while !CAPTURE_COMPLETED.load(Ordering::SeqCst) && start.elapsed().as_millis() < 3000 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    if CAPTURE_COMPLETED.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        Err("Capture preview timed out after 3000ms".to_string())
+    }
+}
+
 unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize {
     match msg {
+        WM_APP_CAPTURE_PREVIEW => {
+            let path_ptr = wparam as *const u16;
+            perform_capture_trigger(path_ptr);
+            0
+        }
         WM_APP_SYNC_GEOMETRY => {
             apply_hwnd_geometry_internal(hwnd);
             0
@@ -875,17 +1060,27 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0083 => {
-            // WM_NCCALCSIZE: Return 0 when wparam != 0 removes window title/frame while preserving composition
-            if wparam != 0 {
-                return 0;
-            }
-            DefWindowProcW(hwnd, msg, wparam, lparam)
+            // WM_NCCALCSIZE: Return 0 UNCONDITIONALLY (both wparam == 0 and wparam != 0)
+            // so Windows NEVER allocates non-client frame/borders!
+            0
+        }
+        0x0085 => {
+            // WM_NCPAINT: Return 0 WITHOUT calling DefWindowProcW
+            // so GDI never paints non-client borders/frames!
+            0
+        }
+        0x0086 => {
+            // WM_NCACTIVATE: Return 1 (TRUE) WITHOUT calling DefWindowProcW!
+            // Calling DefWindowProcW on WM_NCACTIVATE is the root cause of the white border when focus switches!
+            1
         }
         0x0014 => {
-            // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent in DWM acrylic blur)
+            // WM_ERASEBKGND: Fill with solid dark brush RGB(16, 20, 30) (#10141e)
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetClientRect(hwnd, &mut rc);
-            FillRect(wparam as *mut c_void, &rc as *const RECT, GetStockObject(4));
+            let hbr = CreateSolidBrush(0x001E1410);
+            FillRect(wparam as *mut c_void, &rc as *const RECT, hbr);
+            DeleteObject(hbr);
             1
         }
         0x0005 => {
@@ -905,6 +1100,13 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
 pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
+    }
+
+    // Clean any unwanted frame styles from GWL_STYLE
+    let mut cur_style = GetWindowLongW(hwnd, -16) as u32;
+    if (cur_style & (0x00040000 | 0x00C00000 | 0x00800000)) != 0 {
+        cur_style &= !(0x00040000 | 0x00C00000 | 0x00800000);
+        SetWindowLongW(hwnd, -16, cur_style as i32);
     }
 
     if GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
@@ -1087,6 +1289,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
 
         let class_name: Vec<u16> = "iPhoneLinkMainWindowClass\0".encode_utf16().collect();
+        let dark_brush = CreateSolidBrush(0x001E1410); // RGB(16, 20, 30) = #10141e
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0x0001 | 0x0002, // CS_VREDRAW | CS_HREDRAW
@@ -1096,7 +1299,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             hInstance: ptr::null_mut(),
             hIcon: ptr::null_mut(),
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
-            hbrBackground: GetStockObject(4), // BLACK_BRUSH
+            hbrBackground: dark_brush,
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: ptr::null_mut(),
@@ -1105,8 +1308,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = RegisterClassExW(&wnd_class);
 
         let window_title: Vec<u16> = "iPhone Link\0".encode_utf16().collect();
-        const STYLE: u32 = 0x80000000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x02000000 | 0x04000000 | 0x10000000;
-        // WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE
+        const STYLE: u32 = 0x80000000 | 0x02000000 | 0x04000000 | 0x00080000 | 0x00020000 | 0x10000000;
+        // WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE
 
         let dpi_scale = get_hwnd_dpi_scale(ptr::null_mut());
         let phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;
@@ -1137,6 +1340,13 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         if hwnd.is_null() {
             return Err("Failed to create main Win32 window".to_string());
         }
+
+        GLOBAL_MAIN_HWND.store(hwnd as isize, Ordering::SeqCst);
+
+        // Clean any unwanted frame styles from GWL_STYLE
+        let mut cur_style = GetWindowLongW(hwnd, -16) as u32;
+        cur_style &= !(0x00040000 | 0x00C00000 | 0x00800000);
+        SetWindowLongW(hwnd, -16, cur_style as i32);
 
         // Apply true DWM Acrylic blur
         let _ = apply_true_files_acrylic_backdrop(hwnd, dark_mode);

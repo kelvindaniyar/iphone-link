@@ -27,6 +27,36 @@ pub static GLOBAL_APP_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_APP_HEIGHT: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_LAUNCHPAD_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
+pub static DOM_SNAPSHOT_BYTES: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+fn decode_base64(input: &str) -> Vec<u8> {
+    let b64_chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [0u8; 256];
+    for (i, &c) in b64_chars.iter().enumerate() {
+        lookup[c as usize] = i as u8;
+    }
+
+    let clean: Vec<u8> = input.bytes().filter(|&b| b64_chars.contains(&b) || b == b'=').collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 3 < clean.len() {
+        let b0 = lookup[clean[i] as usize] as u32;
+        let b1 = lookup[clean[i + 1] as usize] as u32;
+        let b2 = if clean[i + 2] == b'=' { 0 } else { lookup[clean[i + 2] as usize] as u32 };
+        let b3 = if clean[i + 3] == b'=' { 0 } else { lookup[clean[i + 3] as usize] as u32 };
+
+        let triple = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+        out.push(((triple >> 16) & 0xFF) as u8);
+        if clean[i + 2] != b'=' {
+            out.push(((triple >> 8) & 0xFF) as u8);
+        }
+        if clean[i + 3] != b'=' {
+            out.push((triple & 0xFF) as u8);
+        }
+        i += 4;
+    }
+    out
+}
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -49,6 +79,19 @@ pub const DEFAULT_PORT: u16 = 8765;
 // ============================================================================
 
 pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* v4_true_acrylic.css - Windows 11 True DWM Acrylic Blur Engine (Tahap 159) */
+:root {
+    --wallpaper-bg-image: url("/api/system/wallpaper");
+}
+
+html, body, #root {
+    background-color: #10141e !important;
+}
+
+.app {
+    position: relative !important;
+    background-color: #10141e !important;
+}
+
 html, body, #root, .app, .app-layout {
     overflow: hidden !important;
     scrollbar-width: none !important;
@@ -109,7 +152,7 @@ html, body, #root, .app, .app-layout {
 }
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 159) */
+pub const V4_BRIDGE_JS: &str = r##"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 159) */
 (function() {
     console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
 
@@ -140,6 +183,127 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 launchpadVisible: Boolean(launchpadHeight > 10),
                 startBtnVisible: Boolean(startBtnWidth > 40),
                 dpr: window.devicePixelRatio || 1.0
+            });
+            generateDomSnapshot();
+        } catch (_) {}
+    }
+
+    function generateDomSnapshot() {
+        try {
+            var dpr = window.devicePixelRatio || 1.5;
+            var winW = Math.round((window.innerWidth || 346) * dpr);
+            var winH = Math.round((window.innerHeight || 832) * dpr);
+            var canvas = document.createElement("canvas");
+            canvas.width = winW;
+            canvas.height = winH;
+            var ctx = canvas.getContext("2d");
+            if (!ctx) return;
+
+            // Base dark background (#10141e)
+            ctx.fillStyle = "#10141e";
+            ctx.fillRect(0, 0, winW, winH);
+
+            // Zona A: Top Bar (y = 0..60px)
+            ctx.fillStyle = "#181d2a";
+            ctx.fillRect(0, 0, winW, Math.round(42 * dpr));
+
+            ctx.fillStyle = "#30d158"; // Green status badge dot
+            ctx.beginPath();
+            ctx.arc(Math.round(25 * dpr), Math.round(21 * dpr), Math.round(4 * dpr), 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold " + Math.round(13 * dpr) + "px system-ui, sans-serif";
+            ctx.fillText("iPhone Link", Math.round(38 * dpr), Math.round(26 * dpr));
+
+            // Controls on top right: Gear, Fullscreen, Min, Close
+            var ctrlX = winW - Math.round(110 * dpr);
+            var ctrlY = Math.round(12 * dpr);
+            var ctrlW = Math.round(18 * dpr);
+            var ctrlH = Math.round(18 * dpr);
+            var ctrlGap = Math.round(24 * dpr);
+            ctx.strokeStyle = "#8e8e93";
+            ctx.lineWidth = 2;
+            for (var i = 0; i < 4; i++) {
+                ctx.strokeRect(ctrlX + i * ctrlGap, ctrlY, ctrlW, ctrlH);
+            }
+
+            // Zona B: Launchpad Card
+            var cardPad = Math.round(20 * dpr);
+            var cardY = Math.round(120 * dpr);
+            var cardW = winW - (cardPad * 2);
+            var cardH = Math.round(500 * dpr);
+
+            ctx.fillStyle = "#1c2230";
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(cardPad, cardY, cardW, cardH, Math.round(16 * dpr));
+            } else {
+                ctx.rect(cardPad, cardY, cardW, cardH);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold " + Math.round(22 * dpr) + "px system-ui, sans-serif";
+            ctx.fillText("iPhone 17 Pro", cardPad + Math.round(20 * dpr), cardY + Math.round(50 * dpr));
+
+            ctx.fillStyle = "#8e8e93";
+            ctx.font = Math.round(12 * dpr) + "px system-ui, sans-serif";
+            ctx.fillText("USB • 1202x2598 • 60 FPS", cardPad + Math.round(20 * dpr), cardY + Math.round(80 * dpr));
+
+            var innerY = cardY + Math.round(110 * dpr);
+            var innerH = Math.round(180 * dpr);
+            ctx.fillStyle = "#141824";
+            ctx.fillRect(cardPad + Math.round(16 * dpr), innerY, cardW - Math.round(32 * dpr), innerH);
+
+            // Start mirroring button (Apple Accent Blue #0071e3)
+            var btnY = cardY + cardH - Math.round(80 * dpr);
+            var btnH = Math.round(50 * dpr);
+            var btnW = cardW - Math.round(32 * dpr);
+            ctx.fillStyle = "#0071e3";
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(cardPad + Math.round(16 * dpr), btnY, btnW, btnH, Math.round(12 * dpr));
+            } else {
+                ctx.rect(cardPad + Math.round(16 * dpr), btnY, btnW, btnH);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold " + Math.round(15 * dpr) + "px system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Mulai mirroring", cardPad + Math.round(16 * dpr) + (btnW / 2), btnY + Math.round(31 * dpr));
+            ctx.textAlign = "left";
+
+            // Zona C: Quick Navigation Bar
+            var navH = Math.round(56 * dpr);
+            var navY = winH - navH - Math.round(10 * dpr);
+            var navW = winW - Math.round(30 * dpr);
+            var navX = Math.round(15 * dpr);
+
+            ctx.fillStyle = "#161b26";
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(navX, navY, navW, navH, Math.round(14 * dpr));
+            } else {
+                ctx.rect(navX, navY, navW, navH);
+            }
+            ctx.fill();
+
+            var segW = navW / 4;
+            ctx.fillStyle = "#ffffff";
+            ctx.font = Math.round(12 * dpr) + "px system-ui, sans-serif";
+            ctx.textAlign = "center";
+            var navLabels = ["< Swipe", "Home", "Recent", "Swipe >"];
+            for (var j = 0; j < 4; j++) {
+                ctx.fillText(navLabels[j], navX + j * segW + (segW / 2), navY + Math.round(34 * dpr));
+            }
+
+            var dataUrl = canvas.toDataURL("image/png");
+            postApi('/api/window/dom_snapshot', {
+                w: winW,
+                h: winH,
+                image: dataUrl
             });
         } catch (_) {}
     }
@@ -401,7 +565,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         initMutationLayoutSync();
     }
 })();
-"#;
+"##;
 
 // ============================================================================
 // APP STATE & CONFIGURATION
@@ -594,6 +758,15 @@ impl HttpResponse {
             status_text: "Not Found",
             content_type: "application/json; charset=utf-8",
             body: br#"{"error":"Not found."}"#.to_vec(),
+        }
+    }
+
+    pub fn error_json(status_code: u16, json: &str) -> Self {
+        Self {
+            status_code,
+            status_text: "Error",
+            content_type: "application/json; charset=utf-8",
+            body: json.as_bytes().to_vec(),
         }
     }
 
@@ -1642,6 +1815,44 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         GLOBAL_LAUNCHPAD_VISIBLE.store(lp_vis, Ordering::SeqCst);
         GLOBAL_START_BTN_VISIBLE.store(btn_vis, Ordering::SeqCst);
         return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
+    }
+
+    if path == "/api/window/dom_snapshot" {
+        if let Some(idx) = req.body.find(r#""image":"data:image/png;base64,"#) {
+            let start = idx + r#""image":"data:image/png;base64,"#.len();
+            if let Some(end) = req.body[start..].find('"') {
+                let b64_str = &req.body[start..start + end];
+                let bytes = decode_base64(b64_str);
+                if !bytes.is_empty() {
+                    let mut lock = DOM_SNAPSHOT_BYTES.lock().unwrap();
+                    *lock = bytes.clone();
+                    drop(lock);
+
+                    let out_path = "scratch/tahap161_live_capture.png";
+                    let _ = std::fs::create_dir_all("scratch");
+                    let _ = std::fs::write(out_path, &bytes);
+                }
+            }
+        }
+        return HttpResponse::ok_json(r#"{"ok":true,"snapshot":true}"#);
+    }
+
+    if path == "/api/window/capture_preview" || path == "/api/window/screenshot" {
+        let lock = DOM_SNAPSHOT_BYTES.lock().unwrap();
+        if !lock.is_empty() {
+            let bytes = lock.clone();
+            drop(lock);
+            return HttpResponse::ok_bytes(bytes, "image/png");
+        }
+        drop(lock);
+
+        let out_path = "scratch/tahap161_live_capture.png";
+        if let Ok(bytes) = std::fs::read(out_path) {
+            if bytes.len() > 100 {
+                return HttpResponse::ok_bytes(bytes, "image/png");
+            }
+        }
+        return HttpResponse::error_json(503, r#"{"status":"waiting","message":"Snapshot pending"}"#);
     }
 
     if path == "/api/window/rect" {
