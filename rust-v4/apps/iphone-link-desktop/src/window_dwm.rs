@@ -198,6 +198,12 @@ extern "system" {
     fn GetSystemMetrics(nIndex: i32) -> i32;
     fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
     fn InvalidateRect(hWnd: *mut c_void, lpRect: *const RECT, bErase: i32) -> i32;
+    fn FindWindowExW(
+        hWndParent: *mut c_void,
+        hWndChildAfter: *mut c_void,
+        lpszClass: *const u16,
+        lpszWindow: *const u16,
+    ) -> *mut c_void;
     fn EnumChildWindows(
         hWndParent: *mut c_void,
         lpEnumFunc: Option<unsafe extern "system" fn(*mut c_void, isize) -> i32>,
@@ -206,6 +212,7 @@ extern "system" {
     fn GetWindowLongW(hWnd: *mut c_void, nIndex: i32) -> i32;
     fn SetWindowLongW(hWnd: *mut c_void, nIndex: i32, dwNewLong: i32) -> i32;
     fn IsWindowVisible(hWnd: *mut c_void) -> i32;
+    fn GetClassNameW(hWnd: *mut c_void, lpClassName: *mut u16, nMaxCount: i32) -> i32;
 }
 
 #[link(name = "gdi32")]
@@ -526,24 +533,6 @@ pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f64 {
 
 
 
-unsafe extern "system" fn enum_child_sync_proc(child: *mut c_void, lparam: isize) -> i32 {
-    let rc = &*(lparam as *const RECT);
-    let w = rc.width();
-    let h = rc.height();
-    ShowWindow(child, 5); // SW_SHOW
-    SetWindowPos(
-        child,
-        ptr::null_mut(),
-        0,
-        0,
-        w,
-        h,
-        0x0004 | 0x0010 | 0x0040, // SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
-    );
-    InvalidateRect(child, ptr::null(), 1);
-    1
-}
-
 pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
@@ -552,6 +541,8 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     unsafe {
         let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         GetClientRect(hwnd, &mut rc);
+        rc.left = 0;
+        rc.top = 0;
 
         if ctrl_raw != 0 {
             let ctrl = ctrl_raw as *mut c_void;
@@ -573,9 +564,38 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
             let _ = notify_pos(ctrl);
         }
 
-        // Win32 level direct enforcement on child HWNDs (Chrome_WidgetWin_0, Chrome_RenderWidgetHostHWND, etc.)
-        EnumChildWindows(hwnd, Some(enum_child_sync_proc), &rc as *const _ as isize);
+        // Direct synchronization ONLY on the immediate child "Chrome_WidgetWin_0"
+        // NEVER touch Intermediate D3D Window, Chrome_RenderWidgetHostHWND, or other internal GPU surfaces!
+        let class_name: Vec<u16> = "Chrome_WidgetWin_0\0".encode_utf16().collect();
+        let child_0 = FindWindowExW(hwnd, ptr::null_mut(), class_name.as_ptr(), ptr::null());
+        if !child_0.is_null() {
+            ShowWindow(child_0, 5); // SW_SHOW
+            SetWindowPos(
+                child_0,
+                ptr::null_mut(),
+                0,
+                0,
+                rc.width(),
+                rc.height(),
+                0x0004 | 0x0010 | 0x0040, // SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+            );
+        }
+
+        // Explicitly guarantee Intermediate D3D Window is HIDDEN (SW_HIDE) so it never occludes DirectComposition
+        EnumChildWindows(hwnd, Some(hide_d3d_child_proc), 0);
     }
+}
+
+unsafe extern "system" fn hide_d3d_child_proc(child: *mut c_void, _lparam: isize) -> i32 {
+    let mut class_buf = [0u16; 64];
+    let len = GetClassNameW(child, class_buf.as_mut_ptr(), 64);
+    if len > 0 {
+        let name = String::from_utf16_lossy(&class_buf[..len as usize]);
+        if name.contains("Intermediate D3D") {
+            ShowWindow(child, 0); // SW_HIDE
+        }
+    }
+    1
 }
 
 #[repr(C)]
@@ -724,21 +744,7 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
     let _ = put_bounds(controller, &rc as *const RECT);
 
-    // 4. QueryInterface for ICoreWebView2Controller2 & put_DefaultBackgroundColor(0xFF1E1410)
-    type QueryInterfaceFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
-    let qi: QueryInterfaceFn = std::mem::transmute(*ctrl_vt.add(0));
-    let mut ctrl2: *mut c_void = ptr::null_mut();
-    let hr_qi = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
-    if hr_qi >= 0 && !ctrl2.is_null() {
-        let ctrl2_vt = *(ctrl2 as *mut *const usize);
-        type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
-        let put_bg: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let _ = put_bg(ctrl2, 0xFF1E1410); // Opaque dark ARGB(255, 16, 20, 30) = #10141e
-        let rel_fn: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*ctrl2_vt.add(2));
-        let _ = rel_fn(ctrl2);
-    }
-
-    // 5. get_CoreWebView2 (index 25)
+    // 4. get_CoreWebView2 (index 25)
     type GetCoreWebView2Fn = unsafe extern "system" fn(this: *mut c_void, webview_out: *mut *mut c_void) -> i32;
     let get_core: GetCoreWebView2Fn = std::mem::transmute(*ctrl_vt.add(25));
     let mut webview: *mut c_void = ptr::null_mut();
@@ -844,15 +850,10 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
         ) -> i32;
         let create_env: CreateEnvFn = std::mem::transmute(proc);
 
-        let data_dir = if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                dir.join(".pane_webview_v4_data")
-            } else {
-                std::env::temp_dir().join(".pane_webview_v4_data")
-            }
-        } else {
-            std::env::temp_dir().join(".pane_webview_v4_data")
-        };
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+        let data_dir = local_app_data.join("iPhoneLink_NativeRust_v4").join("webview2_data");
         let _ = std::fs::create_dir_all(&data_dir);
         let user_data_w: Vec<u16> = data_dir
             .as_os_str()
@@ -1060,27 +1061,23 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0083 => {
-            // WM_NCCALCSIZE: Return 0 UNCONDITIONALLY (both wparam == 0 and wparam != 0)
-            // so Windows NEVER allocates non-client frame/borders!
-            0
+            // WM_NCCALCSIZE: Return 0 when wparam != 0 (Tahap 158 formula)
+            if wparam != 0 {
+                return 0;
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         0x0085 => {
-            // WM_NCPAINT: Return 0 WITHOUT calling DefWindowProcW
-            // so GDI never paints non-client borders/frames!
+            // WM_NCPAINT: Prevent GDI from painting non-client border
             0
         }
         0x0086 => {
-            // WM_NCACTIVATE: Return 1 (TRUE) WITHOUT calling DefWindowProcW!
-            // Calling DefWindowProcW on WM_NCACTIVATE is the root cause of the white border when focus switches!
-            1
+            // WM_NCACTIVATE: Forward to DefWindowProcW with lparam = -1isize!
+            // Keeps WebView2 DirectComposition active on focus switch and suppresses Windows white stroke
+            DefWindowProcW(hwnd, msg, wparam, -1isize)
         }
         0x0014 => {
-            // WM_ERASEBKGND: Fill with solid dark brush RGB(16, 20, 30) (#10141e)
-            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-            GetClientRect(hwnd, &mut rc);
-            let hbr = CreateSolidBrush(0x001E1410);
-            FillRect(wparam as *mut c_void, &rc as *const RECT, hbr);
-            DeleteObject(hbr);
+            // WM_ERASEBKGND: Handled
             1
         }
         0x0005 => {
@@ -1102,10 +1099,10 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         return;
     }
 
-    // Clean any unwanted frame styles from GWL_STYLE
+    // Clean unwanted caption/border styles from GWL_STYLE (preserve WS_THICKFRAME 0x00040000 for DirectComposition)
     let mut cur_style = GetWindowLongW(hwnd, -16) as u32;
-    if (cur_style & (0x00040000 | 0x00C00000 | 0x00800000)) != 0 {
-        cur_style &= !(0x00040000 | 0x00C00000 | 0x00800000);
+    if (cur_style & (0x00C00000 | 0x00800000)) != 0 {
+        cur_style &= !(0x00C00000 | 0x00800000);
         SetWindowLongW(hwnd, -16, cur_style as i32);
     }
 
@@ -1308,8 +1305,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = RegisterClassExW(&wnd_class);
 
         let window_title: Vec<u16> = "iPhone Link\0".encode_utf16().collect();
-        const STYLE: u32 = 0x80000000 | 0x02000000 | 0x04000000 | 0x00080000 | 0x00020000 | 0x10000000;
-        // WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE
+        const STYLE: u32 = 0x80000000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x02000000 | 0x04000000 | 0x10000000;
+        // WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE
 
         let dpi_scale = get_hwnd_dpi_scale(ptr::null_mut());
         let phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;
@@ -1343,15 +1340,22 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
 
         GLOBAL_MAIN_HWND.store(hwnd as isize, Ordering::SeqCst);
 
-        // Clean any unwanted frame styles from GWL_STYLE
-        let mut cur_style = GetWindowLongW(hwnd, -16) as u32;
-        cur_style &= !(0x00040000 | 0x00C00000 | 0x00800000);
-        SetWindowLongW(hwnd, -16, cur_style as i32);
-
         // Apply true DWM Acrylic blur
         let _ = apply_true_files_acrylic_backdrop(hwnd, dark_mode);
 
-        // Immediately scale window to match actual HWND DPI (e.g. 150% = 519x1248)
+        // Force SWP_FRAMECHANGED immediately so WM_NCCALCSIZE (wparam = 1) is invoked
+        // This eliminates the 6-8px WS_THICKFRAME border while keeping DirectComposition intact
+        SetWindowPos(
+            hwnd,
+            ptr::null_mut(),
+            pos_x,
+            pos_y,
+            phys_w,
+            phys_h,
+            0x0004 | 0x0020 | 0x0040, // SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
+        );
+
+        // Scale window geometry based on DPI
         apply_hwnd_geometry_internal(hwnd);
 
         // Re-center window based on actual physical dimensions

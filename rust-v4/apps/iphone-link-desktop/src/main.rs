@@ -628,15 +628,15 @@ fn spawn_coredevice_worker() {
         }
     }
 
-    // 1. Check for standalone engine/iPhone Link.exe
+    // 1. Check for standalone iPhone Link.exe worker
     let mut engine_candidates = Vec::new();
+    engine_candidates.push(PathBuf::from(r"D:\DATA KELVIN\IPHONE LINK\iPhone-Link-Win64-Standalone-EXE-v2.0.0\iPhone Link.exe"));
+    engine_candidates.push(repo_root.join("dist").join("iPhone Link").join("iPhone Link.exe"));
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
-            engine_candidates.push(dir.join("engine").join("iPhone Link.exe"));
             engine_candidates.push(dir.join("dist").join("iPhone Link").join("iPhone Link.exe"));
         }
     }
-    engine_candidates.push(repo_root.join("dist").join("iPhone Link").join("iPhone Link.exe"));
 
     let mut target_engine = None;
     for cand in engine_candidates {
@@ -648,9 +648,7 @@ fn spawn_coredevice_worker() {
 
     let mut cmd = if let Some(exe_path) = target_engine {
         let mut c = std::process::Command::new(&exe_path);
-        if let Some(engine_dir) = exe_path.parent() {
-            c.current_dir(engine_dir);
-        }
+        c.current_dir(std::env::temp_dir());
         c.args(&["--server-child", "--host", "127.0.0.1", "--port", "8767"]);
         c.env("PANE_HOST", "127.0.0.1");
         c.env("PANE_PORT", "8767");
@@ -658,6 +656,8 @@ fn spawn_coredevice_worker() {
     } else {
         // Fallback to Python venv or system python
         let mut py_candidates = Vec::new();
+        py_candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\pythonw.exe"));
+        py_candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\python.exe"));
         py_candidates.push(repo_root.join("venv").join("Scripts").join("pythonw.exe"));
         py_candidates.push(repo_root.join("venv").join("Scripts").join("python.exe"));
         py_candidates.push(repo_root.join(".venv").join("Scripts").join("pythonw.exe"));
@@ -673,7 +673,7 @@ fn spawn_coredevice_worker() {
             .unwrap_or_else(|| PathBuf::from("python.exe"));
 
         let mut c = std::process::Command::new(py_bin);
-        c.current_dir(&repo_root);
+        c.current_dir(std::env::temp_dir());
         c.env("PYTHONPATH", &repo_root);
         c.env("PANE_HOST", "127.0.0.1");
         c.env("PANE_PORT", "8767");
