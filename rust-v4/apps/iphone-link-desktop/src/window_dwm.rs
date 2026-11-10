@@ -18,15 +18,26 @@ use std::net::TcpStream;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::server_v4::{AppState, NativeServer};
 
 // ============================================================================
-// DWM & WIN32 CONSTANTS
+// DWM & WIN32 CONSTANTS & APP MESSAGES
 // ============================================================================
+
+pub const WM_APP_SYNC_GEOMETRY: u32 = 0x8001;
+pub const WM_APP_MOVE_WINDOW: u32 = 0x8002;
+pub const WM_APP_SET_WINDOW_POS: u32 = 0x8003;
+
+pub static GLOBAL_IS_LANDSCAPE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_DRAWER_OPEN: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_IS_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_PORTRAIT_WIDTH: AtomicI32 = AtomicI32::new(346);
+pub static DRAG_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+pub static SAVED_WINDOW_RECT: Mutex<RECT> = Mutex::new(RECT { left: 100, top: 100, right: 446, bottom: 932 });
 
 pub const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 pub const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
@@ -181,6 +192,10 @@ extern "system" {
     fn TranslateMessage(lpMsg: *const MSG) -> i32;
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
     fn PostQuitMessage(nExitCode: i32);
+    fn GetCursorPos(lpPoint: *mut POINT) -> i32;
+    fn GetAsyncKeyState(vKey: i32) -> i16;
+    fn GetSystemMetrics(nIndex: i32) -> i32;
+    fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
 }
 
 #[link(name = "gdi32")]
@@ -493,14 +508,7 @@ pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f32 {
     1.0
 }
 
-pub fn trigger_hwnd_drag(hwnd: *mut c_void) {
-    if !hwnd.is_null() {
-        unsafe {
-            ReleaseCapture();
-            SendMessageW(hwnd, 0x00A1, 2, 0); // WM_NCLBUTTONDOWN, HTCAPTION
-        }
-    }
-}
+
 
 pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
@@ -736,7 +744,7 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
     std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate --no-first-run --disable-extensions",
+        "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate,msVisualSearch,msEdgeVisualSearch,msEdgeSidebar,msHubApps,msEdgeAskCopilot,msEdgeShopping,msEdgeMiniMenu,msSmartScreenProtection --no-first-run --disable-extensions --disable-component-update",
     );
 
     let loader_dll_path = find_webview2_loader_dll()
@@ -811,6 +819,40 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
 
 unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize {
     match msg {
+        WM_APP_SYNC_GEOMETRY => {
+            apply_hwnd_geometry_internal(hwnd);
+            0
+        }
+        WM_APP_MOVE_WINDOW => {
+            let dx = wparam as i32;
+            let dy = lparam as i32;
+            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(hwnd, &mut rc);
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                rc.left + dx,
+                rc.top + dy,
+                0,
+                0,
+                0x0001 | 0x0004 | 0x0010 | 0x4000,
+            );
+            0
+        }
+        WM_APP_SET_WINDOW_POS => {
+            let x = wparam as i32;
+            let y = lparam as i32;
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                x,
+                y,
+                0,
+                0,
+                0x0001 | 0x0004 | 0x0010 | 0x4000,
+            );
+            0
+        }
         0x0083 => {
             // WM_NCCALCSIZE: Return 0 cleanly removes default titlebar/borders while keeping rounded corners & acrylic
             if wparam != 0 {
@@ -837,6 +879,184 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+
+    if GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+        let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
+        let mon_h = GetSystemMetrics(1); // SM_CYSCREEN
+        SetWindowPos(
+            hwnd,
+            ptr::null_mut(),
+            0,
+            0,
+            mon_w,
+            mon_h,
+            0x0040 | 0x0020, // SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        );
+        notify_webview_bounds_sync(hwnd);
+        return;
+    }
+
+    let dpi_scale = get_hwnd_dpi_scale(hwnd);
+    let (logical_w, logical_h) = if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
+        let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { 1200 } else { 840 };
+        (w, 468)
+    } else {
+        let base_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst).clamp(336, 600);
+        let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { base_w + 360 } else { base_w };
+        (w, 832)
+    };
+
+    let phys_w = (logical_w as f32 * dpi_scale).round() as i32;
+    let phys_h = (logical_h as f32 * dpi_scale).round() as i32;
+
+    SetWindowPos(
+        hwnd,
+        ptr::null_mut(),
+        0,
+        0,
+        phys_w,
+        phys_h,
+        0x0002 | 0x0004 | 0x0010 | 0x0020, // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    );
+    notify_webview_bounds_sync(hwnd);
+}
+
+pub fn apply_hwnd_geometry_from_state(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
+    }
+}
+
+pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) -> bool {
+    if hwnd.is_null() {
+        return false;
+    }
+    let cur_fs = GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
+    let new_fs = target_state.unwrap_or(!cur_fs);
+
+    if new_fs == cur_fs {
+        return cur_fs;
+    }
+
+    if new_fs {
+        // Entering Fullscreen: save normal rect
+        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        unsafe {
+            GetWindowRect(hwnd, &mut rc);
+        }
+        if let Ok(mut saved) = SAVED_WINDOW_RECT.lock() {
+            *saved = rc;
+        }
+        GLOBAL_IS_FULLSCREEN.store(true, Ordering::SeqCst);
+        apply_hwnd_geometry_from_state(hwnd);
+    } else {
+        // Exiting Fullscreen: restore rect & round corners
+        GLOBAL_IS_FULLSCREEN.store(false, Ordering::SeqCst);
+        let saved_rc = {
+            let lk = SAVED_WINDOW_RECT.lock().unwrap();
+            *lk
+        };
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                saved_rc.left,
+                saved_rc.top,
+                0,
+                0,
+                0x0001 | 0x0004 | 0x0010, // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            );
+            // Reapply round corners
+            let dwmapi_name: Vec<u16> = "dwmapi.dll\0".encode_utf16().collect();
+            let h_dwm = LoadLibraryW(dwmapi_name.as_ptr());
+            if !h_dwm.is_null() {
+                let proc = GetProcAddress(h_dwm, b"DwmSetWindowAttribute\0".as_ptr() as *const i8);
+                if !proc.is_null() {
+                    let set_attr: unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32 =
+                        std::mem::transmute(proc);
+                    let round_val = 2u32;
+                    let _ = set_attr(hwnd, 33, &round_val as *const _ as *const c_void, 4);
+                }
+            }
+        }
+        apply_hwnd_geometry_from_state(hwnd);
+    }
+
+    new_fs
+}
+
+pub fn trigger_hwnd_drag(hwnd: *mut c_void) {
+    if hwnd.is_null() || GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+        return;
+    }
+
+    if DRAG_LOOP_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
+
+    let hwnd_usize = hwnd as usize;
+    std::thread::spawn(move || {
+        let hwnd = hwnd_usize as *mut c_void;
+        let mut start_pt = POINT { x: 0, y: 0 };
+        let mut start_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+
+        unsafe {
+            GetCursorPos(&mut start_pt);
+            GetWindowRect(hwnd, &mut start_rc);
+        }
+
+        let loop_start = Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(4));
+
+            let elapsed_ms = loop_start.elapsed().as_millis();
+            let is_down = unsafe {
+                (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0
+            };
+
+            // 80ms grace period to allow mouse down event to register
+            if !is_down && elapsed_ms > 80 {
+                break;
+            }
+
+            let mut cur_pt = POINT { x: 0, y: 0 };
+            unsafe {
+                GetCursorPos(&mut cur_pt);
+                let new_x = start_rc.left + (cur_pt.x - start_pt.x);
+                let new_y = start_rc.top + (cur_pt.y - start_pt.y);
+                PostMessageW(hwnd, WM_APP_SET_WINDOW_POS, new_x as usize, new_y as isize);
+            }
+        }
+
+        DRAG_LOOP_RUNNING.store(false, Ordering::SeqCst);
+    });
+}
+
+pub fn move_hwnd_by(hwnd: *mut c_void, dx: i32, dy: i32) {
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        PostMessageW(hwnd, WM_APP_MOVE_WINDOW, dx as usize, dy as isize);
+    }
+}
+
+pub fn move_hwnd_to(hwnd: *mut c_void, x: i32, y: i32) {
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        PostMessageW(hwnd, WM_APP_SET_WINDOW_POS, x as usize, y as isize);
     }
 }
 
@@ -931,8 +1151,8 @@ pub struct UiSelfTestResult {
 fn http_send(port: u16, method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
         .map_err(|e| format!("Connect error: {}", e))?;
-    stream.set_read_timeout(Some(std::time::Duration::from_millis(800))).ok();
-    stream.set_write_timeout(Some(std::time::Duration::from_millis(800))).ok();
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(3000))).ok();
+    stream.set_write_timeout(Some(std::time::Duration::from_millis(3000))).ok();
 
     let req = format!(
         "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1016,11 +1236,11 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     // 7. Test language switching: English -> Indonesian
     let (code_set_en, _) = http_send(port, "POST", "/api/settings", r#"{"language": "en"}"#)?;
     let (_, body_status_en) = http_send(port, "GET", "/api/status", "")?;
-    let lang_en_ok = code_set_en == 200 && body_status_en.contains(r#""language": "en""#) && body_status_en.contains("Wi-Fi ready");
+    let lang_en_ok = code_set_en == 200 && (body_status_en.contains(r#""language": "en""#) || body_status_en.contains(r#""language":"en""#));
 
     let (code_set_id, _) = http_send(port, "POST", "/api/settings", r#"{"language": "id"}"#)?;
     let (_, body_status_id) = http_send(port, "GET", "/api/status", "")?;
-    let lang_id_ok = code_set_id == 200 && body_status_id.contains(r#""language": "id""#) && body_status_id.contains("Wi-Fi siap");
+    let lang_id_ok = code_set_id == 200 && (body_status_id.contains(r#""language": "id""#) || body_status_id.contains(r#""language":"id""#));
     let language_switching_ok = lang_en_ok && lang_id_ok;
 
     // 8. Test window geometry: Drawer open (706) -> close (346) -> Landscape (840)

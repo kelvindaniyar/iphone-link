@@ -18,6 +18,7 @@ pub struct ConnectedAppleDevice {
     pub connection_type: String,
     pub product_id: u32,
     pub marketing_model: Option<String>,
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +164,7 @@ pub fn list_connected_usb_devices(timeout: Duration) -> Result<Vec<ConnectedAppl
                 connection_type: conn_type,
                 product_id: prod_id,
                 marketing_model: model_name,
+                device_name: "iPhone".to_string(),
             });
         }
         search_from = dict_end;

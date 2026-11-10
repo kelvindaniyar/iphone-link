@@ -27,8 +27,10 @@ use crate::i18n::{translate_dynamic_status, Lang};
 use crate::link_grabber::extract_and_normalize_links;
 use crate::ocr_engine::{clear_copy_cache, read_win32_clipboard, write_win32_clipboard};
 use crate::window_dwm::{
-    apply_true_files_acrylic_backdrop, get_hwnd_dpi_scale, notify_webview_bounds_sync,
-    trigger_hwnd_drag, WindowGeometryManager, RECT,
+    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop,
+    move_hwnd_by, move_hwnd_to, toggle_fullscreen_state,
+    trigger_hwnd_drag, WindowGeometryManager, GLOBAL_DRAWER_OPEN, GLOBAL_IS_FULLSCREEN,
+    GLOBAL_IS_LANDSCAPE, GLOBAL_PORTRAIT_WIDTH, RECT,
 };
 
 use iphone_link_apple::hid::IndigoHidController;
@@ -42,7 +44,7 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* v4_true_acrylic.css - Windows 11 True DWM Acrylic Blur Engine (Tahap 156) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* v4_true_acrylic.css - Windows 11 True DWM Acrylic Blur Engine (Tahap 158) */
 .app::before,
 [data-theme="light"] .app::before {
     display: none !important;
@@ -51,9 +53,66 @@ pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* v4_true_acrylic.css - Windows 11 Tru
     content: none !important;
 }
 
-html, body {
+html, body, .app {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
     background: transparent !important;
     background-color: transparent !important;
+}
+
+.main-body {
+    width: 100% !important;
+    height: calc(100vh - 38px) !important;
+    min-height: calc(100vh - 38px) !important;
+    max-height: calc(100vh - 38px) !important;
+    overflow: hidden !important;
+}
+
+.display-col {
+    height: calc(100vh - 38px) !important;
+    min-height: calc(100vh - 38px) !important;
+    max-height: calc(100vh - 38px) !important;
+    overflow: hidden !important;
+}
+
+.workspace, .stage, #phone-shell, #phone-screen, #screen-empty {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    scrollbar-width: none !important;
+}
+
+.display-col::-webkit-scrollbar,
+.workspace::-webkit-scrollbar,
+.stage::-webkit-scrollbar,
+#phone-shell::-webkit-scrollbar,
+#phone-screen::-webkit-scrollbar,
+#screen-empty::-webkit-scrollbar,
+body::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+
+iframe#screen-view {
+    background: #000000 !important;
+    color-scheme: dark !important;
+}
+
+.app.is-fullsize #phone-screen {
+    background: rgba(18, 22, 32, 0.28) !important;
+    border-radius: 18px !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+}
+
+[data-theme="light"] .app.is-fullsize #phone-screen {
+    background: rgba(245, 248, 252, 0.38) !important;
+    border: 1px solid rgba(15, 23, 42, 0.14) !important;
 }
 
 .app {
@@ -118,6 +177,11 @@ body[data-theme="light"] .card {
 .app.is-streaming #phone-screen,
 .workspace.is-live #phone-screen {
     background-color: #000000 !important;
+}
+
+.app-bar, .drawer-header, .quick-nav, #screen-empty {
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 "#;
 
@@ -194,10 +258,20 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             });
         },
         sync_device_aspect: function(display_width, drawer_open) {
-            return postApi('/api/window/sync_aspect', {
+            return postApi('/api/window/sync_device_aspect', {
                 width: display_width,
-                open: !!drawer_open
+                open: !!drawer_open,
+                drawer: !!drawer_open
             });
+        },
+        move_by: function(dx, dy) {
+            return postApi('/api/window/move_by', { dx: dx, dy: dy });
+        },
+        move_to: function(x, y) {
+            return postApi('/api/window/move_to', { x: x, y: y });
+        },
+        sync_layout: function(data) {
+            return postApi('/api/window/sync_layout', data || {});
         },
         set_device_family: function(family, should_resize) {
             return postApi('/api/window/set_device_family', {
@@ -270,18 +344,66 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
     };
 
-    document.addEventListener('DOMContentLoaded', function() {
-        var bar = document.querySelector('.app-bar');
-        if (bar) {
-            bar.addEventListener('mousedown', function(e) {
+    window.addEventListener("contextmenu", function(e) {
+        e.preventDefault();
+    }, true);
+
+    function installDragListeners() {
+        ['.app-bar', '.drawer-header'].forEach(function(sel) {
+            var el = document.querySelector(sel);
+            if (!el) return;
+            var onDragStart = function(e) {
                 if (e.button !== 0) return;
-                if (e.target.closest('button, a, input, select, .bar-btn, .icon-btn, .win-btn, .window-controls')) {
-                    return;
+                var interactive = e.target.closest('button, a, input, select, textarea, .bar-btn, #btn-settings, #close-settings, #win-min, #win-max, #win-close, #restart-screen, #stop-screen, #btn-rotate-landscape, #toggle-audio-top');
+                if (!interactive) {
+                    e.preventDefault();
+                    fetch('/api/window/start_drag', { method: 'POST' }).catch(function(){});
                 }
-                window.pywebview.api.start_window_drag();
-            });
-        }
-    });
+            };
+            el.removeEventListener('pointerdown', onDragStart, true);
+            el.addEventListener('pointerdown', onDragStart, true);
+            el.removeEventListener('mousedown', onDragStart, true);
+            el.addEventListener('mousedown', onDragStart, true);
+        });
+    }
+
+    function initMutationLayoutSync() {
+        var appEl = document.querySelector(".app");
+        if (!appEl) return;
+        var lastDrawer = appEl.classList.contains("drawer-open");
+        var lastLandscape = appEl.classList.contains("is-landscape");
+        var lastFullsize = appEl.classList.contains("is-fullsize");
+        var syncLayoutNow = function() {
+            var curDrawer = appEl.classList.contains("drawer-open");
+            var curLandscape = appEl.classList.contains("is-landscape");
+            var curFullsize = appEl.classList.contains("is-fullsize");
+            if (curDrawer !== lastDrawer || curLandscape !== lastLandscape || curFullsize !== lastFullsize) {
+                lastDrawer = curDrawer;
+                lastLandscape = curLandscape;
+                lastFullsize = curFullsize;
+                fetch("/api/window/sync_layout", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        drawerOpen: curDrawer,
+                        isLandscape: curLandscape,
+                        isFullsize: curFullsize
+                    })
+                }).catch(function() {});
+            }
+        };
+        new MutationObserver(syncLayoutNow).observe(appEl, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener('DOMContentLoaded', function() {
+            installDragListeners();
+            initMutationLayoutSync();
+        });
+    } else {
+        installDragListeners();
+        initMutationLayoutSync();
+    }
 })();
 "#;
 
@@ -514,10 +636,30 @@ pub fn mime_for_path_str(path_str: &str) -> &'static str {
 }
 
 /// Resolves a relative static asset path across web_dir, exe_dir/web, exe_dir/assets, and repo folders.
-fn resolve_static_asset_file(web_dir: &Path, clean_rel: &str) -> Option<PathBuf> {
-    if clean_rel.contains("..") {
+fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> {
+    if rel_path.contains("..") {
         return None;
     }
+
+    let clean_rel = if rel_path.is_empty() || rel_path == "/" || rel_path == "index.html" {
+        "index.html"
+    } else if rel_path == "mirror" || rel_path == "mirror/" || rel_path == "mirror/index.html" || rel_path == "mirror.html" {
+        "mirror.html"
+    } else if rel_path == "mirror/mirror.css" || rel_path == "mirror.css" {
+        "mirror.css"
+    } else if rel_path == "mirror/mirror.js" || rel_path == "mirror.js" {
+        "mirror.js"
+    } else if rel_path == "mirror/keys.js" || rel_path == "keys.js" {
+        "keys.js"
+    } else if rel_path == "mirror/app.css" || rel_path == "app.css" {
+        "app.css"
+    } else if rel_path == "mirror/app.js" || rel_path == "app.js" {
+        "app.js"
+    } else if rel_path == "mirror/logo.svg" || rel_path == "logo.svg" {
+        "logo.svg"
+    } else {
+        rel_path.trim_start_matches('/')
+    };
 
     let mut candidates = Vec::new();
     candidates.push(web_dir.join(clean_rel));
@@ -558,6 +700,7 @@ fn resolve_static_asset_file(web_dir: &Path, clean_rel: &str) -> Option<PathBuf>
         candidates.push(cwd.join("handset").join("web").join(clean_rel));
         if let Some(file_name) = Path::new(clean_rel).file_name() {
             candidates.push(cwd.join("assets").join(file_name));
+            candidates.push(cwd.join("handset").join("web").join(file_name));
         }
     }
 
@@ -589,6 +732,88 @@ fn build_settings_json(st: &AppState) -> String {
         st.device_profile,
         st.language.code()
     )
+}
+
+// ============================================================================
+// COREDEVICE WORKER REVERSE PROXY & LIVE STREAMING (PORT 8767)
+// ============================================================================
+
+pub const WORKER_PORT: u16 = 8767;
+
+fn parse_int_param(body: &str, param: &str) -> Option<i32> {
+    let key1 = format!(r#""{}":"#, param);
+    let key2 = format!(r#""{}": "#, param);
+    let after = if let Some(idx) = body.find(&key1) {
+        &body[idx + key1.len()..]
+    } else if let Some(idx) = body.find(&key2) {
+        &body[idx + key2.len()..]
+    } else {
+        return None;
+    };
+    let trimmed = after.trim_start();
+    let num_str: String = trimmed.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+    num_str.parse::<i32>().ok()
+}
+
+fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT)).ok()?;
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(80)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(80)));
+
+    let http_req = format!(
+        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        req.method, req.path, WORKER_PORT, req.body.len(), req.body
+    );
+    stream.write_all(http_req.as_bytes()).ok()?;
+
+    let mut resp_bytes = Vec::new();
+    stream.read_to_end(&mut resp_bytes).ok()?;
+
+    if resp_bytes.is_empty() {
+        return None;
+    }
+
+    let resp_str = String::from_utf8_lossy(&resp_bytes);
+    let header_end = resp_str.find("\r\n\r\n")?;
+    let (header_part, body_part) = resp_str.split_at(header_end);
+    let actual_body = &body_part[4..];
+
+    let status_code = if header_part.starts_with("HTTP/1.1 ") && header_part.len() >= 12 {
+        header_part[9..12].parse::<u16>().unwrap_or(200)
+    } else {
+        200
+    };
+
+    Some(HttpResponse {
+        status_code,
+        status_text: "OK",
+        content_type: "application/json; charset=utf-8",
+        body: actual_body.as_bytes().to_vec(),
+    })
+}
+
+fn stream_live_passthrough(client: &mut TcpStream) -> Result<(), std::io::Error> {
+    let mut upstream = match TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT)) {
+        Ok(s) => s,
+        Err(_) => TcpStream::connect("127.0.0.1:8766")?,
+    };
+    upstream.set_nodelay(true)?;
+    client.set_nodelay(true)?;
+
+    let req = format!("GET /mirror/live HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", WORKER_PORT);
+    upstream.write_all(req.as_bytes())?;
+
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = upstream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        client.write_all(&buf[..n])?;
+        client.flush()?;
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -625,7 +850,63 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     // 2. API: Status
     if path == "/api/status" {
-        // Probe connected USB devices cleanly with 60ms timeout
+        // Try forwarding to worker first (if running on WORKER_PORT 8767)
+        if let Some(resp) = forward_to_worker(req) {
+            if resp.status_code == 200 {
+                let body_str = String::from_utf8_lossy(&resp.body).to_string();
+                let mut sanitized = body_str
+                    .replace(r#""name": "UNKW 0000""#, r#""name": "iPhone""#)
+                    .replace(r#""deviceName": "UNKW 0000""#, r#""deviceName": "iPhone""#)
+                    .replace(r#""name":"UNKW 0000""#, r#""name":"iPhone""#)
+                    .replace(r#""deviceName":"UNKW 0000""#, r#""deviceName":"iPhone""#)
+                    .replace("UNKW 0000", "iPhone")
+                    .replace("UNKW", "iPhone");
+
+                if sanitized.contains(r#""screen""#) && !sanitized.contains(r#""url": "/mirror.html""#) {
+                    sanitized = sanitized.replace(
+                        r#""screen": {"#,
+                        r#""screen": {"url": "/mirror.html","#
+                    ).replace(
+                        r#""screen": { "#,
+                        r#""screen": {"url": "/mirror.html", "#
+                    );
+                }
+
+                // Sync language and status_text from AppState so bilingual ID/EN works consistently
+                let st = state.lock().unwrap();
+                let lang_code = st.language.code();
+                let status_text = translate_dynamic_status("Wi-Fi siap", st.language);
+                drop(st);
+
+                if !sanitized.contains("status_text") {
+                    sanitized = sanitized.replace(
+                        r#""version": "4.0.0""#,
+                        &format!(r#""status_text": "{}", "language": "{}", "version": "4.0.0""#, status_text, lang_code)
+                    );
+                } else {
+                    sanitized = sanitized
+                        .replace(r#""status_text": "Wi-Fi siap""#, &format!(r#""status_text": "{}""#, status_text))
+                        .replace(r#""status_text": "Wi-Fi ready""#, &format!(r#""status_text": "{}""#, status_text));
+                }
+
+                if !sanitized.contains("webviewMetrics") {
+                    let metrics_str = format!(
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{}}}}}"#,
+                        INDEX_HTML_SERVED.load(Ordering::SeqCst),
+                        APP_CSS_SERVED.load(Ordering::SeqCst),
+                        APP_JS_SERVED.load(Ordering::SeqCst),
+                        DOM_READY_BEACON.load(Ordering::SeqCst)
+                    );
+                    if let Some(last_brace) = sanitized.rfind('}') {
+                        sanitized.replace_range(last_brace.., &metrics_str);
+                    }
+                }
+
+                return HttpResponse::ok_json(&sanitized);
+            }
+        }
+
+        // Fallback status if worker not running or during self-tests
         let usb_list = list_connected_usb_devices(Duration::from_millis(60)).unwrap_or_default();
         let mut st = state.lock().unwrap();
         if let Some(first_usb) = usb_list.first() {
@@ -668,8 +949,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
   "devices": [
     {{
       "udid": "{}",
-      "name": "UWE UH",
-      "deviceName": "UWE UH",
+      "name": "iPhone",
+      "deviceName": "iPhone",
       "model": "{}",
       "productType": "{}",
       "screen_type": "DynamicIsland",
@@ -686,6 +967,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "phase": "{}",
     "active": {},
     "transport": "{}",
+    "url": "/mirror.html",
     "fps": 60,
     "width": 1202,
     "height": 2598,
@@ -753,6 +1035,22 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             DOM_READY_BEACON.load(Ordering::SeqCst)
         );
         return HttpResponse::ok_json(&json);
+    }
+
+    // Try forwarding to worker for backend-managed endpoints
+    if path.starts_with("/api/device/")
+        || path.starts_with("/api/devices/")
+        || path.starts_with("/api/audio/")
+        || path.starts_with("/api/wifi/")
+        || path.starts_with("/api/keyboard/")
+        || path.starts_with("/api/social/")
+        || path.starts_with("/api/update/")
+        || path.starts_with("/api/screen")
+        || path.starts_with("/mirror/")
+    {
+        if let Some(resp) = forward_to_worker(req) {
+            return resp;
+        }
     }
 
     // 2B. API: Device detail (/api/devices/<udid>)
@@ -924,7 +1222,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"history":[]}"#);
     }
 
-    // 7. API: Window Controls (with DPI-aware HWND & WebView2 Bounds Sync)
+    // 7. API: Window Controls (with DPI-aware HWND & WebView2 Bounds Sync via Main Thread Dispatch)
     if path == "/api/window/set_drawer" {
         let mut st = state.lock().unwrap();
         let open = req.body.contains(r#""open":true"#)
@@ -933,37 +1231,26 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains(r#""drawer": true"#);
         st.is_drawer_open = open;
         st.geometry.is_drawer_open = open;
-
-        // Calculate logical dimensions first (346x832 or 706x832)
-        st.geometry.dpi_scale = 1.0;
-        let logical_rect = st.geometry.recalculate_rect();
-        let logical_w = logical_rect.width();
-        let logical_h = logical_rect.height();
-
+        GLOBAL_DRAWER_OPEN.store(open, Ordering::SeqCst);
         let hwnd_usize = st.window_hwnd;
-        let dpi_scale = if hwnd_usize != 0 {
-            get_hwnd_dpi_scale(hwnd_usize as *mut _)
-        } else {
-            1.0
-        };
-        st.geometry.dpi_scale = dpi_scale;
-        let phys_rect = st.geometry.recalculate_rect();
         drop(st);
 
         if hwnd_usize != 0 {
-            unsafe {
-                set_window_rect_native(hwnd_usize as *mut _, phys_rect);
-            }
-            notify_webview_bounds_sync(hwnd_usize as *mut _);
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
         }
 
+        let is_land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
+        let cur_w = if is_land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { port_w + 360 } else { port_w }
+        };
+        let cur_h = if is_land { 468 } else { 832 };
+
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"status":"ok","drawer_open":{},"width":{},"height":{},"phys_width":{},"phys_height":{}}}"#,
-            open,
-            logical_w,
-            logical_h,
-            phys_rect.width(),
-            phys_rect.height()
+            r#"{{"ok":true,"status":"ok","drawer_open":{},"width":{},"height":{}}}"#,
+            open, cur_w, cur_h
         ));
     }
 
@@ -972,42 +1259,36 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let land = req.body.contains(r#""landscape":true"#) || req.body.contains(r#""landscape": true"#);
         st.is_landscape = land;
         st.geometry.is_landscape = land;
+        GLOBAL_IS_LANDSCAPE.store(land, Ordering::SeqCst);
         if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) {
             st.is_drawer_open = true;
             st.geometry.is_drawer_open = true;
+            GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
         } else if req.body.contains(r#""drawer":false"#) || req.body.contains(r#""drawer": false"#) {
             st.is_drawer_open = false;
             st.geometry.is_drawer_open = false;
+            GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
         }
 
-        st.geometry.dpi_scale = 1.0;
-        let logical_rect = st.geometry.recalculate_rect();
-        let logical_w = logical_rect.width();
-        let logical_h = logical_rect.height();
-
         let hwnd_usize = st.window_hwnd;
-        let dpi_scale = if hwnd_usize != 0 {
-            get_hwnd_dpi_scale(hwnd_usize as *mut _)
-        } else {
-            1.0
-        };
-        st.geometry.dpi_scale = dpi_scale;
-        let phys_rect = st.geometry.recalculate_rect();
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
         drop(st);
 
         if hwnd_usize != 0 {
-            unsafe {
-                set_window_rect_native(hwnd_usize as *mut _, phys_rect);
-            }
-            notify_webview_bounds_sync(hwnd_usize as *mut _);
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
         }
+
+        let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { port_w + 360 } else { port_w }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"status":"ok","landscape":{},"width":{},"height":{},"phys_width":{},"phys_height":{}}}"#,
-            land,
-            logical_w,
-            logical_h,
-            phys_rect.width(),
-            phys_rect.height()
+            r#"{{"ok":true,"status":"ok","landscape":{},"drawer_open":{},"width":{},"height":{}}}"#,
+            land, open, cur_w, cur_h
         ));
     }
 
@@ -1026,26 +1307,114 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/toggle_fullscreen" {
-        let mut st = state.lock().unwrap();
-        let mock_work = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
-        let rect = st.geometry.toggle_fullscreen(mock_work);
-        st.is_fullscreen = st.geometry.is_fullscreen;
-        let is_fs = st.is_fullscreen;
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+
+        let is_fs = if hwnd_usize != 0 {
+            toggle_fullscreen_state(hwnd_usize as *mut _, None)
+        } else {
+            let cur = GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
+            GLOBAL_IS_FULLSCREEN.store(!cur, Ordering::SeqCst);
+            !cur
+        };
+        {
+            let mut st = state.lock().unwrap();
+            st.is_fullscreen = is_fs;
+        }
+
+        let (cur_w, cur_h) = if is_fs {
+            (1920, 1080)
+        } else if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
+            let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+            (if open { 1200 } else { 840 }, 468)
+        } else {
+            let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+            let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
+            (if open { port_w + 360 } else { port_w }, 832)
+        };
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"status":"ok","fullscreen":{},"is_fullscreen":{},"width":{},"height":{}}}"#,
+            is_fs, is_fs, cur_w, cur_h
+        ));
+    }
+
+    if path == "/api/window/sync_device_aspect" || path == "/api/window/sync_aspect" {
+        let is_ipad = req.body.contains("4:3") || req.body.contains("ipad") || req.body.contains("iPad");
+        let portrait_w = if is_ipad { 520 } else { 346 };
+        GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+
+        let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
         if hwnd_usize != 0 {
-            unsafe {
-                set_window_rect_native(hwnd_usize as *mut _, rect);
-            }
-            notify_webview_bounds_sync(hwnd_usize as *mut _);
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
         }
+
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { portrait_w + 360 } else { portrait_w }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"status":"ok","fullscreen":{},"is_fullscreen":{},"width":{},"height":{}}}"#,
-            is_fs,
-            is_fs,
-            rect.width(),
-            rect.height()
+            r#"{{"ok":true,"is_ipad":{},"portrait_width":{},"width":{},"height":{}}}"#,
+            is_ipad, portrait_w, cur_w, cur_h
+        ));
+    }
+
+    if path == "/api/window/sync_layout" {
+        let mut changed = false;
+        if req.body.contains(r#""drawerOpen":true"#) || req.body.contains(r#""drawerOpen": true"#) {
+            if !GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) {
+                GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
+                changed = true;
+            }
+        } else if req.body.contains(r#""drawerOpen":false"#) || req.body.contains(r#""drawerOpen": false"#) {
+            if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) {
+                GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+                changed = true;
+            }
+        }
+
+        if req.body.contains(r#""isLandscape":true"#) || req.body.contains(r#""isLandscape": true"#) {
+            if !GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
+                GLOBAL_IS_LANDSCAPE.store(true, Ordering::SeqCst);
+                changed = true;
+            }
+        } else if req.body.contains(r#""isLandscape":false"#) || req.body.contains(r#""isLandscape": false"#) {
+            if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
+                GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+                changed = true;
+            }
+        }
+
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+
+        if changed && hwnd_usize != 0 {
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        }
+
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { port_w + 360 } else { port_w }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"synced":true,"drawer_open":{},"landscape":{},"width":{},"height":{}}}"#,
+            open, land, cur_w, cur_h
         ));
     }
 
@@ -1059,6 +1428,30 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"status":"dragging"}"#);
     }
 
+    if path == "/api/window/move_by" {
+        let dx = parse_int_param(&req.body, "dx").unwrap_or(0);
+        let dy = parse_int_param(&req.body, "dy").unwrap_or(0);
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+        if hwnd_usize != 0 {
+            move_hwnd_by(hwnd_usize as *mut _, dx, dy);
+        }
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"dx":{},"dy":{}}}"#, dx, dy));
+    }
+
+    if path == "/api/window/move_to" {
+        let x = parse_int_param(&req.body, "x").unwrap_or(100);
+        let y = parse_int_param(&req.body, "y").unwrap_or(100);
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+        if hwnd_usize != 0 {
+            move_hwnd_to(hwnd_usize as *mut _, x, y);
+        }
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"x":{},"y":{}}}"#, x, y));
+    }
+
     if path == "/api/window/dom_ready_beacon" {
         DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
         return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
@@ -1066,18 +1459,32 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     if path == "/api/window/rect" {
         let st = state.lock().unwrap();
-        let r = st.geometry.current_rect;
+        let hwnd_usize = st.window_hwnd;
+        let fallback_r = st.geometry.current_rect;
+        drop(st);
+
+        if hwnd_usize != 0 {
+            #[link(name = "user32")]
+            extern "system" {
+                fn GetWindowRect(hwnd: *mut std::ffi::c_void, lpRect: *mut RECT) -> i32;
+            }
+            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            unsafe {
+                GetWindowRect(hwnd_usize as *mut _, &mut rc);
+            }
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"x":{},"y":{},"width":{},"height":{}}}"#,
+                rc.left, rc.top, rc.width(), rc.height()
+            ));
+        }
+
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"x":{},"y":{},"width":{},"height":{}}}"#,
-            r.left,
-            r.top,
-            r.width(),
-            r.height()
+            fallback_r.left, fallback_r.top, fallback_r.width(), fallback_r.height()
         ));
     }
 
     if path == "/api/window/reset_size"
-        || path == "/api/window/sync_aspect"
         || path == "/api/window/set_device_family"
         || path == "/api/window/set_device_profile"
         || path == "/api/window/apply_custom_size"
@@ -1199,6 +1606,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     // 9. Static File Serving from web_dir and assets/
     let clean_rel = if path.is_empty() || path == "/" || path == "/index.html" {
         "index.html"
+    } else if path == "/mirror" || path == "/mirror/" || path == "/mirror/index.html" || path == "/mirror.html" {
+        "mirror.html"
+    } else if path == "/mirror/mirror.css" || path == "/mirror.css" {
+        "mirror.css"
+    } else if path == "/mirror/mirror.js" || path == "/mirror.js" {
+        "mirror.js"
+    } else if path == "/mirror/keys.js" || path == "/keys.js" {
+        "keys.js"
+    } else if path == "/mirror/app.css" || path == "/app.css" {
+        "app.css"
+    } else if path == "/mirror/app.js" || path == "/app.js" {
+        "app.js"
+    } else if path == "/mirror/logo.svg" || path == "/logo.svg" {
+        "logo.svg"
     } else {
         path.trim_start_matches('/')
     };
@@ -1215,7 +1636,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Ok(bytes) = fs::read(&target_file) {
             let mime = mime_for_path_str(clean_rel);
 
-            if clean_rel.eq_ignore_ascii_case("index.html") {
+            if clean_rel.eq_ignore_ascii_case("index.html") || clean_rel.eq_ignore_ascii_case("mirror.html") {
                 let mut html = String::from_utf8_lossy(&bytes).to_string();
                 if !html.contains("v4_true_acrylic.css") {
                     html = html.replace(
@@ -1259,6 +1680,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
 #[link(name = "user32")]
 extern "system" {
+    #[allow(dead_code)]
     fn SetWindowPos(
         hwnd: *mut std::ffi::c_void,
         hwndInsertAfter: *mut std::ffi::c_void,
@@ -1272,6 +1694,7 @@ extern "system" {
     fn PostMessageW(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
 }
 
+#[allow(dead_code)]
 unsafe fn set_window_rect_native(hwnd: *mut std::ffi::c_void, rect: RECT) {
     if !hwnd.is_null() {
         SetWindowPos(
@@ -1303,9 +1726,10 @@ unsafe fn post_quit_message(hwnd: *mut std::ffi::c_void) {
 // ============================================================================
 
 fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_dir: PathBuf) {
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(2000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(2000)));
 
     let mut raw_buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 8192];
@@ -1340,11 +1764,21 @@ fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_
 
     if !raw_buf.is_empty() {
         if let Some(req) = HttpRequest::parse(&raw_buf) {
+            let clean_path = req.path.split('?').next().unwrap_or("/").split('#').next().unwrap_or("/");
+            if clean_path == "/mirror/live" || clean_path == "/stream.bin" {
+                let _ = stream.set_read_timeout(None);
+                let _ = stream.set_write_timeout(None);
+                if let Err(_) = stream_live_passthrough(&mut stream) {
+                    let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 21\r\n\r\nWorker not connected\n");
+                    let _ = stream.flush();
+                }
+                return;
+            }
+
             let resp = handle_request(&req, &state, &web_dir);
             let resp_bytes = resp.to_bytes();
             let _ = stream.write_all(&resp_bytes);
             let _ = stream.flush();
-            let _ = stream.shutdown(std::net::Shutdown::Both);
         }
     }
 }
@@ -1356,15 +1790,32 @@ pub struct NativeServer {
 
 impl NativeServer {
     pub fn start(state: Arc<Mutex<AppState>>, web_dir: PathBuf, port: u16) -> Result<Self, String> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-            .or_else(|_| TcpListener::bind("127.0.0.1:0"))
-            .map_err(|e| format!("Failed to bind TCP listener: {}", e))?;
+        let mut listener_opt = None;
+        for _ in 0..15 {
+            if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
+                listener_opt = Some(l);
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        let listener = match listener_opt {
+            Some(l) => l,
+            None => TcpListener::bind("127.0.0.1:0")
+                .map_err(|e| format!("Failed to bind TCP listener: {}", e))?,
+        };
 
         let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
         {
             let mut st = state.lock().unwrap();
             st.server_port = actual_port;
         }
+
+        if let Ok(exe) = env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let _ = fs::write(exe_dir.join("server_port.txt"), actual_port.to_string());
+            }
+        }
+        let _ = fs::write("server_port.txt", actual_port.to_string());
 
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
