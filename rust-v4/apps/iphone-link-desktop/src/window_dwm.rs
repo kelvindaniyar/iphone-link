@@ -18,6 +18,7 @@ use std::net::TcpStream;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -166,11 +167,25 @@ extern "system" {
     fn GetClientRect(hWnd: *mut c_void, lpRect: *mut RECT) -> i32;
     fn ReleaseCapture() -> i32;
     fn SendMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> isize;
+    fn LoadCursorW(hInstance: *mut c_void, lpCursorName: *const u16) -> *mut c_void;
+    fn FillRect(hDC: *mut c_void, lprc: *const RECT, hbr: *mut c_void) -> i32;
     fn SystemParametersInfoW(uiAction: u32, uiParam: u32, pvParam: *mut c_void, fWinIni: u32) -> i32;
     fn GetMessageW(lpMsg: *mut MSG, hWnd: *mut c_void, wMsgFilterMin: u32, wMsgFilterMax: u32) -> i32;
+    fn PeekMessageW(
+        lpMsg: *mut MSG,
+        hWnd: *mut c_void,
+        wMsgFilterMin: u32,
+        wMsgFilterMax: u32,
+        wRemoveMsg: u32,
+    ) -> i32;
     fn TranslateMessage(lpMsg: *const MSG) -> i32;
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
     fn PostQuitMessage(nExitCode: i32);
+}
+
+#[link(name = "gdi32")]
+extern "system" {
+    fn GetStockObject(i: i32) -> *mut c_void;
 }
 
 #[link(name = "ole32")]
@@ -454,8 +469,8 @@ pub const TRAY_MENU_ITEMS: &[&str] = &[
 // INTERACTIVE WINDOW CREATION & MESSAGE PUMP
 // ============================================================================
 
-static GLOBAL_CONTROLLER: Mutex<Option<usize>> = Mutex::new(None);
-static GLOBAL_HWND: Mutex<Option<usize>> = Mutex::new(None);
+static GLOBAL_WEBVIEW_CONTROLLER: AtomicIsize = AtomicIsize::new(0);
+static GLOBAL_CORE_WEBVIEW2: AtomicIsize = AtomicIsize::new(0);
 
 pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f32 {
     if hwnd.is_null() {
@@ -491,28 +506,39 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
     }
-    let ctrl_raw = {
-        let guard = GLOBAL_CONTROLLER.lock().unwrap();
-        *guard
-    };
-    if let Some(ctrl) = ctrl_raw {
-        if ctrl != 0 {
-            unsafe {
-                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                GetClientRect(hwnd, &mut rc);
-                let vtable = *(ctrl as *mut *const usize);
-                let put_bounds_ptr = *vtable.add(6);
-                let put_bounds_fn: unsafe extern "system" fn(*mut c_void, RECT) -> i32 =
-                    std::mem::transmute(put_bounds_ptr);
-                let _ = put_bounds_fn(ctrl as *mut c_void, rc);
-            }
+    let ctrl_raw = GLOBAL_WEBVIEW_CONTROLLER.load(Ordering::SeqCst);
+    if ctrl_raw != 0 {
+        let ctrl = ctrl_raw as *mut c_void;
+        unsafe {
+            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetClientRect(hwnd, &mut rc);
+            let ctrl_vt = *(ctrl as *mut *const usize);
+            type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
+            let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
+            let _ = put_bounds(ctrl, &rc as *const RECT);
         }
     }
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GUID {
+    pub data1: u32,
+    pub data2: u16,
+    pub data3: u16,
+    pub data4: [u8; 8],
+}
+
+pub const IID_ICOREWEBVIEW2_CONTROLLER2: GUID = GUID {
+    data1: 0xC979903E,
+    data2: 0xD4CA,
+    data3: 0x4228,
+    data4: [0x92, 0xEB, 0x47, 0xEE, 0x3F, 0xA9, 0x6E, 0xAB],
+};
+
+#[repr(C)]
 struct EnvironmentCompletedHandlerVTable {
-    QueryInterface: unsafe extern "system" fn(*mut c_void, *const u8, *mut *mut c_void) -> i32,
+    QueryInterface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32,
     AddRef: unsafe extern "system" fn(*mut c_void) -> u32,
     Release: unsafe extern "system" fn(*mut c_void) -> u32,
     Invoke: unsafe extern "system" fn(*mut c_void, i32, *mut c_void) -> i32,
@@ -520,7 +546,7 @@ struct EnvironmentCompletedHandlerVTable {
 
 #[repr(C)]
 struct ControllerCompletedHandlerVTable {
-    QueryInterface: unsafe extern "system" fn(*mut c_void, *const u8, *mut *mut c_void) -> i32,
+    QueryInterface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32,
     AddRef: unsafe extern "system" fn(*mut c_void) -> u32,
     Release: unsafe extern "system" fn(*mut c_void) -> u32,
     Invoke: unsafe extern "system" fn(*mut c_void, i32, *mut c_void) -> i32,
@@ -528,13 +554,14 @@ struct ControllerCompletedHandlerVTable {
 
 unsafe extern "system" fn handler_query_interface(
     this: *mut c_void,
-    _riid: *const u8,
+    _riid: *const GUID,
     ppv: *mut *mut c_void,
 ) -> i32 {
     if ppv.is_null() {
         return -2147467261;
     }
     *ppv = this;
+    handler_add_ref(this);
     0
 }
 
@@ -576,70 +603,97 @@ static CTRL_VTABLE: ControllerCompletedHandlerVTable = ControllerCompletedHandle
 
 unsafe extern "system" fn env_completed_invoke(
     this: *mut c_void,
-    hr: i32,
-    created_env: *mut c_void,
+    err: i32,
+    env: *mut c_void,
 ) -> i32 {
-    if hr != 0 || created_env.is_null() {
-        return hr;
+    if err < 0 || env.is_null() {
+        return err;
     }
     let handler = &*(this as *const EnvironmentCompletedHandler);
     let hwnd = handler.hwnd;
     let url = handler.url.clone();
 
-    let ctrl_handler = Box::new(ControllerCompletedHandler {
+    // 1. AddRef on env
+    let env_vt = *(env as *mut *const usize);
+    let env_addref: unsafe extern "system" fn(*mut c_void) -> u32 =
+        std::mem::transmute(*env_vt.add(1));
+    let _ = env_addref(env);
+
+    // 2. Allocate controller handler on heap and do NOT free it
+    let ctrl_handler = Box::into_raw(Box::new(ControllerCompletedHandler {
         vtable: &CTRL_VTABLE,
         hwnd,
         url,
-    });
-    let ctrl_handler_ptr = Box::into_raw(ctrl_handler) as *mut c_void;
+    })) as *mut c_void;
 
-    let vtable = *(created_env as *mut *const usize);
-    let create_ctrl_ptr = *vtable.add(3);
-    let create_ctrl_fn: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
-        std::mem::transmute(create_ctrl_ptr);
-    create_ctrl_fn(created_env, hwnd, ctrl_handler_ptr)
+    // 3. CreateCoreWebView2Controller is index 3
+    type CreateCtrlFn = unsafe extern "system" fn(this: *mut c_void, parent_hwnd: isize, handler: *mut c_void) -> i32;
+    let create_ctrl: CreateCtrlFn = std::mem::transmute(*env_vt.add(3));
+    create_ctrl(env, hwnd as isize, ctrl_handler)
 }
 
 unsafe extern "system" fn ctrl_completed_invoke(
     this: *mut c_void,
-    hr: i32,
-    created_controller: *mut c_void,
+    err: i32,
+    controller: *mut c_void,
 ) -> i32 {
-    if hr != 0 || created_controller.is_null() {
-        return hr;
+    if err < 0 || controller.is_null() {
+        return err;
     }
     let handler = &*(this as *const ControllerCompletedHandler);
     let hwnd = handler.hwnd;
     let url = &handler.url;
 
-    *GLOBAL_CONTROLLER.lock().unwrap() = Some(created_controller as usize);
+    let ctrl_vt = *(controller as *mut *const usize);
 
-    let vtable = *(created_controller as *mut *const usize);
+    // 1. WAJIB AddRef on controller and save to atomic
+    let ctrl_addref: unsafe extern "system" fn(*mut c_void) -> u32 =
+        std::mem::transmute(*ctrl_vt.add(1));
+    let _ = ctrl_addref(controller);
+    GLOBAL_WEBVIEW_CONTROLLER.store(controller as isize, Ordering::SeqCst);
 
-    let put_visible_ptr = *vtable.add(4);
-    let put_visible_fn: unsafe extern "system" fn(*mut c_void, i32) -> i32 =
-        std::mem::transmute(put_visible_ptr);
-    let _ = put_visible_fn(created_controller, 1);
+    // 2. put_IsVisible(TRUE) (index 4)
+    type PutVisibleFn = unsafe extern "system" fn(this: *mut c_void, is_visible: i32) -> i32;
+    let put_visible: PutVisibleFn = std::mem::transmute(*ctrl_vt.add(4));
+    let _ = put_visible(controller, 1);
 
+    // 3. put_Bounds (index 6, passed by *const RECT)
     let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetClientRect(hwnd, &mut rc);
-    let put_bounds_ptr = *vtable.add(6);
-    let put_bounds_fn: unsafe extern "system" fn(*mut c_void, RECT) -> i32 =
-        std::mem::transmute(put_bounds_ptr);
-    let _ = put_bounds_fn(created_controller, rc);
+    type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
+    let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
+    let _ = put_bounds(controller, &rc as *const RECT);
 
-    let mut core_webview: *mut c_void = ptr::null_mut();
-    let get_core_ptr = *vtable.add(25);
-    let get_core_fn: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32 =
-        std::mem::transmute(get_core_ptr);
-    let hr_core = get_core_fn(created_controller, &mut core_webview);
+    // 4. QueryInterface for ICoreWebView2Controller2 & put_DefaultBackgroundColor(0)
+    type QueryInterfaceFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
+    let qi: QueryInterfaceFn = std::mem::transmute(*ctrl_vt.add(0));
+    let mut ctrl2: *mut c_void = ptr::null_mut();
+    let hr_qi = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
+    if hr_qi >= 0 && !ctrl2.is_null() {
+        let ctrl2_vt = *(ctrl2 as *mut *const usize);
+        type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
+        let put_bg: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
+        let _ = put_bg(ctrl2, 0);
+        let rel_fn: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*ctrl2_vt.add(2));
+        let _ = rel_fn(ctrl2);
+    }
 
-    if hr_core == 0 && !core_webview.is_null() {
-        let core_vtable = *(core_webview as *mut *const usize);
-        let navigate_ptr = *core_vtable.add(5);
-        let navigate_fn: unsafe extern "system" fn(*mut c_void, *const u16) -> i32 =
-            std::mem::transmute(navigate_ptr);
-        let _ = navigate_fn(core_webview, url.as_ptr());
+    // 5. get_CoreWebView2 (index 25)
+    type GetCoreWebView2Fn = unsafe extern "system" fn(this: *mut c_void, webview_out: *mut *mut c_void) -> i32;
+    let get_core: GetCoreWebView2Fn = std::mem::transmute(*ctrl_vt.add(25));
+    let mut webview: *mut c_void = ptr::null_mut();
+    let hr_core = get_core(controller, &mut webview);
+    if hr_core >= 0 && !webview.is_null() {
+        let wv_vt = *(webview as *mut *const usize);
+        let wv_addref: unsafe extern "system" fn(*mut c_void) -> u32 =
+            std::mem::transmute(*wv_vt.add(1));
+        let _ = wv_addref(webview);
+        GLOBAL_CORE_WEBVIEW2.store(webview as isize, Ordering::SeqCst);
+
+        // Navigate (index 5)
+        type NavigateFn = unsafe extern "system" fn(this: *mut c_void, uri: *const u16) -> i32;
+        let navigate: NavigateFn = std::mem::transmute(*wv_vt.add(5));
+        let _ = navigate(webview, url.as_ptr());
     }
 
     0
@@ -674,10 +728,9 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
     }
-    *GLOBAL_HWND.lock().unwrap() = Some(hwnd as usize);
 
     unsafe {
-        let _ = CoInitializeEx(ptr::null_mut(), 0x2);
+        let _ = CoInitializeEx(ptr::null_mut(), 2);
     }
 
     std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
@@ -710,16 +763,24 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
         }
 
         type CreateEnvFn = unsafe extern "system" fn(
-            *const u16,
-            *const u16,
-            *mut c_void,
-            *mut c_void,
+            browser_executable_folder: *const u16,
+            user_data_folder: *const u16,
+            environment_options: *mut c_void,
+            environment_created_handler: *mut c_void,
         ) -> i32;
         let create_env: CreateEnvFn = std::mem::transmute(proc);
 
-        let mut user_data = std::env::temp_dir();
-        user_data.push("iPhoneLink_v4_WebView2");
-        let user_data_w: Vec<u16> = user_data
+        let data_dir = if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                dir.join(".pane_webview_v4_data")
+            } else {
+                std::env::temp_dir().join(".pane_webview_v4_data")
+            }
+        } else {
+            std::env::temp_dir().join(".pane_webview_v4_data")
+        };
+        let _ = std::fs::create_dir_all(&data_dir);
+        let user_data_w: Vec<u16> = data_dir
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
@@ -727,21 +788,20 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
 
         let url_w: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
 
-        let env_handler = Box::new(EnvironmentCompletedHandler {
+        let env_handler = Box::into_raw(Box::new(EnvironmentCompletedHandler {
             vtable: &ENV_VTABLE,
             hwnd,
             url: url_w,
-        });
-        let env_handler_ptr = Box::into_raw(env_handler) as *mut c_void;
+        })) as *mut c_void;
 
         let hr = create_env(
             ptr::null(),
             user_data_w.as_ptr(),
             ptr::null_mut(),
-            env_handler_ptr,
+            env_handler,
         );
 
-        if hr != 0 {
+        if hr < 0 {
             return Err(format!("CreateCoreWebView2EnvironmentWithOptions failed: 0x{:08X}", hr));
         }
     }
@@ -751,14 +811,25 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
 
 unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize {
     match msg {
+        0x0083 => {
+            // WM_NCCALCSIZE: Return 0 cleanly removes default titlebar/borders while keeping rounded corners & acrylic
+            if wparam != 0 {
+                0
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        }
+        0x0014 => {
+            // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent in DWM acrylic blur)
+            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetClientRect(hwnd, &mut rc);
+            FillRect(wparam as *mut c_void, &rc as *const RECT, GetStockObject(4));
+            1
+        }
         0x0005 => {
             // WM_SIZE
             notify_webview_bounds_sync(hwnd);
-            0
-        }
-        0x0014 => {
-            // WM_ERASEBKGND: Return 1 to prevent GDI painting over DWM Acrylic
-            1
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         0x0002 => {
             // WM_DESTROY
@@ -784,8 +855,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             cbWndExtra: 0,
             hInstance: ptr::null_mut(),
             hIcon: ptr::null_mut(),
-            hCursor: ptr::null_mut(),
-            hbrBackground: ptr::null_mut(),
+            hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
+            hbrBackground: GetStockObject(4), // BLACK_BRUSH
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: ptr::null_mut(),
@@ -794,11 +865,13 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = RegisterClassExW(&wnd_class);
 
         let window_title: Vec<u16> = "iPhone Link\0".encode_utf16().collect();
+        let style = 0x80000000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x02000000 | 0x10000000;
+        // WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_VISIBLE
         let hwnd = CreateWindowExW(
             0x00000008, // WS_EX_TOPMOST
             class_name.as_ptr(),
             window_title.as_ptr(),
-            0x80000000 | 0x00040000 | 0x00020000 | 0x10000000, // WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_VISIBLE
+            style,
             150,
             100,
             PORTRAIT_WIDTH_CLOSED,
@@ -844,8 +917,10 @@ pub struct UiSelfTestResult {
     pub version: String,
     pub true_dwm_acrylic_active: bool,
     pub static_wallpaper_disabled: bool,
-    pub app_css_loaded: bool,
-    pub app_js_loaded: bool,
+    pub index_html_served: usize,
+    pub app_css_served: usize,
+    pub app_js_served: usize,
+    pub dom_ready_beacon: usize,
     pub server_endpoints_ok: bool,
     pub window_geometry_ok: bool,
     pub language_switching_ok: bool,
@@ -878,7 +953,7 @@ fn http_send(port: u16, method: &str, path: &str, body: &str) -> Result<(u16, St
     Ok((status_code, resp_str))
 }
 
-/// Executes the comprehensive live GUI and server self-test in < 1.5s.
+/// Executes the comprehensive live GUI and server self-test with real WebView2 DOM beacon.
 pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let start = Instant::now();
 
@@ -895,30 +970,50 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
         st.window_hwnd = hwnd as usize;
     }
 
-    // 3. Test static wallpaper override in CSS
+    // 3. Mount real embedded WebView2
+    let url = format!("http://127.0.0.1:{}/", port);
+    mount_embedded_webview2(hwnd, &url)?;
+
+    // 4. Pump messages and wait for real WebView2 DOM beacon (up to 10s timeout)
+    let mut beacon_received = false;
+    while start.elapsed() < std::time::Duration::from_secs(10) {
+        unsafe {
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, 1) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        if crate::server_v4::DOM_READY_BEACON.load(Ordering::SeqCst) >= 1
+            && crate::server_v4::APP_CSS_SERVED.load(Ordering::SeqCst) >= 1
+        {
+            beacon_received = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    if !beacon_received {
+        unsafe {
+            DestroyWindow(hwnd);
+        }
+        server.stop();
+        return Err("Timed out waiting for real WebView2 DOM beacon".to_string());
+    }
+
+    // 5. Test static wallpaper override in CSS
     let (code_css, body_css) = http_send(port, "GET", "/v4_true_acrylic.css", "")?;
     let static_wallpaper_disabled = code_css == 200
         && body_css.contains(".app::before")
         && body_css.contains("display: none !important");
 
-    // 3b. Test /app.css with cache-busting query string
-    let (code_app_css, body_app_css) = http_send(
-        port,
-        "GET",
-        "/app.css?v=tahap149_complete_bilingual_and_light_contrast",
-        "",
-    )?;
-    let app_css_loaded = code_app_css == 200 && body_app_css.len() > 20000;
-
-    // 3c. Test /app.js with cache-busting query string
-    let (code_app_js, body_app_js) = http_send(port, "GET", "/app.js?v=tahap149", "")?;
-    let app_js_loaded = code_app_js == 200 && body_app_js.len() > 20000;
-
-    // 4. Test /api/status
+    // 6. Test /api/status and webview metrics
     let (code_status, body_status) = http_send(port, "GET", "/api/status", "")?;
-    let status_ok = code_status == 200 && body_status.contains(r#""version": "4.0.0""#);
+    let status_ok = code_status == 200
+        && body_status.contains(r#""version": "4.0.0""#)
+        && body_status.contains("webviewMetrics");
 
-    // 5. Test language switching: English -> Indonesian
+    // 7. Test language switching: English -> Indonesian
     let (code_set_en, _) = http_send(port, "POST", "/api/settings", r#"{"language": "en"}"#)?;
     let (_, body_status_en) = http_send(port, "GET", "/api/status", "")?;
     let lang_en_ok = code_set_en == 200 && body_status_en.contains(r#""language": "en""#) && body_status_en.contains("Wi-Fi ready");
@@ -928,7 +1023,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let lang_id_ok = code_set_id == 200 && body_status_id.contains(r#""language": "id""#) && body_status_id.contains("Wi-Fi siap");
     let language_switching_ok = lang_en_ok && lang_id_ok;
 
-    // 6. Test window geometry: Drawer open (706) -> close (346) -> Landscape (840)
+    // 8. Test window geometry: Drawer open (706) -> close (346) -> Landscape (840)
     let (code_drawer_open, body_drawer_open) = http_send(port, "POST", "/api/window/set_drawer", r#"{"open": true}"#)?;
     let geom_drawer_open_ok = code_drawer_open == 200 && body_drawer_open.contains(r#""width":706"#);
 
@@ -940,7 +1035,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
 
     let window_geometry_ok = geom_drawer_open_ok && geom_drawer_close_ok && geom_orient_ok;
 
-    // 7. Test theme switching (light / dark acrylic)
+    // 9. Test theme switching (light / dark acrylic)
     let (code_theme_light, body_theme_light) = http_send(port, "POST", "/api/window/set_theme", r#"{"theme": "light"}"#)?;
     let theme_light_ok = code_theme_light == 200 && body_theme_light.contains(r#""theme":"light""#);
 
@@ -948,7 +1043,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let theme_dark_ok = code_theme_dark == 200 && body_theme_dark.contains(r#""theme":"dark""#);
     let theme_switching_ok = theme_light_ok && theme_dark_ok;
 
-    // 8. Test True DWM Acrylic status
+    // 10. Test True DWM Acrylic status
     let acrylic_status = apply_true_files_acrylic_backdrop(hwnd, true).unwrap_or(DwmBackdropStatus::NativeTransientAcrylic);
     let true_dwm_acrylic_active = acrylic_status == DwmBackdropStatus::NativeTransientAcrylic || acrylic_status == DwmBackdropStatus::AccentPolicyFallback;
 
@@ -958,12 +1053,17 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     }
     server.stop();
 
+    let index_html_served = crate::server_v4::INDEX_HTML_SERVED.load(Ordering::SeqCst);
+    let app_css_served = crate::server_v4::APP_CSS_SERVED.load(Ordering::SeqCst);
+    let app_js_served = crate::server_v4::APP_JS_SERVED.load(Ordering::SeqCst);
+    let dom_ready_beacon = crate::server_v4::DOM_READY_BEACON.load(Ordering::SeqCst);
+
     let server_endpoints_ok = status_ok
         && language_switching_ok
         && window_geometry_ok
         && theme_switching_ok
-        && app_css_loaded
-        && app_js_loaded;
+        && app_css_served >= 1
+        && app_js_served >= 1;
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
     let test_res = UiSelfTestResult {
@@ -971,8 +1071,10 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
         version: "4.0.0".to_string(),
         true_dwm_acrylic_active,
         static_wallpaper_disabled,
-        app_css_loaded,
-        app_js_loaded,
+        index_html_served,
+        app_css_served,
+        app_js_served,
+        dom_ready_beacon,
         server_endpoints_ok,
         window_geometry_ok,
         language_switching_ok,
@@ -987,8 +1089,10 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
   "version": "4.0.0",
   "true_dwm_acrylic_active": {},
   "static_wallpaper_disabled": {},
-  "app_css_loaded": {},
-  "app_js_loaded": {},
+  "index_html_served": {},
+  "app_css_served": {},
+  "app_js_served": {},
+  "dom_ready_beacon": {},
   "server_endpoints_ok": {},
   "window_geometry_ok": {},
   "language_switching_ok": {},
@@ -997,8 +1101,10 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
 }}"#,
         true_dwm_acrylic_active,
         static_wallpaper_disabled,
-        app_css_loaded,
-        app_js_loaded,
+        index_html_served,
+        app_css_served,
+        app_js_served,
+        dom_ready_beacon,
         server_endpoints_ok,
         window_geometry_ok,
         language_switching_ok,

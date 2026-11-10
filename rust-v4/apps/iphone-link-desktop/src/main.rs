@@ -544,6 +544,11 @@ extern "system" {
     fn AttachConsole(dwProcessId: u32) -> i32;
 }
 
+#[link(name = "ole32")]
+extern "system" {
+    fn CoInitializeEx(pvReserved: *mut std::ffi::c_void, dwCoInit: u32) -> i32;
+}
+
 fn find_web_dir() -> PathBuf {
     let mut candidates = Vec::new();
 
@@ -585,6 +590,7 @@ fn main() {
     if args.iter().any(|a| a == "--ui-self-test") {
         unsafe {
             let _ = AttachConsole(0xFFFFFFFF);
+            let _ = CoInitializeEx(std::ptr::null_mut(), 2);
         }
         println!("=== iPhone Link v4.0 Native Rust UI Self-Test ===");
         let web_dir = find_web_dir();
@@ -595,8 +601,10 @@ fn main() {
                 println!("  \"version\": \"{}\",", res.version);
                 println!("  \"true_dwm_acrylic_active\": {},", res.true_dwm_acrylic_active);
                 println!("  \"static_wallpaper_disabled\": {},", res.static_wallpaper_disabled);
-                println!("  \"app_css_loaded\": {},", res.app_css_loaded);
-                println!("  \"app_js_loaded\": {},", res.app_js_loaded);
+                println!("  \"index_html_served\": {},", res.index_html_served);
+                println!("  \"app_css_served\": {},", res.app_css_served);
+                println!("  \"app_js_served\": {},", res.app_js_served);
+                println!("  \"dom_ready_beacon\": {},", res.dom_ready_beacon);
                 println!("  \"server_endpoints_ok\": {},", res.server_endpoints_ok);
                 println!("  \"window_geometry_ok\": {},", res.window_geometry_ok);
                 println!("  \"language_switching_ok\": {},", res.language_switching_ok);
@@ -613,6 +621,9 @@ fn main() {
     }
 
     // Normal interactive launch: Embedded WebView2 in single True Acrylic HWND
+    unsafe {
+        let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+    }
     let web_dir = find_web_dir();
     let state = Arc::new(Mutex::new(server_v4::AppState::default()));
     let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)

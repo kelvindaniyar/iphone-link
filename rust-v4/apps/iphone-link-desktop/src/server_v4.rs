@@ -13,10 +13,15 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+pub static INDEX_HTML_SERVED: AtomicUsize = AtomicUsize::new(0);
+pub static APP_CSS_SERVED: AtomicUsize = AtomicUsize::new(0);
+pub static APP_JS_SERVED: AtomicUsize = AtomicUsize::new(0);
+pub static DOM_READY_BEACON: AtomicUsize = AtomicUsize::new(0);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::link_grabber::extract_and_normalize_links;
@@ -116,7 +121,7 @@ body[data-theme="light"] .card {
 }
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 156) */
+pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 157) */
 (function() {
     console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
 
@@ -126,6 +131,25 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {})
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
+    }
+
+    function sendDomBeacon() {
+        try {
+            var appEl = document.querySelector(".app") || document.body;
+            var disp = window.getComputedStyle ? window.getComputedStyle(appEl).display : "block";
+            postApi('/api/window/dom_ready_beacon', {
+                display: disp,
+                w: window.innerWidth,
+                h: window.innerHeight
+            });
+        } catch (_) {}
+    }
+
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+        setTimeout(sendDomBeacon, 10);
+    } else {
+        document.addEventListener("DOMContentLoaded", sendDomBeacon);
+        window.addEventListener("load", sendDomBeacon);
     }
 
     window.pywebview = window.pywebview || {};
@@ -688,6 +712,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
   "settings": {},
   "status_text": "{}",
   "language": "{}",
+  "webviewMetrics": {{
+    "indexHtmlServed": {},
+    "appCssServed": {},
+    "appJsServed": {},
+    "domReadyBeacon": {}
+  }},
   "version": "4.0.0"
 }}"#,
             udid,
@@ -716,7 +746,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             REMOTEPAIRING_SERVICE,
             settings_json,
             status_text,
-            lang_code
+            lang_code,
+            INDEX_HTML_SERVED.load(Ordering::SeqCst),
+            APP_CSS_SERVED.load(Ordering::SeqCst),
+            APP_JS_SERVED.load(Ordering::SeqCst),
+            DOM_READY_BEACON.load(Ordering::SeqCst)
         );
         return HttpResponse::ok_json(&json);
     }
@@ -1025,6 +1059,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"status":"dragging"}"#);
     }
 
+    if path == "/api/window/dom_ready_beacon" {
+        DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
+        return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
+    }
+
     if path == "/api/window/rect" {
         let st = state.lock().unwrap();
         let r = st.geometry.current_rect;
@@ -1164,6 +1203,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         path.trim_start_matches('/')
     };
 
+    if clean_rel.eq_ignore_ascii_case("index.html") {
+        INDEX_HTML_SERVED.fetch_add(1, Ordering::SeqCst);
+    } else if clean_rel.starts_with("app.css") {
+        APP_CSS_SERVED.fetch_add(1, Ordering::SeqCst);
+    } else if clean_rel.starts_with("app.js") {
+        APP_JS_SERVED.fetch_add(1, Ordering::SeqCst);
+    }
+
     if let Some(target_file) = resolve_static_asset_file(web_dir, clean_rel) {
         if let Ok(bytes) = fs::read(&target_file) {
             let mime = mime_for_path_str(clean_rel);
@@ -1185,6 +1232,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     // Fallback landing page if index.html is missing in unit test environments
     if path == "/" || path == "/index.html" {
+        INDEX_HTML_SERVED.fetch_add(1, Ordering::SeqCst);
         let fallback_html = r#"<!DOCTYPE html>
 <html>
 <head>
