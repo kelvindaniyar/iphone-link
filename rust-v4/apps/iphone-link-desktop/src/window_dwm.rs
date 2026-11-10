@@ -270,42 +270,15 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 let round_val = DWMWCP_ROUND;
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
+                // DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
+                let border_none: u32 = 0xFFFFFFFE;
+                let _ = set_attr_fn(hwnd, 34, &border_none as *const _ as *const c_void, 4);
+
                 // Set backdrop type to DWMSBT_TRANSIENTWINDOW (3 = Thin Acrylic)
                 let backdrop_type = DWMSBT_TRANSIENTWINDOW;
-                let hr = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
+                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
 
-                if hr == 0 {
-                    return Ok(DwmBackdropStatus::NativeTransientAcrylic);
-                }
-            }
-        }
-
-        // Fallback for Windows 10: SetWindowCompositionAttribute
-        let user32_name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
-        let user32_module = LoadLibraryW(user32_name.as_ptr());
-        if !user32_module.is_null() {
-            let wca_proc = GetProcAddress(user32_module, b"SetWindowCompositionAttribute\0".as_ptr() as *const i8);
-            if !wca_proc.is_null() {
-                let wca_fn: SetWindowCompositionAttributeFn = std::mem::transmute(wca_proc);
-
-                let tint = if dark_mode { ACRYLIC_DARK_TINT } else { ACRYLIC_LIGHT_TINT };
-                let mut policy = ACCENT_POLICY {
-                    AccentState: ACCENT_ENABLE_ACRYLICBLURBEHIND,
-                    AccentFlags: 2,
-                    GradientColor: tint,
-                    AnimationId: 0,
-                };
-
-                let mut data = WINDOWCOMPOSITIONATTRIBDATA {
-                    Attrib: WCA_ACCENT_POLICY,
-                    pvData: &mut policy as *mut _ as *mut c_void,
-                    cbData: std::mem::size_of::<ACCENT_POLICY>(),
-                };
-
-                let hr = wca_fn(hwnd, &mut data);
-                if hr != 0 {
-                    return Ok(DwmBackdropStatus::AccentPolicyFallback);
-                }
+                return Ok(DwmBackdropStatus::NativeTransientAcrylic);
             }
         }
     }
@@ -487,20 +460,65 @@ pub const TRAY_MENU_ITEMS: &[&str] = &[
 static GLOBAL_WEBVIEW_CONTROLLER: AtomicIsize = AtomicIsize::new(0);
 static GLOBAL_CORE_WEBVIEW2: AtomicIsize = AtomicIsize::new(0);
 
-pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f32 {
-    if hwnd.is_null() {
-        return 1.0;
-    }
+pub fn enable_per_monitor_v2_dpi_awareness() {
     unsafe {
         let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
         let h_user = LoadLibraryW(user32.as_ptr());
         if !h_user.is_null() {
-            let proc = GetProcAddress(h_user, b"GetDpiForWindow\0".as_ptr() as *const i8);
+            let proc = GetProcAddress(h_user, b"SetProcessDpiAwarenessContext\0".as_ptr() as *const i8);
             if !proc.is_null() {
-                let get_dpi: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(proc);
-                let dpi = get_dpi(hwnd);
+                let set_context: unsafe extern "system" fn(isize) -> i32 = std::mem::transmute(proc);
+                // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4isize
+                if set_context(-4) != 0 {
+                    return;
+                }
+            }
+        }
+        let shcore: Vec<u16> = "shcore.dll\0".encode_utf16().collect();
+        let h_shcore = LoadLibraryW(shcore.as_ptr());
+        if !h_shcore.is_null() {
+            let proc = GetProcAddress(h_shcore, b"SetProcessDpiAwareness\0".as_ptr() as *const i8);
+            if !proc.is_null() {
+                let set_aware: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(proc);
+                // PROCESS_PER_MONITOR_DPI_AWARE = 2
+                if set_aware(2) == 0 {
+                    return;
+                }
+            }
+        }
+        if !h_user.is_null() {
+            let proc = GetProcAddress(h_user, b"SetProcessDPIAware\0".as_ptr() as *const i8);
+            if !proc.is_null() {
+                let set_dpi_aware: unsafe extern "system" fn() -> i32 = std::mem::transmute(proc);
+                let _ = set_dpi_aware();
+            }
+        }
+    }
+}
+
+pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f64 {
+    unsafe {
+        let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let h_user = LoadLibraryW(user32.as_ptr());
+        if !h_user.is_null() {
+            if !hwnd.is_null() {
+                let proc = GetProcAddress(h_user, b"GetDpiForWindow\0".as_ptr() as *const i8);
+                if !proc.is_null() {
+                    let get_dpi: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(proc);
+                    let dpi = get_dpi(hwnd);
+                    if dpi > 0 {
+                        let scale = (dpi as f64) / 96.0;
+                        return if scale < 1.0 { 1.0 } else { scale };
+                    }
+                }
+            }
+            let proc_sys = GetProcAddress(h_user, b"GetDpiForSystem\0".as_ptr() as *const i8);
+            if !proc_sys.is_null() {
+                let get_dpi_sys: unsafe extern "system" fn() -> u32 = std::mem::transmute(proc_sys);
+                let dpi = get_dpi_sys();
                 if dpi > 0 {
-                    return (dpi as f32) / 96.0;
+                    let scale = (dpi as f64) / 96.0;
+                    return if scale < 1.0 { 1.0 } else { scale };
                 }
             }
         }
@@ -854,12 +872,8 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0083 => {
-            // WM_NCCALCSIZE: Return 0 cleanly removes default titlebar/borders while keeping rounded corners & acrylic
-            if wparam != 0 {
-                0
-            } else {
-                DefWindowProcW(hwnd, msg, wparam, lparam)
-            }
+            // WM_NCCALCSIZE: Return 0 unconditionally removes 100% of non-client borders/frames
+            0
         }
         0x0014 => {
             // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent in DWM acrylic blur)
@@ -913,8 +927,8 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         (w, 832)
     };
 
-    let phys_w = (logical_w as f32 * dpi_scale).round() as i32;
-    let phys_h = (logical_h as f32 * dpi_scale).round() as i32;
+    let phys_w = (logical_w as f64 * dpi_scale).round() as i32;
+    let phys_h = (logical_h as f64 * dpi_scale).round() as i32;
 
     SetWindowPos(
         hwnd,
@@ -1085,17 +1099,29 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = RegisterClassExW(&wnd_class);
 
         let window_title: Vec<u16> = "iPhone Link\0".encode_utf16().collect();
-        let style = 0x80000000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x02000000 | 0x10000000;
-        // WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN | WS_VISIBLE
+        const STYLE: u32 = 0x80000000 | 0x02000000 | 0x04000000 | 0x00080000 | 0x00020000 | 0x10000000;
+        // WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE
+
+        let dpi_scale = get_hwnd_dpi_scale(ptr::null_mut());
+        let phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;
+        let phys_h = (PORTRAIT_HEIGHT as f64 * dpi_scale).round() as i32;
+
+        let mut work_area = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        let _ = SystemParametersInfoW(0x0030, 0, &mut work_area as *mut _ as *mut c_void, 0); // SPI_GETWORKAREA
+        let work_w = work_area.right - work_area.left;
+        let work_h = work_area.bottom - work_area.top;
+        let pos_x = work_area.left + ((work_w - phys_w) / 2).max(50);
+        let pos_y = work_area.top + ((work_h - phys_h) / 2).max(50);
+
         let hwnd = CreateWindowExW(
             0x00000008, // WS_EX_TOPMOST
             class_name.as_ptr(),
             window_title.as_ptr(),
-            style,
-            150,
-            100,
-            PORTRAIT_WIDTH_CLOSED,
-            PORTRAIT_HEIGHT,
+            STYLE,
+            pos_x,
+            pos_y,
+            phys_w,
+            phys_h,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
@@ -1108,6 +1134,26 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
 
         // Apply true DWM Acrylic blur
         let _ = apply_true_files_acrylic_backdrop(hwnd, dark_mode);
+
+        // Immediately scale window to match actual HWND DPI (e.g. 150% = 519x1248)
+        apply_hwnd_geometry_internal(hwnd);
+
+        // Re-center window based on actual physical dimensions
+        let mut actual_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(hwnd, &mut actual_rc);
+        let actual_w = actual_rc.width();
+        let actual_h = actual_rc.height();
+        let new_x = work_area.left + ((work_w - actual_w) / 2).max(50);
+        let new_y = work_area.top + ((work_h - actual_h) / 2).max(50);
+        SetWindowPos(
+            hwnd,
+            ptr::null_mut(),
+            new_x,
+            new_y,
+            actual_w,
+            actual_h,
+            0x0004 | 0x0010 | 0x0020, // SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        );
 
         ShowWindow(hwnd, 5); // SW_SHOW
         UpdateWindow(hwnd);

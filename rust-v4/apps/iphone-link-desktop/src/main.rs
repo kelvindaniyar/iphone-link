@@ -680,6 +680,7 @@ fn find_web_dir() -> PathBuf {
 }
 
 fn main() {
+    window_dwm::enable_per_monitor_v2_dpi_awareness();
     let args: Vec<String> = env::args().collect();
 
     if args.iter().any(|a| a == "--self-test") {
