@@ -33,3 +33,6 @@ packaging/
 
 
 self_test_result.json
+
+# Reference clones
+ref/
