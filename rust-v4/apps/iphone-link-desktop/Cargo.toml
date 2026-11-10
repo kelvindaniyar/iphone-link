@@ -1,0 +1,13 @@
+[package]
+name = "iphone-link-desktop"
+version = "4.0.0"
+edition = "2021"
+
+[[bin]]
+name = "iphone-link-v4"
+path = "src/main.rs"
+
+[dependencies]
+iphone-link-apple = { path = "../../crates/iphone-link-apple" }
+iphone-link-video = { path = "../../crates/iphone-link-video" }
+iphone-link-audio = { path = "../../crates/iphone-link-audio" }

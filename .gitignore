@@ -36,3 +36,7 @@ self_test_result.json
 
 # Reference clones
 ref/
+
+# Rust v4 build artifacts
+/rust-v4/target/
+rust-v4/target/
