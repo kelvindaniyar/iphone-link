@@ -51,65 +51,51 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic & 3D Liquid Glass (Tahap 171) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 172) */
 :root {
-  --wallpaper-bg-image: url("/api/system/wallpaper");
+  --wallpaper-bg-image: none !important;
+}
+.app::before {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  content: none !important;
+  background-image: none !important;
 }
 html, body {
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
   background: transparent !important;
   background-color: transparent !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: 100vw !important;
-  max-height: 100vh !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-}
-.app {
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: 100vw !important;
-  max-height: 100vh !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  border: none !important;
-  outline: none !important;
-  background: linear-gradient(165deg, rgba(16, 22, 34, 0.42) 0%, rgba(10, 14, 24, 0.54) 100%) !important;
+  border-radius: 0px !important;
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
+}
+.app, .app:not(.is-fullsize) {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-radius: 0px !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: linear-gradient(165deg, rgba(14, 19, 30, 0.28) 0%, rgba(10, 14, 22, 0.36) 100%) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   position: relative !important;
 }
+html[data-theme="light"] .app,
+body[data-theme="light"] .app,
+.app[data-theme="light"],
 [data-theme="light"] .app,
 .theme-light .app {
-  background: linear-gradient(165deg, rgba(242, 246, 252, 0.52) 0%, rgba(230, 236, 245, 0.60) 100%) !important;
-}
-.app:not(.is-fullsize) {
-  border-radius: 12px !important;
-  overflow: hidden !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 8px 32px rgba(0, 0, 0, 0.35) !important;
-}
-/* Wallpaper blur permanently active 100% both focused and unfocused */
-.app::before {
-  content: "" !important;
-  position: absolute !important;
-  inset: 0 !important;
-  display: block !important;
-  visibility: visible !important;
-  opacity: 0.46 !important;
-  background-image: var(--wallpaper-bg-image) !important;
-  background-size: cover !important;
-  background-position: center !important;
-  filter: blur(28px) saturate(170%) !important;
-  transform: scale(1.08) translateZ(0) !important;
-  pointer-events: none !important;
-  z-index: 0 !important;
-}
-[data-theme="light"] .app::before,
-.theme-light .app::before {
-  opacity: 0.38 !important;
-  filter: blur(32px) saturate(180%) brightness(1.12) !important;
+  background: linear-gradient(165deg, rgba(248, 251, 255, 0.32) 0%, rgba(235, 242, 252, 0.42) 100%) !important;
 }
 
 /* 100% Transparent Wrapper Pipeline for Full Real-Time Acrylic Blur */
@@ -126,6 +112,12 @@ html, body {
 .app:not(.is-streaming) #phone-screen {
   background: transparent !important;
   background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.app.is-streaming #phone-screen {
+  background: #000000 !important;
+  background-color: #000000 !important;
 }
 
 .main-body, .display-col {
@@ -160,36 +152,41 @@ body::-webkit-scrollbar {
 
 /* 3D Liquid Glass Specular Styling for Bars and Drawers */
 .app-bar {
-  background: rgba(14, 18, 26, 0.32) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
+  border-radius: 0px !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(12, 16, 26, 0.22) 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 10 !important;
 }
 .quick-nav {
-  background: rgba(14, 18, 26, 0.38) !important;
-  border-top: 1px solid rgba(255, 255, 255, 0.09) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
+  border-radius: 0px !important;
+  background: linear-gradient(0deg, rgba(10, 14, 24, 0.28) 0%, rgba(20, 26, 40, 0.16) 100%) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 10 !important;
 }
 .side-drawer,
 .control-pane {
-  background: rgba(16, 22, 34, 0.55) !important;
-  backdrop-filter: blur(24px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.12) !important;
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35), inset 1px 0 0 rgba(255, 255, 255, 0.15) !important;
+  border-radius: 0px !important;
+  background: linear-gradient(180deg, rgba(16, 22, 34, 0.22) 0%, rgba(10, 14, 24, 0.30) 100%) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: -6px 0 20px rgba(0, 0, 0, 0.18), inset 1px 0 0 0 rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 20 !important;
 }
 [data-theme="light"] .side-drawer,
 [data-theme="light"] .control-pane {
-  background: rgba(240, 244, 250, 0.65) !important;
+  background: linear-gradient(180deg, rgba(240, 244, 250, 0.35) 0%, rgba(230, 236, 245, 0.45) 100%) !important;
   border-left: 1px solid rgba(255, 255, 255, 0.40) !important;
-  box-shadow: -8px 0 32px rgba(15, 23, 42, 0.12), inset 1px 0 0 rgba(255, 255, 255, 0.50) !important;
+  box-shadow: -6px 0 20px rgba(15, 23, 42, 0.08), inset 1px 0 0 0 rgba(255, 255, 255, 0.50) !important;
 }
 
 /* 3D Liquid Glass Cards Anti-Flat Specular Rim Highlights */
@@ -197,19 +194,20 @@ body::-webkit-scrollbar {
 .glass-card,
 .launchpad-device-card,
 #launchpad-device-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(20, 24, 35, 0.45) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px 0 rgba(0, 0, 0, 0.30) !important;
-  backdrop-filter: blur(16px) saturate(165%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(165%) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(18, 24, 36, 0.24) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.26) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 [data-theme="light"] .card,
 [data-theme="light"] .glass-card,
 [data-theme="light"] .launchpad-device-card,
 [data-theme="light"] #launchpad-device-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.40) 100%), rgba(240, 244, 250, 0.45) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0.45) 100%), rgba(240, 244, 250, 0.35) !important;
   border: 1px solid rgba(255, 255, 255, 0.45) !important;
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.65), 0 6px 20px 0 rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.65) !important;
 }
 
 /* Sembunyikan tombol Restart & Stop saat belum mirroring (Ready / Stop) */
@@ -225,9 +223,6 @@ body::-webkit-scrollbar {
 /* Saat streaming berjalan, tombol Restart tampil sebagai ikon ringkas tanpa teks "Restart" */
 #restart-screen .btn-label {
   display: none !important;
-}
-.app.is-streaming #phone-screen {
-  background: #000000 !important;
 }
 iframe#screen-view {
   background: #000000 !important;

@@ -260,7 +260,6 @@ extern "system" {
 #[link(name = "gdi32")]
 extern "system" {
     fn GetStockObject(i: i32) -> *mut c_void;
-    fn CreateSolidBrush(crColor: u32) -> *mut c_void;
     fn DeleteObject(ho: *mut c_void) -> i32;
 }
 
@@ -333,13 +332,13 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 let round_val = DWMWCP_ROUND;
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
-                // 4. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
-                let border_none: u32 = 0xFFFFFFFE;
-                let _ = set_attr_fn(hwnd, DWMWA_BORDER_COLOR, &border_none as *const _ as *const c_void, 4);
+                // 4. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFF (DWMWA_COLOR_DEFAULT) to let DWM render anti-aliased 1px glass border
+                let border_default: u32 = 0xFFFFFFFF;
+                let _ = set_attr_fn(hwnd, DWMWA_BORDER_COLOR, &border_default as *const _ as *const c_void, 4);
 
-                // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = DWMSBT_TRANSIENTWINDOW (3) for native Files app acrylic
-                let backdrop_type = DWMSBT_TRANSIENTWINDOW;
-                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
+                // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = 1 (DWMSBT_NONE) so it does not collide with WCA_ACCENT_POLICY
+                let backdrop_none: u32 = 1;
+                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_none as *const _ as *const c_void, 4);
             }
         }
 
@@ -350,11 +349,11 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
             let set_wca = GetProcAddress(h_user32, b"SetWindowCompositionAttribute\0".as_ptr() as *const i8);
             if !set_wca.is_null() {
                 let set_wca_fn: SetWindowCompositionAttributeFn = std::mem::transmute(set_wca);
-                // Gradient tint: 0x28181210 (dark mode) / 0x28F8F4F0 (light mode)
-                let grad = if dark_mode { 0x28181210 } else { 0x28F8F4F0 };
+                // Gradient tint: 0x301E1610 (dark mode) / 0x30F8F4F0 (light mode) with alpha 0x30 (~18% tint)
+                let grad = if dark_mode { 0x301E1610 } else { 0x30F8F4F0 };
                 let mut accent = ACCENT_POLICY {
                     AccentState: 4, // ACCENT_ENABLE_ACRYLICBLURBEHIND
-                    AccentFlags: 2,
+                    AccentFlags: 2, // Draw all borders / full client blur
                     GradientColor: grad,
                     AnimationId: 0,
                 };
@@ -736,7 +735,7 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_visible: PutVisibleFn = std::mem::transmute(*ctrl_vt.add(4));
     let _ = put_visible(controller, 1);
 
-    // 2B. put_DefaultBackgroundColor(0) via ICoreWebView2Controller2 (index 27) for 100% transparent WebView2 backdrop
+    // 2B. put_DefaultBackgroundColor(0) via ICoreWebView2Controller2 (index 26 & 27) for 100% transparent WebView2 backdrop
     let mut ctrl2: *mut c_void = ptr::null_mut();
     type QiFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
     let qi: QiFn = std::mem::transmute(*ctrl_vt.add(0));
@@ -744,8 +743,10 @@ unsafe extern "system" fn ctrl_completed_invoke(
     if hr_ctrl2 >= 0 && !ctrl2.is_null() {
         let ctrl2_vt = *(ctrl2 as *mut *const usize);
         type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
-        let put_bg_color: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let _ = put_bg_color(ctrl2, 0); // Alpha = 0, R = 0, G = 0, B = 0
+        let put_bg_color26: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(26));
+        let _ = put_bg_color26(ctrl2, 0); // Vtable index 26
+        let put_bg_color27: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
+        let _ = put_bg_color27(ctrl2, 0); // Vtable index 27
     }
 
     // 3. put_Bounds (index 6, passed by *const RECT)
@@ -1427,11 +1428,11 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
         return Err("Timed out waiting for real WebView2 DOM beacon".to_string());
     }
 
-    // 5. Test static wallpaper override in CSS
+    // 5. Test static wallpaper disabled in CSS (Tahap 172 true acrylic)
     let (code_css, body_css) = http_send(port, "GET", "/v4_true_acrylic.css", "")?;
     let static_wallpaper_disabled = code_css == 200
-        && body_css.contains("--wallpaper-bg-image")
-        && !body_css.contains(".app::before {\n  display: none !important;");
+        && body_css.contains(".app::before")
+        && body_css.contains("display: none !important;");
 
     // 6. Test /api/status and webview metrics
     let (code_status, body_status) = http_send(port, "GET", "/api/status", "")?;
