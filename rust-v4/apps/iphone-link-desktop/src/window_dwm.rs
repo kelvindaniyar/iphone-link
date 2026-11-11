@@ -37,10 +37,13 @@ pub static GLOBAL_DRAWER_OPEN: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_IS_FULLSCREEN: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_PORTRAIT_WIDTH: AtomicI32 = AtomicI32::new(346);
 pub static DRAG_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+pub static SAVED_WINDOW_X: AtomicI32 = AtomicI32::new(100);
+pub static SAVED_WINDOW_Y: AtomicI32 = AtomicI32::new(100);
 pub static SAVED_WINDOW_RECT: Mutex<RECT> = Mutex::new(RECT { left: 100, top: 100, right: 446, bottom: 932 });
 
 pub const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 pub const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+pub const DWMWA_BORDER_COLOR: u32 = 34;
 pub const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
 
 pub const DWMWCP_ROUND: u32 = 2; // 12px rounded corners
@@ -50,7 +53,70 @@ pub const DWMSBT_MAINWINDOW: u32 = 2;      // Mica
 pub const DWMSBT_TRANSIENTWINDOW: u32 = 3; // True Acrylic ("Files" app style)
 pub const DWMSBT_TABBEDWINDOW: u32 = 4;    // Mica Alt
 
-// Accent policy removed in Tahap 166 (clean DWM attributes only)
+#[repr(C)]
+struct ACCENT_POLICY {
+    AccentState: u32,
+    AccentFlags: u32,
+    GradientColor: u32,
+    AnimationId: u32,
+}
+
+#[repr(C)]
+struct WINDOWCOMPOSITIONATTRIBUTEDATA {
+    Attrib: u32,
+    pvData: *mut c_void,
+    cbData: usize,
+}
+
+type SetWindowCompositionAttributeFn =
+    unsafe extern "system" fn(*mut c_void, *mut WINDOWCOMPOSITIONATTRIBUTEDATA) -> i32;
+
+/// Activates Per-Monitor V2 DPI awareness for pixel-perfect sharpness across scaling factors.
+pub fn enable_per_monitor_v2_dpi_awareness() {
+    unsafe {
+        let user32_name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let h_user32 = LoadLibraryW(user32_name.as_ptr());
+        if !h_user32.is_null() {
+            let proc = GetProcAddress(h_user32, b"SetProcessDpiAwarenessContext\0".as_ptr() as *const i8);
+            if !proc.is_null() {
+                type SetDpiAwarenessFn = unsafe extern "system" fn(isize) -> i32;
+                let set_dpi: SetDpiAwarenessFn = std::mem::transmute(proc);
+                let _ = set_dpi(-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            }
+        }
+    }
+}
+
+/// Computes the effective DPI scaling factor (e.g. 1.0 for 100%, 1.5 for 150%).
+pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f64 {
+    unsafe {
+        let user32_name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let h_user32 = LoadLibraryW(user32_name.as_ptr());
+        if !h_user32.is_null() {
+            if !hwnd.is_null() {
+                let proc = GetProcAddress(h_user32, b"GetDpiForWindow\0".as_ptr() as *const i8);
+                if !proc.is_null() {
+                    type GetDpiFn = unsafe extern "system" fn(*mut c_void) -> u32;
+                    let get_dpi: GetDpiFn = std::mem::transmute(proc);
+                    let dpi = get_dpi(hwnd);
+                    if dpi > 0 {
+                        return dpi as f64 / 96.0;
+                    }
+                }
+            }
+            let proc_sys = GetProcAddress(h_user32, b"GetDpiForSystem\0".as_ptr() as *const i8);
+            if !proc_sys.is_null() {
+                type GetDpiSysFn = unsafe extern "system" fn() -> u32;
+                let get_dpi_sys: GetDpiSysFn = std::mem::transmute(proc_sys);
+                let dpi = get_dpi_sys();
+                if dpi > 0 {
+                    return dpi as f64 / 96.0;
+                }
+            }
+        }
+        1.0
+    }
+}
 
 // Geometry standard constants (at 100% DPI)
 pub const PORTRAIT_WIDTH_CLOSED: i32 = 346;
@@ -221,8 +287,8 @@ pub enum DwmBackdropStatus {
 type DwmSetWindowAttributeFn = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
 type DwmExtendFrameIntoClientAreaFn = unsafe extern "system" fn(*mut c_void, *const MARGINS) -> i32;
 
-/// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border) to HWND
-/// with 1px bottom margin frame extension to activate DirectComposition + DWM redirection.
+/// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border, transient acrylic)
+/// and ACCENT_ENABLE_ACRYLICBLURBEHIND to HWND with full glass frame extension (-1 margins).
 pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> Result<DwmBackdropStatus, String> {
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
@@ -240,13 +306,13 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 let extend_fn: DwmExtendFrameIntoClientAreaFn = std::mem::transmute(extend_proc);
                 let set_attr_fn: DwmSetWindowAttributeFn = std::mem::transmute(set_attr_proc);
 
-                // 1. Extend frame 1px bottom margin (0, 0, 0, 1):
-                // Activates DirectComposition + DWM redirection without making client area alpha-0.
+                // 1. Extend frame into full client area (-1 margins):
+                // Enables DWM acrylic glass composition across the entire HWND surface.
                 let margins = MARGINS {
-                    cxLeftWidth: 0,
-                    cxRightWidth: 0,
-                    cyTopHeight: 0,
-                    cyBottomHeight: 1,
+                    cxLeftWidth: -1,
+                    cxRightWidth: -1,
+                    cyTopHeight: -1,
+                    cyBottomHeight: -1,
                 };
                 let _ = extend_fn(hwnd, &margins);
 
@@ -260,9 +326,35 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
 
                 // 4. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
                 let border_none: u32 = 0xFFFFFFFE;
-                let _ = set_attr_fn(hwnd, 34, &border_none as *const _ as *const c_void, 4);
+                let _ = set_attr_fn(hwnd, DWMWA_BORDER_COLOR, &border_none as *const _ as *const c_void, 4);
 
-                return Ok(DwmBackdropStatus::NativeTransientAcrylic);
+                // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = DWMSBT_TRANSIENTWINDOW (3) for native Files app acrylic
+                let backdrop_type = DWMSBT_TRANSIENTWINDOW;
+                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
+            }
+        }
+
+        // 6. SetWindowCompositionAttribute with ACCENT_ENABLE_ACRYLICBLURBEHIND (4)
+        let user32_name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let h_user32 = LoadLibraryW(user32_name.as_ptr());
+        if !h_user32.is_null() {
+            let set_wca = GetProcAddress(h_user32, b"SetWindowCompositionAttribute\0".as_ptr() as *const i8);
+            if !set_wca.is_null() {
+                let set_wca_fn: SetWindowCompositionAttributeFn = std::mem::transmute(set_wca);
+                // Gradient tint: 0x28181210 (dark mode) / 0x28F8F4F0 (light mode)
+                let grad = if dark_mode { 0x28181210 } else { 0x28F8F4F0 };
+                let mut accent = ACCENT_POLICY {
+                    AccentState: 4, // ACCENT_ENABLE_ACRYLICBLURBEHIND
+                    AccentFlags: 2,
+                    GradientColor: grad,
+                    AnimationId: 0,
+                };
+                let mut wca_data = WINDOWCOMPOSITIONATTRIBUTEDATA {
+                    Attrib: 19, // WCA_ACCENT_POLICY
+                    pvData: &mut accent as *mut _ as *mut c_void,
+                    cbData: std::mem::size_of::<ACCENT_POLICY>(),
+                };
+                let _ = set_wca_fn(hwnd, &mut wca_data);
             }
         }
     }
@@ -444,29 +536,6 @@ pub const TRAY_MENU_ITEMS: &[&str] = &[
 static GLOBAL_WEBVIEW_CONTROLLER: AtomicIsize = AtomicIsize::new(0);
 static GLOBAL_CORE_WEBVIEW2: AtomicIsize = AtomicIsize::new(0);
 
-pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f32 {
-    if hwnd.is_null() {
-        return 1.0;
-    }
-    unsafe {
-        let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
-        let h_user = LoadLibraryW(user32.as_ptr());
-        if !h_user.is_null() {
-            let proc = GetProcAddress(h_user, b"GetDpiForWindow\0".as_ptr() as *const i8);
-            if !proc.is_null() {
-                let get_dpi: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(proc);
-                let dpi = get_dpi(hwnd);
-                if dpi > 0 {
-                    return (dpi as f32) / 96.0;
-                }
-            }
-        }
-    }
-    1.0
-}
-
-
-
 unsafe fn ensure_child_widget_bounds(hwnd: *mut c_void, rc: &RECT) {
     let widget_class: Vec<u16> = "Chrome_WidgetWin_0\0".encode_utf16().collect();
     let child = FindWindowExW(hwnd, ptr::null_mut(), widget_class.as_ptr(), ptr::null());
@@ -500,10 +569,11 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetClientRect(hwnd, &mut rc);
             if rc.right <= rc.left || rc.bottom <= rc.top {
+                let dpi_scale = get_hwnd_dpi_scale(hwnd);
                 rc.left = 0;
                 rc.top = 0;
-                rc.right = PORTRAIT_WIDTH_CLOSED;
-                rc.bottom = PORTRAIT_HEIGHT;
+                rc.right = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;
+                rc.bottom = (PORTRAIT_HEIGHT as f64 * dpi_scale).round() as i32;
             }
             let ctrl_vt = *(ctrl as *mut *const usize);
             type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
@@ -657,6 +727,18 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_visible: PutVisibleFn = std::mem::transmute(*ctrl_vt.add(4));
     let _ = put_visible(controller, 1);
 
+    // 2B. put_DefaultBackgroundColor(0) via ICoreWebView2Controller2 (index 27) for 100% transparent WebView2 backdrop
+    let mut ctrl2: *mut c_void = ptr::null_mut();
+    type QiFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
+    let qi: QiFn = std::mem::transmute(*ctrl_vt.add(0));
+    let hr_ctrl2 = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
+    if hr_ctrl2 >= 0 && !ctrl2.is_null() {
+        let ctrl2_vt = *(ctrl2 as *mut *const usize);
+        type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
+        let put_bg_color: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
+        let _ = put_bg_color(ctrl2, 0); // Alpha = 0, R = 0, G = 0, B = 0
+    }
+
     // 3. put_Bounds (index 6, passed by *const RECT)
     let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetClientRect(hwnd, &mut rc);
@@ -751,6 +833,7 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
         let _ = CoInitializeEx(ptr::null_mut(), 2);
     }
 
+    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
         "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate,msVisualSearch,msEdgeVisualSearch --no-first-run --disable-extensions",
@@ -858,8 +941,16 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0086 => {
-            // WM_NCACTIVATE: Return DefWindowProcW with -1 lparam to suppress standard titlebar painting
-            DefWindowProcW(hwnd, msg, wparam, -1isize)
+            // WM_NCACTIVATE: Return DefWindowProcW with wparam=1 and -1 lparam to suppress standard titlebar painting & white stroke
+            DefWindowProcW(hwnd, msg, 1usize, -1isize)
+        }
+        0x0006 => {
+            // WM_ACTIVATE: When window is deactivated, re-apply acrylic backdrop to prevent DWM from turning into #404040 gray!
+            let active_state = (wparam & 0xFFFF) as u16;
+            if active_state == 0 {
+                let _ = apply_true_files_acrylic_backdrop(hwnd, true);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         0x0083 => {
             // WM_NCCALCSIZE: Return 0 cleanly removes default titlebar/borders while keeping rounded corners & acrylic
@@ -870,12 +961,11 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             }
         }
         0x0014 => {
-            // WM_ERASEBKGND: Fill with solid brush #10141e
+            // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent alpha-0 in DWM)
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetClientRect(hwnd, &mut rc);
-            let brush = CreateSolidBrush(0x001E1410);
+            let brush = GetStockObject(4); // BLACK_BRUSH
             FillRect(wparam as *mut c_void, &rc as *const RECT, brush);
-            DeleteObject(brush);
             1
         }
         0x0005 => {
@@ -896,6 +986,8 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
     }
+
+    let dpi_scale = get_hwnd_dpi_scale(hwnd);
 
     if GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
         let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
@@ -922,13 +1014,31 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         (w, 832)
     };
 
+    let phys_w = (logical_w as f64 * dpi_scale).round() as i32;
+    let phys_h = (logical_h as f64 * dpi_scale).round() as i32;
+
+    let mut cur_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    GetWindowRect(hwnd, &mut cur_rc);
+    let cur_x = if cur_rc.left != 0 || cur_rc.top != 0 {
+        SAVED_WINDOW_X.store(cur_rc.left, Ordering::SeqCst);
+        SAVED_WINDOW_Y.store(cur_rc.top, Ordering::SeqCst);
+        cur_rc.left
+    } else {
+        SAVED_WINDOW_X.load(Ordering::SeqCst)
+    };
+    let cur_y = if cur_rc.left != 0 || cur_rc.top != 0 {
+        cur_rc.top
+    } else {
+        SAVED_WINDOW_Y.load(Ordering::SeqCst)
+    };
+
     SetWindowPos(
         hwnd,
         ptr::null_mut(),
-        0,
-        0,
-        logical_w,
-        logical_h,
+        cur_x,
+        cur_y,
+        phys_w,
+        phys_h,
         0x0002 | 0x0004 | 0x0010 | 0x0020, // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
     );
     notify_webview_bounds_sync(hwnd);
@@ -973,6 +1083,8 @@ pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) ->
             *lk
         };
         unsafe {
+            SAVED_WINDOW_X.store(saved_rc.left, Ordering::SeqCst);
+            SAVED_WINDOW_Y.store(saved_rc.top, Ordering::SeqCst);
             SetWindowPos(
                 hwnd,
                 ptr::null_mut(),
@@ -982,18 +1094,7 @@ pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) ->
                 0,
                 0x0001 | 0x0004 | 0x0010, // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
             );
-            // Reapply round corners
-            let dwmapi_name: Vec<u16> = "dwmapi.dll\0".encode_utf16().collect();
-            let h_dwm = LoadLibraryW(dwmapi_name.as_ptr());
-            if !h_dwm.is_null() {
-                let proc = GetProcAddress(h_dwm, b"DwmSetWindowAttribute\0".as_ptr() as *const i8);
-                if !proc.is_null() {
-                    let set_attr: unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32 =
-                        std::mem::transmute(proc);
-                    let round_val = 2u32;
-                    let _ = set_attr(hwnd, 33, &round_val as *const _ as *const c_void, 4);
-                }
-            }
+            let _ = apply_true_files_acrylic_backdrop(hwnd, true);
         }
         apply_hwnd_geometry_from_state(hwnd);
     }
@@ -1074,6 +1175,9 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
 
         let _ = CoInitializeEx(ptr::null_mut(), 2);
 
+        // Pre-configure WebView2 transparent default background
+        std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
+
         let class_name: Vec<u16> = "iPhoneLinkMainWindowClass\0".encode_utf16().collect();
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -1084,7 +1188,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             hInstance: ptr::null_mut(),
             hIcon: ptr::null_mut(),
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
-            hbrBackground: ptr::null_mut(),
+            hbrBackground: GetStockObject(4), // BLACK_BRUSH (transparent alpha-0 in DWM)
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: ptr::null_mut(),
@@ -1100,8 +1204,14 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = SystemParametersInfoW(0x0030, 0, &mut work_area as *mut _ as *mut c_void, 0); // SPI_GETWORKAREA
         let work_w = work_area.right - work_area.left;
         let work_h = work_area.bottom - work_area.top;
-        let pos_x = work_area.left + ((work_w - PORTRAIT_WIDTH_CLOSED) / 2).max(50);
-        let pos_y = work_area.top + ((work_h - PORTRAIT_HEIGHT) / 2).max(50);
+
+        let dpi_scale = get_hwnd_dpi_scale(ptr::null_mut());
+        let phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * dpi_scale).round() as i32;
+        let phys_h = (PORTRAIT_HEIGHT as f64 * dpi_scale).round() as i32;
+        let pos_x = work_area.left + ((work_w - phys_w) / 2).max(50);
+        let pos_y = work_area.top + ((work_h - phys_h) / 2).max(50);
+        SAVED_WINDOW_X.store(pos_x, Ordering::SeqCst);
+        SAVED_WINDOW_Y.store(pos_y, Ordering::SeqCst);
 
         let hwnd = CreateWindowExW(
             0x00000008, // WS_EX_TOPMOST
@@ -1110,8 +1220,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             STYLE,
             pos_x,
             pos_y,
-            PORTRAIT_WIDTH_CLOSED,
-            PORTRAIT_HEIGHT,
+            phys_w,
+            phys_h,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
@@ -1122,16 +1232,25 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             return Err("Failed to create main Win32 window".to_string());
         }
 
-        // Apply true DWM Acrylic blur with 1px bottom margin extension
+        // Query the true monitor DPI scale for this created HWND
+        let win_dpi_scale = get_hwnd_dpi_scale(hwnd);
+        let win_phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * win_dpi_scale).round() as i32;
+        let win_phys_h = (PORTRAIT_HEIGHT as f64 * win_dpi_scale).round() as i32;
+        let win_pos_x = work_area.left + ((work_w - win_phys_w) / 2).max(50);
+        let win_pos_y = work_area.top + ((work_h - win_phys_h) / 2).max(50);
+        SAVED_WINDOW_X.store(win_pos_x, Ordering::SeqCst);
+        SAVED_WINDOW_Y.store(win_pos_y, Ordering::SeqCst);
+
+        // Apply true DWM Acrylic blur with full frame extension (-1 margins)
         let _ = apply_true_files_acrylic_backdrop(hwnd, dark_mode);
 
         SetWindowPos(
             hwnd,
             ptr::null_mut(),
-            pos_x,
-            pos_y,
-            PORTRAIT_WIDTH_CLOSED,
-            PORTRAIT_HEIGHT,
+            win_pos_x,
+            win_pos_y,
+            win_phys_w,
+            win_phys_h,
             0x0004 | 0x0020 | 0x0040, // SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
         );
         ShowWindow(hwnd, 5); // SW_SHOW

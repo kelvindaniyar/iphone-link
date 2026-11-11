@@ -51,10 +51,22 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#":root {
-  --wallpaper-bg-image: url("/api/system/wallpaper");
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic Styling (Tahap 169) */
+:root {
+  --wallpaper-bg-image: none !important;
 }
-html, body, .app {
+html, body {
+  background: transparent !important;
+  background-color: transparent !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+.app {
   width: 100vw !important;
   height: 100vh !important;
   max-width: 100vw !important;
@@ -64,9 +76,25 @@ html, body, .app {
   overflow: hidden !important;
   border: none !important;
   outline: none !important;
-  box-shadow: none !important;
+  background: rgba(14, 18, 26, 0.44) !important;
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
+}
+[data-theme="light"] .app,
+.theme-light .app {
+  background: rgba(242, 246, 252, 0.54) !important;
+}
+.app:not(.is-fullsize) {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+.app::before {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  background-image: none !important;
+  background: none !important;
 }
 .main-body, .display-col {
   height: calc(100vh - 38px) !important;
@@ -861,14 +889,39 @@ fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
     let ports = [8766u16, WORKER_PORT];
     for port in ports {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(150)) {
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
             let _ = stream.set_nodelay(true);
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
-            let full_target = if req.query.is_empty() {
-                req.path.clone()
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(2500)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(2500)));
+
+            let target_path = if port == 8766 {
+                match req.path.as_str() {
+                    "/mirror/codec" => "/codec",
+                    "/mirror/live" => "/stream.bin",
+                    "/mirror/touch" => "/touch",
+                    "/mirror/scroll" => "/scroll",
+                    "/mirror/button" => "/button",
+                    "/mirror/key" => "/key",
+                    "/mirror/gesture" => "/gesture",
+                    "/mirror/pli" => "/pli",
+                    "/mirror/restart" => "/restart",
+                    "/mirror/buttons" => "/buttons",
+                    other => {
+                        if other.starts_with("/mirror/") {
+                            &other[7..]
+                        } else {
+                            other
+                        }
+                    }
+                }
             } else {
-                format!("{}?{}", req.path, req.query)
+                req.path.as_str()
+            };
+
+            let full_target = if req.query.is_empty() {
+                target_path.to_string()
+            } else {
+                format!("{}?{}", target_path, req.query)
             };
             let content_type = req.headers.get("content-type").map(|s| s.as_str()).unwrap_or("application/json");
             let header = format!(
@@ -890,6 +943,9 @@ fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
                         } else {
                             200
                         };
+                        if status_code == 404 && port == 8766 {
+                            continue;
+                        }
                         return Some(HttpResponse {
                             status_code,
                             status_text: "OK",
@@ -905,17 +961,24 @@ fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
 }
 
 fn stream_live_passthrough(client: &mut TcpStream) -> Result<(), std::io::Error> {
-    let mut upstream = match TcpStream::connect("127.0.0.1:8766") {
-        Ok(s) => s,
-        Err(_) => TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT))?,
+    let (mut upstream, is_8766) = match TcpStream::connect("127.0.0.1:8766") {
+        Ok(s) => (s, true),
+        Err(_) => (TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT))?, false),
     };
     upstream.set_nodelay(true)?;
     client.set_nodelay(true)?;
+    let _ = upstream.set_read_timeout(None);
+    let _ = upstream.set_write_timeout(None);
 
-    let req = "GET /mirror/live HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req = if is_8766 {
+        "GET /stream.bin HTTP/1.1\r\nHost: 127.0.0.1:8766\r\nConnection: close\r\n\r\n"
+    } else {
+        "GET /mirror/live HTTP/1.1\r\nHost: 127.0.0.1:8767\r\nConnection: close\r\n\r\n"
+    };
     upstream.write_all(req.as_bytes())?;
+    upstream.flush()?;
 
-    let mut buf = [0u8; 131072]; // 128KB buffer
+    let mut buf = [0u8; 65536]; // 64KB buffer
     loop {
         let n = upstream.read(&mut buf)?;
         if n == 0 {
@@ -1802,6 +1865,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     // 8. Screen streaming start / stop / status & /mirror/* bridge
     if path == "/api/screen" || path == "/api/screen/start" || path == "/api/screen/restart" {
         if req.method == "POST" {
+            if let Some(resp) = forward_to_worker(req) {
+                if resp.status_code == 200 {
+                    let mut st = state.lock().unwrap();
+                    st.is_streaming = true;
+                    return resp;
+                }
+            }
             let mut st = state.lock().unwrap();
             st.is_streaming = true;
             if req.body.contains("wifi") {
@@ -1813,6 +1883,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 r#"{"ok":true,"phase":"running","status":"started","fps":60,"width":1202,"height":2598}"#,
             );
         } else {
+            if let Some(resp) = forward_to_worker(req) {
+                return resp;
+            }
             let st = state.lock().unwrap();
             let phase = if st.is_streaming { "running" } else { "stopped" };
             return HttpResponse::ok_json(&format!(
@@ -1825,6 +1898,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     if path == "/api/screen/stop" || path == "/mirror/stop" {
         let mut st = state.lock().unwrap();
         st.is_streaming = false;
+        let stop_req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/screen/stop".to_string(),
+            query: String::new(),
+            headers: req.headers.clone(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        if let Some(resp) = forward_to_worker(&stop_req) {
+            return resp;
+        }
         return HttpResponse::ok_json(r#"{"ok":true,"phase":"stopped","status":"stopped"}"#);
     }
 
