@@ -2,7 +2,7 @@
 //!
 //! Provides:
 //! - "Files" app style thin acrylic backdrop (DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW (3))
-//! - Fallback to SetWindowCompositionAttribute acrylic blur behind
+//! - Official Windows 11 DWM attributes (dark mode, rounded corners, zero border)
 //! - WindowGeometryManager: Precision DPI geometry for portrait (346x832 / 706x832),
 //!   landscape 270 deg (840x468 / 1200x468), and aspect-ratio centered fullscreen
 //! - System Tray integration (Shell_NotifyIconW) with ASCII popup menu
@@ -50,13 +50,7 @@ pub const DWMSBT_MAINWINDOW: u32 = 2;      // Mica
 pub const DWMSBT_TRANSIENTWINDOW: u32 = 3; // True Acrylic ("Files" app style)
 pub const DWMSBT_TABBEDWINDOW: u32 = 4;    // Mica Alt
 
-// Accent policy fallback for Windows 10
-pub const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
-pub const WCA_ACCENT_POLICY: u32 = 19;
-
-// Tint colors (ABGR format: alpha 0x40 = ~25% opacity)
-pub const ACRYLIC_DARK_TINT: u32 = 0x40181412;
-pub const ACRYLIC_LIGHT_TINT: u32 = 0x40F8F6F4;
+// Accent policy removed in Tahap 166 (clean DWM attributes only)
 
 // Geometry standard constants (at 100% DPI)
 pub const PORTRAIT_WIDTH_CLOSED: i32 = 346;
@@ -88,28 +82,7 @@ impl RECT {
     }
 }
 
-#[repr(C)]
-pub struct MARGINS {
-    pub cxLeftWidth: i32,
-    pub cxRightWidth: i32,
-    pub cyTopHeight: i32,
-    pub cyBottomHeight: i32,
-}
 
-#[repr(C)]
-pub struct ACCENT_POLICY {
-    pub AccentState: u32,
-    pub AccentFlags: u32,
-    pub GradientColor: u32,
-    pub AnimationId: u32,
-}
-
-#[repr(C)]
-pub struct WINDOWCOMPOSITIONATTRIBDATA {
-    pub Attrib: u32,
-    pub pvData: *mut c_void,
-    pub cbData: usize,
-}
 
 #[repr(C)]
 struct WNDCLASSEXW {
@@ -201,6 +174,8 @@ extern "system" {
 #[link(name = "gdi32")]
 extern "system" {
     fn GetStockObject(i: i32) -> *mut c_void;
+    fn CreateSolidBrush(crColor: u32) -> *mut c_void;
+    fn DeleteObject(ho: *mut c_void) -> i32;
 }
 
 #[link(name = "ole32")]
@@ -231,11 +206,10 @@ pub enum DwmBackdropStatus {
     Unsupported,
 }
 
-type DwmExtendFrameIntoClientAreaFn = unsafe extern "system" fn(*mut c_void, *const MARGINS) -> i32;
 type DwmSetWindowAttributeFn = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
-type SetWindowCompositionAttributeFn = unsafe extern "system" fn(*mut c_void, *mut WINDOWCOMPOSITIONATTRIBDATA) -> i32;
 
-/// Applies "Files" app style true acrylic blur behind the given Win32 HWND.
+/// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border) to HWND.
+/// Zero frame extension margins and zero legacy accent policy to prevent gray box on blur.
 pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> Result<DwmBackdropStatus, String> {
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
@@ -246,37 +220,22 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
         let dwm_module = LoadLibraryW(dwm_name.as_ptr());
 
         if !dwm_module.is_null() {
-            let extend_proc = GetProcAddress(dwm_module, b"DwmExtendFrameIntoClientArea\0".as_ptr() as *const i8);
             let set_attr_proc = GetProcAddress(dwm_module, b"DwmSetWindowAttribute\0".as_ptr() as *const i8);
 
-            if !extend_proc.is_null() && !set_attr_proc.is_null() {
-                let extend_fn: DwmExtendFrameIntoClientAreaFn = std::mem::transmute(extend_proc);
+            if !set_attr_proc.is_null() {
                 let set_attr_fn: DwmSetWindowAttributeFn = std::mem::transmute(set_attr_proc);
 
-                // Extend frame into client area (-1 margins)
-                let margins = MARGINS {
-                    cxLeftWidth: -1,
-                    cxRightWidth: -1,
-                    cyTopHeight: -1,
-                    cyBottomHeight: -1,
-                };
-                let _ = extend_fn(hwnd, &margins);
-
-                // Set immersive dark mode (1 = dark, 0 = light)
+                // 1. Set immersive dark mode (1 = dark, 0 = light)
                 let dark_val: u32 = if dark_mode { 1 } else { 0 };
                 let _ = set_attr_fn(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_val as *const _ as *const c_void, 4);
 
-                // Set rounded corners preference (12px)
+                // 2. Set rounded corners preference (12px, DWMWCP_ROUND = 2)
                 let round_val = DWMWCP_ROUND;
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
-                // DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
+                // 3. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
                 let border_none: u32 = 0xFFFFFFFE;
                 let _ = set_attr_fn(hwnd, 34, &border_none as *const _ as *const c_void, 4);
-
-                // Set backdrop type to DWMSBT_TRANSIENTWINDOW (3 = Thin Acrylic)
-                let backdrop_type = DWMSBT_TRANSIENTWINDOW;
-                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
 
                 return Ok(DwmBackdropStatus::NativeTransientAcrylic);
             }
@@ -493,6 +452,12 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
         unsafe {
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetClientRect(hwnd, &mut rc);
+            if rc.right <= rc.left || rc.bottom <= rc.top {
+                rc.left = 0;
+                rc.top = 0;
+                rc.right = PORTRAIT_WIDTH_CLOSED;
+                rc.bottom = PORTRAIT_HEIGHT;
+            }
             let ctrl_vt = *(ctrl as *mut *const usize);
             type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
             let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
@@ -641,25 +606,17 @@ unsafe extern "system" fn ctrl_completed_invoke(
     // 3. put_Bounds (index 6, passed by *const RECT)
     let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetClientRect(hwnd, &mut rc);
+    if rc.right <= rc.left || rc.bottom <= rc.top {
+        rc.left = 0;
+        rc.top = 0;
+        rc.right = PORTRAIT_WIDTH_CLOSED;
+        rc.bottom = PORTRAIT_HEIGHT;
+    }
     type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
     let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
     let _ = put_bounds(controller, &rc as *const RECT);
 
-    // 4. QueryInterface for ICoreWebView2Controller2 & put_DefaultBackgroundColor(0)
-    type QueryInterfaceFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
-    let qi: QueryInterfaceFn = std::mem::transmute(*ctrl_vt.add(0));
-    let mut ctrl2: *mut c_void = ptr::null_mut();
-    let hr_qi = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
-    if hr_qi >= 0 && !ctrl2.is_null() {
-        let ctrl2_vt = *(ctrl2 as *mut *const usize);
-        type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
-        let put_bg: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let _ = put_bg(ctrl2, 0);
-        let rel_fn: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*ctrl2_vt.add(2));
-        let _ = rel_fn(ctrl2);
-    }
-
-    // 5. get_CoreWebView2 (index 25)
+    // 4. get_CoreWebView2 (index 25)
     type GetCoreWebView2Fn = unsafe extern "system" fn(this: *mut c_void, webview_out: *mut *mut c_void) -> i32;
     let get_core: GetCoreWebView2Fn = std::mem::transmute(*ctrl_vt.add(25));
     let mut webview: *mut c_void = ptr::null_mut();
@@ -675,6 +632,19 @@ unsafe extern "system" fn ctrl_completed_invoke(
         type NavigateFn = unsafe extern "system" fn(this: *mut c_void, uri: *const u16) -> i32;
         let navigate: NavigateFn = std::mem::transmute(*wv_vt.add(5));
         let _ = navigate(webview, url.as_ptr());
+
+        // Immediately schedule bounds refresh at 150ms and 500ms
+        let hwnd_usize = hwnd as usize;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            unsafe {
+                PostMessageW(hwnd_usize as *mut _, WM_APP_SYNC_GEOMETRY, 0, 0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            unsafe {
+                PostMessageW(hwnd_usize as *mut _, WM_APP_SYNC_GEOMETRY, 0, 0);
+            }
+        });
     }
 
     0
@@ -714,10 +684,9 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
         let _ = CoInitializeEx(ptr::null_mut(), 2);
     }
 
-    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate,msVisualSearch,msEdgeVisualSearch,msEdgeSidebar,msHubApps,msEdgeAskCopilot,msEdgeShopping,msEdgeMiniMenu,msSmartScreenProtection --no-first-run --disable-extensions --disable-component-update",
+        "--enable-features=PlatformHEVCDecoderSupport --disable-features=Translate,msTranslate,msEdgeTranslate,msVisualSearch,msEdgeVisualSearch --no-first-run --disable-extensions",
     );
 
     let loader_dll_path = find_webview2_loader_dll()
@@ -834,10 +803,12 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             }
         }
         0x0014 => {
-            // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent in DWM acrylic blur)
+            // WM_ERASEBKGND: Fill with solid brush #10141e
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetClientRect(hwnd, &mut rc);
-            FillRect(wparam as *mut c_void, &rc as *const RECT, GetStockObject(4));
+            let brush = CreateSolidBrush(0x001E1410);
+            FillRect(wparam as *mut c_void, &rc as *const RECT, brush);
+            DeleteObject(brush);
             1
         }
         0x0005 => {
@@ -1034,7 +1005,10 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let app_id: Vec<u16> = "Kelvin.iPhoneLink.NativeRust.4\0".encode_utf16().collect();
         let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
 
+        let _ = CoInitializeEx(ptr::null_mut(), 2);
+
         let class_name: Vec<u16> = "iPhoneLinkMainWindowClass\0".encode_utf16().collect();
+        let bg_brush = CreateSolidBrush(0x001E1410); // Solid brush #10141e
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0x0001 | 0x0002, // CS_VREDRAW | CS_HREDRAW
@@ -1044,7 +1018,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             hInstance: ptr::null_mut(),
             hIcon: ptr::null_mut(),
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
-            hbrBackground: GetStockObject(4), // BLACK_BRUSH
+            hbrBackground: bg_brush,
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: ptr::null_mut(),

@@ -27,6 +27,8 @@ pub static GLOBAL_APP_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_APP_HEIGHT: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_LAUNCHPAD_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_START_BTN_TEXT: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_USER_AGENT: Mutex<String> = Mutex::new(String::new());
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -131,15 +133,17 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var appRect = appEl.getBoundingClientRect ? appEl.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
             var launchpadTitle = document.getElementById("launchpad-title");
             var launchpadHeight = (launchpadTitle && launchpadTitle.getBoundingClientRect) ? launchpadTitle.getBoundingClientRect().height : 0;
-            var startBtn = document.getElementById("launchpad-start-btn") || document.getElementById("show-screen") || document.querySelector(".launchpad-start-btn");
+            var startBtn = document.getElementById("launchpad-start-btn") || document.getElementById("show-screen");
             var startBtnWidth = (startBtn && startBtn.getBoundingClientRect) ? startBtn.getBoundingClientRect().width : 0;
 
             var screenEmpty = document.getElementById("screen-empty");
             var lpVis = Boolean(launchpadHeight > 10) || Boolean(screenEmpty && !screenEmpty.hidden);
-            var startBtnEl = startBtn || document.getElementById("btn-mirror") || document.getElementById("start-screen") || document.querySelector(".btn-primary");
-            var btnVis = Boolean(startBtnWidth > 40) || Boolean(startBtnEl && !startBtnEl.hidden);
+            var btnVis = Boolean(startBtnWidth >= 80) || Boolean(startBtn && !startBtn.hidden);
             var curW = (appRect.width > 50) ? Math.round(appRect.width) : (window.innerWidth || 346);
             var curH = (appRect.height > 50) ? Math.round(appRect.height) : (window.innerHeight || 832);
+
+            var btnText = (startBtn ? (startBtn.innerText || startBtn.textContent || "") : "").trim();
+            var titleText = (launchpadTitle ? (launchpadTitle.innerText || launchpadTitle.textContent || "") : "").trim();
 
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
@@ -149,6 +153,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 appHeight: curH,
                 launchpadVisible: lpVis,
                 startBtnVisible: btnVis,
+                startBtnText: btnText,
+                launchpadTitleText: titleText,
+                userAgent: navigator.userAgent || "",
                 dpr: window.devicePixelRatio || 1.0
             });
         } catch (_) {}
@@ -202,16 +209,22 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     if (document.readyState === "complete" || document.readyState === "interactive") {
         setTimeout(sendDomBeacon, 10);
+        setTimeout(sendDomBeacon, 300);
+        setTimeout(sendDomBeacon, 1000);
         setTimeout(updateWindowParallaxPosition, 10);
         setTimeout(updateStreamingButtonVisibility, 10);
     } else {
         document.addEventListener("DOMContentLoaded", function() {
             sendDomBeacon();
+            setTimeout(sendDomBeacon, 300);
+            setTimeout(sendDomBeacon, 1000);
             updateWindowParallaxPosition();
             updateStreamingButtonVisibility();
         });
         window.addEventListener("load", function() {
             sendDomBeacon();
+            setTimeout(sendDomBeacon, 300);
+            setTimeout(sendDomBeacon, 1000);
             updateWindowParallaxPosition();
             updateStreamingButtonVisibility();
         });
@@ -784,6 +797,25 @@ fn parse_float_param(body: &str, param: &str) -> Option<f64> {
     num_str.parse::<f64>().ok()
 }
 
+fn parse_string_param(body: &str, param: &str) -> Option<String> {
+    let key1 = format!(r#""{}":"#, param);
+    let key2 = format!(r#""{}": "#, param);
+    let after = if let Some(idx) = body.find(&key1) {
+        &body[idx + key1.len()..]
+    } else if let Some(idx) = body.find(&key2) {
+        &body[idx + key2.len()..]
+    } else {
+        return None;
+    };
+    let trimmed = after.trim_start();
+    if !trimmed.starts_with('"') {
+        return None;
+    }
+    let content = &trimmed[1..];
+    let end_idx = content.find('"')?;
+    Some(content[..end_idx].to_string())
+}
+
 fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
     if let Ok(appdata) = env::var("APPDATA") {
         let tw = PathBuf::from(&appdata).join("Microsoft").join("Windows").join("Themes").join("TranscodedWallpaper");
@@ -1073,9 +1105,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
                 let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
 
+                let btn_text = GLOBAL_START_BTN_TEXT.lock().map(|s| s.clone()).unwrap_or_default();
+                let user_agent = GLOBAL_USER_AGENT.lock().map(|s| s.clone()).unwrap_or_default();
+                let safe_btn = btn_text.replace('\\', r#"\\"#).replace('"', r#"\""#);
+                let safe_ua = user_agent.replace('\\', r#"\\"#).replace('"', r#"\""#);
+
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{}}}}}"#,
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}"}}}}"#,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -1084,7 +1121,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         app_w,
                         app_h,
                         lp_vis,
-                        btn_vis
+                        btn_vis,
+                        safe_btn,
+                        safe_ua
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -1093,8 +1132,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     sanitized = sanitized.replace(
                         r#""domReadyBeacon":"#,
                         &format!(
-                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "domReadyBeacon":"#,
-                            dpr_float, app_w, app_h, lp_vis, btn_vis
+                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "domReadyBeacon":"#,
+                            dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua
                         )
                     );
                 }
@@ -1206,7 +1245,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "appWidth": {},
     "appHeight": {},
     "launchpadVisible": {},
-    "startBtnVisible": {}
+    "startBtnVisible": {},
+    "startBtnText": "{}",
+    "userAgent": "{}"
   }},
   "version": "4.0.0"
 }}"#,
@@ -1246,7 +1287,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             app_w,
             app_h,
             lp_vis,
-            btn_vis
+            btn_vis,
+            GLOBAL_START_BTN_TEXT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
+            GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default()
         );
         return HttpResponse::ok_json(&json);
     }
@@ -1706,7 +1749,25 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/dom_ready_beacon" {
-        DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
+        let has_edg = req.body.contains("Edg/");
+        let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
+        let btn_text_ok = req.body.to_lowercase().contains("mirroring");
+
+        if let Some(txt) = parse_string_param(&req.body, "startBtnText") {
+            if let Ok(mut g_txt) = GLOBAL_START_BTN_TEXT.lock() {
+                *g_txt = txt;
+            }
+        }
+        if let Some(ua) = parse_string_param(&req.body, "userAgent") {
+            if let Ok(mut g_ua) = GLOBAL_USER_AGENT.lock() {
+                *g_ua = ua;
+            }
+        }
+
+        if has_edg && btn_vis && btn_text_ok {
+            DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
+        }
+
         if let Some(dpr_val) = parse_float_param(&req.body, "dpr") {
             let dpr_int = (dpr_val * 100.0).round() as usize;
             GLOBAL_DEVICE_PIXEL_RATIO.store(dpr_int, Ordering::SeqCst);
@@ -1722,7 +1783,6 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             }
         }
         let lp_vis = req.body.contains(r#""launchpadVisible":true"#) || req.body.contains(r#""launchpadVisible": true"#);
-        let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
         GLOBAL_LAUNCHPAD_VISIBLE.store(lp_vis, Ordering::SeqCst);
         GLOBAL_START_BTN_VISIBLE.store(btn_vis, Ordering::SeqCst);
         return HttpResponse::ok_json(r#"{"ok":true,"beacon":true}"#);
