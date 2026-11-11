@@ -51,9 +51,9 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic & 3D Liquid Glass (Tahap 170) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic & 3D Liquid Glass (Tahap 171) */
 :root {
-  --wallpaper-bg-image: none !important;
+  --wallpaper-bg-image: url("/api/system/wallpaper");
 }
 html, body {
   background: transparent !important;
@@ -76,40 +76,40 @@ html, body {
   overflow: hidden !important;
   border: none !important;
   outline: none !important;
-  background: rgba(14, 18, 26, 0.38) !important;
+  background: linear-gradient(165deg, rgba(16, 22, 34, 0.42) 0%, rgba(10, 14, 24, 0.54) 100%) !important;
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
   position: relative !important;
 }
 [data-theme="light"] .app,
 .theme-light .app {
-  background: rgba(242, 246, 252, 0.45) !important;
+  background: linear-gradient(165deg, rgba(242, 246, 252, 0.52) 0%, rgba(230, 236, 245, 0.60) 100%) !important;
 }
 .app:not(.is-fullsize) {
   border-radius: 12px !important;
   overflow: hidden !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 8px 32px rgba(0, 0, 0, 0.35) !important;
 }
-/* Wallpaper blur fallback ONLY when window is unfocused */
+/* Wallpaper blur permanently active 100% both focused and unfocused */
 .app::before {
   content: "" !important;
   position: absolute !important;
   inset: 0 !important;
-  display: none !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  background-size: cover !important;
-  background-position: center !important;
-  pointer-events: none !important;
-  z-index: 0 !important;
-  transition: opacity 0.25s ease !important;
-}
-.window-unfocused .app::before {
-  opacity: 0.42 !important;
   display: block !important;
   visibility: visible !important;
+  opacity: 0.46 !important;
   background-image: var(--wallpaper-bg-image) !important;
-  filter: blur(28px) saturate(165%) !important;
+  background-size: cover !important;
+  background-position: center !important;
+  filter: blur(28px) saturate(170%) !important;
+  transform: scale(1.08) translateZ(0) !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+[data-theme="light"] .app::before,
+.theme-light .app::before {
+  opacity: 0.38 !important;
+  filter: blur(32px) saturate(180%) brightness(1.12) !important;
 }
 
 /* 100% Transparent Wrapper Pipeline for Full Real-Time Acrylic Blur */
@@ -175,14 +175,21 @@ body::-webkit-scrollbar {
   position: relative !important;
   z-index: 10 !important;
 }
-.side-drawer {
-  background: rgba(16, 20, 30, 0.58) !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.10) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.30) !important;
+.side-drawer,
+.control-pane {
+  background: rgba(16, 22, 34, 0.55) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35), inset 1px 0 0 rgba(255, 255, 255, 0.15) !important;
   position: relative !important;
   z-index: 20 !important;
+}
+[data-theme="light"] .side-drawer,
+[data-theme="light"] .control-pane {
+  background: rgba(240, 244, 250, 0.65) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.40) !important;
+  box-shadow: -8px 0 32px rgba(15, 23, 42, 0.12), inset 1px 0 0 rgba(255, 255, 255, 0.50) !important;
 }
 
 /* 3D Liquid Glass Cards Anti-Flat Specular Rim Highlights */
@@ -190,11 +197,11 @@ body::-webkit-scrollbar {
 .glass-card,
 .launchpad-device-card,
 #launchpad-device-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(20, 24, 35, 0.42) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px 0 rgba(0, 0, 0, 0.28) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(20, 24, 35, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px 0 rgba(0, 0, 0, 0.30) !important;
+  backdrop-filter: blur(16px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(165%) !important;
 }
 [data-theme="light"] .card,
 [data-theme="light"] .glass-card,
@@ -290,16 +297,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         e.preventDefault();
     }, true);
 
-    window.addEventListener("blur", function() {
-        if (document.body) {
-            document.body.classList.add("window-unfocused");
-        }
-    });
-    window.addEventListener("focus", function() {
-        if (document.body) {
-            document.body.classList.remove("window-unfocused");
-        }
-    });
+    function updateParallaxVars() {
+        try {
+            var wx = window.screenX || window.screenLeft || 0;
+            var wy = window.screenY || window.screenTop || 0;
+            document.documentElement.style.setProperty("--win-x", wx + "px");
+            document.documentElement.style.setProperty("--win-y", wy + "px");
+        } catch(_) {}
+    }
+    updateParallaxVars();
+    window.addEventListener("mouseup", updateParallaxVars, { passive: true });
 
     function installDragListeners() {
         ['.app-bar', '.drawer-header'].forEach(function(sel) {
@@ -319,6 +326,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     function initBridge() {
         installDragListeners();
+        updateParallaxVars();
         requestAnimationFrame(checkRaf);
         setTimeout(function() { sendDomBeacon(false); }, 300);
         setTimeout(function() { sendDomBeacon(false); }, 1000);
@@ -1584,7 +1592,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     // 7. API: Window Controls (with DPI-aware HWND & WebView2 Bounds Sync via Main Thread Dispatch)
-    if path == "/api/window/set_drawer" {
+    if path == "/api/window/set_drawer" || path == "/api/window/drawer" {
         let mut st = state.lock().unwrap();
         let open = req.body.contains(r#""open":true"#)
             || req.body.contains(r#""open": true"#)
@@ -1736,7 +1744,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/sync_layout" {
+    if path == "/api/window/sync_layout" || path == "/api/window/sync_geometry" {
         let mut changed = false;
         if req.body.contains(r#""drawerOpen":true"#) || req.body.contains(r#""drawerOpen": true"#) {
             if !GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) {
