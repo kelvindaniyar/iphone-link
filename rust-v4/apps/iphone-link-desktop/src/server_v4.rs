@@ -29,6 +29,7 @@ pub static GLOBAL_LAUNCHPAD_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_TEXT: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_USER_AGENT: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_RAF_VERIFIED: AtomicBool = AtomicBool::new(false);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -114,7 +115,7 @@ iframe#screen-view {
 }
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 159) */
+pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 168) */
 (function() {
     console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
 
@@ -126,7 +127,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
     }
 
-    function sendDomBeacon() {
+    function sendDomBeacon(rafVerified) {
         try {
             var appEl = document.querySelector(".app") || document.body;
             var disp = window.getComputedStyle ? window.getComputedStyle(appEl).display : "block";
@@ -156,82 +157,54 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 startBtnText: btnText,
                 launchpadTitleText: titleText,
                 userAgent: navigator.userAgent || "",
-                dpr: window.devicePixelRatio || 1.0
+                dpr: window.devicePixelRatio || 1.0,
+                rafVerified: !!rafVerified
             });
         } catch (_) {}
     }
 
-    function updateWindowParallaxPosition() {
-        try {
-            if (window.screenX !== undefined && window.screenY !== undefined) {
-                document.documentElement.style.setProperty("--win-x", window.screenX + "px");
-                document.documentElement.style.setProperty("--win-y", window.screenY + "px");
-            }
-            if (window.screen && window.screen.width && window.screen.height) {
-                document.documentElement.style.setProperty("--screen-w", window.screen.width + "px");
-                document.documentElement.style.setProperty("--screen-h", window.screen.height + "px");
-            }
-        } catch (_) {}
+    var rafCount = 0;
+    function checkRaf() {
+        rafCount++;
+        if (rafCount >= 2) {
+            sendDomBeacon(true);
+        } else {
+            requestAnimationFrame(checkRaf);
+        }
     }
 
-    function updateStreamingButtonVisibility() {
-        try {
-            var screenView = document.getElementById("screen-view");
-            var screenEmpty = document.getElementById("screen-empty");
-            var appEl = document.querySelector(".app");
-            var restartBtn = document.getElementById("restart-screen");
-            var stopBtn = document.getElementById("stop-screen");
-            if (!appEl) return;
-            var isStreaming = Boolean(screenView && !screenView.hidden && screenEmpty && screenEmpty.hidden);
-            if (isStreaming) {
-                appEl.classList.add("is-streaming");
-                if (restartBtn) {
-                    restartBtn.hidden = false;
-                    restartBtn.style.removeProperty("display");
+    window.addEventListener("contextmenu", function(e) {
+        e.preventDefault();
+    }, true);
+
+    function installDragListeners() {
+        ['.app-bar', '.drawer-header'].forEach(function(sel) {
+            var el = document.querySelector(sel);
+            if (!el) return;
+            var onDragStart = function(e) {
+                if (e.button !== 0) return;
+                var interactive = e.target.closest('button, a, input, select, textarea, .bar-btn, #btn-settings, #close-settings, #win-min, #win-max, #win-close, #restart-screen, #stop-screen, #btn-rotate-landscape, #toggle-audio-top');
+                if (!interactive) {
+                    e.preventDefault();
+                    fetch('/api/window/start_drag', { method: 'POST' }).catch(function(){});
                 }
-                if (stopBtn) {
-                    stopBtn.hidden = false;
-                    stopBtn.style.removeProperty("display");
-                }
-            } else {
-                appEl.classList.remove("is-streaming");
-                if (restartBtn) {
-                    restartBtn.hidden = true;
-                    restartBtn.style.setProperty("display", "none", "important");
-                }
-                if (stopBtn) {
-                    stopBtn.hidden = true;
-                    stopBtn.style.setProperty("display", "none", "important");
-                }
-            }
-        } catch (_) {}
+            };
+            el.addEventListener('mousedown', onDragStart, true);
+        });
     }
 
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-        setTimeout(sendDomBeacon, 10);
-        setTimeout(sendDomBeacon, 300);
-        setTimeout(sendDomBeacon, 1000);
-        setTimeout(updateWindowParallaxPosition, 10);
-        setTimeout(updateStreamingButtonVisibility, 10);
+    function initBridge() {
+        installDragListeners();
+        requestAnimationFrame(checkRaf);
+        setTimeout(function() { sendDomBeacon(false); }, 300);
+        setTimeout(function() { sendDomBeacon(false); }, 1000);
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener('DOMContentLoaded', initBridge);
     } else {
-        document.addEventListener("DOMContentLoaded", function() {
-            sendDomBeacon();
-            setTimeout(sendDomBeacon, 300);
-            setTimeout(sendDomBeacon, 1000);
-            updateWindowParallaxPosition();
-            updateStreamingButtonVisibility();
-        });
-        window.addEventListener("load", function() {
-            sendDomBeacon();
-            setTimeout(sendDomBeacon, 300);
-            setTimeout(sendDomBeacon, 1000);
-            updateWindowParallaxPosition();
-            updateStreamingButtonVisibility();
-        });
+        initBridge();
     }
-
-    setInterval(updateWindowParallaxPosition, 60);
-    setInterval(updateStreamingButtonVisibility, 200);
 
     window.pywebview = window.pywebview || {};
     window.pywebview.api = {
@@ -360,69 +333,6 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return fetch('/api/status').then(function(r) { return r.json(); });
         }
     };
-
-    window.addEventListener("contextmenu", function(e) {
-        e.preventDefault();
-    }, true);
-
-    function installDragListeners() {
-        ['.app-bar', '.drawer-header'].forEach(function(sel) {
-            var el = document.querySelector(sel);
-            if (!el) return;
-            var onDragStart = function(e) {
-                if (e.button !== 0) return;
-                var interactive = e.target.closest('button, a, input, select, textarea, .bar-btn, #btn-settings, #close-settings, #win-min, #win-max, #win-close, #restart-screen, #stop-screen, #btn-rotate-landscape, #toggle-audio-top');
-                if (!interactive) {
-                    e.preventDefault();
-                    fetch('/api/window/start_drag', { method: 'POST' }).catch(function(){});
-                }
-            };
-            el.removeEventListener('pointerdown', onDragStart, true);
-            el.addEventListener('pointerdown', onDragStart, true);
-            el.removeEventListener('mousedown', onDragStart, true);
-            el.addEventListener('mousedown', onDragStart, true);
-        });
-    }
-
-    function initMutationLayoutSync() {
-        var appEl = document.querySelector(".app");
-        if (!appEl) return;
-        var lastDrawer = appEl.classList.contains("drawer-open");
-        var lastLandscape = appEl.classList.contains("is-landscape");
-        var lastFullsize = appEl.classList.contains("is-fullsize");
-        var syncLayoutNow = function() {
-            updateStreamingButtonVisibility();
-            updateWindowParallaxPosition();
-            var curDrawer = appEl.classList.contains("drawer-open");
-            var curLandscape = appEl.classList.contains("is-landscape");
-            var curFullsize = appEl.classList.contains("is-fullsize");
-            if (curDrawer !== lastDrawer || curLandscape !== lastLandscape || curFullsize !== lastFullsize) {
-                lastDrawer = curDrawer;
-                lastLandscape = curLandscape;
-                lastFullsize = curFullsize;
-                fetch("/api/window/sync_layout", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        drawerOpen: curDrawer,
-                        isLandscape: curLandscape,
-                        isFullsize: curFullsize
-                    })
-                }).catch(function() {});
-            }
-        };
-        new MutationObserver(syncLayoutNow).observe(appEl, { attributes: true, attributeFilter: ["class"] });
-    }
-
-    if (document.readyState === "loading") {
-        document.addEventListener('DOMContentLoaded', function() {
-            installDragListeners();
-            initMutationLayoutSync();
-        });
-    } else {
-        installDragListeners();
-        initMutationLayoutSync();
-    }
 })();
 "#;
 
@@ -1112,7 +1022,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}"}}}}"#,
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{}}}}}"#,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -1123,7 +1033,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         lp_vis,
                         btn_vis,
                         safe_btn,
-                        safe_ua
+                        safe_ua,
+                        GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -1132,8 +1043,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     sanitized = sanitized.replace(
                         r#""domReadyBeacon":"#,
                         &format!(
-                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "domReadyBeacon":"#,
-                            dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua
+                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                            dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                         )
                     );
                 }
@@ -1247,7 +1158,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "launchpadVisible": {},
     "startBtnVisible": {},
     "startBtnText": "{}",
-    "userAgent": "{}"
+    "userAgent": "{}",
+    "rafVerified": {}
   }},
   "version": "4.0.0"
 }}"#,
@@ -1289,7 +1201,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             lp_vis,
             btn_vis,
             GLOBAL_START_BTN_TEXT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
-            GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default()
+            GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
+            GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
         );
         return HttpResponse::ok_json(&json);
     }
@@ -1752,6 +1665,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let has_edg = req.body.contains("Edg/");
         let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
         let btn_text_ok = req.body.to_lowercase().contains("mirroring");
+        let raf_ok = req.body.contains(r#""rafVerified":true"#) || req.body.contains(r#""rafVerified": true"#);
+
+        if raf_ok {
+            GLOBAL_RAF_VERIFIED.store(true, Ordering::SeqCst);
+        }
 
         if let Some(txt) = parse_string_param(&req.body, "startBtnText") {
             if let Ok(mut g_txt) = GLOBAL_START_BTN_TEXT.lock() {
@@ -2008,8 +1926,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 if !html.contains("v4_true_acrylic.css") {
                     html = html.replace(
                         "</head>",
-                        "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n    <script src=\"/v4_bridge.js\"></script>\n</head>",
+                        "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n</head>",
                     );
+                }
+                if !html.contains("v4_bridge.js") {
+                    if let Some(pos) = html.find("<script src=\"/keys.js") {
+                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n  ");
+                    } else if let Some(pos) = html.find("<script src=\"/app.js") {
+                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n  ");
+                    } else if let Some(pos) = html.find("</body>") {
+                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n");
+                    }
                 }
                 return HttpResponse::ok_html(&html);
             }

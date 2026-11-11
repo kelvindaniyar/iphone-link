@@ -175,6 +175,12 @@ extern "system" {
     fn GetAsyncKeyState(vKey: i32) -> i16;
     fn GetSystemMetrics(nIndex: i32) -> i32;
     fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
+    fn FindWindowExW(
+        hWndParent: *mut c_void,
+        hWndChildAfter: *mut c_void,
+        lpszClass: *const u16,
+        lpszWindow: *const u16,
+    ) -> *mut c_void;
 }
 
 #[link(name = "gdi32")]
@@ -461,6 +467,28 @@ pub fn get_hwnd_dpi_scale(hwnd: *mut c_void) -> f32 {
 
 
 
+unsafe fn ensure_child_widget_bounds(hwnd: *mut c_void, rc: &RECT) {
+    let widget_class: Vec<u16> = "Chrome_WidgetWin_0\0".encode_utf16().collect();
+    let child = FindWindowExW(hwnd, ptr::null_mut(), widget_class.as_ptr(), ptr::null());
+    if !child.is_null() {
+        let mut child_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetClientRect(child, &mut child_rc);
+        let target_w = rc.right - rc.left;
+        let target_h = rc.bottom - rc.top;
+        if (child_rc.right - child_rc.left) != target_w || (child_rc.bottom - child_rc.top) != target_h {
+            SetWindowPos(
+                child,
+                ptr::null_mut(),
+                0,
+                0,
+                target_w,
+                target_h,
+                0x0002 | 0x0004 | 0x0010 | 0x0040, // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+            );
+        }
+    }
+}
+
 pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
@@ -486,6 +514,8 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
             type NotifyParentFn = unsafe extern "system" fn(this: *mut c_void) -> i32;
             let notify_parent: NotifyParentFn = std::mem::transmute(*ctrl_vt.add(23));
             let _ = notify_parent(ctrl);
+
+            ensure_child_widget_bounds(hwnd, &rc);
         }
     }
 }
@@ -650,6 +680,8 @@ unsafe extern "system" fn ctrl_completed_invoke(
     type NotifyParentFn = unsafe extern "system" fn(this: *mut c_void) -> i32;
     let notify_parent: NotifyParentFn = std::mem::transmute(*ctrl_vt.add(23));
     let _ = notify_parent(controller);
+
+    ensure_child_widget_bounds(hwnd, &rc);
 
     // 6. get_CoreWebView2 (index 25)
     type GetCoreWebView2Fn = unsafe extern "system" fn(this: *mut c_void, webview_out: *mut *mut c_void) -> i32;
@@ -1043,7 +1075,6 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         let _ = CoInitializeEx(ptr::null_mut(), 2);
 
         let class_name: Vec<u16> = "iPhoneLinkMainWindowClass\0".encode_utf16().collect();
-        let bg_brush = CreateSolidBrush(0x001E1410); // Solid brush #10141e
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0x0001 | 0x0002, // CS_VREDRAW | CS_HREDRAW
@@ -1053,7 +1084,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             hInstance: ptr::null_mut(),
             hIcon: ptr::null_mut(),
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
-            hbrBackground: bg_brush,
+            hbrBackground: ptr::null_mut(),
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: ptr::null_mut(),
