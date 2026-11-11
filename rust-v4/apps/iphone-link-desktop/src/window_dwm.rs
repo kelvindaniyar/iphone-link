@@ -82,7 +82,13 @@ impl RECT {
     }
 }
 
-
+#[repr(C)]
+pub struct MARGINS {
+    pub cxLeftWidth: i32,
+    pub cxRightWidth: i32,
+    pub cyTopHeight: i32,
+    pub cyBottomHeight: i32,
+}
 
 #[repr(C)]
 struct WNDCLASSEXW {
@@ -207,9 +213,10 @@ pub enum DwmBackdropStatus {
 }
 
 type DwmSetWindowAttributeFn = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
+type DwmExtendFrameIntoClientAreaFn = unsafe extern "system" fn(*mut c_void, *const MARGINS) -> i32;
 
-/// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border) to HWND.
-/// Zero frame extension margins and zero legacy accent policy to prevent gray box on blur.
+/// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border) to HWND
+/// with 1px bottom margin frame extension to activate DirectComposition + DWM redirection.
 pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> Result<DwmBackdropStatus, String> {
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
@@ -220,20 +227,32 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
         let dwm_module = LoadLibraryW(dwm_name.as_ptr());
 
         if !dwm_module.is_null() {
+            let extend_proc = GetProcAddress(dwm_module, b"DwmExtendFrameIntoClientArea\0".as_ptr() as *const i8);
             let set_attr_proc = GetProcAddress(dwm_module, b"DwmSetWindowAttribute\0".as_ptr() as *const i8);
 
-            if !set_attr_proc.is_null() {
+            if !extend_proc.is_null() && !set_attr_proc.is_null() {
+                let extend_fn: DwmExtendFrameIntoClientAreaFn = std::mem::transmute(extend_proc);
                 let set_attr_fn: DwmSetWindowAttributeFn = std::mem::transmute(set_attr_proc);
 
-                // 1. Set immersive dark mode (1 = dark, 0 = light)
+                // 1. Extend frame 1px bottom margin (0, 0, 0, 1):
+                // Activates DirectComposition + DWM redirection without making client area alpha-0.
+                let margins = MARGINS {
+                    cxLeftWidth: 0,
+                    cxRightWidth: 0,
+                    cyTopHeight: 0,
+                    cyBottomHeight: 1,
+                };
+                let _ = extend_fn(hwnd, &margins);
+
+                // 2. Set immersive dark mode (1 = dark, 0 = light)
                 let dark_val: u32 = if dark_mode { 1 } else { 0 };
                 let _ = set_attr_fn(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_val as *const _ as *const c_void, 4);
 
-                // 2. Set rounded corners preference (12px, DWMWCP_ROUND = 2)
+                // 3. Set rounded corners preference (12px, DWMWCP_ROUND = 2)
                 let round_val = DWMWCP_ROUND;
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
-                // 3. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
+                // 4. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFE (DWMWA_COLOR_NONE) to eliminate 100% of border stroke
                 let border_none: u32 = 0xFFFFFFFE;
                 let _ = set_attr_fn(hwnd, 34, &border_none as *const _ as *const c_void, 4);
 
@@ -462,6 +481,11 @@ pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
             type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
             let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
             let _ = put_bounds(ctrl, &rc as *const RECT);
+
+            // NotifyParentWindowPositionChanged (vtable index 23)
+            type NotifyParentFn = unsafe extern "system" fn(this: *mut c_void) -> i32;
+            let notify_parent: NotifyParentFn = std::mem::transmute(*ctrl_vt.add(23));
+            let _ = notify_parent(ctrl);
         }
     }
 }
@@ -616,7 +640,18 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
     let _ = put_bounds(controller, &rc as *const RECT);
 
-    // 4. get_CoreWebView2 (index 25)
+    // 4. get_Bounds (index 5) - verify bounds match rc
+    type GetBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *mut RECT) -> i32;
+    let get_bounds: GetBoundsFn = std::mem::transmute(*ctrl_vt.add(5));
+    let mut check_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let _ = get_bounds(controller, &mut check_rc as *mut RECT);
+
+    // 5. NotifyParentWindowPositionChanged (index 23)
+    type NotifyParentFn = unsafe extern "system" fn(this: *mut c_void) -> i32;
+    let notify_parent: NotifyParentFn = std::mem::transmute(*ctrl_vt.add(23));
+    let _ = notify_parent(controller);
+
+    // 6. get_CoreWebView2 (index 25)
     type GetCoreWebView2Fn = unsafe extern "system" fn(this: *mut c_void, webview_out: *mut *mut c_void) -> i32;
     let get_core: GetCoreWebView2Fn = std::mem::transmute(*ctrl_vt.add(25));
     let mut webview: *mut c_void = ptr::null_mut();
@@ -1056,9 +1091,18 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             return Err("Failed to create main Win32 window".to_string());
         }
 
-        // Apply true DWM Acrylic blur
+        // Apply true DWM Acrylic blur with 1px bottom margin extension
         let _ = apply_true_files_acrylic_backdrop(hwnd, dark_mode);
 
+        SetWindowPos(
+            hwnd,
+            ptr::null_mut(),
+            pos_x,
+            pos_y,
+            PORTRAIT_WIDTH_CLOSED,
+            PORTRAIT_HEIGHT,
+            0x0004 | 0x0020 | 0x0040, // SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
+        );
         ShowWindow(hwnd, 5); // SW_SHOW
         UpdateWindow(hwnd);
 
