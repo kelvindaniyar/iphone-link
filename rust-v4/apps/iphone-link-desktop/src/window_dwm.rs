@@ -247,6 +247,14 @@ extern "system" {
         lpszClass: *const u16,
         lpszWindow: *const u16,
     ) -> *mut c_void;
+    fn LoadImageW(
+        hInst: *mut c_void,
+        name: *const u16,
+        type_: u32,
+        cx: i32,
+        cy: i32,
+        fuLoad: u32,
+    ) -> *mut c_void;
 }
 
 #[link(name = "gdi32")]
@@ -271,6 +279,7 @@ extern "system" {
     fn LoadLibraryW(lpLibFileName: *const u16) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const i8) -> *mut c_void;
     fn FreeLibrary(hLibModule: *mut c_void) -> i32;
+    fn GetModuleHandleW(lpModuleName: *const u16) -> *mut c_void;
 }
 
 // ============================================================================
@@ -941,8 +950,8 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0086 => {
-            // WM_NCACTIVATE: Return DefWindowProcW with wparam=1 and -1 lparam to suppress standard titlebar painting & white stroke
-            DefWindowProcW(hwnd, msg, 1usize, -1isize)
+            // WM_NCACTIVATE: Return DefWindowProcW with wparam and -1 lparam to suppress standard titlebar painting & white stroke
+            DefWindowProcW(hwnd, msg, wparam, -1isize)
         }
         0x0006 => {
             // WM_ACTIVATE: When window is deactivated, re-apply acrylic backdrop to prevent DWM from turning into #404040 gray!
@@ -1167,6 +1176,45 @@ pub fn move_hwnd_to(hwnd: *mut c_void, x: i32, y: i32) {
     }
 }
 
+/// Helper to load the application icon (from embedded PE resource or assets/iphone_link.ico file)
+unsafe fn load_app_icon(cx: i32, cy: i32) -> *mut c_void {
+    const IMAGE_ICON: u32 = 1;
+    const LR_SHARED: u32 = 0x00008000;
+    const LR_LOADFROMFILE: u32 = 0x00000010;
+
+    // 1. Try loading from embedded PE resource (RT_GROUP_ICON ID 1)
+    let hinst = GetModuleHandleW(ptr::null());
+    let hicon = LoadImageW(hinst, 1 as *const u16, IMAGE_ICON, cx, cy, LR_SHARED);
+    if !hicon.is_null() {
+        return hicon;
+    }
+
+    // 2. Try loading from file assets/iphone_link.ico relative to current executable
+    if let Ok(mut exe_path) = std::env::current_exe() {
+        exe_path.pop(); // remove exe name
+        let ico_path = exe_path.join("assets").join("iphone_link.ico");
+        if ico_path.exists() {
+            let path_w: Vec<u16> = ico_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            let hicon = LoadImageW(ptr::null_mut(), path_w.as_ptr(), IMAGE_ICON, cx, cy, LR_LOADFROMFILE | LR_SHARED);
+            if !hicon.is_null() {
+                return hicon;
+            }
+        }
+    }
+
+    // 3. Fallback: try relative "./assets/iphone_link.ico"
+    let rel_ico = Path::new("assets/iphone_link.ico");
+    if rel_ico.exists() {
+        let path_w: Vec<u16> = rel_ico.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let hicon = LoadImageW(ptr::null_mut(), path_w.as_ptr(), IMAGE_ICON, cx, cy, LR_LOADFROMFILE | LR_SHARED);
+        if !hicon.is_null() {
+            return hicon;
+        }
+    }
+
+    ptr::null_mut()
+}
+
 /// Creates the main interactive Win32 window with True DWM Acrylic Blur.
 pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, String> {
     unsafe {
@@ -1179,19 +1227,22 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
 
         let class_name: Vec<u16> = "iPhoneLinkMainWindowClass\0".encode_utf16().collect();
+        let hicon_big = load_app_icon(256, 256);
+        let hicon_small = load_app_icon(32, 32);
+
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0x0001 | 0x0002, // CS_VREDRAW | CS_HREDRAW
             lpfnWndProc: Some(main_window_proc),
             cbClsExtra: 0,
             cbWndExtra: 0,
-            hInstance: ptr::null_mut(),
-            hIcon: ptr::null_mut(),
+            hInstance: GetModuleHandleW(ptr::null()),
+            hIcon: hicon_big,
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
             hbrBackground: GetStockObject(4), // BLACK_BRUSH (transparent alpha-0 in DWM)
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
-            hIconSm: ptr::null_mut(),
+            hIconSm: hicon_small,
         };
 
         let _ = RegisterClassExW(&wnd_class);
@@ -1214,7 +1265,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         SAVED_WINDOW_Y.store(pos_y, Ordering::SeqCst);
 
         let hwnd = CreateWindowExW(
-            0x00000008, // WS_EX_TOPMOST
+            0, // dwExStyle = 0 (WS_EX_TOPMOST removed!)
             class_name.as_ptr(),
             window_title.as_ptr(),
             STYLE,
@@ -1232,6 +1283,17 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             return Err("Failed to create main Win32 window".to_string());
         }
 
+        // Send WM_SETICON for Taskbar & Alt+Tab
+        const WM_SETICON: u32 = 0x0080;
+        const ICON_BIG: usize = 1;
+        const ICON_SMALL: usize = 0;
+        if !hicon_big.is_null() {
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big as isize);
+        }
+        if !hicon_small.is_null() {
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small as isize);
+        }
+
         // Query the true monitor DPI scale for this created HWND
         let win_dpi_scale = get_hwnd_dpi_scale(hwnd);
         let win_phys_w = (PORTRAIT_WIDTH_CLOSED as f64 * win_dpi_scale).round() as i32;
@@ -1246,12 +1308,12 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
 
         SetWindowPos(
             hwnd,
-            ptr::null_mut(),
+            (-2isize) as *mut c_void, // HWND_NOTOPMOST
             win_pos_x,
             win_pos_y,
             win_phys_w,
             win_phys_h,
-            0x0004 | 0x0020 | 0x0040, // SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
+            0x0020 | 0x0040, // SWP_FRAMECHANGED | SWP_SHOWWINDOW
         );
         ShowWindow(hwnd, 5); // SW_SHOW
         UpdateWindow(hwnd);

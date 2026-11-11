@@ -51,7 +51,7 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic Styling (Tahap 169) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Real-Time Acrylic & 3D Liquid Glass (Tahap 170) */
 :root {
   --wallpaper-bg-image: none !important;
 }
@@ -76,31 +76,65 @@ html, body {
   overflow: hidden !important;
   border: none !important;
   outline: none !important;
-  background: rgba(14, 18, 26, 0.44) !important;
+  background: rgba(14, 18, 26, 0.38) !important;
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
+  position: relative !important;
 }
 [data-theme="light"] .app,
 .theme-light .app {
-  background: rgba(242, 246, 252, 0.54) !important;
+  background: rgba(242, 246, 252, 0.45) !important;
 }
 .app:not(.is-fullsize) {
   border-radius: 12px !important;
   overflow: hidden !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 8px 32px rgba(0, 0, 0, 0.35) !important;
 }
+/* Wallpaper blur fallback ONLY when window is unfocused */
 .app::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
   display: none !important;
   opacity: 0 !important;
   visibility: hidden !important;
-  background-image: none !important;
-  background: none !important;
+  background-size: cover !important;
+  background-position: center !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  transition: opacity 0.25s ease !important;
 }
+.window-unfocused .app::before {
+  opacity: 0.42 !important;
+  display: block !important;
+  visibility: visible !important;
+  background-image: var(--wallpaper-bg-image) !important;
+  filter: blur(28px) saturate(165%) !important;
+}
+
+/* 100% Transparent Wrapper Pipeline for Full Real-Time Acrylic Blur */
+.main-body,
+.display-col,
+.workspace,
+.stage,
+.screen-stage,
+#phone-shell,
+#screen-empty,
+.screen-empty,
+.placeholder,
+.screen-viewport,
+.app:not(.is-streaming) #phone-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 .main-body, .display-col {
   height: calc(100vh - 38px) !important;
   min-height: calc(100vh - 38px) !important;
   max-height: calc(100vh - 38px) !important;
   overflow: hidden !important;
+  position: relative !important;
+  z-index: 1 !important;
 }
 .workspace, .stage, #phone-shell, #phone-screen, #screen-empty {
   width: 100% !important;
@@ -123,6 +157,54 @@ body::-webkit-scrollbar {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
+
+/* 3D Liquid Glass Specular Styling for Bars and Drawers */
+.app-bar {
+  background: rgba(14, 18, 26, 0.32) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  position: relative !important;
+  z-index: 10 !important;
+}
+.quick-nav {
+  background: rgba(14, 18, 26, 0.38) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.09) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  position: relative !important;
+  z-index: 10 !important;
+}
+.side-drawer {
+  background: rgba(16, 20, 30, 0.58) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.30) !important;
+  position: relative !important;
+  z-index: 20 !important;
+}
+
+/* 3D Liquid Glass Cards Anti-Flat Specular Rim Highlights */
+.card,
+.glass-card,
+.launchpad-device-card,
+#launchpad-device-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(20, 24, 35, 0.42) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px 0 rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+[data-theme="light"] .card,
+[data-theme="light"] .glass-card,
+[data-theme="light"] .launchpad-device-card,
+[data-theme="light"] #launchpad-device-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.40) 100%), rgba(240, 244, 250, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.65), 0 6px 20px 0 rgba(15, 23, 42, 0.08) !important;
+}
+
 /* Sembunyikan tombol Restart & Stop saat belum mirroring (Ready / Stop) */
 .app:not(.is-streaming) #restart-screen,
 .app:not(.is-streaming) #stop-screen,
@@ -136,6 +218,9 @@ body::-webkit-scrollbar {
 /* Saat streaming berjalan, tombol Restart tampil sebagai ikon ringkas tanpa teks "Restart" */
 #restart-screen .btn-label {
   display: none !important;
+}
+.app.is-streaming #phone-screen {
+  background: #000000 !important;
 }
 iframe#screen-view {
   background: #000000 !important;
@@ -204,6 +289,17 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.addEventListener("contextmenu", function(e) {
         e.preventDefault();
     }, true);
+
+    window.addEventListener("blur", function() {
+        if (document.body) {
+            document.body.classList.add("window-unfocused");
+        }
+    });
+    window.addEventListener("focus", function() {
+        if (document.body) {
+            document.body.classList.remove("window-unfocused");
+        }
+    });
 
     function installDragListeners() {
         ['.app-bar', '.drawer-header'].forEach(function(sel) {
