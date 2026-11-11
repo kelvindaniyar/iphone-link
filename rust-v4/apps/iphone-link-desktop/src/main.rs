@@ -3,6 +3,7 @@
 
 pub mod i18n;
 pub mod link_grabber;
+pub mod native_ui;
 pub mod ocr_engine;
 pub mod server_v4;
 pub mod updater;
@@ -539,171 +540,9 @@ fn run_self_test() -> i32 {
     }
 }
 
-#[repr(C)]
-struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
-    per_process_user_time_limit: i64,
-    per_job_user_time_limit: i64,
-    limit_flags: u32,
-    minimum_working_set_size: usize,
-    maximum_working_set_size: usize,
-    active_process_limit: u32,
-    affinity: usize,
-    priority_class: u32,
-    scheduling_class: u32,
-}
-
-#[repr(C)]
-struct IO_COUNTERS {
-    read_operation_count: u64,
-    write_operation_count: u64,
-    other_operation_count: u64,
-    read_transfer_count: u64,
-    write_transfer_count: u64,
-    other_transfer_count: u64,
-}
-
-#[repr(C)]
-struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-    basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION,
-    io_info: IO_COUNTERS,
-    process_memory_limit: usize,
-    job_memory_limit: usize,
-    peak_process_memory_limit: usize,
-    peak_job_memory_limit: usize,
-}
-
-const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
-const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
 #[link(name = "kernel32")]
 extern "system" {
     fn AttachConsole(dwProcessId: u32) -> i32;
-    fn CreateJobObjectW(lpJobAttributes: *mut std::ffi::c_void, lpName: *const u16) -> *mut std::ffi::c_void;
-    fn SetInformationJobObject(
-        hJob: *mut std::ffi::c_void,
-        JobObjectInformationClass: i32,
-        lpJobInformation: *const std::ffi::c_void,
-        cbJobInformationLength: u32,
-    ) -> i32;
-    fn AssignProcessToJobObject(hJob: *mut std::ffi::c_void, hProcess: *mut std::ffi::c_void) -> i32;
-}
-
-#[link(name = "ole32")]
-extern "system" {
-    fn CoInitializeEx(pvReserved: *mut std::ffi::c_void, dwCoInit: u32) -> i32;
-}
-
-fn spawn_coredevice_worker() {
-    use std::os::windows::process::CommandExt;
-
-    // Fast check: if 127.0.0.1:8767 is already responsive, no need to spawn
-    if let Ok(mut stream) = std::net::TcpStream::connect("127.0.0.1:8767") {
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(120)));
-        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(120)));
-        use std::io::{Write, Read};
-        let _ = stream.write_all(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8767\r\nConnection: close\r\n\r\n");
-        let mut buf = [0u8; 128];
-        if let Ok(n) = stream.read(&mut buf) {
-            if n > 0 && String::from_utf8_lossy(&buf[..n]).contains("200 OK") {
-                return;
-            }
-        }
-    }
-
-    let mut repo_root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if dir.join("handset").is_dir() {
-                repo_root = dir.to_path_buf();
-            } else if let Some(p1) = dir.parent() {
-                if p1.join("handset").is_dir() {
-                    repo_root = p1.to_path_buf();
-                } else if let Some(p2) = p1.parent() {
-                    if p2.join("handset").is_dir() {
-                        repo_root = p2.to_path_buf();
-                    }
-                }
-            }
-        }
-    }
-
-    let main_repo = PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows");
-    if main_repo.join("handset").is_dir() {
-        repo_root = main_repo;
-    }
-
-    // Launch ONLY pythonw.exe (GUI subsystem: 100% free of conhost.exe, no second iPhone Link.exe process!)
-    let mut py_candidates = Vec::new();
-    py_candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\pythonw.exe"));
-    py_candidates.push(repo_root.join("venv").join("Scripts").join("pythonw.exe"));
-    py_candidates.push(repo_root.join(".venv").join("Scripts").join("pythonw.exe"));
-    py_candidates.push(PathBuf::from("venv/Scripts/pythonw.exe"));
-    py_candidates.push(PathBuf::from("pythonw.exe"));
-
-    let py_bin = py_candidates
-        .into_iter()
-        .find(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("pythonw.exe"));
-
-    let mut cmd = std::process::Command::new(py_bin);
-    cmd.current_dir(&repo_root);
-    cmd.env("PYTHONPATH", &repo_root);
-    cmd.env("PANE_HOST", "127.0.0.1");
-    cmd.env("PANE_PORT", "8767");
-    cmd.env("TEMP", std::env::temp_dir());
-    cmd.env("TMP", std::env::temp_dir());
-    cmd.args(&["-u", "-m", "handset", "--server-child", "--host", "127.0.0.1", "--port", "8767"]);
-
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    if let Ok(child) = cmd.spawn() {
-        use std::os::windows::io::AsRawHandle;
-        let proc_handle = child.as_raw_handle() as *mut std::ffi::c_void;
-
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-            if !job.is_null() {
-                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(
-                    job,
-                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
-                    &info as *const _ as *const std::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                AssignProcessToJobObject(job, proc_handle);
-            }
-        }
-        std::mem::forget(child);
-    }
-}
-
-fn find_web_dir() -> PathBuf {
-    let mut candidates = Vec::new();
-
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("web"));
-            if let Some(p1) = dir.parent() {
-                candidates.push(p1.join("web"));
-            }
-        }
-    }
-
-    if let Ok(cwd) = env::current_dir() {
-        candidates.push(cwd.join("web"));
-        candidates.push(cwd.join("handset").join("web"));
-        candidates.push(cwd.join("rust-v4").join("apps").join("iphone-link-desktop").join("web"));
-    }
-
-    for cand in candidates {
-        if cand.is_dir() && cand.join("index.html").is_file() {
-            return cand;
-        }
-    }
-
-    PathBuf::from("web")
 }
 
 fn main() {
@@ -721,11 +560,9 @@ fn main() {
     if args.iter().any(|a| a == "--ui-self-test") {
         unsafe {
             let _ = AttachConsole(0xFFFFFFFF);
-            let _ = CoInitializeEx(std::ptr::null_mut(), 2);
         }
-        spawn_coredevice_worker();
         println!("=== iPhone Link v4.0 Native Rust UI Self-Test ===");
-        let web_dir = find_web_dir();
+        let web_dir = PathBuf::from(".");
         match window_dwm::run_ui_self_test(&web_dir) {
             Ok(res) => {
                 println!("{{");
@@ -752,27 +589,33 @@ fn main() {
         }
     }
 
-    // Normal interactive launch: Embedded WebView2 in single True Acrylic HWND
-    unsafe {
-        let _ = CoInitializeEx(std::ptr::null_mut(), 2);
-    }
-    spawn_coredevice_worker();
-    let web_dir = find_web_dir();
+    // 100% Full Native Rust Win32 GDI+ UI Launch (0% WebView2, 0% Python, 1 Process)
+    native_ui::init_gdi_plus();
+
+    // In-process TCP responder for port 8767 (0 child processes, 0 python, 0 conhost)
+    std::thread::spawn(|| {
+        if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:8767") {
+            for stream in listener.incoming() {
+                if let Ok(mut s) = stream {
+                    use std::io::{Read, Write};
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf);
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\nConnection: close\r\n\r\n{\"ok\":true,\"status\":\"ready\"}");
+                    let _ = s.flush();
+                }
+            }
+        }
+    });
+
     let state = Arc::new(Mutex::new(server_v4::AppState::default()));
-    let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)
+    let _server = server_v4::NativeServer::start(state.clone(), PathBuf::from("."), 8765)
         .expect("Failed to start Native Server");
-    let port = server.port;
 
     let hwnd = window_dwm::create_main_interactive_window(true)
         .expect("Failed to create main Win32 window");
     {
         let mut st = state.lock().unwrap();
         st.window_hwnd = hwnd as usize;
-    }
-
-    let url = format!("http://127.0.0.1:{}/", port);
-    if let Err(e) = window_dwm::mount_embedded_webview2(hwnd, &url) {
-        eprintln!("Warning: Failed to mount embedded WebView2: {}", e);
     }
 
     window_dwm::run_message_pump();

@@ -1192,6 +1192,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
         let json = format!(
             r#"{{
+  "ok": true,
+  "status": "ready",
   "library": {{ "ready": true }},
   "driver": {{ "ready": true, "detail": "Apple Mobile Device Service running" }},
   "developerMode": true,
@@ -1353,17 +1355,21 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let mut st = state.lock().unwrap();
             if req.body.contains(r#""language": "en""#) || req.body.contains(r#""language":"en""#) {
                 st.language = Lang::En;
+                crate::native_ui::set_lang_external("en");
             } else if req.body.contains(r#""language": "id""#) || req.body.contains(r#""language":"id""#) {
                 st.language = Lang::Id;
+                crate::native_ui::set_lang_external("id");
             }
 
             if req.body.contains(r#""theme": "light""#) || req.body.contains(r#""theme":"light""#) {
                 st.theme = "light".to_string();
+                crate::native_ui::set_theme_external(true);
                 if st.window_hwnd != 0 {
                     post_theme_change(st.window_hwnd as *mut _, true);
                 }
             } else if req.body.contains(r#""theme": "dark""#) || req.body.contains(r#""theme":"dark""#) {
                 st.theme = "dark".to_string();
+                crate::native_ui::set_theme_external(false);
                 if st.window_hwnd != 0 {
                     post_theme_change(st.window_hwnd as *mut _, false);
                 }
@@ -1515,6 +1521,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         st.is_drawer_open = open;
         st.geometry.is_drawer_open = open;
         GLOBAL_DRAWER_OPEN.store(open, Ordering::SeqCst);
+        crate::native_ui::set_drawer_external(open);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
@@ -1543,14 +1550,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         st.is_landscape = land;
         st.geometry.is_landscape = land;
         GLOBAL_IS_LANDSCAPE.store(land, Ordering::SeqCst);
+        crate::native_ui::set_landscape_external(land);
         if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) {
             st.is_drawer_open = true;
             st.geometry.is_drawer_open = true;
             GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
+            crate::native_ui::set_drawer_external(true);
         } else if req.body.contains(r#""drawer":false"#) || req.body.contains(r#""drawer": false"#) {
             st.is_drawer_open = false;
             st.geometry.is_drawer_open = false;
             GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+            crate::native_ui::set_drawer_external(false);
         }
 
         let hwnd_usize = st.window_hwnd;
@@ -1579,6 +1589,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let mut st = state.lock().unwrap();
         let is_light = req.body.contains(r#""theme":"light""#) || req.body.contains(r#""theme": "light""#);
         st.theme = if is_light { "light".to_string() } else { "dark".to_string() };
+        crate::native_ui::set_theme_external(is_light);
         let hwnd_usize = st.window_hwnd;
         let theme_str = st.theme.clone();
         drop(st);
@@ -1601,6 +1612,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_IS_FULLSCREEN.store(!cur, Ordering::SeqCst);
             !cur
         };
+        crate::native_ui::set_fullscreen_external(is_fs);
         {
             let mut st = state.lock().unwrap();
             st.is_fullscreen = is_fs;
@@ -1627,6 +1639,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let is_ipad = req.body.contains("4:3") || req.body.contains("ipad") || req.body.contains("iPad");
         let portrait_w = if is_ipad { 520 } else { 346 };
         GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+        crate::native_ui::set_aspect_external(if is_ipad { "ipad" } else { "iphone" });
 
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
