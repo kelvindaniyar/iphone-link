@@ -301,7 +301,7 @@ type DwmExtendFrameIntoClientAreaFn = unsafe extern "system" fn(*mut c_void, *co
 
 /// Applies official Windows 11 DWM attributes (dark mode, rounded corners, zero border, transient acrylic)
 /// and ACCENT_ENABLE_ACRYLICBLURBEHIND to HWND with full glass frame extension (-1 margins).
-pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> Result<DwmBackdropStatus, String> {
+pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, _dark_mode: bool) -> Result<DwmBackdropStatus, String> {
     if hwnd.is_null() {
         return Err("HWND is null".to_string());
     }
@@ -328,8 +328,10 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 };
                 let _ = extend_fn(hwnd, &margins);
 
-                // 2. Set immersive dark mode (1 = dark, 0 = light)
-                let dark_val: u32 = if dark_mode { 1 } else { 0 };
+                // 2. Set immersive dark mode: Permanently locked to 1 in Tahap 174
+                // On Windows 11 Build >= 22523 / 26200, DWMWA_USE_IMMERSIVE_DARK_MODE = 1 ensures high-transmittance
+                // crystal glass without the 90% opaque milky-white luminosity blend sheet!
+                let dark_val: u32 = 1;
                 let _ = set_attr_fn(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_val as *const _ as *const c_void, 4);
 
                 // 3. Set rounded corners preference (12px, DWMWCP_ROUND = 2)
@@ -337,7 +339,7 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
                 // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = DWMSBT_TRANSIENTWINDOW (3)
-                // Implementasi Murni apply_acrylic dari tauri-apps/window-vibrancy untuk Windows 11 Build >= 22523!
+                // Pure apply_acrylic implementation for Windows 11 Build >= 22523!
                 let backdrop_type: u32 = DWMSBT_TRANSIENTWINDOW; // 3
                 let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
             }

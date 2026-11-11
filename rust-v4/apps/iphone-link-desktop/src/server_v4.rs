@@ -30,6 +30,10 @@ pub static GLOBAL_START_BTN_VISIBLE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_START_BTN_TEXT: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_USER_AGENT: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_RAF_VERIFIED: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_DARK_MODE: AtomicBool = AtomicBool::new(true);
+pub static GLOBAL_DOM_THEME: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_THEME_LIGHT_X: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_THEME_LIGHT_Y: AtomicUsize = AtomicUsize::new(0);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -51,18 +55,14 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 173) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 174) */
 :root,
 html,
 body,
 html[data-theme="dark"],
 body[data-theme="dark"],
 .app[data-theme="dark"],
-.theme-dark,
-html[data-theme="light"],
-body[data-theme="light"],
-.app[data-theme="light"],
-.theme-light {
+.theme-dark {
   --bg: transparent !important;
   --bg-solid: transparent !important;
   --bg-primary: transparent !important;
@@ -74,6 +74,30 @@ body[data-theme="light"],
   --card: rgba(255, 255, 255, 0.04) !important;
   --wallpaper-bg-image: none !important;
 }
+
+/* 1. Variabel Global Light Mode: 100% Transparan pada Latar Utama & Frosted Tipis pada Komponen */
+html[data-theme="light"],
+body[data-theme="light"],
+.app[data-theme="light"],
+.theme-light,
+[data-theme="light"] {
+  --bg: transparent !important;
+  --bg-solid: transparent !important;
+  --bg-primary: transparent !important;
+  --bg-secondary: transparent !important;
+  --bg-acrylic: transparent !important;
+  --bg-flyout: transparent !important;
+  --surface: transparent !important;
+  --panel: rgba(255, 255, 255, 0.14) !important;
+  --card: rgba(255, 255, 255, 0.16) !important;
+  --card-bg: rgba(255, 255, 255, 0.16) !important;
+  --border: rgba(255, 255, 255, 0.38) !important;
+  --fg: #0f172a !important;
+  --text: #0f172a !important;
+  --muted: #1e293b !important;
+  --wallpaper-bg-image: none !important;
+}
+
 *,
 *::before,
 *::after {
@@ -90,7 +114,15 @@ body[data-theme="light"],
   background-image: none !important;
 }
 html,
-body {
+body,
+html[data-theme="dark"],
+html[data-theme="dark"] body,
+body[data-theme="dark"],
+[data-theme="dark"] body,
+html[data-theme="light"],
+html[data-theme="light"] body,
+body[data-theme="light"],
+[data-theme="light"] body {
   width: 100vw !important;
   height: 100vh !important;
   margin: 0 !important;
@@ -104,8 +136,7 @@ body {
 }
 html body .app,
 html body .app:not(.is-fullsize),
-html[data-theme="dark"] body .app,
-html[data-theme="light"] body .app {
+html[data-theme="dark"] body .app {
   width: 100vw !important;
   height: 100vh !important;
   max-width: 100vw !important;
@@ -122,13 +153,30 @@ html[data-theme="light"] body .app {
   -webkit-backdrop-filter: none !important;
   position: relative !important;
 }
+
+/* 2. Kontainer Utama Light Mode: Frost Putih Tipis 18% agar Blur DWM Tembus Penuh seperti Dark Mode! */
 html[data-theme="light"] body .app,
+html[data-theme="light"] body .app:not(.is-fullsize),
 body[data-theme="light"] .app,
 .app[data-theme="light"] {
-  background: rgba(245, 248, 255, 0.05) !important;
-  background-color: rgba(245, 248, 255, 0.05) !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-radius: 0px !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: linear-gradient(165deg, rgba(240, 246, 255, 0.10) 0%, rgba(225, 235, 250, 0.12) 100%) !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  position: relative !important;
 }
-/* Seluruh Kontainer Utama Wajib 100% Transparan Tembus ke DWM apply_acrylic */
+
+/* 3. Seluruh Wrapper Dalam di Dark & Light Mode WAJIB 100% Transparan (0% Putih Solid!) */
 html body .main-body,
 html body .display-col,
 html body .app:not(.is-landscape) .display-col,
@@ -147,13 +195,35 @@ html body .placeholder,
 html body .screen-viewport,
 html body .app:not(.is-streaming) #phone-screen,
 html[data-theme="dark"] body .app:not(.is-streaming) #phone-screen,
-html[data-theme="light"] body .app:not(.is-streaming) #phone-screen {
+html[data-theme="light"] body .main-body,
+html[data-theme="light"] body .display-col,
+html[data-theme="light"] body .app:not(.is-landscape) .display-col,
+html[data-theme="light"] body .app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
+html[data-theme="light"] body .workspace,
+html[data-theme="light"] body .stage,
+html[data-theme="light"] body .screen-stage,
+html[data-theme="light"] body #phone-shell,
+html[data-theme="light"] body #screen-empty,
+html[data-theme="light"] body .screen-empty,
+html[data-theme="light"] body #launchpad-shell,
+html[data-theme="light"] body .launchpad-shell,
+html[data-theme="light"] body #launchpad-idle-view,
+html[data-theme="light"] body .launchpad-idle-view,
+html[data-theme="light"] body .placeholder,
+html[data-theme="light"] body .screen-viewport,
+html[data-theme="light"] body .app:not(.is-streaming) #phone-screen,
+html[data-theme="light"] body .drawer-body,
+html[data-theme="light"] body .drawer-scroll,
+html[data-theme="light"] body .drawer-content,
+html[data-theme="light"] body .drawer-header,
+html[data-theme="light"] body .drawer-footer-credits {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
 }
+
 /* Hanya saat video iPhone sedang aktif streaming, latar #phone-screen hitam */
 html body .app.is-streaming #phone-screen {
   background: #000000 !important;
@@ -190,7 +260,7 @@ body::-webkit-scrollbar {
   -webkit-user-select: none !important;
 }
 
-/* Top Bar, Quick Nav, Side Drawer & Cards: Efek Kaca Bening apply_acrylic */
+/* 4. Top Bar, Quick Nav & Side Drawer */
 html body .app-bar,
 html[data-theme="dark"] body .app-bar {
   border-radius: 0px !important;
@@ -203,8 +273,15 @@ html[data-theme="dark"] body .app-bar {
   z-index: 10 !important;
 }
 html[data-theme="light"] body .app-bar {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.10) !important;
+  border-radius: 0px !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  background-color: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.50) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  position: relative !important;
+  z-index: 10 !important;
 }
 html body .quick-nav,
 html[data-theme="dark"] body .quick-nav {
@@ -218,9 +295,16 @@ html[data-theme="dark"] body .quick-nav {
   z-index: 10 !important;
 }
 html[data-theme="light"] body .quick-nav {
-  background: rgba(255, 255, 255, 0.10) !important;
-  border-top: 1px solid rgba(15, 23, 42, 0.10) !important;
+  border-radius: 0px !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  background-color: transparent !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.35) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  position: relative !important;
+  z-index: 10 !important;
 }
+
 /* Side Drawer & Settings Controls (Liquid Glass with #control-pane ID specificity) */
 #control-pane,
 .side-drawer,
@@ -230,19 +314,10 @@ html[data-theme="light"] body .quick-nav {
 }
 html body #control-pane,
 html body .side-drawer,
-html body #control-pane .drawer-header,
-html body #control-pane .drawer-body,
-html body #control-pane .drawer-scroll,
-html body #control-pane .drawer-content,
-html body .side-drawer .drawer-header,
-html body .side-drawer .drawer-body,
-html body .side-drawer .drawer-scroll,
-html body .side-drawer .drawer-content,
+html body .control-pane,
 html[data-theme="dark"] body #control-pane,
 html[data-theme="dark"] body .side-drawer,
-html[data-theme="dark"] body #control-pane .drawer-header,
-html[data-theme="dark"] body #control-pane .drawer-content,
-html[data-theme="dark"] body #control-pane .drawer-scroll {
+html[data-theme="dark"] body .control-pane {
   border-radius: 0px !important;
   background: rgba(14, 18, 28, 0.05) !important;
   background-color: rgba(14, 18, 28, 0.05) !important;
@@ -255,16 +330,16 @@ html[data-theme="dark"] body #control-pane .drawer-scroll {
 }
 html[data-theme="light"] body #control-pane,
 html[data-theme="light"] body .side-drawer,
-html[data-theme="light"] body #control-pane .drawer-header,
-html[data-theme="light"] body #control-pane .drawer-content,
-html[data-theme="light"] body #control-pane .drawer-scroll,
-html[data-theme="light"] body .side-drawer .drawer-header,
-html[data-theme="light"] body .side-drawer .drawer-content,
-html[data-theme="light"] body .side-drawer .drawer-scroll {
-  background: rgba(255, 255, 255, 0.08) !important;
-  background-color: rgba(255, 255, 255, 0.08) !important;
-  border-left: 1px solid rgba(15, 23, 42, 0.12) !important;
-  box-shadow: -6px 0 20px rgba(15, 23, 42, 0.08), inset 1px 0 0 0 rgba(255, 255, 255, 0.50) !important;
+html[data-theme="light"] body .control-pane {
+  border-radius: 0px !important;
+  background: linear-gradient(180deg, rgba(245, 250, 255, 0.08) 0%, rgba(230, 240, 255, 0.10) 100%) !important;
+  background-color: transparent !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.38) !important;
+  box-shadow: inset 1px 0 0 0 rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  position: relative !important;
+  z-index: 20 !important;
 }
 html body #control-pane section,
 html body #control-pane form,
@@ -285,12 +360,33 @@ html body .side-drawer .crop-grid,
 html body .side-drawer .drawer-content,
 html body .side-drawer .panel-theme,
 html body .side-drawer .panel-display-fit,
-html body .side-drawer .panel-audio-settings {
+html body .side-drawer .panel-audio-settings,
+html[data-theme="light"] body #control-pane section,
+html[data-theme="light"] body #control-pane form,
+html[data-theme="light"] body #control-pane .control-group,
+html[data-theme="light"] body #control-pane .settings-group,
+html[data-theme="light"] body #control-pane details,
+html[data-theme="light"] body #control-pane .crop-grid,
+html[data-theme="light"] body #control-pane .panel-theme,
+html[data-theme="light"] body #control-pane .panel-display-fit,
+html[data-theme="light"] body #control-pane .panel-audio-settings,
+html[data-theme="light"] body .side-drawer section,
+html[data-theme="light"] body .side-drawer form,
+html[data-theme="light"] body .side-drawer .control-group,
+html[data-theme="light"] body .side-drawer .settings-group,
+html[data-theme="light"] body .side-drawer details,
+html[data-theme="light"] body .side-drawer .crop-grid,
+html[data-theme="light"] body .side-drawer .panel-theme,
+html[data-theme="light"] body .side-drawer .panel-display-fit,
+html[data-theme="light"] body .side-drawer .panel-audio-settings {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
 }
+
+/* 5. Kartu, Tombol & Segmented Controls di Dark & Light Mode */
 html body .card,
 html body .glass-card,
 html body .launchpad-device-card,
@@ -311,14 +407,68 @@ html[data-theme="light"] body .card,
 html[data-theme="light"] body .glass-card,
 html[data-theme="light"] body .launchpad-device-card,
 html[data-theme="light"] body .device-card,
+html[data-theme="light"] body .panel-card,
+html[data-theme="light"] body .settings-card,
 html[data-theme="light"] body #control-pane .card,
 html[data-theme="light"] body #control-pane .glass-card,
 html[data-theme="light"] body .side-drawer .card,
-html[data-theme="light"] body .side-drawer .glass-card {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.36) 0%, rgba(255, 255, 255, 0.18) 100%) !important;
-  background-color: rgba(255, 255, 255, 0.22) !important;
-  border: 1px solid rgba(255, 255, 255, 0.65) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.80), 0 6px 20px rgba(15, 23, 42, 0.08) !important;
+html[data-theme="light"] body .side-drawer .glass-card,
+html[data-theme="light"] body .card-details {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 100%) !important;
+  background-color: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-radius: 14px !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.65), 0 4px 16px rgba(15, 23, 42, 0.08) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-theme="light"] body .seg,
+html[data-theme="light"] body .segmented,
+html[data-theme="light"] body .seg-group {
+  background: rgba(15, 23, 42, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+}
+html[data-theme="light"] body .seg button.active,
+html[data-theme="light"] body .seg button.is-active,
+html[data-theme="light"] body .seg-btn.active,
+html[data-theme="light"] body .seg-btn.is-active,
+html[data-theme="light"] body .seg.is-active {
+  background: rgba(255, 255, 255, 0.42) !important;
+  color: #0f172a !important;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.80) !important;
+}
+html[data-theme="light"] body .bar-btn,
+html[data-theme="light"] body .icon-btn,
+html[data-theme="light"] body .nav-btn,
+html[data-theme="light"] body .action-btn,
+html[data-theme="light"] body button:not(.primary):not(#show-screen):not(#btn-save-crop) {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.42) !important;
+  color: #0f172a !important;
+}
+
+/* 6. Keterbacaan Teks Tajam di Atas Kaca Bening Light Mode */
+html[data-theme="light"] body,
+html[data-theme="light"] body h1,
+html[data-theme="light"] body h2,
+html[data-theme="light"] body h3,
+html[data-theme="light"] body .drawer-title,
+html[data-theme="light"] body .brand-title,
+html[data-theme="light"] body label,
+html[data-theme="light"] body .card-title,
+html[data-theme="light"] body .device-name,
+html[data-theme="light"] body .placeholder-title,
+html[data-theme="light"] body .control-label,
+html[data-theme="light"] body .drawer-section-label {
+  color: #0f172a !important;
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.65) !important;
+}
+html[data-theme="light"] body p,
+html[data-theme="light"] body .sub,
+html[data-theme="light"] body .muted,
+html[data-theme="light"] body .section-label {
+  color: #1e293b !important;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55) !important;
 }
 
 /* Sembunyikan tombol Restart & Stop saat belum mirroring (Ready / Stop) */
@@ -341,7 +491,7 @@ iframe#screen-view {
 }
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 168) */
+pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 174) */
 (function() {
     console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
 
@@ -352,6 +502,51 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             body: JSON.stringify(payload || {})
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
     }
+
+    window.__v4ApplyTheme = function(theme) {
+        var t = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+        try {
+            document.documentElement.style.setProperty('background', 'transparent', 'important');
+            document.documentElement.style.setProperty('background-color', 'transparent', 'important');
+        } catch (_) {}
+        if (document.body) {
+            document.body.setAttribute('data-theme', t);
+            try {
+                document.body.style.setProperty('background', 'transparent', 'important');
+                document.body.style.setProperty('background-color', 'transparent', 'important');
+            } catch (_) {}
+        }
+        var appEl = document.getElementById('app-root') || document.querySelector('.app');
+        if (appEl) {
+            appEl.setAttribute('data-theme', t);
+            appEl.classList.toggle('theme-light', t === 'light');
+            appEl.classList.toggle('theme-dark', t === 'dark');
+            try {
+                appEl.style.removeProperty('background');
+                appEl.style.removeProperty('background-color');
+            } catch (_) {}
+        }
+        var lightBtn = document.querySelector('[data-theme-choice="light"]') || document.getElementById('theme-light');
+        var darkBtn = document.querySelector('[data-theme-choice="dark"]') || document.getElementById('theme-dark');
+        if (lightBtn) {
+            lightBtn.id = 'theme-light';
+            lightBtn.classList.toggle('is-active', t === 'light');
+            lightBtn.setAttribute('aria-checked', String(t === 'light'));
+        }
+        if (darkBtn) {
+            darkBtn.id = 'theme-dark';
+            darkBtn.classList.toggle('is-active', t === 'dark');
+            darkBtn.setAttribute('aria-checked', String(t === 'dark'));
+        }
+        try {
+            localStorage.setItem('pane-theme', t);
+        } catch (_) {}
+        if (typeof applyTheme === 'function' && typeof currentTheme !== 'undefined' && currentTheme !== t) {
+            try { applyTheme(t); } catch (_) {}
+        }
+        sendDomBeacon(false);
+    };
 
     function sendDomBeacon(rafVerified) {
         try {
@@ -372,12 +567,21 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var btnText = (startBtn ? (startBtn.innerText || startBtn.textContent || "") : "").trim();
             var titleText = (launchpadTitle ? (launchpadTitle.innerText || launchpadTitle.textContent || "") : "").trim();
 
+            var curTheme = document.documentElement.getAttribute('data-theme') || (document.body ? document.body.getAttribute('data-theme') : null) || 'dark';
+            var lightBtn = document.querySelector('[data-theme-choice="light"]') || document.getElementById('theme-light');
+            var darkBtn = document.querySelector('[data-theme-choice="dark"]') || document.getElementById('theme-dark');
+            var lightRect = (lightBtn && lightBtn.getBoundingClientRect) ? lightBtn.getBoundingClientRect() : null;
+            var darkRect = (darkBtn && darkBtn.getBoundingClientRect) ? darkBtn.getBoundingClientRect() : null;
+            var themeLightX = lightRect ? Math.round(lightRect.left + lightRect.width / 2) : 0;
+            var themeLightY = lightRect ? Math.round(lightRect.top + lightRect.height / 2) : 0;
+            var themeDarkX = darkRect ? Math.round(darkRect.left + darkRect.width / 2) : 0;
+            var themeDarkY = darkRect ? Math.round(darkRect.top + darkRect.height / 2) : 0;
+
             var bgHtml = window.getComputedStyle ? window.getComputedStyle(document.documentElement).backgroundColor : "";
             var bgBody = window.getComputedStyle ? window.getComputedStyle(document.body).backgroundColor : "";
             var bgApp = window.getComputedStyle ? window.getComputedStyle(appEl).backgroundColor : "";
             var sideDrawer = document.querySelector(".side-drawer");
             var bgDrawer = (sideDrawer && window.getComputedStyle) ? window.getComputedStyle(sideDrawer).backgroundColor : "";
-            console.log("[BG_DEBUG] html:", bgHtml, "body:", bgBody, "app:", bgApp, "drawer:", bgDrawer);
 
             var elTop = document.elementFromPoint ? document.elementFromPoint(100, 20) : null;
             var elLp = document.elementFromPoint ? document.elementFromPoint(200, 450) : null;
@@ -412,6 +616,11 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 userAgent: navigator.userAgent || "",
                 dpr: window.devicePixelRatio || 1.0,
                 rafVerified: !!rafVerified,
+                domTheme: curTheme,
+                themeLightX: themeLightX,
+                themeLightY: themeLightY,
+                themeDarkX: themeDarkX,
+                themeDarkY: themeDarkY,
                 bgHtml: bgHtml,
                 bgBody: bgBody,
                 bgApp: bgApp,
@@ -468,9 +677,29 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function initBridge() {
         installDragListeners();
         updateParallaxVars();
+
+        // Ensure theme buttons have proper IDs and listeners
+        var lightBtn = document.querySelector('[data-theme-choice="light"]');
+        if (lightBtn) {
+            lightBtn.id = 'theme-light';
+            lightBtn.addEventListener('click', function() {
+                window.__v4ApplyTheme('light');
+                postApi('/api/window/set_theme', { theme: 'light' });
+            }, true);
+        }
+        var darkBtn = document.querySelector('[data-theme-choice="dark"]');
+        if (darkBtn) {
+            darkBtn.id = 'theme-dark';
+            darkBtn.addEventListener('click', function() {
+                window.__v4ApplyTheme('dark');
+                postApi('/api/window/set_theme', { theme: 'dark' });
+            }, true);
+        }
+
         requestAnimationFrame(checkRaf);
         setTimeout(function() { sendDomBeacon(false); }, 300);
         setTimeout(function() { sendDomBeacon(false); }, 1000);
+
         setInterval(function() {
             try {
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
@@ -480,23 +709,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                             setTimeout(function() { sendDomBeacon(false); }, 300);
                         }
                     }
-                    if (s && s.settings && s.settings.theme) {
+                    var desiredTheme = (s && s.webviewMetrics && s.webviewMetrics.activeTheme) || (s && s.settings && s.settings.theme);
+                    if (desiredTheme) {
                         var curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-                        if (curTheme !== s.settings.theme) {
-                            document.documentElement.setAttribute('data-theme', s.settings.theme);
-                            if (document.body) document.body.setAttribute('data-theme', s.settings.theme);
-                            var appEl = document.getElementById('app-root') || document.querySelector('.app');
-                            if (appEl) {
-                                appEl.setAttribute('data-theme', s.settings.theme);
-                                appEl.classList.toggle('theme-light', s.settings.theme === 'light');
-                                appEl.classList.toggle('theme-dark', s.settings.theme === 'dark');
-                            }
-                            setTimeout(function() { sendDomBeacon(false); }, 300);
+                        if (curTheme !== desiredTheme) {
+                            window.__v4ApplyTheme(desiredTheme);
                         }
                     }
                 }).catch(function(){});
             } catch (_) {}
-        }, 150);
+        }, 250);
     }
 
     if (document.readyState === "loading") {
@@ -617,6 +839,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return postApi('/api/window/set_drawer', { width: w, open: !!drawer_open });
         },
         set_theme: function(theme) {
+            window.__v4ApplyTheme(theme);
             return postApi('/api/window/set_theme', { theme: theme });
         },
         start_window_drag: function() {
@@ -1366,9 +1589,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                 }
 
+                let is_dark = GLOBAL_DARK_MODE.load(Ordering::SeqCst);
+                let active_thm = if is_dark { "dark" } else { "light" };
+                let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
+                let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
+
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{}}}}}"#,
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}"}}}}"#,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -1380,17 +1608,19 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         btn_vis,
                         safe_btn,
                         safe_ua,
-                        GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                        GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
+                        active_thm,
+                        dom_thm_str
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
                     }
-                } else if !sanitized.contains("devicePixelRatio") {
+                } else if !sanitized.contains("activeTheme") {
                     sanitized = sanitized.replace(
                         r#""domReadyBeacon":"#,
                         &format!(
-                            r#""devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
-                            dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                            r#""activeTheme": "{}", "domTheme": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                            active_thm, dom_thm_str, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                         )
                     );
                 }
@@ -1432,6 +1662,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let app_h = GLOBAL_APP_HEIGHT.load(Ordering::SeqCst);
         let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
         let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
+        let is_dark = GLOBAL_DARK_MODE.load(Ordering::SeqCst);
+        let active_thm = if is_dark { "dark" } else { "light" };
+        let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
+        let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
 
         let json = format!(
             r#"{{
@@ -1510,7 +1744,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "startBtnVisible": {},
     "startBtnText": "{}",
     "userAgent": "{}",
-    "rafVerified": {}
+    "rafVerified": {},
+    "activeTheme": "{}",
+    "domTheme": "{}"
   }},
   "version": "4.0.0"
 }}"#,
@@ -1556,7 +1792,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             btn_vis,
             GLOBAL_START_BTN_TEXT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
             GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
-            GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+            GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
+            active_thm,
+            dom_thm_str
         );
         return HttpResponse::ok_json(&json);
     }
@@ -1613,11 +1851,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
             if req.body.contains(r#""theme": "light""#) || req.body.contains(r#""theme":"light""#) {
                 st.theme = "light".to_string();
+                GLOBAL_DARK_MODE.store(false, Ordering::SeqCst);
                 if st.window_hwnd != 0 {
                     let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, false);
                 }
             } else if req.body.contains(r#""theme": "dark""#) || req.body.contains(r#""theme":"dark""#) {
                 st.theme = "dark".to_string();
+                GLOBAL_DARK_MODE.store(true, Ordering::SeqCst);
                 if st.window_hwnd != 0 {
                     let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, true);
                 }
@@ -1849,8 +2089,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/set_theme" {
-        let mut st = state.lock().unwrap();
         let is_light = req.body.contains(r#""theme":"light""#) || req.body.contains(r#""theme": "light""#);
+        GLOBAL_DARK_MODE.store(!is_light, Ordering::SeqCst);
+        let mut st = state.lock().unwrap();
         st.theme = if is_light { "light".to_string() } else { "dark".to_string() };
         let hwnd_usize = st.window_hwnd;
         let theme_str = st.theme.clone();
@@ -1860,6 +2101,19 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let _ = apply_true_files_acrylic_backdrop(hwnd_usize as *mut _, !is_light);
         }
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","theme":"{}"}}"#, theme_str));
+    }
+
+    if path == "/api/window/theme" {
+        let is_dark = GLOBAL_DARK_MODE.load(Ordering::SeqCst);
+        let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
+        let active = if is_dark { "dark" } else { "light" };
+        let dom_active = if dom_thm.is_empty() { active } else { &dom_thm };
+        let light_x = GLOBAL_THEME_LIGHT_X.load(Ordering::SeqCst);
+        let light_y = GLOBAL_THEME_LIGHT_Y.load(Ordering::SeqCst);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"theme":"{}","activeTheme":"{}","domTheme":"{}","themeLightX":{},"themeLightY":{}}}"#,
+            active, active, dom_active, light_x, light_y
+        ));
     }
 
     if path == "/api/window/toggle_fullscreen" {
@@ -2024,6 +2278,22 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
         if raf_ok {
             GLOBAL_RAF_VERIFIED.store(true, Ordering::SeqCst);
+        }
+
+        if let Some(theme) = parse_string_param(&req.body, "domTheme") {
+            if let Ok(mut g_thm) = GLOBAL_DOM_THEME.lock() {
+                *g_thm = theme;
+            }
+        }
+        if let Some(x) = parse_int_param(&req.body, "themeLightX") {
+            if x > 0 {
+                GLOBAL_THEME_LIGHT_X.store(x as usize, Ordering::SeqCst);
+            }
+        }
+        if let Some(y) = parse_int_param(&req.body, "themeLightY") {
+            if y > 0 {
+                GLOBAL_THEME_LIGHT_Y.store(y as usize, Ordering::SeqCst);
+            }
         }
 
         if let Some(txt) = parse_string_param(&req.body, "startBtnText") {
