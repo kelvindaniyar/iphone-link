@@ -51,18 +51,46 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 172) */
-:root {
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 173) */
+:root,
+html,
+body,
+html[data-theme="dark"],
+body[data-theme="dark"],
+.app[data-theme="dark"],
+.theme-dark,
+html[data-theme="light"],
+body[data-theme="light"],
+.app[data-theme="light"],
+.theme-light {
+  --bg: transparent !important;
+  --bg-solid: transparent !important;
+  --bg-primary: transparent !important;
+  --bg-secondary: transparent !important;
+  --bg-acrylic: transparent !important;
+  --bg-flyout: transparent !important;
+  --surface: transparent !important;
+  --panel: rgba(255, 255, 255, 0.04) !important;
+  --card: rgba(255, 255, 255, 0.04) !important;
   --wallpaper-bg-image: none !important;
 }
-.app::before {
+*,
+*::before,
+*::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.app::before,
+.app::after {
   display: none !important;
   opacity: 0 !important;
   visibility: hidden !important;
   content: none !important;
+  background: none !important;
   background-image: none !important;
 }
-html, body {
+html,
+body {
   width: 100vw !important;
   height: 100vh !important;
   margin: 0 !important;
@@ -74,7 +102,10 @@ html, body {
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
 }
-.app, .app:not(.is-fullsize) {
+html body .app,
+html body .app:not(.is-fullsize),
+html[data-theme="dark"] body .app,
+html[data-theme="light"] body .app {
   width: 100vw !important;
   height: 100vh !important;
   max-width: 100vw !important;
@@ -85,37 +116,46 @@ html, body {
   border-radius: 0px !important;
   border: none !important;
   box-shadow: none !important;
-  background: linear-gradient(165deg, rgba(14, 19, 30, 0.28) 0%, rgba(10, 14, 22, 0.36) 100%) !important;
+  background: rgba(14, 18, 26, 0.04) !important;
+  background-color: rgba(14, 18, 26, 0.04) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
 }
-html[data-theme="light"] .app,
+html[data-theme="light"] body .app,
 body[data-theme="light"] .app,
-.app[data-theme="light"],
-[data-theme="light"] .app,
-.theme-light .app {
-  background: linear-gradient(165deg, rgba(248, 251, 255, 0.32) 0%, rgba(235, 242, 252, 0.42) 100%) !important;
+.app[data-theme="light"] {
+  background: rgba(245, 248, 255, 0.05) !important;
+  background-color: rgba(245, 248, 255, 0.05) !important;
 }
-
-/* 100% Transparent Wrapper Pipeline for Full Real-Time Acrylic Blur */
-.main-body,
-.display-col,
-.workspace,
-.stage,
-.screen-stage,
-#phone-shell,
-#screen-empty,
-.screen-empty,
-.placeholder,
-.screen-viewport,
-.app:not(.is-streaming) #phone-screen {
+/* Seluruh Kontainer Utama Wajib 100% Transparan Tembus ke DWM apply_acrylic */
+html body .main-body,
+html body .display-col,
+html body .app:not(.is-landscape) .display-col,
+html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
+html body .workspace,
+html body .stage,
+html body .screen-stage,
+html body #phone-shell,
+html body #screen-empty,
+html body .screen-empty,
+html body #launchpad-shell,
+html body .launchpad-shell,
+html body #launchpad-idle-view,
+html body .launchpad-idle-view,
+html body .placeholder,
+html body .screen-viewport,
+html body .app:not(.is-streaming) #phone-screen,
+html[data-theme="dark"] body .app:not(.is-streaming) #phone-screen,
+html[data-theme="light"] body .app:not(.is-streaming) #phone-screen {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
 }
-.app.is-streaming #phone-screen {
+/* Hanya saat video iPhone sedang aktif streaming, latar #phone-screen hitam */
+html body .app.is-streaming #phone-screen {
   background: #000000 !important;
   background-color: #000000 !important;
 }
@@ -150,20 +190,26 @@ body::-webkit-scrollbar {
   -webkit-user-select: none !important;
 }
 
-/* 3D Liquid Glass Specular Styling for Bars and Drawers */
-.app-bar {
+/* Top Bar, Quick Nav, Side Drawer & Cards: Efek Kaca Bening apply_acrylic */
+html body .app-bar,
+html[data-theme="dark"] body .app-bar {
   border-radius: 0px !important;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(12, 16, 26, 0.22) 100%) !important;
+  background: rgba(12, 16, 24, 0.06) !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 10 !important;
 }
-.quick-nav {
+html[data-theme="light"] body .app-bar {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.10) !important;
+}
+html body .quick-nav,
+html[data-theme="dark"] body .quick-nav {
   border-radius: 0px !important;
-  background: linear-gradient(0deg, rgba(10, 14, 24, 0.28) 0%, rgba(20, 26, 40, 0.16) 100%) !important;
+  background: rgba(12, 16, 24, 0.08) !important;
   border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
   box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14) !important;
   backdrop-filter: none !important;
@@ -171,10 +217,35 @@ body::-webkit-scrollbar {
   position: relative !important;
   z-index: 10 !important;
 }
+html[data-theme="light"] body .quick-nav {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-top: 1px solid rgba(15, 23, 42, 0.10) !important;
+}
+/* Side Drawer & Settings Controls (Liquid Glass with #control-pane ID specificity) */
+#control-pane,
 .side-drawer,
-.control-pane {
+#control-pane *,
+.side-drawer * {
+  contain: none !important;
+}
+html body #control-pane,
+html body .side-drawer,
+html body #control-pane .drawer-header,
+html body #control-pane .drawer-body,
+html body #control-pane .drawer-scroll,
+html body #control-pane .drawer-content,
+html body .side-drawer .drawer-header,
+html body .side-drawer .drawer-body,
+html body .side-drawer .drawer-scroll,
+html body .side-drawer .drawer-content,
+html[data-theme="dark"] body #control-pane,
+html[data-theme="dark"] body .side-drawer,
+html[data-theme="dark"] body #control-pane .drawer-header,
+html[data-theme="dark"] body #control-pane .drawer-content,
+html[data-theme="dark"] body #control-pane .drawer-scroll {
   border-radius: 0px !important;
-  background: linear-gradient(180deg, rgba(16, 22, 34, 0.22) 0%, rgba(10, 14, 24, 0.30) 100%) !important;
+  background: rgba(14, 18, 28, 0.05) !important;
+  background-color: rgba(14, 18, 28, 0.05) !important;
   border-left: 1px solid rgba(255, 255, 255, 0.14) !important;
   box-shadow: -6px 0 20px rgba(0, 0, 0, 0.18), inset 1px 0 0 0 rgba(255, 255, 255, 0.14) !important;
   backdrop-filter: none !important;
@@ -182,32 +253,72 @@ body::-webkit-scrollbar {
   position: relative !important;
   z-index: 20 !important;
 }
-[data-theme="light"] .side-drawer,
-[data-theme="light"] .control-pane {
-  background: linear-gradient(180deg, rgba(240, 244, 250, 0.35) 0%, rgba(230, 236, 245, 0.45) 100%) !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.40) !important;
+html[data-theme="light"] body #control-pane,
+html[data-theme="light"] body .side-drawer,
+html[data-theme="light"] body #control-pane .drawer-header,
+html[data-theme="light"] body #control-pane .drawer-content,
+html[data-theme="light"] body #control-pane .drawer-scroll,
+html[data-theme="light"] body .side-drawer .drawer-header,
+html[data-theme="light"] body .side-drawer .drawer-content,
+html[data-theme="light"] body .side-drawer .drawer-scroll {
+  background: rgba(255, 255, 255, 0.08) !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  border-left: 1px solid rgba(15, 23, 42, 0.12) !important;
   box-shadow: -6px 0 20px rgba(15, 23, 42, 0.08), inset 1px 0 0 0 rgba(255, 255, 255, 0.50) !important;
 }
-
-/* 3D Liquid Glass Cards Anti-Flat Specular Rim Highlights */
-.card,
-.glass-card,
-.launchpad-device-card,
-#launchpad-device-card {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(18, 24, 36, 0.24) !important;
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.26) !important;
+html body #control-pane section,
+html body #control-pane form,
+html body #control-pane .control-group,
+html body #control-pane .settings-group,
+html body #control-pane details,
+html body #control-pane .crop-grid,
+html body #control-pane .drawer-content,
+html body #control-pane .panel-theme,
+html body #control-pane .panel-display-fit,
+html body #control-pane .panel-audio-settings,
+html body .side-drawer section,
+html body .side-drawer form,
+html body .side-drawer .control-group,
+html body .side-drawer .settings-group,
+html body .side-drawer details,
+html body .side-drawer .crop-grid,
+html body .side-drawer .drawer-content,
+html body .side-drawer .panel-theme,
+html body .side-drawer .panel-display-fit,
+html body .side-drawer .panel-audio-settings {
+  background: transparent !important;
+  background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-[data-theme="light"] .card,
-[data-theme="light"] .glass-card,
-[data-theme="light"] .launchpad-device-card,
-[data-theme="light"] #launchpad-device-card {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0.45) 100%), rgba(240, 244, 250, 0.35) !important;
-  border: 1px solid rgba(255, 255, 255, 0.45) !important;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.65) !important;
+html body .card,
+html body .glass-card,
+html body .launchpad-device-card,
+html body .device-card,
+html body #control-pane .card,
+html body #control-pane .glass-card,
+html body .side-drawer .card,
+html body .side-drawer .glass-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 14px !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.18) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-theme="light"] body .card,
+html[data-theme="light"] body .glass-card,
+html[data-theme="light"] body .launchpad-device-card,
+html[data-theme="light"] body .device-card,
+html[data-theme="light"] body #control-pane .card,
+html[data-theme="light"] body #control-pane .glass-card,
+html[data-theme="light"] body .side-drawer .card,
+html[data-theme="light"] body .side-drawer .glass-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.36) 0%, rgba(255, 255, 255, 0.18) 100%) !important;
+  background-color: rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.80), 0 6px 20px rgba(15, 23, 42, 0.08) !important;
 }
 
 /* Sembunyikan tombol Restart & Stop saat belum mirroring (Ready / Stop) */
@@ -261,6 +372,33 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var btnText = (startBtn ? (startBtn.innerText || startBtn.textContent || "") : "").trim();
             var titleText = (launchpadTitle ? (launchpadTitle.innerText || launchpadTitle.textContent || "") : "").trim();
 
+            var bgHtml = window.getComputedStyle ? window.getComputedStyle(document.documentElement).backgroundColor : "";
+            var bgBody = window.getComputedStyle ? window.getComputedStyle(document.body).backgroundColor : "";
+            var bgApp = window.getComputedStyle ? window.getComputedStyle(appEl).backgroundColor : "";
+            var sideDrawer = document.querySelector(".side-drawer");
+            var bgDrawer = (sideDrawer && window.getComputedStyle) ? window.getComputedStyle(sideDrawer).backgroundColor : "";
+            console.log("[BG_DEBUG] html:", bgHtml, "body:", bgBody, "app:", bgApp, "drawer:", bgDrawer);
+
+            var elTop = document.elementFromPoint ? document.elementFromPoint(100, 20) : null;
+            var elLp = document.elementFromPoint ? document.elementFromPoint(200, 450) : null;
+            var elDr = document.elementFromPoint ? document.elementFromPoint(600, 400) : null;
+            var elProbe = document.elementFromPoint ? document.elementFromPoint(580, 250) : null;
+            var chain = [];
+            var cur = elProbe;
+            while (cur && cur !== document.documentElement) {
+                var bg = window.getComputedStyle ? window.getComputedStyle(cur).backgroundColor : "";
+                var bgImg = window.getComputedStyle ? window.getComputedStyle(cur).backgroundImage : "";
+                var idPart = cur.id ? ('#' + cur.id) : '';
+                var clsPart = cur.className ? ('.' + cur.className) : '';
+                chain.push(cur.tagName + idPart + clsPart + '[bg:' + bg + '|img:' + bgImg + ']');
+                cur = cur.parentElement;
+            }
+            var probeChain = chain.join(' -> ');
+
+            var infoTop = elTop ? (elTop.tagName + "." + elTop.className + " id:" + elTop.id + " bg:" + (window.getComputedStyle ? window.getComputedStyle(elTop).backgroundColor : "")) : "none";
+            var infoLp = elLp ? (elLp.tagName + "." + elLp.className + " id:" + elLp.id + " bg:" + (window.getComputedStyle ? window.getComputedStyle(elLp).backgroundColor : "")) : "none";
+            var infoDr = elDr ? (elDr.tagName + "." + elDr.className + " id:" + elDr.id + " bg:" + (window.getComputedStyle ? window.getComputedStyle(elDr).backgroundColor : "")) : "none";
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: curW,
@@ -273,7 +411,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 launchpadTitleText: titleText,
                 userAgent: navigator.userAgent || "",
                 dpr: window.devicePixelRatio || 1.0,
-                rafVerified: !!rafVerified
+                rafVerified: !!rafVerified,
+                bgHtml: bgHtml,
+                bgBody: bgBody,
+                bgApp: bgApp,
+                bgDrawer: bgDrawer,
+                infoTop: infoTop,
+                infoLp: infoLp,
+                infoDr: infoDr,
+                probeChain: probeChain
             });
         } catch (_) {}
     }
@@ -325,6 +471,32 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         requestAnimationFrame(checkRaf);
         setTimeout(function() { sendDomBeacon(false); }, 300);
         setTimeout(function() { sendDomBeacon(false); }, 1000);
+        setInterval(function() {
+            try {
+                fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
+                    if (s && s.window && typeof s.window.drawer_open === 'boolean') {
+                        if (typeof toggleSettings === 'function' && window.isDrawerOpen !== s.window.drawer_open) {
+                            toggleSettings(s.window.drawer_open);
+                            setTimeout(function() { sendDomBeacon(false); }, 300);
+                        }
+                    }
+                    if (s && s.settings && s.settings.theme) {
+                        var curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+                        if (curTheme !== s.settings.theme) {
+                            document.documentElement.setAttribute('data-theme', s.settings.theme);
+                            if (document.body) document.body.setAttribute('data-theme', s.settings.theme);
+                            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+                            if (appEl) {
+                                appEl.setAttribute('data-theme', s.settings.theme);
+                                appEl.classList.toggle('theme-light', s.settings.theme === 'light');
+                                appEl.classList.toggle('theme-dark', s.settings.theme === 'dark');
+                            }
+                            setTimeout(function() { sendDomBeacon(false); }, 300);
+                        }
+                    }
+                }).catch(function(){});
+            } catch (_) {}
+        }, 150);
     }
 
     if (document.readyState === "loading") {
@@ -1182,6 +1354,18 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let safe_btn = btn_text.replace('\\', r#"\\"#).replace('"', r#"\""#);
                 let safe_ua = user_agent.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
+                let win_json = format!(
+                    r#","window":{{"drawer_open":{},"is_landscape":{},"is_fullscreen":{}}}"#,
+                    GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+                    GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+                    GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst)
+                );
+                if !sanitized.contains(r#""window":"#) {
+                    if let Some(pos) = sanitized.rfind('}') {
+                        sanitized.insert_str(pos, &win_json);
+                    }
+                }
+
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
                         r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{}}}}}"#,
@@ -1306,6 +1490,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "ip": "192.168.100.10",
     "service": "{}"
   }},
+  "window": {{
+    "drawer_open": {},
+    "is_landscape": {},
+    "is_fullscreen": {}
+  }},
   "settings": {},
   "status_text": "{}",
   "language": "{}",
@@ -1350,6 +1539,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             st_snap.lip_sync,
             udid,
             REMOTEPAIRING_SERVICE,
+            GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+            GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+            GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
             settings_json,
             status_text,
             lang_code,
@@ -1824,6 +2016,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/dom_ready_beacon" {
+        let _ = std::fs::write("D:\\SCREEN MIROR IOS\\pane-iphone-mirror-windows\\scratch\\dom_beacon.json", &req.body);
         let has_edg = req.body.contains("Edg/");
         let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
         let btn_text_ok = req.body.to_lowercase().contains("mirroring");
@@ -2107,10 +2300,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             if clean_rel.eq_ignore_ascii_case("index.html") {
                 let mut html = String::from_utf8_lossy(&bytes).to_string();
                 if !html.contains("v4_true_acrylic.css") {
-                    html = html.replace(
-                        "</head>",
-                        "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n</head>",
-                    );
+                    if let Some(pos) = html.rfind("</body>") {
+                        html.insert_str(pos, "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n");
+                    } else {
+                        html = html.replace(
+                            "</head>",
+                            "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n</head>",
+                        );
+                    }
                 }
                 if !html.contains("v4_bridge.js") {
                     if let Some(pos) = html.find("<script src=\"/keys.js") {
@@ -2122,6 +2319,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                 }
                 return HttpResponse::ok_html(&html);
+            }
+
+            if clean_rel.starts_with("app.css") || clean_rel == "app.css" {
+                let mut css_text = String::from_utf8_lossy(&bytes).to_string();
+                css_text.push_str("\n\n/* === V4_TRUE_ACRYLIC_CSS OVERRIDE === */\n");
+                css_text.push_str(V4_TRUE_ACRYLIC_CSS);
+                return HttpResponse::ok_css(&css_text);
             }
 
             return HttpResponse::ok_bytes(bytes, mime);

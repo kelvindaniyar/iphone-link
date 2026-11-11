@@ -53,6 +53,8 @@ pub const DWMSBT_MAINWINDOW: u32 = 2;      // Mica
 pub const DWMSBT_TRANSIENTWINDOW: u32 = 3; // True Acrylic ("Files" app style)
 pub const DWMSBT_TABBEDWINDOW: u32 = 4;    // Mica Alt
 
+pub const BLACK_BRUSH: i32 = 4;
+
 #[repr(C)]
 struct ACCENT_POLICY {
     AccentState: u32,
@@ -255,6 +257,8 @@ extern "system" {
         cy: i32,
         fuLoad: u32,
     ) -> *mut c_void;
+    fn BeginPaint(hwnd: *mut c_void, lpPaint: *mut c_void) -> *mut c_void;
+    fn EndPaint(hwnd: *mut c_void, lpPaint: *const c_void) -> i32;
 }
 
 #[link(name = "gdi32")]
@@ -332,37 +336,10 @@ pub fn apply_true_files_acrylic_backdrop(hwnd: *mut c_void, dark_mode: bool) -> 
                 let round_val = DWMWCP_ROUND;
                 let _ = set_attr_fn(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &round_val as *const _ as *const c_void, 4);
 
-                // 4. DWMWA_BORDER_COLOR (34) = 0xFFFFFFFF (DWMWA_COLOR_DEFAULT) to let DWM render anti-aliased 1px glass border
-                let border_default: u32 = 0xFFFFFFFF;
-                let _ = set_attr_fn(hwnd, DWMWA_BORDER_COLOR, &border_default as *const _ as *const c_void, 4);
-
-                // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = 1 (DWMSBT_NONE) so it does not collide with WCA_ACCENT_POLICY
-                let backdrop_none: u32 = 1;
-                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_none as *const _ as *const c_void, 4);
-            }
-        }
-
-        // 6. SetWindowCompositionAttribute with ACCENT_ENABLE_ACRYLICBLURBEHIND (4)
-        let user32_name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
-        let h_user32 = LoadLibraryW(user32_name.as_ptr());
-        if !h_user32.is_null() {
-            let set_wca = GetProcAddress(h_user32, b"SetWindowCompositionAttribute\0".as_ptr() as *const i8);
-            if !set_wca.is_null() {
-                let set_wca_fn: SetWindowCompositionAttributeFn = std::mem::transmute(set_wca);
-                // Gradient tint: 0x301E1610 (dark mode) / 0x30F8F4F0 (light mode) with alpha 0x30 (~18% tint)
-                let grad = if dark_mode { 0x301E1610 } else { 0x30F8F4F0 };
-                let mut accent = ACCENT_POLICY {
-                    AccentState: 4, // ACCENT_ENABLE_ACRYLICBLURBEHIND
-                    AccentFlags: 2, // Draw all borders / full client blur
-                    GradientColor: grad,
-                    AnimationId: 0,
-                };
-                let mut wca_data = WINDOWCOMPOSITIONATTRIBUTEDATA {
-                    Attrib: 19, // WCA_ACCENT_POLICY
-                    pvData: &mut accent as *mut _ as *mut c_void,
-                    cbData: std::mem::size_of::<ACCENT_POLICY>(),
-                };
-                let _ = set_wca_fn(hwnd, &mut wca_data);
+                // 5. DWMWA_SYSTEMBACKDROP_TYPE (38) = DWMSBT_TRANSIENTWINDOW (3)
+                // Implementasi Murni apply_acrylic dari tauri-apps/window-vibrancy untuk Windows 11 Build >= 22523!
+                let backdrop_type: u32 = DWMSBT_TRANSIENTWINDOW; // 3
+                let _ = set_attr_fn(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop_type as *const _ as *const c_void, 4);
             }
         }
     }
@@ -735,19 +712,30 @@ unsafe extern "system" fn ctrl_completed_invoke(
     let put_visible: PutVisibleFn = std::mem::transmute(*ctrl_vt.add(4));
     let _ = put_visible(controller, 1);
 
-    // 2B. put_DefaultBackgroundColor(0) via ICoreWebView2Controller2 (index 26 & 27) for 100% transparent WebView2 backdrop
+    // 2B. put_DefaultBackgroundColor(0) via ICoreWebView2Controller2 (index 27) for 100% transparent WebView2 backdrop
     let mut ctrl2: *mut c_void = ptr::null_mut();
     type QiFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
     let qi: QiFn = std::mem::transmute(*ctrl_vt.add(0));
     let hr_ctrl2 = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
+    let mut dbg_msg = format!("hr_ctrl2: 0x{:08X}, ctrl2: {:p}\n", hr_ctrl2, ctrl2);
     if hr_ctrl2 >= 0 && !ctrl2.is_null() {
         let ctrl2_vt = *(ctrl2 as *mut *const usize);
+        type GetBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: *mut u32) -> i32;
+        let get_bg: GetBgColorFn = std::mem::transmute(*ctrl2_vt.add(26));
+        let mut cur_col: u32 = 0xAAAAAAAA;
+        let hr_get = get_bg(ctrl2, &mut cur_col);
+        dbg_msg.push_str(&format!("hr_get26: 0x{:08X}, cur_col: 0x{:08X}\n", hr_get, cur_col));
+
         type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
-        let put_bg_color26: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(26));
-        let _ = put_bg_color26(ctrl2, 0); // Vtable index 26
         let put_bg_color27: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let _ = put_bg_color27(ctrl2, 0); // Vtable index 27
+        let hr_put = put_bg_color27(ctrl2, 0); // Vtable index 27 (put_DefaultBackgroundColor)
+        dbg_msg.push_str(&format!("hr_put27: 0x{:08X}\n", hr_put));
+
+        let mut after_col: u32 = 0xAAAAAAAA;
+        let hr_get_after = get_bg(ctrl2, &mut after_col);
+        dbg_msg.push_str(&format!("hr_get_after: 0x{:08X}, after_col: 0x{:08X}\n", hr_get_after, after_col));
     }
+    let _ = std::fs::write("D:\\SCREEN MIROR IOS\\pane-iphone-mirror-windows\\scratch\\ctrl2_debug.log", dbg_msg);
 
     // 3. put_Bounds (index 6, passed by *const RECT)
     let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -934,6 +922,7 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
                 0,
                 0x0001 | 0x0004 | 0x0010 | 0x4000,
             );
+            notify_webview_bounds_sync(hwnd);
             0
         }
         WM_APP_SET_WINDOW_POS => {
@@ -948,6 +937,31 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
                 0,
                 0x0001 | 0x0004 | 0x0010 | 0x4000,
             );
+            notify_webview_bounds_sync(hwnd);
+            0
+        }
+        0x0014 => {
+            // WM_ERASEBKGND: Fill with BLACK_BRUSH to preserve DWM acrylic glass composition
+            let hdc = wparam as *mut c_void;
+            if !hdc.is_null() {
+                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetClientRect(hwnd, &mut rc);
+                let black_br = GetStockObject(BLACK_BRUSH);
+                FillRect(hdc, &rc, black_br);
+            }
+            1
+        }
+        0x000F => {
+            // WM_PAINT: Fill client area with BLACK_BRUSH for DWM extended frame glass
+            let mut ps: [u8; 80] = [0; 80];
+            let hdc = BeginPaint(hwnd, ps.as_mut_ptr() as *mut c_void);
+            if !hdc.is_null() {
+                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetClientRect(hwnd, &mut rc);
+                let black_br = GetStockObject(BLACK_BRUSH);
+                FillRect(hdc, &rc, black_br);
+                EndPaint(hwnd, ps.as_ptr() as *const c_void);
+            }
             0
         }
         0x0086 => {
@@ -969,14 +983,6 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             } else {
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
-        }
-        0x0014 => {
-            // WM_ERASEBKGND: Fill with BLACK_BRUSH (transparent alpha-0 in DWM)
-            let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-            GetClientRect(hwnd, &mut rc);
-            let brush = GetStockObject(4); // BLACK_BRUSH
-            FillRect(wparam as *mut c_void, &rc as *const RECT, brush);
-            1
         }
         0x0005 => {
             // WM_SIZE
@@ -1240,7 +1246,7 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
             hInstance: GetModuleHandleW(ptr::null()),
             hIcon: hicon_big,
             hCursor: LoadCursorW(ptr::null_mut(), 32512 as *const u16), // IDC_ARROW
-            hbrBackground: GetStockObject(4), // BLACK_BRUSH (transparent alpha-0 in DWM)
+            hbrBackground: GetStockObject(BLACK_BRUSH), // BLACK_BRUSH for DWM extended frame acrylic transparency
             lpszMenuName: ptr::null(),
             lpszClassName: class_name.as_ptr(),
             hIconSm: hicon_small,
@@ -1265,8 +1271,9 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         SAVED_WINDOW_X.store(pos_x, Ordering::SeqCst);
         SAVED_WINDOW_Y.store(pos_y, Ordering::SeqCst);
 
+        const WS_EX_NOREDIRECTIONBITMAP: u32 = 0x00200000;
         let hwnd = CreateWindowExW(
-            0, // dwExStyle = 0 (WS_EX_TOPMOST removed!)
+            WS_EX_NOREDIRECTIONBITMAP, // dwExStyle with WS_EX_NOREDIRECTIONBITMAP for DirectComposition glass transparency (WS_EX_TOPMOST removed!)
             class_name.as_ptr(),
             window_title.as_ptr(),
             STYLE,
