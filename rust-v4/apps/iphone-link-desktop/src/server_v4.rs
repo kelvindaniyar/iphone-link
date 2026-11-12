@@ -69,6 +69,8 @@ pub static GLOBAL_DOM_LANG_ID_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DOM_LANG_EN_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DOM_DRAWER_TITLE: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DOM_TOGGLES_SUMMARY: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_CARD_UPDATER_EXISTS: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_DOM_CARD_UPDATER_TITLE: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_TRAY_DISMISSED_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 use crate::i18n::{translate_dynamic_status, Lang};
@@ -874,6 +876,17 @@ html[data-theme="light"] body #card-updater .toggle-switch[aria-checked="true"],
 html[data-theme="light"] body #card-updater .toggle-switch.is-active {
   background: linear-gradient(180deg, #1E90FF 0%, #0066CC 100%) !important;
   border-color: rgba(255, 255, 255, 0.45) !important;
+}
+html body #card-updater {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+html body #card-updater .update-card-title {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.03em !important;
+  line-height: 1.25 !important;
 }
 html body #screen-error-banner:empty,
 html body #screen-error-banner[hidden],
@@ -2016,6 +2029,21 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var seVisibleNow = Boolean(seEl && !seEl.hidden && window.getComputedStyle(seEl).display !== 'none');
             var cardUpdEl = document.getElementById('card-updater');
             var cardUpdaterCollapsed = Boolean(cardUpdEl && cardUpdEl.classList.contains('is-collapsed'));
+            var drawerPaneEl = document.getElementById('control-pane') || document.querySelector('.side-drawer');
+            var isDrawerOpenNow = Boolean(appRoot && appRoot.classList.contains('drawer-open') && drawerPaneEl && !drawerPaneEl.hidden);
+            var cardUpdRect = (cardUpdEl && cardUpdEl.getBoundingClientRect) ? cardUpdEl.getBoundingClientRect() : null;
+            var cardUpdCs = (cardUpdEl && window.getComputedStyle) ? window.getComputedStyle(cardUpdEl) : null;
+            var cardUpdaterExistsNow = Boolean(
+                cardUpdEl &&
+                cardUpdEl.isConnected &&
+                !cardUpdEl.hidden &&
+                cardUpdCs &&
+                cardUpdCs.display !== 'none' &&
+                cardUpdCs.visibility !== 'hidden' &&
+                (!isDrawerOpenNow || (cardUpdRect && cardUpdRect.width > 50 && cardUpdRect.height > 20))
+            );
+            var cardUpdTitleEl = cardUpdEl ? cardUpdEl.querySelector('.update-card-title') : null;
+            var cardUpdaterTitleNow = cardUpdTitleEl ? cardUpdTitleEl.textContent.trim() : '';
 
             function isBtnLit(el) {
                 return Boolean(el && (el.classList.contains('is-active') || el.classList.contains('active') || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true'));
@@ -2165,6 +2193,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 domTogglesSummary: domTogglesSummary,
                 updaterScrolled: Boolean(window.__v4UpdaterScrolledIntoView),
                 cardUpdaterCollapsed: cardUpdaterCollapsed,
+                cardUpdaterExists: cardUpdaterExistsNow,
+                cardUpdaterTitle: cardUpdaterTitleNow,
                 checkUpdateClicked: Boolean(window.__v4CheckUpdateClicked),
                 screenEmptyVisible: seVisibleNow
             });
@@ -2875,14 +2905,191 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         } catch (_) {}
     }
 
+    function ensureUpdaterCardExistsInDom() {
+        try {
+            var card = document.getElementById('card-updater');
+            var langNow = (window.__v4CurrentLang === 'en' || document.documentElement.getAttribute('data-lang') === 'en') ? 'en' : 'id';
+            var isEn = (langNow === 'en');
+            if (!card) {
+                var drawerBody = document.querySelector('#control-pane .drawer-content')
+                    || document.querySelector('#control-pane .drawer-scroll')
+                    || document.querySelector('.side-drawer .drawer-content')
+                    || document.querySelector('.side-drawer .drawer-scroll')
+                    || document.querySelector('#control-pane .drawer-body')
+                    || document.getElementById('control-pane')
+                    || document.querySelector('.side-drawer');
+                if (!drawerBody) return null;
+
+                card = document.createElement('section');
+                card.className = 'card glass-card card-updater';
+                card.id = 'card-updater';
+                card.innerHTML = [
+                    '<div class="update-card-header">',
+                    '  <div class="update-header-left">',
+                    '    <div class="update-icon-badge" aria-hidden="true">',
+                    '      <svg class="fluent-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>',
+                    '    </div>',
+                    '    <span class="update-card-title" data-i18n="updater.title">' + (isEn ? 'SOFTWARE UPDATE' : 'PEMBARUAN PERANGKAT LUNAK') + '</span>',
+                    '  </div>',
+                    '  <div class="update-header-actions">',
+                    '    <button type="button" class="update-icon-btn" id="btn-update-info" title="Update info" aria-label="Update info" aria-expanded="false">',
+                    '      <svg class="fluent-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>',
+                    '    </button>',
+                    '    <button type="button" class="update-icon-btn" id="btn-update-collapse" title="Toggle update card" aria-label="Toggle update card" aria-expanded="true">',
+                    '      <svg class="fluent-icon icon-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>',
+                    '    </button>',
+                    '  </div>',
+                    '</div>',
+                    '<div class="update-info-box" id="update-info-box" hidden>',
+                    '  <p data-i18n="updater.info"></p>',
+                    '</div>',
+                    '<div class="update-card-body" id="update-card-body">',
+                    '  <div class="update-version-label" id="update-current-version">iPhone Link v4.0.0</div>',
+                    '  <div class="update-row">',
+                    '    <span class="update-row-label" data-i18n="updater.auto_check">' + (isEn ? 'Check automatically on startup' : 'Cek pembaruan otomatis saat dibuka') + '</span>',
+                    '    <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Auto check updates"><span class="toggle-switch-thumb"></span></button>',
+                    '  </div>',
+                    '  <div class="update-row">',
+                    '    <span class="update-row-label" data-i18n="updater.channel">' + (isEn ? 'Channel' : 'Saluran Pembaruan') + '</span>',
+                    '    <div class="segmented segmented-channel" id="update-channel-group" role="radiogroup" aria-label="Update Channel">',
+                    '      <button type="button" class="seg is-active" id="btn-channel-stable" data-channel="stable" role="radio" aria-checked="true"><span class="btn-label" data-i18n="updater.stable">' + (isEn ? 'Stable' : 'Stabil') + '</span></button>',
+                    '      <button type="button" class="seg" id="btn-channel-beta" data-channel="beta" role="radio" aria-checked="false"><span class="btn-label" data-i18n="updater.beta">Beta</span></button>',
+                    '    </div>',
+                    '  </div>',
+                    '  <div class="update-status-row"><p class="update-status-text" id="update-status-text" data-i18n="updater.status_up_to_date">' + (isEn ? 'iPhone Link is up to date.' : 'iPhone Link sudah versi terbaru.') + '</p></div>',
+                    '  <div class="update-progress-wrap" id="update-progress-wrap" hidden><div class="update-progress-bar"><div class="update-progress-fill" id="update-progress-fill" style="width: 0%;"></div></div><div class="update-progress-label" id="update-progress-label">0%</div></div>',
+                    '  <div class="update-action-row"><button type="button" class="ctl ctl-accent update-action-btn" id="btn-check-update"><span class="btn-label" data-i18n="updater.check_btn">' + (isEn ? 'Check for updates' : 'Periksa Pembaruan') + '</span></button></div>',
+                    '</div>'
+                ].join('');
+
+                var footer = drawerBody.querySelector('.drawer-footer-credits') || drawerBody.querySelector('.drawer-footer');
+                if (footer && footer.parentNode === drawerBody) {
+                    drawerBody.insertBefore(card, footer);
+                } else {
+                    drawerBody.appendChild(card);
+                }
+
+                if (typeof window.initUpdaterControls === 'function') {
+                    try { window.initUpdaterControls(); } catch (_) {}
+                }
+            }
+
+            if (card.hidden) card.hidden = false;
+            if (card.style.display === 'none') card.style.display = '';
+            if (card.style.visibility === 'hidden') card.style.visibility = '';
+
+            if (!card.__v4UpdaterFallbackBound && typeof window.initUpdaterControls !== 'function') {
+                card.__v4UpdaterFallbackBound = true;
+                var btnInfo = document.getElementById('btn-update-info');
+                var infoBox = document.getElementById('update-info-box');
+                var btnCol = document.getElementById('btn-update-collapse');
+                var tAuto = document.getElementById('toggle-auto-update-check');
+                var bSt = document.getElementById('btn-channel-stable');
+                var bBe = document.getElementById('btn-channel-beta');
+                var bChk = document.getElementById('btn-check-update');
+                if (btnInfo && infoBox) {
+                    btnInfo.addEventListener('click', function() {
+                        infoBox.hidden = !infoBox.hidden;
+                        btnInfo.setAttribute('aria-expanded', String(!infoBox.hidden));
+                    });
+                }
+                if (btnCol) {
+                    btnCol.addEventListener('click', function() {
+                        card.classList.toggle('is-collapsed');
+                        btnCol.setAttribute('aria-expanded', String(!card.classList.contains('is-collapsed')));
+                    });
+                }
+                if (tAuto) {
+                    tAuto.addEventListener('click', function() {
+                        var nextVal = !(tAuto.classList.contains('is-active') || tAuto.getAttribute('aria-checked') === 'true');
+                        tAuto.classList.toggle('is-active', nextVal);
+                        tAuto.setAttribute('aria-checked', String(nextVal));
+                        persistSettingPartial({ autoCheckUpdate: nextVal }, false);
+                    });
+                }
+                if (bSt) {
+                    bSt.addEventListener('click', function() {
+                        enforceSingleActivePerSegmentedGroup(bSt);
+                        persistSettingPartial({ updateChannel: 'stable' }, false);
+                    });
+                }
+                if (bBe) {
+                    bBe.addEventListener('click', function() {
+                        enforceSingleActivePerSegmentedGroup(bBe);
+                        persistSettingPartial({ updateChannel: 'beta' }, false);
+                    });
+                }
+                if (bChk) {
+                    bChk.addEventListener('click', function() {
+                        var stEl = document.getElementById('update-status-text');
+                        var curEn = (window.__v4CurrentLang === 'en');
+                        if (stEl) stEl.textContent = curEn ? 'Checking for updates...' : 'Memeriksa pembaruan...';
+                        var ch = (bBe && bBe.classList.contains('is-active')) ? 'beta' : 'stable';
+                        postApi('/api/update/check', { channel: ch });
+                    });
+                }
+            }
+            return card;
+        } catch (_) {
+            return null;
+        }
+    }
+
     function applyV4DomTranslations(lang) {
         if (window.__v4TranslatingDom) return;
         window.__v4TranslatingDom = true;
         try {
+            ensureUpdaterCardExistsInDom();
             var isEn = (lang === 'en');
             var drawerTitle = document.querySelector('.drawer-title');
             if (drawerTitle) {
-                drawerTitle.textContent = isEn ? 'Settings & Controls' : 'Pengaturan & Kontrol';
+                var nextTitle = isEn ? 'Settings & Controls' : 'Pengaturan & Kontrol';
+                if (drawerTitle.textContent !== nextTitle) drawerTitle.textContent = nextTitle;
+            }
+            var updTitle = document.querySelector('#card-updater .update-card-title');
+            if (updTitle) {
+                var nextUpdTitle = isEn ? 'SOFTWARE UPDATE' : 'PEMBARUAN PERANGKAT LUNAK';
+                if (updTitle.textContent.trim() !== nextUpdTitle) updTitle.textContent = nextUpdTitle;
+            }
+            var updAutoLbl = document.querySelector('#card-updater [data-i18n="updater.auto_check"]');
+            if (updAutoLbl) {
+                var nextAutoLbl = isEn ? 'Check automatically on startup' : 'Cek pembaruan otomatis saat dibuka';
+                if (updAutoLbl.textContent.trim() !== nextAutoLbl) updAutoLbl.textContent = nextAutoLbl;
+            }
+            var updChLbl = document.querySelector('#card-updater [data-i18n="updater.channel"]');
+            if (updChLbl) {
+                var nextChLbl = isEn ? 'Channel' : 'Saluran Pembaruan';
+                if (updChLbl.textContent.trim() !== nextChLbl) updChLbl.textContent = nextChLbl;
+            }
+            var updStLbl = document.querySelector('#btn-channel-stable .btn-label') || document.getElementById('btn-channel-stable');
+            if (updStLbl) {
+                var nextStLbl = isEn ? 'Stable' : 'Stabil';
+                if (updStLbl.textContent.trim() !== nextStLbl) updStLbl.textContent = nextStLbl;
+            }
+            var updBeLbl = document.querySelector('#btn-channel-beta .btn-label') || document.getElementById('btn-channel-beta');
+            if (updBeLbl && updBeLbl.textContent.trim() !== 'Beta') {
+                updBeLbl.textContent = 'Beta';
+            }
+            var updInfoP = document.querySelector('#update-info-box p');
+            if (updInfoP) {
+                var nextInfoP = isEn
+                    ? 'Checks for new GitHub releases, downloads the installer, verifies SHA-256 integrity, and updates smoothly while keeping your settings.'
+                    : 'Memeriksa rilis baru di GitHub, mengunduh berkas instalasi, memverifikasi integritas SHA-256, dan memperbarui aplikasi tanpa menghapus pengaturan Anda.';
+                if (updInfoP.textContent.trim() !== nextInfoP) updInfoP.textContent = nextInfoP;
+            }
+            var updStatusEl = document.getElementById('update-status-text');
+            if (updStatusEl) {
+                var curUpdStatus = updStatusEl.textContent.trim();
+                if (!curUpdStatus || curUpdStatus === 'iPhone Link is up to date.' || curUpdStatus === 'iPhone Link sudah versi terbaru.') {
+                    var targetUpdStatus = isEn ? 'iPhone Link is up to date.' : 'iPhone Link sudah versi terbaru.';
+                    if (curUpdStatus !== targetUpdStatus) updStatusEl.textContent = targetUpdStatus;
+                }
+            }
+            var updBtnEl = document.getElementById('btn-check-update');
+            if (updBtnEl && !updBtnEl.disabled && !updBtnEl.classList.contains('has-update')) {
+                var updBtnLbl = updBtnEl.querySelector('.btn-label') || updBtnEl;
+                var nextBtnLbl = isEn ? 'Check for updates' : 'Periksa Pembaruan';
+                if (updBtnLbl.textContent.trim() !== nextBtnLbl) updBtnLbl.textContent = nextBtnLbl;
             }
             var showScreen = document.getElementById('show-screen');
             if (showScreen) {
@@ -3687,6 +3894,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     toggleSettings(true);
                 }
                 setTimeout(function() {
+                    ensureUpdaterCardExistsInDom();
+                    applyV4DomTranslations(window.__v4CurrentLang || 'id');
                     var cardUpd = document.getElementById('card-updater');
                     if (cardUpd) {
                         cardUpd.classList.remove('is-collapsed');
@@ -3739,6 +3948,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.__v4PersistUnlockPin = persistUnlockPinDual;
     window.__v4HydratePinFromSettings = hydratePinFromSettings;
     window.__v4HandleTrayAction = handlePendingTrayAction;
+    window.__v4EnsureUpdaterCard = ensureUpdaterCardExistsInDom;
 
     function initBridge() {
         var isMainAppWindow = Boolean(document.getElementById('app-root') || document.querySelector('.side-drawer') || document.getElementById('screen-view'));
@@ -3749,6 +3959,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         updateParallaxVars();
         syncIpadDisplayWidthVar();
         syncMirroringStateClass();
+        ensureUpdaterCardExistsInDom();
         wrapApplyLanguageIfReady();
         bindUniversalTogglePersistence();
         if (window.__V4_INITIAL_SETTINGS__) {
@@ -4376,7 +4587,47 @@ pub fn mime_for_path_str(path_str: &str) -> &'static str {
     }
 }
 
-/// Resolves a relative static asset path across web_dir, exe_dir/web, exe_dir/assets, and repo folders.
+/// Resolves the primary web root directory, prioritizing exe_dir/web (packaged v4.0 UI) FIRST
+/// before parent dev layouts or handset/web fallbacks.
+pub fn resolve_web_root_from(exe_dir: Option<&Path>, cwd: Option<&Path>) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(dir) = exe_dir {
+        candidates.push(dir.join("web"));
+        if let Some(p1) = dir.parent() {
+            candidates.push(p1.join("web"));
+        }
+    }
+
+    if let Some(c) = cwd {
+        candidates.push(c.join("web"));
+        candidates.push(c.join("handset").join("web"));
+        candidates.push(c.join("rust-v4").join("apps").join("iphone-link-desktop").join("web"));
+    }
+
+    if let Some(dir) = exe_dir {
+        candidates.push(dir.join("runtime").join("handset").join("web"));
+    }
+
+    for cand in candidates {
+        if cand.is_dir() && cand.join("index.html").is_file() {
+            return cand;
+        }
+    }
+
+    PathBuf::from("web")
+}
+
+/// Resolves the active web root directory for the running process.
+pub fn resolve_web_root() -> PathBuf {
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+    let cwd = env::current_dir().ok();
+    resolve_web_root_from(exe_dir.as_deref(), cwd.as_deref())
+}
+
+/// Resolves a relative static asset path, prioritizing exe_dir/web FIRST before web_dir and handset fallbacks.
 fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> {
     if rel_path.contains("..") {
         return None;
@@ -4403,6 +4654,16 @@ fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> 
     };
 
     let mut candidates = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("web").join(clean_rel));
+            candidates.push(exe_dir.join("assets").join(clean_rel));
+            if let Some(file_name) = Path::new(clean_rel).file_name() {
+                candidates.push(exe_dir.join("web").join(file_name));
+                candidates.push(exe_dir.join("assets").join(file_name));
+            }
+        }
+    }
     candidates.push(web_dir.join(clean_rel));
 
     if let Some(parent) = web_dir.parent() {
@@ -4414,12 +4675,6 @@ fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> 
 
     if let Ok(exe) = env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("web").join(clean_rel));
-            candidates.push(exe_dir.join("assets").join(clean_rel));
-            if let Some(file_name) = Path::new(clean_rel).file_name() {
-                candidates.push(exe_dir.join("assets").join(file_name));
-                candidates.push(exe_dir.join("web").join(file_name));
-            }
             if let Some(p1) = exe_dir.parent() {
                 candidates.push(p1.join("web").join(clean_rel));
                 candidates.push(p1.join("assets").join(clean_rel));
@@ -4432,6 +4687,7 @@ fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> 
                     }
                 }
             }
+            candidates.push(exe_dir.join("runtime").join("handset").join("web").join(clean_rel));
         }
     }
 
@@ -5531,10 +5787,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let dom_lang_en_act = GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst);
                 let dom_drawer_title = GLOBAL_DOM_DRAWER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
                 let dom_toggles_sum = GLOBAL_DOM_TOGGLES_SUMMARY.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_card_upd_exists = GLOBAL_DOM_CARD_UPDATER_EXISTS.load(Ordering::SeqCst);
+                let dom_card_upd_title = GLOBAL_DOM_CARD_UPDATER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
+                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
                         pending_tray_str,
@@ -5578,6 +5836,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         dom_lang_en_act,
                         dom_drawer_title,
                         dom_toggles_sum,
+                        dom_card_upd_exists,
+                        dom_card_upd_title,
                         GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
                         GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
                         is_start_with_windows_enabled(),
@@ -5612,8 +5872,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         sanitized = sanitized.replace(
                             r#""domReadyBeacon":"#,
                             &format!(
-                                r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "concentricTrackRadius": "{}", "concentricButtonRadius": "{}", "badgeBg": "{}", "segmentedClean": {}, "segmentedDetails": "{}", "domLanguage": "{}", "activeLangId": {}, "activeLangEn": {}, "drawerTitleText": "{}", "domTogglesSummary": "{}", "trayMenuOpen": {}, "trayDismissedCount": {}, "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
-                                active_thm, dom_thm_str, wf_clean, safe_wf_details, conc_track, conc_btn, badge_bg, seg_clean, safe_seg_details, dom_lang_val, dom_lang_id_act, dom_lang_en_act, dom_drawer_title, dom_toggles_sum, GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst), GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst), dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                                r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "concentricTrackRadius": "{}", "concentricButtonRadius": "{}", "badgeBg": "{}", "segmentedClean": {}, "segmentedDetails": "{}", "domLanguage": "{}", "activeLangId": {}, "activeLangEn": {}, "drawerTitleText": "{}", "domTogglesSummary": "{}", "cardUpdaterExists": {}, "cardUpdaterTitle": "{}", "trayMenuOpen": {}, "trayDismissedCount": {}, "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                                active_thm, dom_thm_str, wf_clean, safe_wf_details, conc_track, conc_btn, badge_bg, seg_clean, safe_seg_details, dom_lang_val, dom_lang_id_act, dom_lang_en_act, dom_drawer_title, dom_toggles_sum, dom_card_upd_exists, dom_card_upd_title, GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst), GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst), dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                             )
                         );
                     }
@@ -5811,6 +6071,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "activeLangEn": {},
     "drawerTitleText": "{}",
     "domTogglesSummary": "{}",
+    "cardUpdaterExists": {},
+    "cardUpdaterTitle": "{}",
     "stealthActive": {},
     "audioPcActive": {},
     "startWithWindows": {},
@@ -5890,6 +6152,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst),
             GLOBAL_DOM_DRAWER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
             GLOBAL_DOM_TOGGLES_SUMMARY.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_CARD_UPDATER_EXISTS.load(Ordering::SeqCst),
+            GLOBAL_DOM_CARD_UPDATER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
             GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
             GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
             is_start_with_windows_enabled(),
@@ -6947,6 +7211,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Some(tsum) = parse_string_param(&req.body, "domTogglesSummary") {
             if let Ok(mut g_ts) = GLOBAL_DOM_TOGGLES_SUMMARY.lock() {
                 *g_ts = tsum;
+            }
+        }
+        GLOBAL_DOM_CARD_UPDATER_EXISTS.store(
+            req.body.contains(r#""cardUpdaterExists":true"#) || req.body.contains(r#""cardUpdaterExists": true"#),
+            Ordering::SeqCst,
+        );
+        if let Some(cu_title) = parse_string_param(&req.body, "cardUpdaterTitle") {
+            if let Ok(mut g_ct) = GLOBAL_DOM_CARD_UPDATER_TITLE.lock() {
+                *g_ct = cu_title;
             }
         }
 
@@ -8466,5 +8739,50 @@ mod tests {
         // 3. Verify 1-Click HEVC banner wiring in V4_BRIDGE_JS and mirror.js serve hook
         assert!(V4_BRIDGE_JS.contains("__v4ShowMainHevcBanner"));
         assert!(V4_BRIDGE_JS.contains("/api/system/install_hevc"));
+    }
+
+    #[test]
+    fn test_tahap186_resolve_web_root_and_updater_bridge() {
+        let base = std::env::temp_dir().join(format!(
+            "iphone_link_t186_webroot_test_{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+        ));
+        let exe_dir = base.join("install_dir");
+        let exe_web = exe_dir.join("web");
+        let rt_web = exe_dir.join("runtime").join("handset").join("web");
+        let cwd_dir = base.join("cwd_fallback");
+        let cwd_handset_web = cwd_dir.join("handset").join("web");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&exe_web).unwrap();
+        fs::create_dir_all(&rt_web).unwrap();
+        fs::create_dir_all(&cwd_handset_web).unwrap();
+
+        fs::write(exe_web.join("index.html"), b"<html><!-- #card-updater --></html>").unwrap();
+        fs::write(rt_web.join("index.html"), b"<html>raw</html>").unwrap();
+        fs::write(cwd_handset_web.join("index.html"), b"<html>cwd raw</html>").unwrap();
+
+        // Priority 1 must ALWAYS be exe_dir/web when exe_dir/web/index.html exists
+        let resolved = resolve_web_root_from(Some(&exe_dir), Some(&cwd_dir));
+        assert_eq!(resolved, exe_web);
+
+        // If exe_dir/web is absent, cwd/handset/web resolves before runtime/handset/web fallback
+        fs::remove_dir_all(&exe_web).unwrap();
+        let resolved_cwd = resolve_web_root_from(Some(&exe_dir), Some(&cwd_dir));
+        assert_eq!(resolved_cwd, cwd_handset_web);
+
+        // If only runtime/handset/web remains, fallback picks it gracefully
+        fs::remove_dir_all(&cwd_dir).unwrap();
+        let resolved_rt = resolve_web_root_from(Some(&exe_dir), None);
+        assert_eq!(resolved_rt, rt_web);
+        let _ = fs::remove_dir_all(&base);
+
+        // Verify V4_BRIDGE_JS contains ensureUpdaterCardExistsInDom & ID/EN labels
+        assert!(V4_BRIDGE_JS.contains("ensureUpdaterCardExistsInDom"));
+        assert!(V4_BRIDGE_JS.contains("PEMBARUAN PERANGKAT LUNAK"));
+        assert!(V4_BRIDGE_JS.contains("SOFTWARE UPDATE"));
+        assert!(V4_BRIDGE_JS.contains("Saluran Pembaruan"));
+        assert!(V4_BRIDGE_JS.contains("Cek pembaruan otomatis saat dibuka"));
+        assert!(V4_BRIDGE_JS.contains("Periksa Pembaruan"));
+        assert!(V4_BRIDGE_JS.contains("cardUpdaterExists"));
     }
 }

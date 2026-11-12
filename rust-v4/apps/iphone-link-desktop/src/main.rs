@@ -767,30 +767,7 @@ fn spawn_coredevice_worker() {
 }
 
 fn find_web_dir() -> PathBuf {
-    let mut candidates = Vec::new();
-
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("web"));
-            if let Some(p1) = dir.parent() {
-                candidates.push(p1.join("web"));
-            }
-        }
-    }
-
-    if let Ok(cwd) = env::current_dir() {
-        candidates.push(cwd.join("web"));
-        candidates.push(cwd.join("handset").join("web"));
-        candidates.push(cwd.join("rust-v4").join("apps").join("iphone-link-desktop").join("web"));
-    }
-
-    for cand in candidates {
-        if cand.is_dir() && cand.join("index.html").is_file() {
-            return cand;
-        }
-    }
-
-    PathBuf::from("web")
+    server_v4::resolve_web_root()
 }
 
 fn main() {
