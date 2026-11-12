@@ -1041,18 +1041,34 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
 
     let mut cur_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetWindowRect(hwnd, &mut cur_rc);
-    let cur_x = if cur_rc.left != 0 || cur_rc.top != 0 {
+    let is_pos_valid = cur_rc.left > 0 || cur_rc.top > 0;
+    let mut cur_x = if is_pos_valid {
         SAVED_WINDOW_X.store(cur_rc.left, Ordering::SeqCst);
         SAVED_WINDOW_Y.store(cur_rc.top, Ordering::SeqCst);
         cur_rc.left
     } else {
         SAVED_WINDOW_X.load(Ordering::SeqCst)
     };
-    let cur_y = if cur_rc.left != 0 || cur_rc.top != 0 {
+    let cur_y = if is_pos_valid {
         cur_rc.top
     } else {
         SAVED_WINDOW_Y.load(Ordering::SeqCst)
     };
+
+    let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
+    let mut u_flags = 0x0004 | 0x0010 | 0x0020; // SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    let mut position_adjusted = false;
+    if mon_w > 0 && cur_x + phys_w > mon_w {
+        cur_x = (mon_w - phys_w).max(0);
+        SAVED_WINDOW_X.store(cur_x, Ordering::SeqCst);
+        position_adjusted = true;
+    }
+
+    if !is_pos_valid || position_adjusted {
+        // Position changed or initializing from (0,0)
+    } else {
+        u_flags |= 0x0002; // SWP_NOMOVE
+    }
 
     SetWindowPos(
         hwnd,
@@ -1061,7 +1077,7 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         cur_y,
         phys_w,
         phys_h,
-        0x0002 | 0x0004 | 0x0010 | 0x0020, // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        u_flags,
     );
     notify_webview_bounds_sync(hwnd);
 }

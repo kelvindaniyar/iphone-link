@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -44,6 +44,9 @@ pub static GLOBAL_CONCENTRIC_BTN: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_BADGE_BG: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_SEGMENTED_CLEAN: AtomicBool = AtomicBool::new(true);
 pub static GLOBAL_SEGMENTED_DETAILS: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DEVICE_PROFILE: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DRAWER_RECT_WIDTH: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_DRAWER_RIGHT_OVERFLOW: AtomicIsize = AtomicIsize::new(0);
 pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
 
 use crate::i18n::{translate_dynamic_status, Lang};
@@ -841,6 +844,40 @@ iframe#screen-view {
   background: #000000 !important;
   color-scheme: dark !important;
 }
+
+/* Portrait + Drawer OPEN: left column takes remaining width, drawer takes exact 360px without clipping */
+html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100vw !important;
+  height: calc(100vh - 38px) !important;
+  overflow: hidden !important;
+}
+html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col {
+  width: calc(100vw - 360px) !important;
+  min-width: calc(100vw - 360px) !important;
+  max-width: calc(100vw - 360px) !important;
+  flex: 0 0 calc(100vw - 360px) !important;
+}
+html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .side-drawer,
+html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .control-pane {
+  width: 360px !important;
+  min-width: 360px !important;
+  max-width: 360px !important;
+  flex: 0 0 360px !important;
+}
+
+/* Portrait + Drawer CLOSED: full 100vw width for display-col and inner stages */
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .display-col,
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .workspace,
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .stage,
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) #phone-shell,
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) #phone-screen {
+  width: 100vw !important;
+  min-width: 100vw !important;
+  max-width: 100vw !important;
+  flex: 1 1 100vw !important;
+}
 "#;
 
 pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 174) */
@@ -898,7 +935,75 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
     }
 
+    window.__v4ActiveDeviceProfile = "auto";
+    window.__v4LastProfileTouch = 0;
+
+    function updateDeviceProfileState(prof, skipPost) {
+        window.__v4LastProfileTouch = Date.now();
+        var p = (prof === "ipad") ? "ipad" : ((prof === "iphone") ? "iphone" : "auto");
+        window.__v4ActiveDeviceProfile = p;
+        var isIpad = (p === "ipad");
+        var targetW = isIpad ? 564 : 346;
+        document.documentElement.style.setProperty('--display-width', targetW + 'px');
+        if (document.body) document.body.style.setProperty('--display-width', targetW + 'px');
+        var appEl = document.getElementById('app-root') || document.querySelector('.app');
+        if (appEl) {
+            appEl.style.setProperty('--display-width', targetW + 'px');
+            appEl.classList.toggle('is-ipad', isIpad);
+        }
+        var btn = document.querySelector('[data-device-profile="' + p + '"]') || document.getElementById('profile-' + p);
+        if (btn) {
+            enforceSingleActivePerSegmentedGroup(btn);
+        }
+        if (!skipPost) {
+            var isDrawer = !!(appEl && (appEl.classList.contains('drawer-open') || (document.querySelector('.side-drawer') && !document.querySelector('.side-drawer').hidden)));
+            postApi('/api/window/set_device_profile', { profile: p, family: isIpad ? 'ipad' : 'iphone', resize: true, open: isDrawer, drawer: isDrawer });
+            postApi('/api/window/sync_device_aspect', { width: targetW, open: isDrawer, drawer: isDrawer, profile: p });
+        }
+        setTimeout(function() {
+            if (btn) enforceSingleActivePerSegmentedGroup(btn);
+            sendDomBeacon(false);
+        }, 50);
+    }
+
+    function handleResetDefaultSize() {
+        window.__v4LastProfileTouch = Date.now();
+        window.__v4ActiveDeviceProfile = 'auto';
+        document.documentElement.style.setProperty('--display-width', '346px');
+        if (document.body) document.body.style.setProperty('--display-width', '346px');
+        var appEl = document.getElementById('app-root') || document.querySelector('.app');
+        if (appEl) {
+            appEl.style.setProperty('--display-width', '346px');
+            appEl.classList.remove('is-ipad');
+        }
+        var autoBtn = document.querySelector('[data-device-profile="auto"]') || document.getElementById('profile-auto');
+        if (autoBtn) {
+            enforceSingleActivePerSegmentedGroup(autoBtn);
+        }
+        var autoFitBtn = document.querySelector('[data-fit-choice="autofit"]') || document.getElementById('fit-autofit');
+        if (autoFitBtn) {
+            enforceSingleActivePerSegmentedGroup(autoFitBtn);
+        }
+        var isDrawer = !!(appEl && (appEl.classList.contains('drawer-open') || (document.querySelector('.side-drawer') && !document.querySelector('.side-drawer').hidden)));
+        postApi('/api/window/reset_size', { open: isDrawer, drawer: isDrawer });
+        postApi('/api/window/sync_device_aspect', { width: 346, open: isDrawer, drawer: isDrawer, profile: 'auto' });
+        setTimeout(function() {
+            if (autoBtn) enforceSingleActivePerSegmentedGroup(autoBtn);
+            if (autoFitBtn) enforceSingleActivePerSegmentedGroup(autoFitBtn);
+            sendDomBeacon(false);
+        }, 50);
+    }
+
     document.addEventListener('click', function(e) {
+        var profBtn = e.target && e.target.closest ? e.target.closest('[data-device-profile]') : null;
+        if (profBtn) {
+            var prof = profBtn.getAttribute('data-device-profile') || 'auto';
+            updateDeviceProfileState(prof);
+        }
+        var resetBtn = e.target && e.target.closest ? e.target.closest('#btn-reset-size, #btn-reset-window-size, [data-action="reset-window-size"]') : null;
+        if (resetBtn) {
+            handleResetDefaultSize();
+        }
         var btn = e.target && e.target.closest ? e.target.closest('.seg > button, .segmented > button, .seg-group > button, .seg button, .segmented button, .seg-btn, button.seg, button.seg-btn') : null;
         if (btn) {
             enforceSingleActivePerSegmentedGroup(btn);
@@ -917,6 +1022,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     var origQuerySelector = document.querySelector.bind(document);
     document.querySelector = function(sel) {
+        if (sel === '#btn-reset-size' || sel === '#btn-reset-window-size') return origQuerySelector('#btn-reset-window-size') || origQuerySelector(sel);
         if (sel === '#lang-en') return origQuerySelector('#btn-lang-en') || origQuerySelector('[data-lang="en"]') || origQuerySelector(sel);
         if (sel === '#lang-id') return origQuerySelector('#btn-lang-id') || origQuerySelector('[data-lang="id"]') || origQuerySelector(sel);
         if (sel === '#fit-autofit') return origQuerySelector('[data-fit-choice="autofit"]') || origQuerySelector(sel);
@@ -931,6 +1037,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     };
     var origGetElementById = document.getElementById.bind(document);
     document.getElementById = function(id) {
+        if (id === 'btn-reset-size' || id === 'btn-reset-window-size') return origGetElementById('btn-reset-window-size') || origGetElementById(id);
         if (id === 'lang-en') return origGetElementById('btn-lang-en') || origGetElementById(id);
         if (id === 'lang-id') return origGetElementById('btn-lang-id') || origGetElementById(id);
         if (id === 'fit-autofit') return document.querySelector('[data-fit-choice="autofit"]') || origGetElementById(id);
@@ -1080,6 +1187,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var badgeEl = document.querySelector('.lang-badge, .seg .badge');
             var badgeBg = (badgeEl && window.getComputedStyle) ? window.getComputedStyle(badgeEl).backgroundColor : "rgba(0, 0, 0, 0)";
 
+            var drawerRectWidth = (sideDrawer && sideDrawer.getBoundingClientRect) ? Math.round(sideDrawer.getBoundingClientRect().width) : 0;
+            var drawerRight = (sideDrawer && sideDrawer.getBoundingClientRect) ? Math.round(sideDrawer.getBoundingClientRect().right) : 0;
+            var winInnerWidth = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || 0;
+            var drawerRightOverflow = (sideDrawer && !sideDrawer.hidden && drawerRight > winInnerWidth) ? (drawerRight - winInnerWidth) : 0;
+            var activeProf = window.__v4ActiveDeviceProfile || "auto";
+
             var segmentedClean = true;
             var segmentedDetails = [];
             var auditGroups = document.querySelectorAll('.segmented, .seg-group, div.seg');
@@ -1142,7 +1255,10 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 concentricButtonRadius: concentricButtonRadius,
                 badgeBg: badgeBg,
                 segmentedClean: segmentedClean,
-                segmentedDetails: segmentedDetails.join('; ')
+                segmentedDetails: segmentedDetails.join('; '),
+                activeDeviceProfile: activeProf,
+                drawerRectWidth: drawerRectWidth,
+                drawerRightOverflow: drawerRightOverflow
             });
         } catch (_) {}
     }
@@ -1233,6 +1349,14 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                             setTimeout(function() { sendDomBeacon(false); }, 300);
                         }
                     }
+                    if (s && s.window && s.window.active_device_profile) {
+                        var servProf = s.window.active_device_profile;
+                        var timeSinceTouch = Date.now() - (window.__v4LastProfileTouch || 0);
+                        if (timeSinceTouch > 1500 && window.__v4ActiveDeviceProfile !== servProf) {
+                            updateDeviceProfileState(servProf, true);
+                            setTimeout(function() { sendDomBeacon(false); }, 100);
+                        }
+                    }
                     var desiredTheme = (s && s.webviewMetrics && s.webviewMetrics.activeTheme) || (s && s.settings && s.settings.theme);
                     if (desiredTheme) {
                         var curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -1293,10 +1417,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             });
         },
         sync_device_aspect: function(display_width, drawer_open) {
+            var prof = window.__v4ActiveDeviceProfile || "auto";
+            var w = display_width;
+            if (prof === "ipad" && (!w || w < 500)) {
+                w = 564;
+            }
             return postApi('/api/window/sync_device_aspect', {
-                width: display_width,
+                width: w,
                 open: !!drawer_open,
-                drawer: !!drawer_open
+                drawer: !!drawer_open,
+                profile: prof
             });
         },
         move_by: function(dx, dy) {
@@ -1315,6 +1445,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             });
         },
         set_device_profile: function(profile, family, should_resize) {
+            updateDeviceProfileState(profile);
             return postApi('/api/window/set_device_profile', {
                 profile: profile || 'auto',
                 family: family || 'iphone',
@@ -1325,6 +1456,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return postApi('/api/window/apply_custom_size', { width: width, height: height });
         },
         reset_window_size: function() {
+            handleResetDefaultSize();
             return postApi('/api/window/reset_size', {});
         },
         begin_resize_drag: function(edge, x, y) {
@@ -2101,11 +2233,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let safe_btn = btn_text.replace('\\', r#"\\"#).replace('"', r#"\""#);
                 let safe_ua = user_agent.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
+                let active_prof = GLOBAL_DEVICE_PROFILE.lock().map(|s| if s.is_empty() { "auto".to_string() } else { s.clone() }).unwrap_or_else(|_| "auto".to_string());
+                let dr_width = GLOBAL_DRAWER_RECT_WIDTH.load(Ordering::SeqCst);
+                let dr_overflow = GLOBAL_DRAWER_RIGHT_OVERFLOW.load(Ordering::SeqCst);
+
                 let win_json = format!(
-                    r#","window":{{"drawer_open":{},"is_landscape":{},"is_fullscreen":{}}}"#,
+                    r#","window":{{"drawer_open":{},"is_landscape":{},"is_fullscreen":{},"portrait_width":{},"active_device_profile":"{}"}}"#,
                     GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
                     GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
-                    GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst)
+                    GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
+                    GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
+                    active_prof
                 );
                 if !sanitized.contains(r#""window":"#) {
                     if let Some(pos) = sanitized.rfind('}') {
@@ -2134,7 +2272,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}"}}}}"#,
+                        r#","version":"4.0.0"{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{}}}}}"#,
                         pending_click_str,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
@@ -2156,7 +2294,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         conc_btn,
                         badge_bg,
                         seg_clean,
-                        safe_seg_details
+                        safe_seg_details,
+                        active_prof,
+                        dr_width,
+                        dr_overflow
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -2233,6 +2374,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
         let seg_details = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
         let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+        let active_prof = GLOBAL_DEVICE_PROFILE.lock().map(|s| if s.is_empty() { "auto".to_string() } else { s.clone() }).unwrap_or_else(|_| "auto".to_string());
+        let dr_width = GLOBAL_DRAWER_RECT_WIDTH.load(Ordering::SeqCst);
+        let dr_overflow = GLOBAL_DRAWER_RIGHT_OVERFLOW.load(Ordering::SeqCst);
 
         let json = format!(
             r#"{{
@@ -2294,7 +2438,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
   "window": {{
     "drawer_open": {},
     "is_landscape": {},
-    "is_fullscreen": {}
+    "is_fullscreen": {},
+    "portrait_width": {},
+    "active_device_profile": "{}"
   }},
   "settings": {},
   "status_text": "{}",
@@ -2320,7 +2466,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "concentricButtonRadius": "{}",
     "badgeBg": "{}",
     "segmentedClean": {},
-    "segmentedDetails": "{}"
+    "segmentedDetails": "{}",
+    "activeDeviceProfile": "{}",
+    "drawerRectWidth": {},
+    "drawerRightOverflow": {}
   }},
   "version": "4.0.0"{}"#,
             udid,
@@ -2351,6 +2500,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
             GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
             GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
+            GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
+            active_prof.clone(),
             settings_json,
             status_text,
             lang_code,
@@ -2375,6 +2526,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             badge_bg,
             seg_clean,
             safe_seg_details,
+            active_prof,
+            dr_width,
+            dr_overflow,
             if pending_click_str.is_empty() { "\n}" } else { "\n" }
         );
         let mut final_json = json;
@@ -2710,7 +2864,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/click_selector" {
+    if path == "/api/window/click_selector" || path == "/api/test/click_selector" {
         if let Some(sel) = parse_string_param(&req.body, "selector") {
             if let Ok(mut g_sel) = GLOBAL_PENDING_CLICK.lock() {
                 *g_sel = Some(sel);
@@ -2756,9 +2910,19 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     if path == "/api/window/sync_device_aspect" || path == "/api/window/sync_aspect" {
         let width_val = parse_int_param(&req.body, "width").unwrap_or(0);
-        let is_ipad = width_val >= 500 || req.body.contains("4:3") || req.body.contains("ipad") || req.body.contains("iPad");
-        let portrait_w = if is_ipad { 520 } else { 346 };
+        let cur_prof = GLOBAL_DEVICE_PROFILE.lock().map(|p| p.clone()).unwrap_or_default();
+        let is_ipad = width_val >= 500
+            || req.body.contains(r#""profile":"ipad""#)
+            || req.body.contains(r#""profile": "ipad""#)
+            || req.body.contains(r#""family":"ipad""#)
+            || req.body.contains(r#""family": "ipad""#)
+            || req.body.contains("4:3")
+            || cur_prof == "ipad";
+        let portrait_w = if is_ipad { 564 } else { 346 };
         GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+        if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
+            *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
+        }
 
         if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) || req.body.contains(r#""open":true"#) || req.body.contains(r#""open": true"#) {
             GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
@@ -2784,8 +2948,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let cur_h = if land { 468 } else { 832 };
 
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"is_ipad":{},"portrait_width":{},"width":{},"height":{}}}"#,
-            is_ipad, portrait_w, cur_w, cur_h
+            r#"{{"ok":true,"is_ipad":{},"portrait_width":{},"width":{},"height":{},"profile":"{}"}}"#,
+            is_ipad, portrait_w, cur_w, cur_h, if is_ipad { "ipad" } else { "auto" }
         ));
     }
 
@@ -2930,6 +3094,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 *g_sd = seg_det;
             }
         }
+        if let Some(prof) = parse_string_param(&req.body, "activeDeviceProfile") {
+            if let Ok(mut g_prof) = GLOBAL_DEVICE_PROFILE.lock() {
+                *g_prof = prof;
+            }
+        }
+        if let Some(dw) = parse_int_param(&req.body, "drawerRectWidth") {
+            GLOBAL_DRAWER_RECT_WIDTH.store(dw as usize, Ordering::SeqCst);
+        }
+        if let Some(ov) = parse_int_param(&req.body, "drawerRightOverflow") {
+            GLOBAL_DRAWER_RIGHT_OVERFLOW.store(ov as isize, Ordering::SeqCst);
+        }
 
         if let Some(txt) = parse_string_param(&req.body, "startBtnText") {
             if let Ok(mut g_txt) = GLOBAL_START_BTN_TEXT.lock() {
@@ -2993,21 +3168,122 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/reset_size"
-        || path == "/api/window/set_device_family"
-        || path == "/api/window/set_device_profile"
-        || path == "/api/window/apply_custom_size"
+    if path == "/api/window/set_device_profile" {
+        let is_ipad = req.body.contains(r#""profile":"ipad""#)
+            || req.body.contains(r#""profile": "ipad""#)
+            || req.body.contains(r#""ipad""#);
+        let portrait_w = if is_ipad { 564 } else { 346 };
+        GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+        if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
+            *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
+        }
+
+        if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) || req.body.contains(r#""open":true"#) || req.body.contains(r#""open": true"#) {
+            GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
+        } else if req.body.contains(r#""drawer":false"#) || req.body.contains(r#""drawer": false"#) || req.body.contains(r#""open":false"#) || req.body.contains(r#""open": false"#) {
+            GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+        }
+
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+
+        if hwnd_usize != 0 {
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        }
+
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { portrait_w + 360 } else { portrait_w }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"profile":"{}","isIpadMode":{},"portrait_width":{},"width":{},"height":{}}}"#,
+            if is_ipad { "ipad" } else { "auto" }, is_ipad, portrait_w, cur_w, cur_h
+        ));
+    }
+
+    if path == "/api/window/set_device_family" {
+        let cur_prof = GLOBAL_DEVICE_PROFILE.lock().map(|p| p.clone()).unwrap_or_default();
+        if cur_prof == "ipad" {
+            // User selected iPad profile; do not downgrade to iphone
+            return HttpResponse::ok_json(r#"{"ok":true,"family":"ipad","isIpadMode":true}"#);
+        }
+        let should_resize = req.body.contains(r#""resize":true"#) || req.body.contains(r#""resize": true"#);
+        let is_ipad = req.body.contains(r#""family":"ipad""#)
+            || req.body.contains(r#""family": "ipad""#)
+            || req.body.contains(r#""ipad""#);
+        if should_resize {
+            let portrait_w = if is_ipad { 564 } else { 346 };
+            GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+            if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
+                *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
+            }
+
+            let st = state.lock().unwrap();
+            let hwnd_usize = st.window_hwnd;
+            drop(st);
+
+            if hwnd_usize != 0 {
+                apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+            }
+        }
+
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { port_w + 360 } else { port_w }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"family":"{}","isIpadMode":{},"portrait_width":{},"width":{},"height":{}}}"#,
+            if is_ipad { "ipad" } else { "iphone" }, is_ipad, port_w, cur_w, cur_h
+        ));
+    }
+
+    if path == "/api/window/reset_size" || path == "/api/window/reset_window_size" {
+        GLOBAL_PORTRAIT_WIDTH.store(346, Ordering::SeqCst);
+        if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
+            *prof = "auto".to_string();
+        }
+
+        let st = state.lock().unwrap();
+        let hwnd_usize = st.window_hwnd;
+        drop(st);
+
+        if hwnd_usize != 0 {
+            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        }
+
+        let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let cur_w = if land {
+            if open { 1200 } else { 840 }
+        } else {
+            if open { 706 } else { 346 }
+        };
+        let cur_h = if land { 468 } else { 832 };
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"reset":true,"width":{},"height":{},"isIpadMode":false}}"#,
+            cur_w, cur_h
+        ));
+    }
+
+    if path == "/api/window/apply_custom_size"
         || path == "/api/window/begin_resize"
         || path == "/api/window/update_resize"
         || path == "/api/window/end_resize"
     {
-        let st = state.lock().unwrap();
-        let r = st.geometry.current_rect;
-        return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"width":{},"height":{},"isIpadMode":false}}"#,
-            r.width(),
-            r.height()
-        ));
+        return HttpResponse::ok_json(r#"{"ok":true}"#);
     }
 
     if path == "/api/window/close" {
