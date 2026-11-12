@@ -31,11 +31,20 @@ pub static GLOBAL_START_BTN_TEXT: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_USER_AGENT: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_RAF_VERIFIED: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DARK_MODE: AtomicBool = AtomicBool::new(true);
+pub fn is_dark_mode_active() -> bool {
+    GLOBAL_DARK_MODE.load(Ordering::SeqCst)
+}
 pub static GLOBAL_DOM_THEME: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_THEME_LIGHT_X: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_THEME_LIGHT_Y: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_WIREFRAME_CLEAN: AtomicBool = AtomicBool::new(true);
 pub static GLOBAL_WIREFRAME_DETAILS: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_CONCENTRIC_TRACK: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_CONCENTRIC_BTN: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_BADGE_BG: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_SEGMENTED_CLEAN: AtomicBool = AtomicBool::new(true);
+pub static GLOBAL_SEGMENTED_DETAILS: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -465,18 +474,19 @@ html[data-theme="light"] body #control-pane .glass-card,
 html[data-theme="light"] body .side-drawer .card,
 html[data-theme="light"] body .side-drawer .glass-card,
 html[data-theme="light"] body .card-details {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.24) 0%, rgba(242, 248, 255, 0.14) 100%) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.20) 0%, rgba(242, 248, 255, 0.10) 100%) !important;
   background-color: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.88) !important;
   border-radius: 16px !important;
   box-shadow:
-    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.90),
-    0 4px 18px rgba(15, 23, 42, 0.07) !important;
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.98),
+    0 8px 22px -4px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(15, 23, 42, 0.06) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-/* PILAR 3: Track & Tombol Segmented Controls */
+/* PILAR 3: Track & Tombol Segmented Controls (Concentric 12px / 9px) */
 html body .seg,
 html body .segmented,
 html body .seg-group,
@@ -484,12 +494,22 @@ html body .segmented-theme,
 html body .segmented-lang,
 html body .segmented-fit,
 html body .segmented-device-profile,
-html body div.seg {
-  background: rgba(6, 10, 18, 0.32) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-radius: 999px !important;
+html body .segmented-toggle,
+html body .segmented-audio-out,
+html body .segmented-speed,
+html body .segmented-channel,
+html body div.seg,
+html[data-theme="dark"] body .seg,
+html[data-theme="dark"] body .segmented,
+html[data-theme="dark"] body .seg-group {
+  background: rgba(6, 10, 18, 0.34) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 12px !important;
   padding: 3px !important;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.38) !important;
+  gap: 3px !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.42) !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
 }
 html[data-theme="light"] body .seg,
 html[data-theme="light"] body .segmented,
@@ -498,35 +518,64 @@ html[data-theme="light"] body .segmented-theme,
 html[data-theme="light"] body .segmented-lang,
 html[data-theme="light"] body .segmented-fit,
 html[data-theme="light"] body .segmented-device-profile,
+html[data-theme="light"] body .segmented-toggle,
+html[data-theme="light"] body .segmented-audio-out,
+html[data-theme="light"] body .segmented-speed,
+html[data-theme="light"] body .segmented-channel,
 html[data-theme="light"] body div.seg {
   background: rgba(15, 23, 42, 0.09) !important;
-  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  border-radius: 12px !important;
+  padding: 3px !important;
+  gap: 3px !important;
   box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10) !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
 }
 
-/* Tombol Inactive di Dalam Segmented Control (100% Polos Tanpa Border Kotak) */
-html body .seg button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html body .segmented button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html body .seg-group button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html body button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html body button.seg-btn:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) {
+/* Seluruh Tombol di Dalam Segmented Control: Concentric Inner Radius 9px (12px - 3px = 9px) */
+html body .seg > button,
+html body .seg button,
+html body .segmented button,
+html body .seg-group button,
+html body .seg-btn,
+html body button.seg,
+html body button.seg-btn,
+html body .seg button[id],
+html[data-theme="dark"] body .seg button[id],
+html[data-theme="light"] body .seg button[id] {
   background: transparent !important;
+  background-color: transparent !important;
   border: 1px solid transparent !important;
-  border-radius: 999px !important;
+  border-radius: 9px !important;
+  margin: 0 !important;
+  padding: 6px 10px !important;
+  min-height: 30px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
   color: rgba(248, 250, 252, 0.78) !important;
   box-shadow: none !important;
   font-weight: 500 !important;
-  text-shadow: none !important;
+  line-height: 1.2 !important;
+  box-sizing: border-box !important;
+  transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease !important;
 }
-html[data-theme="light"] body .seg button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html[data-theme="light"] body .segmented button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html[data-theme="light"] body .seg-group button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html[data-theme="light"] body button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
-html[data-theme="light"] body button.seg-btn:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) {
-  color: #334155 !important;
+html[data-theme="light"] body .seg > button,
+html[data-theme="light"] body .seg button,
+html[data-theme="light"] body .segmented button,
+html[data-theme="light"] body .seg-group button,
+html[data-theme="light"] body .seg-btn,
+html[data-theme="light"] body button.seg,
+html[data-theme="light"] body button.seg-btn,
+html[data-theme="light"] body .seg button[id] {
+  color: #1e293b !important;
 }
 
-/* Tombol ACTIVE di Dalam Segmented Control: Vibrant Crystal-Blue Pill! */
+/* Tombol ACTIVE di Dalam Segmented Control: Presisi 9px Concentric Crystal-Blue Pill */
+html body .seg > button.active,
+html body .seg > button.is-active,
 html body .seg button.active,
 html body .seg button.is-active,
 html body .seg button[aria-checked="true"],
@@ -537,8 +586,12 @@ html body .segmented button[aria-checked="true"],
 html body .segmented button[aria-pressed="true"],
 html body .seg-group button.active,
 html body .seg-group button.is-active,
+html body .seg-group button[aria-checked="true"],
+html body .seg-group button[aria-pressed="true"],
 html body .seg-btn.active,
 html body .seg-btn.is-active,
+html body .seg-btn[aria-checked="true"],
+html body .seg-btn[aria-pressed="true"],
 html body button.seg.active,
 html body button.seg.is-active,
 html body button.seg[aria-checked="true"],
@@ -547,6 +600,12 @@ html body button.seg-btn.active,
 html body button.seg-btn.is-active,
 html body button.seg-btn[aria-checked="true"],
 html body button.seg-btn[aria-pressed="true"],
+html body .seg button[id].active,
+html body .seg button[id].is-active,
+html body .seg button[id][aria-checked="true"],
+html body .seg button[id][aria-pressed="true"],
+html[data-theme="light"] body .seg > button.active,
+html[data-theme="light"] body .seg > button.is-active,
 html[data-theme="light"] body .seg button.active,
 html[data-theme="light"] body .seg button.is-active,
 html[data-theme="light"] body .seg button[aria-checked="true"],
@@ -557,8 +616,12 @@ html[data-theme="light"] body .segmented button[aria-checked="true"],
 html[data-theme="light"] body .segmented button[aria-pressed="true"],
 html[data-theme="light"] body .seg-group button.active,
 html[data-theme="light"] body .seg-group button.is-active,
+html[data-theme="light"] body .seg-group button[aria-checked="true"],
+html[data-theme="light"] body .seg-group button[aria-pressed="true"],
 html[data-theme="light"] body .seg-btn.active,
 html[data-theme="light"] body .seg-btn.is-active,
+html[data-theme="light"] body .seg-btn[aria-checked="true"],
+html[data-theme="light"] body .seg-btn[aria-pressed="true"],
 html[data-theme="light"] body button.seg.active,
 html[data-theme="light"] body button.seg.is-active,
 html[data-theme="light"] body button.seg[aria-checked="true"],
@@ -566,15 +629,43 @@ html[data-theme="light"] body button.seg[aria-pressed="true"],
 html[data-theme="light"] body button.seg-btn.active,
 html[data-theme="light"] body button.seg-btn.is-active,
 html[data-theme="light"] body button.seg-btn[aria-checked="true"],
-html[data-theme="light"] body button.seg-btn[aria-pressed="true"] {
-  background: linear-gradient(135deg, #0A84FF 0%, #0066CC 100%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+html[data-theme="light"] body button.seg-btn[aria-pressed="true"],
+html[data-theme="light"] body .seg button[id].active,
+html[data-theme="light"] body .seg button[id].is-active,
+html[data-theme="light"] body .seg button[id][aria-checked="true"],
+html[data-theme="light"] body .seg button[id][aria-pressed="true"] {
+  background: linear-gradient(180deg, #1E90FF 0%, #0066CC 100%) !important;
+  background-color: #0A84FF !important;
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  border-radius: 9px !important;
   color: #ffffff !important;
   font-weight: 600 !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.22) !important;
   box-shadow:
-    0 2px 10px rgba(10, 132, 255, 0.38),
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.48) !important;
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.45),
+    0 2px 6px rgba(0, 102, 204, 0.32) !important;
+}
+
+/* Badge Kecil ID / EN / Icon di Dalam Tombol Segmented: Bebas Kotak Biru Tua Belang! */
+html body .seg button span,
+html body .seg button .badge,
+html body .seg button .lang-badge,
+html body .seg button .lang-code,
+html body .seg button code,
+html body .seg button strong,
+html body .segmented .lang-badge,
+html body .seg-btn .lang-badge,
+html body .segmented span.lang-badge,
+html body button .lang-badge,
+html body button.seg-btn span.lang-badge {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
 }
 
 html body button.seg.active svg,
@@ -633,7 +724,7 @@ html[data-theme="light"] body .icon-btn,
 html[data-theme="light"] body .nav-btn,
 html[data-theme="light"] body .action-btn,
 html[data-theme="light"] body .card button:not(.primary):not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]):not(#show-screen):not(#btn-save-crop):not(.seg button) {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(240, 246, 255, 0.38) 100%) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(240, 246, 255, 0.16) 100%) !important;
   border: 1px solid rgba(255, 255, 255, 0.78) !important;
   color: #0f172a !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
@@ -688,6 +779,64 @@ html[data-theme="light"] body .section-label {
 #restart-screen .btn-label {
   display: none !important;
 }
+/* Custom Liquid Glass Range Sliders (Edge Crop & Trackpad Speed) */
+html body input[type="range"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35) !important;
+  outline: none !important;
+}
+html[data-theme="light"] body input[type="range"] {
+  background: rgba(15, 23, 42, 0.14) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.12) !important;
+}
+html body input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%) !important;
+  border: 2px solid #0A84FF !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
+  cursor: pointer !important;
+}
+
+/* Recessed Liquid Glass Shortcut Pills */
+html body .shortcuts-badge-list {
+  padding: 8px !important;
+  border-radius: 12px !important;
+  background: rgba(6, 10, 18, 0.28) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+  gap: 6px !important;
+}
+html[data-theme="light"] body .shortcuts-badge-list {
+  background: rgba(15, 23, 42, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10) !important;
+}
+html body .shortcut-pill {
+  border-radius: 6px !important;
+  padding: 3px 8px !important;
+  font-size: 10.5px !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  color: rgba(248, 250, 252, 0.88) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+html[data-theme="light"] body .shortcut-pill {
+  background: rgba(255, 255, 255, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+}
+
 iframe#screen-view {
   background: #000000 !important;
   color-scheme: dark !important;
@@ -705,6 +854,104 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             body: JSON.stringify(payload || {})
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
     }
+
+    function enforceSingleActivePerSegmentedGroup(clickedBtn) {
+        if (!clickedBtn) return;
+        var segGroup = (clickedBtn.parentElement ? clickedBtn.parentElement.closest('.segmented, .seg-group, .seg, div.seg') : null) || clickedBtn.parentElement;
+        if (!segGroup) return;
+        var children = Array.from(segGroup.children || []);
+        var buttons = children.filter(function(el) {
+            return el.tagName === 'BUTTON' || el.classList.contains('seg-btn') || el.classList.contains('seg');
+        });
+        if (buttons.length === 0) return;
+        for (var i = 0; i < buttons.length; i++) {
+            var b = buttons[i];
+            if (b === clickedBtn) {
+                b.classList.add('active', 'is-active');
+                b.setAttribute('aria-checked', 'true');
+                b.setAttribute('aria-pressed', 'true');
+            } else {
+                b.classList.remove('active', 'is-active');
+                b.setAttribute('aria-checked', 'false');
+                b.setAttribute('aria-pressed', 'false');
+            }
+        }
+    }
+
+    function sanitizeAllSegmentedGroupsOnBoot() {
+        var groups = document.querySelectorAll('.segmented, .seg-group, div.seg');
+        for (var gi = 0; gi < groups.length; gi++) {
+            var group = groups[gi];
+            if (group.tagName === 'BUTTON') continue;
+            var children = Array.from(group.children || []);
+            var buttons = children.filter(function(el) {
+                return el.tagName === 'BUTTON' || el.classList.contains('seg-btn') || el.classList.contains('seg');
+            });
+            if (buttons.length <= 1) continue;
+            var activeBtn = buttons.find(function(b) {
+                return b.classList.contains('is-active') ||
+                       b.classList.contains('active') ||
+                       b.getAttribute('aria-checked') === 'true' ||
+                       b.getAttribute('aria-pressed') === 'true';
+            }) || buttons[0];
+            enforceSingleActivePerSegmentedGroup(activeBtn);
+        }
+    }
+
+    document.addEventListener('click', function(e) {
+        var btn = e.target && e.target.closest ? e.target.closest('.seg > button, .segmented > button, .seg-group > button, .seg button, .segmented button, .seg-btn, button.seg, button.seg-btn') : null;
+        if (btn) {
+            enforceSingleActivePerSegmentedGroup(btn);
+            setTimeout(function() { enforceSingleActivePerSegmentedGroup(btn); }, 0);
+            setTimeout(function() { enforceSingleActivePerSegmentedGroup(btn); }, 40);
+        }
+    }, true);
+    document.addEventListener('click', function(e) {
+        var btn = e.target && e.target.closest ? e.target.closest('.seg > button, .segmented > button, .seg-group > button, .seg button, .segmented button, .seg-btn, button.seg, button.seg-btn') : null;
+        if (btn) {
+            enforceSingleActivePerSegmentedGroup(btn);
+            setTimeout(function() { enforceSingleActivePerSegmentedGroup(btn); }, 0);
+            setTimeout(function() { enforceSingleActivePerSegmentedGroup(btn); }, 40);
+        }
+    }, false);
+
+    var origQuerySelector = document.querySelector.bind(document);
+    document.querySelector = function(sel) {
+        if (sel === '#lang-en') return origQuerySelector('#btn-lang-en') || origQuerySelector('[data-lang="en"]') || origQuerySelector(sel);
+        if (sel === '#lang-id') return origQuerySelector('#btn-lang-id') || origQuerySelector('[data-lang="id"]') || origQuerySelector(sel);
+        if (sel === '#fit-autofit') return origQuerySelector('[data-fit-choice="autofit"]') || origQuerySelector(sel);
+        if (sel === '#fit-fill') return origQuerySelector('[data-fit-choice="fill"]') || origQuerySelector(sel);
+        if (sel === '#fit-contain') return origQuerySelector('[data-fit-choice="contain"]') || origQuerySelector(sel);
+        if (sel === '#profile-auto') return origQuerySelector('[data-device-profile="auto"]') || origQuerySelector(sel);
+        if (sel === '#profile-iphone') return origQuerySelector('[data-device-profile="iphone"]') || origQuerySelector(sel);
+        if (sel === '#profile-ipad') return origQuerySelector('[data-device-profile="ipad"]') || origQuerySelector(sel);
+        if (sel === '#rotate-off') return origQuerySelector('[data-auto-rotate-choice="off"]') || origQuerySelector(sel);
+        if (sel === '#rotate-on') return origQuerySelector('[data-auto-rotate-choice="on"]') || origQuerySelector(sel);
+        return origQuerySelector(sel);
+    };
+    var origGetElementById = document.getElementById.bind(document);
+    document.getElementById = function(id) {
+        if (id === 'lang-en') return origGetElementById('btn-lang-en') || origGetElementById(id);
+        if (id === 'lang-id') return origGetElementById('btn-lang-id') || origGetElementById(id);
+        if (id === 'fit-autofit') return document.querySelector('[data-fit-choice="autofit"]') || origGetElementById(id);
+        if (id === 'fit-fill') return document.querySelector('[data-fit-choice="fill"]') || origGetElementById(id);
+        if (id === 'fit-contain') return document.querySelector('[data-fit-choice="contain"]') || origGetElementById(id);
+        return origGetElementById(id);
+    };
+
+    window.__v4ClickSelector = function(sel) {
+        var target = document.querySelector(sel);
+        if (target) {
+            target.click();
+            enforceSingleActivePerSegmentedGroup(target);
+            setTimeout(function() {
+                enforceSingleActivePerSegmentedGroup(target);
+                sendDomBeacon(false);
+            }, 30);
+            return true;
+        }
+        return false;
+    };
 
     window.__v4ApplyTheme = function(theme) {
         var t = theme === 'light' ? 'light' : 'dark';
@@ -826,6 +1073,43 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 }
             }
 
+            var segTrack = document.querySelector('.seg, .segmented, .seg-group');
+            var concentricTrackRadius = (segTrack && window.getComputedStyle) ? window.getComputedStyle(segTrack).borderRadius : "12px";
+            var segBtn = document.querySelector('.seg > button, .seg button, .segmented button, .seg-btn, button.seg');
+            var concentricButtonRadius = (segBtn && window.getComputedStyle) ? window.getComputedStyle(segBtn).borderRadius : "9px";
+            var badgeEl = document.querySelector('.lang-badge, .seg .badge');
+            var badgeBg = (badgeEl && window.getComputedStyle) ? window.getComputedStyle(badgeEl).backgroundColor : "rgba(0, 0, 0, 0)";
+
+            var segmentedClean = true;
+            var segmentedDetails = [];
+            var auditGroups = document.querySelectorAll('.segmented, .seg-group, div.seg');
+            for (var agi = 0; agi < auditGroups.length; agi++) {
+                var ag = auditGroups[agi];
+                if (ag.tagName === 'BUTTON') continue;
+                var btns = Array.from(ag.children || []).filter(function(el) {
+                    return el.tagName === 'BUTTON' || el.classList.contains('seg-btn') || el.classList.contains('seg');
+                });
+                if (btns.length <= 1) continue;
+                var activeCount = 0;
+                var activeIds = [];
+                for (var bi = 0; bi < btns.length; bi++) {
+                    var b = btns[bi];
+                    var isActive = b.classList.contains('active') ||
+                                   b.classList.contains('is-active') ||
+                                   b.getAttribute('aria-checked') === 'true' ||
+                                   b.getAttribute('aria-pressed') === 'true';
+                    if (isActive) {
+                        activeCount++;
+                        activeIds.push(b.id || b.getAttribute('data-fit-choice') || b.getAttribute('data-device-profile') || b.getAttribute('data-auto-rotate-choice') || b.getAttribute('data-theme-choice') || b.getAttribute('data-lang') || ('btn' + bi));
+                    }
+                }
+                if (activeCount > 1) {
+                    segmentedClean = false;
+                    var gid = ag.id || ag.className || ('group' + agi);
+                    segmentedDetails.push(gid + '[actives:' + activeCount + ' (' + activeIds.join(',') + ')]');
+                }
+            }
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: curW,
@@ -853,7 +1137,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 infoDr: infoDr,
                 probeChain: probeChain,
                 wireframeClean: wireframeClean,
-                wireframeDetails: wireframeDetails.join('; ')
+                wireframeDetails: wireframeDetails.join('; '),
+                concentricTrackRadius: concentricTrackRadius,
+                concentricButtonRadius: concentricButtonRadius,
+                badgeBg: badgeBg,
+                segmentedClean: segmentedClean,
+                segmentedDetails: segmentedDetails.join('; ')
             });
         } catch (_) {}
     }
@@ -902,6 +1191,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function initBridge() {
         installDragListeners();
         updateParallaxVars();
+        sanitizeAllSegmentedGroupsOnBoot();
 
         // Ensure theme buttons have proper IDs and listeners
         var lightBtn = document.querySelector('[data-theme-choice="light"]');
@@ -922,12 +1212,21 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
 
         requestAnimationFrame(checkRaf);
-        setTimeout(function() { sendDomBeacon(false); }, 300);
-        setTimeout(function() { sendDomBeacon(false); }, 1000);
+        setTimeout(function() {
+            sanitizeAllSegmentedGroupsOnBoot();
+            sendDomBeacon(false);
+        }, 300);
+        setTimeout(function() {
+            sanitizeAllSegmentedGroupsOnBoot();
+            sendDomBeacon(false);
+        }, 1000);
 
         setInterval(function() {
             try {
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
+                    if (s && s.pendingClick) {
+                        window.__v4ClickSelector(s.pendingClick);
+                    }
                     if (s && s.window && typeof s.window.drawer_open === 'boolean') {
                         if (typeof toggleSettings === 'function' && window.isDrawerOpen !== s.window.drawer_open) {
                             toggleSettings(s.window.drawer_open);
@@ -1821,10 +2120,22 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
                 let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
                 let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+                let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.take());
+                let pending_click_str = match pending_click {
+                    Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
+                    None => String::new(),
+                };
+                let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
+                let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
+                let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
+                let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
+                let seg_details = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
+                let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}"}}}}"#,
+                        r#","version":"4.0.0"{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}"}}}}"#,
+                        pending_click_str,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -1840,19 +2151,31 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         active_thm,
                         dom_thm_str,
                         wf_clean,
-                        safe_wf_details
+                        safe_wf_details,
+                        conc_track,
+                        conc_btn,
+                        badge_bg,
+                        seg_clean,
+                        safe_seg_details
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
                     }
-                } else if !sanitized.contains("activeTheme") {
-                    sanitized = sanitized.replace(
-                        r#""domReadyBeacon":"#,
-                        &format!(
-                            r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
-                            active_thm, dom_thm_str, wf_clean, safe_wf_details, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
-                        )
-                    );
+                } else {
+                    if !pending_click_str.is_empty() {
+                        if let Some(pos) = sanitized.rfind('}') {
+                            sanitized.insert_str(pos, &pending_click_str);
+                        }
+                    }
+                    if !sanitized.contains("activeTheme") {
+                        sanitized = sanitized.replace(
+                            r#""domReadyBeacon":"#,
+                            &format!(
+                                r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "concentricTrackRadius": "{}", "concentricButtonRadius": "{}", "badgeBg": "{}", "segmentedClean": {}, "segmentedDetails": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                                active_thm, dom_thm_str, wf_clean, safe_wf_details, conc_track, conc_btn, badge_bg, seg_clean, safe_seg_details, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                            )
+                        );
+                    }
                 }
 
                 return HttpResponse::ok_json(&sanitized);
@@ -1899,6 +2222,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
         let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
         let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+        let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.take());
+        let pending_click_str = match pending_click {
+            Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
+            None => String::new(),
+        };
+        let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
+        let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
+        let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
+        let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
+        let seg_details = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
+        let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
         let json = format!(
             r#"{{
@@ -1981,10 +2315,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "activeTheme": "{}",
     "domTheme": "{}",
     "wireframeClean": {},
-    "wireframeDetails": "{}"
+    "wireframeDetails": "{}",
+    "concentricTrackRadius": "{}",
+    "concentricButtonRadius": "{}",
+    "badgeBg": "{}",
+    "segmentedClean": {},
+    "segmentedDetails": "{}"
   }},
-  "version": "4.0.0"
-}}"#,
+  "version": "4.0.0"{}"#,
             udid,
             udid,
             if st_snap.transport == "usb" { "USB" } else { "Wi-Fi" },
@@ -2031,9 +2369,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             active_thm,
             dom_thm_str,
             wf_clean,
-            safe_wf_details
+            safe_wf_details,
+            conc_track,
+            conc_btn,
+            badge_bg,
+            seg_clean,
+            safe_seg_details,
+            if pending_click_str.is_empty() { "\n}" } else { "\n" }
         );
-        return HttpResponse::ok_json(&json);
+        let mut final_json = json;
+        if !pending_click_str.is_empty() {
+            final_json.push_str(&pending_click_str);
+            final_json.push_str("\n}");
+        }
+        return HttpResponse::ok_json(&final_json);
     }
 
     // Try forwarding to worker for backend-managed endpoints
@@ -2349,10 +2698,26 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let light_y = GLOBAL_THEME_LIGHT_Y.load(Ordering::SeqCst);
         let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
         let wf_det = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
+        let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
+        let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
+        let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
+        let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
+        let seg_det = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"theme":"{}","activeTheme":"{}","domTheme":"{}","themeLightX":{},"themeLightY":{},"wireframeClean":{},"wireframeDetails":"{}"}}"#,
-            active, active, dom_active, light_x, light_y, wf_clean, wf_det.replace('"', r#"\""#)
+            r#"{{"ok":true,"theme":"{}","activeTheme":"{}","domTheme":"{}","themeLightX":{},"themeLightY":{},"wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}"}}"#,
+            active, active, dom_active, light_x, light_y, wf_clean, wf_det.replace('"', r#"\""#),
+            conc_track, conc_btn, badge_bg, seg_clean, seg_det.replace('"', r#"\""#)
         ));
+    }
+
+    if path == "/api/window/click_selector" {
+        if let Some(sel) = parse_string_param(&req.body, "selector") {
+            if let Ok(mut g_sel) = GLOBAL_PENDING_CLICK.lock() {
+                *g_sel = Some(sel);
+            }
+            return HttpResponse::ok_json(r#"{"ok":true,"queued":true}"#);
+        }
+        return HttpResponse::ok_json(r#"{"ok":false,"error":"missing selector"}"#);
     }
 
     if path == "/api/window/toggle_fullscreen" {
@@ -2540,6 +2905,29 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Some(details) = parse_string_param(&req.body, "wireframeDetails") {
             if let Ok(mut g_wf) = GLOBAL_WIREFRAME_DETAILS.lock() {
                 *g_wf = details;
+            }
+        }
+
+        if let Some(track_r) = parse_string_param(&req.body, "concentricTrackRadius") {
+            if let Ok(mut g_tr) = GLOBAL_CONCENTRIC_TRACK.lock() {
+                *g_tr = track_r;
+            }
+        }
+        if let Some(btn_r) = parse_string_param(&req.body, "concentricButtonRadius") {
+            if let Ok(mut g_br) = GLOBAL_CONCENTRIC_BTN.lock() {
+                *g_br = btn_r;
+            }
+        }
+        if let Some(badge_bg) = parse_string_param(&req.body, "badgeBg") {
+            if let Ok(mut g_bg) = GLOBAL_BADGE_BG.lock() {
+                *g_bg = badge_bg;
+            }
+        }
+        let seg_clean = req.body.contains(r#""segmentedClean":true"#) || req.body.contains(r#""segmentedClean": true"#);
+        GLOBAL_SEGMENTED_CLEAN.store(seg_clean, Ordering::SeqCst);
+        if let Some(seg_det) = parse_string_param(&req.body, "segmentedDetails") {
+            if let Ok(mut g_sd) = GLOBAL_SEGMENTED_DETAILS.lock() {
+                *g_sd = seg_det;
             }
         }
 

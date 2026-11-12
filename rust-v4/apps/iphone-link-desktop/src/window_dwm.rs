@@ -967,16 +967,20 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             0
         }
         0x0086 => {
-            // WM_NCACTIVATE: Return DefWindowProcW with wparam and -1 lparam to suppress standard titlebar painting & white stroke
-            DefWindowProcW(hwnd, msg, wparam, -1isize)
+            // WM_NCACTIVATE: Paksa wParam = 1 (TRUE) agar DWM Windows 11 TIDAK PERNAH
+            // mematikan shader hardware Acrylic Blur saat jendela kehilangan fokus (unfocused)!
+            // Gunakan lParam = -1 agar DefWindowProcW tidak menggambar ulang titlebar klasik.
+            let res = DefWindowProcW(hwnd, msg, 1usize, -1isize);
+            let is_dark = crate::server_v4::is_dark_mode_active();
+            let _ = apply_true_files_acrylic_backdrop(hwnd, is_dark);
+            res
         }
         0x0006 => {
-            // WM_ACTIVATE: When window is deactivated, re-apply acrylic backdrop to prevent DWM from turning into #404040 gray!
-            let active_state = (wparam & 0xFFFF) as u16;
-            if active_state == 0 {
-                let _ = apply_true_files_acrylic_backdrop(hwnd, true);
-            }
-            DefWindowProcW(hwnd, msg, wparam, lparam)
+            // WM_ACTIVATE: Pastikan backdrop DWM tetap terkunci aktif baik saat WA_INACTIVE (0) maupun WA_ACTIVE (1/2)
+            let res = DefWindowProcW(hwnd, msg, wparam, lparam);
+            let is_dark = crate::server_v4::is_dark_mode_active();
+            let _ = apply_true_files_acrylic_backdrop(hwnd, is_dark);
+            res
         }
         0x0083 => {
             // WM_NCCALCSIZE: Return 0 cleanly removes default titlebar/borders while keeping rounded corners & acrylic
