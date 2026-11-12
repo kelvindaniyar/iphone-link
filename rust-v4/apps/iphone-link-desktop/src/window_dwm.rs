@@ -1025,29 +1025,8 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
     }
 }
 
-pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
-    if hwnd.is_null() {
-        return;
-    }
-
+pub fn compute_target_physical_size(hwnd: *mut c_void) -> (i32, i32) {
     let dpi_scale = get_hwnd_dpi_scale(hwnd);
-
-    if GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
-        let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
-        let mon_h = GetSystemMetrics(1); // SM_CYSCREEN
-        SetWindowPos(
-            hwnd,
-            ptr::null_mut(),
-            0,
-            0,
-            mon_w,
-            mon_h,
-            0x0040 | 0x0020, // SWP_SHOWWINDOW | SWP_FRAMECHANGED
-        );
-        notify_webview_bounds_sync(hwnd);
-        return;
-    }
-
     let (logical_w, logical_h) = if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
         let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { 1200 } else { 840 };
         (w, 468)
@@ -1056,9 +1035,34 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { base_w + 360 } else { base_w };
         (w, 832)
     };
-
     let phys_w = (logical_w as f64 * dpi_scale).round() as i32;
     let phys_h = (logical_h as f64 * dpi_scale).round() as i32;
+    (phys_w, phys_h)
+}
+
+pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+
+    if GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+        let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
+        let mon_h = GetSystemMetrics(1); // SM_CYSCREEN
+        prepare_webview_bounds_for_size(hwnd, mon_w, mon_h);
+        SetWindowPos(
+            hwnd,
+            ptr::null_mut(),
+            0,
+            0,
+            mon_w,
+            mon_h,
+            0x0040 | 0x0004 | 0x0010 | 0x0100, // SWP_SHOWWINDOW | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
+        );
+        notify_webview_bounds_sync(hwnd);
+        return;
+    }
+
+    let (phys_w, phys_h) = compute_target_physical_size(hwnd);
 
     let mut cur_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetWindowRect(hwnd, &mut cur_rc);
@@ -1135,7 +1139,7 @@ pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) ->
     }
 
     if new_fs {
-        // Entering Fullscreen: save normal rect
+        // Entering Fullscreen: save normal rect and switch directly
         let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         unsafe {
             GetWindowRect(hwnd, &mut rc);
@@ -1143,30 +1147,62 @@ pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) ->
         if let Ok(mut saved) = SAVED_WINDOW_RECT.lock() {
             *saved = rc;
         }
+        if rc.left > 0 || rc.top > 0 {
+            SAVED_WINDOW_X.store(rc.left, Ordering::SeqCst);
+            SAVED_WINDOW_Y.store(rc.top, Ordering::SeqCst);
+        }
         GLOBAL_IS_FULLSCREEN.store(true, Ordering::SeqCst);
-        apply_hwnd_geometry_from_state(hwnd);
+        unsafe {
+            let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
+            let mon_h = GetSystemMetrics(1); // SM_CYSCREEN
+            prepare_webview_bounds_for_size(hwnd, mon_w, mon_h);
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                0,
+                0,
+                mon_w,
+                mon_h,
+                0x0040 | 0x0004 | 0x0010 | 0x0100, // SWP_SHOWWINDOW | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
+            );
+            notify_webview_bounds_sync(hwnd);
+        }
     } else {
-        // Exiting Fullscreen: restore rect & round corners
+        // Exiting Fullscreen: restore saved pos + exact computed normal size in one atomic SetWindowPos (zero 1-frame shift)
         GLOBAL_IS_FULLSCREEN.store(false, Ordering::SeqCst);
         let saved_rc = {
             let lk = SAVED_WINDOW_RECT.lock().unwrap();
             *lk
         };
         unsafe {
-            SAVED_WINDOW_X.store(saved_rc.left, Ordering::SeqCst);
-            SAVED_WINDOW_Y.store(saved_rc.top, Ordering::SeqCst);
+            let (phys_w, phys_h) = compute_target_physical_size(hwnd);
+            let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
+            let mut target_x = if saved_rc.left > 0 || saved_rc.top > 0 {
+                saved_rc.left
+            } else {
+                SAVED_WINDOW_X.load(Ordering::SeqCst)
+            };
+            let target_y = if saved_rc.left > 0 || saved_rc.top > 0 {
+                saved_rc.top
+            } else {
+                SAVED_WINDOW_Y.load(Ordering::SeqCst)
+            };
+            if mon_w > 0 && target_x + phys_w > mon_w {
+                target_x = (mon_w - phys_w).max(0);
+            }
+            SAVED_WINDOW_X.store(target_x, Ordering::SeqCst);
+            SAVED_WINDOW_Y.store(target_y, Ordering::SeqCst);
             SetWindowPos(
                 hwnd,
                 ptr::null_mut(),
-                saved_rc.left,
-                saved_rc.top,
-                0,
-                0,
-                0x0001 | 0x0004 | 0x0010, // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                target_x,
+                target_y,
+                phys_w,
+                phys_h,
+                0x0004 | 0x0010 | 0x0100, // SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
             );
-            let _ = apply_true_files_acrylic_backdrop(hwnd, true);
+            notify_webview_bounds_sync(hwnd);
         }
-        apply_hwnd_geometry_from_state(hwnd);
     }
 
     new_fs

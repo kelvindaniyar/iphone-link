@@ -292,7 +292,9 @@ html[data-theme="light"] body .app:not(.is-streaming) #phone-screen {
   box-shadow: none !important;
 }
 
-/* Hanya saat video iPhone sedang aktif streaming, latar #phone-screen hitam */
+/* Hanya saat video iPhone/iPad sedang aktif mirroring, latar #phone-screen hitam */
+html body #app-root.app.is-mirroring #phone-screen,
+html body #app-root.app.is-streaming #phone-screen,
 html body .app.is-streaming #phone-screen {
   background: #000000 !important;
   background-color: #000000 !important;
@@ -851,9 +853,23 @@ html[data-theme="light"] body .shortcut-pill {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
 }
 
-iframe#screen-view {
+html body #app-root.app.is-mirroring iframe#screen-view,
+html body #app-root.app.is-streaming iframe#screen-view,
+html body .app.is-streaming iframe#screen-view {
   background: #000000 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
   color-scheme: dark !important;
+}
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) #phone-screen #screen-view,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) iframe#screen-view,
+html body #app-root.app:has(#screen-empty:not([hidden])) iframe#screen-view {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 /* Tahap 179: Zero-Flicker Top Bar Lock (38px 1-Row Invariant) & Zero-Transition Drawer Layout */
@@ -1021,6 +1037,53 @@ html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) #phone-scr
   max-width: 100% !important;
   flex: 1 1 auto !important;
 }
+
+/* Tahap 180: Pure Real-Time Transparent Launchpad Full Screen across Auto, iPhone, & iPad (Zero #000000 Box) */
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) .display-col,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) .workspace,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) .stage,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) #phone-shell,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-ipad.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-landscape.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app:has(#screen-empty:not([hidden])) #phone-screen,
+html[data-theme="dark"] body #app-root.app.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html[data-theme="light"] body #app-root.app.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+}
+html body #app-root.app.is-fullsize:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-fullsize.is-ipad:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-fullsize.is-landscape:not(.is-mirroring):not(.is-streaming) #phone-screen,
+html body #app-root.app.is-fullsize:has(#screen-empty:not([hidden])) #phone-screen {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  height: calc(100vh - 82px) !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 82px) !important;
+  aspect-ratio: unset !important;
+  flex: 1 1 auto !important;
+  margin: 0 !important;
+  border-radius: 0px !important;
+}
+html body #app-root.app.is-fullsize #screen-empty,
+html body #app-root.app.is-fullsize:not(.is-mirroring):not(.is-streaming) #screen-empty,
+html[data-theme="light"] body #app-root.app.is-fullsize #screen-empty {
+  width: 100% !important;
+  height: 100% !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
 "#;
 
 pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 174) */
@@ -1080,6 +1143,62 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     window.__v4ActiveDeviceProfile = "auto";
     window.__v4LastProfileTouch = 0;
+    window.__v4LastSyncedPortraitWidth = 346;
+
+    function syncMirroringStateClass() {
+        try {
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            if (!appEl) return false;
+            var se = document.getElementById('screen-empty');
+            var sv = document.getElementById('screen-view');
+            var emptyHidden = !!(se && (se.hidden || se.hasAttribute('hidden') || window.getComputedStyle(se).display === 'none'));
+            var streamCls = appEl.classList.contains('is-streaming');
+            var svSrc = sv ? (sv.getAttribute('src') || '') : '';
+            var svVisible = !!(sv && !sv.hidden && window.getComputedStyle(sv).display !== 'none' && svSrc && svSrc !== 'about:blank');
+            var mirroring = emptyHidden && (streamCls || svVisible);
+            appEl.classList.toggle('is-mirroring', mirroring);
+            return mirroring;
+        } catch (_) {
+            return false;
+        }
+    }
+    window.__v4SyncMirroringState = syncMirroringStateClass;
+
+    function computeV4DisplayWidthCss() {
+        try {
+            if (window.customWindowSize && window.customWindowSize.width) {
+                return Math.round(window.customWindowSize.width) + 'px';
+            }
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            var isIpad = !!(appEl && appEl.classList.contains('is-ipad')) || window.__v4ActiveDeviceProfile === 'ipad';
+            var isLand = !!(appEl && appEl.classList.contains('is-landscape'));
+            if (isIpad) return isLand ? '760px' : '564px';
+            if (isLand) return '840px';
+            var pw = (window.__v4LastVideoAspectSync && window.__v4LastVideoAspectSync.idealPortraitWidth)
+                ? window.__v4LastVideoAspectSync.idealPortraitWidth
+                : (window.__v4LastSyncedPortraitWidth || 346);
+            return Math.max(336, Math.min(440, pw)) + 'px';
+        } catch (_) {
+            return '346px';
+        }
+    }
+    window.__v4ComputeDisplayWidthCss = computeV4DisplayWidthCss;
+
+    function syncPreFullscreenTransitionDom(targetFullscreen) {
+        try {
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            if (!appEl) return;
+            var nextFs = Boolean(targetFullscreen);
+            appEl.classList.toggle('is-fullsize', nextFs);
+            window.isFullSize = nextFs;
+            var dw = computeV4DisplayWidthCss();
+            document.documentElement.style.setProperty('--display-width', dw);
+            if (document.body) document.body.style.setProperty('--display-width', dw);
+            appEl.style.setProperty('--display-width', dw);
+            syncMirroringStateClass();
+        } catch (_) {}
+    }
+    window.__v4SyncPreFullscreenDom = syncPreFullscreenTransitionDom;
 
     function updateDeviceProfileState(prof, skipPost) {
         window.__v4LastProfileTouch = Date.now();
@@ -1087,6 +1206,10 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         window.__v4ActiveDeviceProfile = p;
         var isIpad = (p === "ipad");
         var targetW = isIpad ? 564 : 346;
+        if (!isIpad) {
+            window.__v4LastSyncedPortraitWidth = 346;
+            window.__v4LastVideoAspectSync = null;
+        }
         document.documentElement.style.setProperty('--display-width', targetW + 'px');
         if (document.body) document.body.style.setProperty('--display-width', targetW + 'px');
         var appEl = document.getElementById('app-root') || document.querySelector('.app');
@@ -1094,6 +1217,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             appEl.style.setProperty('--display-width', targetW + 'px');
             appEl.classList.toggle('is-ipad', isIpad);
         }
+        syncMirroringStateClass();
         var btn = document.querySelector('[data-device-profile="' + p + '"]') || document.getElementById('profile-' + p);
         if (btn) {
             enforceSingleActivePerSegmentedGroup(btn);
@@ -1198,10 +1322,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.__v4ClickSelector = function(sel) {
         var target = document.querySelector(sel);
         if (target) {
+            var inSeg = Boolean(target.closest && target.closest('.segmented, .seg-group, div.seg'));
             target.click();
-            enforceSingleActivePerSegmentedGroup(target);
-            setTimeout(function() {
+            if (inSeg) {
                 enforceSingleActivePerSegmentedGroup(target);
+            }
+            setTimeout(function() {
+                if (inSeg) {
+                    enforceSingleActivePerSegmentedGroup(target);
+                }
                 sendDomBeacon(false);
             }, 30);
             return true;
@@ -1385,6 +1514,19 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 }
             }
 
+            var psEl = document.getElementById('phone-screen');
+            var svEl = document.getElementById('screen-view');
+            var seEl = document.getElementById('screen-empty');
+            var psBg = (psEl && window.getComputedStyle) ? window.getComputedStyle(psEl).backgroundColor : "";
+            var psWidth = (psEl && psEl.getBoundingClientRect) ? Math.round(psEl.getBoundingClientRect().width) : 0;
+            var psHeight = (psEl && psEl.getBoundingClientRect) ? Math.round(psEl.getBoundingClientRect().height) : 0;
+            var svVis = (svEl && window.getComputedStyle) ? window.getComputedStyle(svEl).visibility : "";
+            var svOpacity = (svEl && window.getComputedStyle) ? window.getComputedStyle(svEl).opacity : "";
+            var appIsFullsize = Boolean(appRoot && appRoot.classList.contains('is-fullsize'));
+            var appIsMirroring = Boolean(appRoot && appRoot.classList.contains('is-mirroring'));
+            var appIsStreaming = Boolean(appRoot && appRoot.classList.contains('is-streaming'));
+            var seVisibleNow = Boolean(seEl && !seEl.hidden && window.getComputedStyle(seEl).display !== 'none');
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: curW,
@@ -1427,7 +1569,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 drawerScrollRightGap: drawerScrollRightGap,
                 innerWidth: winInnerWidth,
                 stretchGlitchCount: stretchGlitchCount,
-                maxDisplayColDuringClose: maxDisplayColDuringClose
+                maxDisplayColDuringClose: maxDisplayColDuringClose,
+                phoneScreenBg: psBg,
+                phoneScreenWidth: psWidth,
+                phoneScreenHeight: psHeight,
+                screenViewVisibility: svVis,
+                screenViewOpacity: svOpacity,
+                isFullsize: appIsFullsize,
+                isMirroring: appIsMirroring,
+                isStreaming: appIsStreaming,
+                screenEmptyVisible: seVisibleNow
             });
         } catch (_) {}
     }
@@ -1567,6 +1718,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             if (!appEl) return;
             var cleanW = Number(e.data.cleanW || e.data.width) || 0;
             var cleanH = Number(e.data.cleanH || e.data.height) || 0;
+            var rawW = Number(e.data.rawWidth || e.data.rawW || cleanW) || cleanW;
+            var rawH = Number(e.data.rawHeight || e.data.rawH || cleanH) || cleanH;
             if (cleanW <= 0 || cleanH <= 0) return;
 
             var isLandscape = appEl.classList.contains('is-landscape');
@@ -1582,18 +1735,18 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var deviceAspect = cleanW / cleanH;
             if (deviceAspect > 0.35 && deviceAspect < 0.72) {
                 var stageH = 832 - 38 - 44; // 750px logical stage height (ZenLink True 1:1 parity)
-                var idealW = Math.max(344, Math.min(430, Math.round(stageH * deviceAspect)));
-                if (Math.abs(idealW - 346) <= 3) {
-                    idealW = 346;
-                }
+                var idealW = Math.max(336, Math.min(440, Math.round(stageH * deviceAspect)));
+                window.__v4LastSyncedPortraitWidth = idealW;
                 window.__v4LastVideoAspectSync = {
                     cleanW: cleanW,
                     cleanH: cleanH,
+                    rawW: rawW,
+                    rawH: rawH,
                     deviceAspect: Number(deviceAspect.toFixed(5)),
                     idealPortraitWidth: idealW
                 };
                 var curDw = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--display-width') || '346', 10) || 346;
-                if (Math.abs(idealW - curDw) > 1) {
+                if (idealW !== curDw) {
                     document.documentElement.style.setProperty('--display-width', idealW + 'px');
                     appEl.style.setProperty('--display-width', idealW + 'px');
                     var isDrawer = appEl.classList.contains('drawer-open');
@@ -1622,12 +1775,18 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             postApi('/api/test/mirror_report', { ok: false, error: 'missing_screen_view' });
             return;
         }
+        var se = document.getElementById('screen-empty');
+        if (se) {
+            se.hidden = true;
+            se.style.display = 'none';
+        }
         sv.hidden = false;
         sv.style.display = 'block';
         var curSrc = sv.getAttribute('src') || '';
         if (!curSrc.startsWith('/mirror.html')) {
-            sv.src = '/mirror.html?v=tahap178_verify';
+            sv.src = '/mirror.html?v=tahap180_verify';
         }
+        syncMirroringStateClass();
         var attempts = 0;
         function waitIframeReady() {
             attempts++;
@@ -1647,6 +1806,23 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 postApi('/api/test/mirror_report', { ok: false, error: 'iframe_timeout' });
             }
         }
+        function makeFrameCanvas(idoc, rawW, rawH, trimR, trimB) {
+            var off = idoc.createElement('canvas');
+            off.width = rawW;
+            off.height = rawH;
+            var octx = off.getContext('2d');
+            octx.fillStyle = '#000000';
+            octx.fillRect(0, 0, rawW, rawH);
+            var cw = rawW - trimR;
+            var ch = rawH - trimB;
+            octx.fillStyle = 'rgb(240, 245, 255)';
+            octx.fillRect(0, 0, cw, ch);
+            octx.fillStyle = '#ff2020';
+            octx.fillRect(0, 0, 12, 12);
+            octx.fillStyle = '#20e040';
+            octx.fillRect(cw - 12, ch - 12, 12, 12);
+            return off;
+        }
         function executeFrameChecks(iw, idoc) {
             try {
                 var appEl = document.getElementById('app-root') || document.querySelector('.app');
@@ -1654,38 +1830,28 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     appEl.classList.add('is-streaming');
                     appEl.classList.remove('is-ipad');
                 }
-                var off = idoc.createElement('canvas');
-                off.width = 1216;
-                off.height = 2656;
-                var octx = off.getContext('2d');
-                // Active iPhone 17 Pro screen area x=0..1202, y=0..2598 in bright white/blue
-                octx.fillStyle = '#000000';
-                octx.fillRect(0, 0, 1216, 2656);
-                octx.fillStyle = 'rgb(240, 245, 255)';
-                octx.fillRect(0, 0, 1202, 2598);
-                // Active edge markers at (x=4, y=4) and (x=1198, y=2594)
-                octx.fillStyle = '#ff2020';
-                octx.fillRect(0, 0, 12, 12);
-                octx.fillStyle = '#20e040';
-                octx.fillRect(1190, 2586, 12, 12);
+                syncMirroringStateClass();
 
                 var c = idoc.getElementById('c');
                 var cCtx = c.getContext('2d');
 
-                function inspectMode(mode, tsOffset, nextCb) {
+                function inspectMode(mode, rawW, rawH, expectTrimR, expectTrimB, tsOffset, nextCb) {
                     var fitBtn = document.querySelector('[data-fit-choice="' + mode + '"]');
                     if (fitBtn) fitBtn.click();
                     iw.postMessage({ type: 'set-fit-mode', mode: mode }, '*');
                     iw.postMessage({ type: 'set-crop', crop: { top: 0, bottom: 0, left: 0, right: 0 } }, '*');
+                    var off = makeFrameCanvas(idoc, rawW, rawH, expectTrimR, expectTrimB);
                     setTimeout(function() {
                         var vf = new iw.VideoFrame(off, { timestamp: tsOffset });
                         iw.drawFrame(vf);
                         waitTwoRafs(iw, function() {
+                            var cleanExpW = rawW - expectTrimR;
+                            var cleanExpH = rawH - expectTrimB;
                             var rightEdgePx = Array.from(cCtx.getImageData(c.width - 2, Math.floor(c.height / 2), 1, 1).data);
                             var bottomEdgePx = Array.from(cCtx.getImageData(Math.floor(c.width / 2), c.height - 2, 1, 1).data);
                             var topLeftMarkerPx = Array.from(cCtx.getImageData(4, 4, 1, 1).data);
-                            var brX = Math.max(0, Math.min(c.width - 1, Math.round(1196 * c.width / 1202)));
-                            var brY = Math.max(0, Math.min(c.height - 1, Math.round(2592 * c.height / 2598)));
+                            var brX = Math.max(0, Math.min(c.width - 1, Math.round((cleanExpW - 6) * c.width / cleanExpW)));
+                            var brY = Math.max(0, Math.min(c.height - 1, Math.round((cleanExpH - 6) * c.height / cleanExpH)));
                             var botRightMarkerPx = Array.from(cCtx.getImageData(brX, brY, 1, 1).data);
 
                             var rightBright = (rightEdgePx[0] > 200 && rightEdgePx[1] > 200 && rightEdgePx[2] > 200);
@@ -1700,11 +1866,14 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                             var psRc = psEl ? psEl.getBoundingClientRect() : rc;
                             nextCb({
                                 mode: mode,
+                                rawW: rawW,
+                                rawH: rawH,
                                 canvasWidth: c.width,
                                 canvasHeight: c.height,
                                 cleanW: tr.cleanW || 0,
                                 cleanH: tr.cleanH || 0,
                                 baseTrim: tr.baseTrim || 0,
+                                macroblockSource: tr.macroblockSource || '',
                                 nativeTrimTop: tr.nativeTrimTop !== undefined ? tr.nativeTrimTop : -1,
                                 nativeTrimLeft: tr.nativeTrimLeft !== undefined ? tr.nativeTrimLeft : -1,
                                 nativeTrimRight: tr.nativeTrimRight !== undefined ? tr.nativeTrimRight : -1,
@@ -1725,26 +1894,52 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }, 80);
                 }
 
-                inspectMode('autofit', 1000, function(resAutoFit) {
-                    inspectMode('contain', 2000, function(resContain) {
-                        var afBtn = document.querySelector('[data-fit-choice="autofit"]');
-                        if (afBtn) afBtn.click();
-                        iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
-                        if (appEl) appEl.classList.remove('is-ipad');
-                        window.__v4LastVideoAspectSync = null;
-                        window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
-                        setTimeout(function() {
-                            var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
-                            window.postMessage({ type: 'video-dimensions', width: 1216, height: 2656, cleanW: 1216, cleanH: 2656, isIpad: false }, '*');
-                            setTimeout(function() {
-                                postApi('/api/test/mirror_report', {
-                                    ok: true,
-                                    autofit: resAutoFit,
-                                    contain: resContain,
-                                    aspect9x16: aspect916
-                                });
-                            }, 200);
-                        }, 220);
+                inspectMode('autofit', 1216, 2656, 14, 58, 1000, function(resAutoFit1216) {
+                    inspectMode('autofit', 1184, 2560, 14, 28, 2000, function(resAutoFit1184) {
+                        inspectMode('autofit', 1248, 2688, 6, 0, 3000, function(resAutoFit1248) {
+                            inspectMode('contain', 1216, 2656, 14, 58, 4000, function(resContain) {
+                                var afBtn = document.querySelector('[data-fit-choice="autofit"]');
+                                if (afBtn) afBtn.click();
+                                iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
+                                if (appEl) appEl.classList.remove('is-ipad');
+                                window.__v4LastVideoAspectSync = null;
+                                window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
+                                setTimeout(function() {
+                                    var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                    window.postMessage({ type: 'video-dimensions', width: 1202, height: 2598, cleanW: 1202, cleanH: 2598, rawWidth: 1216, rawHeight: 2656, isIpad: false }, '*');
+                                    setTimeout(function() {
+                                        var aspect1202 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                        window.postMessage({ type: 'video-dimensions', width: 1290, height: 2796, cleanW: 1290, cleanH: 2796, rawWidth: 1296, rawHeight: 2800, isIpad: false }, '*');
+                                        setTimeout(function() {
+                                            var aspect1290 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                            postApi('/api/window/sync_device_aspect', { width: 346, open: false, drawer: false, profile: 'auto' });
+                                            if (se) {
+                                                se.hidden = false;
+                                                se.style.display = 'flex';
+                                            }
+                                            sv.hidden = true;
+                                            sv.style.display = 'none';
+                                            sv.src = 'about:blank';
+                                            if (appEl) {
+                                                appEl.classList.remove('is-streaming');
+                                                appEl.classList.remove('is-mirroring');
+                                            }
+                                            syncMirroringStateClass();
+                                            postApi('/api/test/mirror_report', {
+                                                ok: true,
+                                                autofit: resAutoFit1216,
+                                                autofit1184: resAutoFit1184,
+                                                autofit1248: resAutoFit1248,
+                                                contain: resContain,
+                                                aspect9x16: aspect916,
+                                                aspect1202x2598: aspect1202,
+                                                aspect1290x2796: aspect1290
+                                            });
+                                        }, 160);
+                                    }, 160);
+                                }, 180);
+                            });
+                        });
                     });
                 });
             } catch (err) {
@@ -1763,9 +1958,40 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         installDragListeners();
         updateParallaxVars();
         syncIpadDisplayWidthVar();
+        syncMirroringStateClass();
         sanitizeAllSegmentedGroupsOnBoot();
 
+        // Override app.js global computeDisplayWidthCss so exits from Full Screen keep exact 564px (iPad) or dynamic portrait width
+        window.computeDisplayWidthCss = computeV4DisplayWidthCss;
+
+        // Instantaneous .is-mirroring state observer (#screen-empty <-> #screen-view)
+        try {
+            var obsTargetEmpty = document.getElementById('screen-empty');
+            var obsTargetRoot = document.getElementById('app-root') || document.querySelector('.app');
+            if (typeof MutationObserver !== 'undefined') {
+                var mObs = new MutationObserver(function() {
+                    syncMirroringStateClass();
+                });
+                if (obsTargetEmpty) {
+                    mObs.observe(obsTargetEmpty, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+                }
+                if (obsTargetRoot) {
+                    mObs.observe(obsTargetRoot, { attributes: true, attributeFilter: ['class'] });
+                }
+            }
+        } catch (_) {}
+
+        // Pre-sync --display-width cleanly when #win-max clicked (preserve .is-fullsize until app.js reads it, then pywebview.api.toggle_fullscreen syncs .is-fullsize & --display-width)
         document.addEventListener('click', function(e) {
+            var fsBtn = e.target && e.target.closest ? e.target.closest('#win-max, #btn-fullsize') : null;
+            if (fsBtn) {
+                var dw = computeV4DisplayWidthCss();
+                document.documentElement.style.setProperty('--display-width', dw);
+                if (document.body) document.body.style.setProperty('--display-width', dw);
+                var appEl = document.getElementById('app-root') || document.querySelector('.app');
+                if (appEl) appEl.style.setProperty('--display-width', dw);
+                syncMirroringStateClass();
+            }
             if (e.target && e.target.closest && e.target.closest('#btn-settings, #close-settings')) {
                 window.__v4LastDrawerTouch = Date.now();
             }
@@ -1791,21 +2017,26 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
         requestAnimationFrame(checkRaf);
         setTimeout(function() {
+            window.computeDisplayWidthCss = computeV4DisplayWidthCss;
             syncIpadDisplayWidthVar();
+            syncMirroringStateClass();
             sanitizeAllSegmentedGroupsOnBoot();
             sendDomBeacon(false);
         }, 300);
         setTimeout(function() {
             syncIpadDisplayWidthVar();
+            syncMirroringStateClass();
             sanitizeAllSegmentedGroupsOnBoot();
             sendDomBeacon(false);
         }, 1000);
 
         setInterval(function() {
             try {
+                syncMirroringStateClass();
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
                     if (s && s.pendingClick) {
                         window.__v4ClickSelector(s.pendingClick);
+                        setTimeout(function() { sendDomBeacon(false); }, 180);
                     }
                     if (s && s.pendingTest === 'verify_mirror_autofit') {
                         runSyntheticMirrorAutofitVerify();
@@ -1874,7 +2105,17 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return postApi('/api/window/restore_from_tray', {});
         },
         toggle_fullscreen: function(target_state) {
-            return postApi('/api/window/toggle_fullscreen', { target: target_state });
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            var curFs = Boolean(appEl && appEl.classList.contains('is-fullsize'));
+            var nextFs = (typeof target_state === 'boolean') ? target_state : !curFs;
+            syncPreFullscreenTransitionDom(nextFs);
+            return postApi('/api/window/toggle_fullscreen', { target: target_state }).then(function(res) {
+                if (res && typeof res.fullscreen === 'boolean') {
+                    syncPreFullscreenTransitionDom(res.fullscreen);
+                }
+                setTimeout(function() { sendDomBeacon(false); }, 60);
+                return res;
+            });
         },
         set_drawer: function(open) {
             var target = !!open;
@@ -3458,12 +3699,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        let is_fs = if hwnd_usize != 0 {
-            toggle_fullscreen_state(hwnd_usize as *mut _, None)
+        let target_opt = if req.body.contains(r#""target":true"#) || req.body.contains(r#""target": true"#) {
+            Some(true)
+        } else if req.body.contains(r#""target":false"#) || req.body.contains(r#""target": false"#) {
+            Some(false)
         } else {
-            let cur = GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
-            GLOBAL_IS_FULLSCREEN.store(!cur, Ordering::SeqCst);
-            !cur
+            None
+        };
+
+        let is_fs = if hwnd_usize != 0 {
+            toggle_fullscreen_state(hwnd_usize as *mut _, target_opt)
+        } else {
+            let next_val = target_opt.unwrap_or_else(|| !GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst));
+            GLOBAL_IS_FULLSCREEN.store(next_val, Ordering::SeqCst);
+            next_val
         };
         {
             let mut st = state.lock().unwrap();
@@ -3497,16 +3746,28 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains(r#""family": "ipad""#)
             || req.body.contains("4:3")
             || (cur_prof == "ipad" && !(req.body.contains(r#""profile":"auto""#) || req.body.contains(r#""profile":"iphone""#)));
+        // Tahap 180 (ZenLink True 1:1 Parity): remove +-3px deadband around 346px
         let portrait_w = if is_ipad {
             564
-        } else if (344..=430).contains(&width_val) {
-            if (width_val - 346).abs() <= 3 { 346 } else { width_val }
+        } else if (336..=440).contains(&width_val) {
+            width_val
         } else {
             346
         };
         GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
+        let out_prof = if is_ipad {
+            "ipad".to_string()
+        } else if req.body.contains(r#""profile":"iphone""#) || req.body.contains(r#""profile": "iphone""#) {
+            "iphone".to_string()
+        } else if req.body.contains(r#""profile":"auto""#) || req.body.contains(r#""profile": "auto""#) {
+            "auto".to_string()
+        } else if cur_prof == "iphone" {
+            "iphone".to_string()
+        } else {
+            "auto".to_string()
+        };
         if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
-            *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
+            *prof = out_prof.clone();
         }
 
         if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) || req.body.contains(r#""open":true"#) || req.body.contains(r#""open": true"#) {
@@ -3534,7 +3795,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"is_ipad":{},"portrait_width":{},"width":{},"height":{},"profile":"{}"}}"#,
-            is_ipad, portrait_w, cur_w, cur_h, if is_ipad { "ipad" } else { "auto" }
+            is_ipad, portrait_w, cur_w, cur_h, out_prof
         ));
     }
 
@@ -4153,19 +4414,203 @@ body.fit-contain canvas {
 
             if clean_rel.starts_with("mirror.js") || clean_rel == "mirror.js" {
                 let mut js_text = String::from_utf8_lossy(&bytes).to_string();
-                if !js_text.contains("__V4_TAHAP179_AUTOFIT__") {
+                if !js_text.contains("__V4_TAHAP180_DYNAMIC_AUTOFIT__") {
                     js_text = js_text.replace(
                         r##"  document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   document.body.classList.add(`fit-${fitMode}`);"##,
-                        r##"  // __V4_TAHAP179_AUTOFIT__: Exact H.265 Macroblock Trim (14px/58px) with baseTrim=0 & object-fit: fill on Auto-Fit
+                        r##"  // __V4_TAHAP179_AUTOFIT__ __V4_TAHAP180_DYNAMIC_AUTOFIT__: Dynamic H.265 Macroblock Scanner with baseTrim=0 & object-fit: fill on Auto-Fit
   document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   document.body.classList.add(`fit-${fitMode}`);
   canvas.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   canvas.classList.add(`fit-${fitMode}`);"##,
                     );
                     js_text = js_text.replace(
+                        r##"function drawFrame(f) {"##,
+                        r##"let _v4MacroTrimCache = null;
+let _v4ScanRightCanvas = null;
+let _v4ScanRightCtx = null;
+let _v4ScanBotCanvas = null;
+let _v4ScanBotCtx = null;
+let _v4DarkRetryCount = 0;
+let _v4LastNotifiedCleanW = 0;
+let _v4LastNotifiedCleanH = 0;
+
+function calibrateFallbackMacroblockTrim(rawW, rawH) {
+  if (rawW === 1216 && rawH === 2656) return { top: 0, left: 0, right: 14, bottom: 58, source: "calibrated-1216x2656" };
+  if (rawW === 1184 && rawH === 2560) return { top: 0, left: 0, right: 14, bottom: 28, source: "calibrated-1184x2560" };
+  if (rawW === 1248 && rawH === 2688) return { top: 0, left: 0, right: 6, bottom: 0, source: "calibrated-1248x2688" };
+  if (rawW === 1328 && rawH === 2880) return { top: 0, left: 0, right: 8, bottom: 12, source: "calibrated-1328x2880" };
+  if (rawW === 1296 && rawH === 2800) return { top: 0, left: 0, right: 6, bottom: 4, source: "calibrated-1296x2800" };
+  if (rawW === 1344 && rawH === 2992) return { top: 0, left: 0, right: 14, bottom: 58, source: "calibrated-1344x2992" };
+  return { top: 0, left: 0, right: 0, bottom: 0, source: "calibrated-zero" };
+}
+
+function detectExactMacroblockTrim(sourceFrame, rawW, rawH) {
+  if (!rawW || !rawH) return { top: 0, left: 0, right: 0, bottom: 0, source: "none" };
+  if (_v4MacroTrimCache && _v4MacroTrimCache.rawW === rawW && _v4MacroTrimCache.rawH === rawH && _v4MacroTrimCache.locked) {
+    return _v4MacroTrimCache;
+  }
+  if (_v4MacroTrimCache && _v4MacroTrimCache.rawW === rawW && _v4MacroTrimCache.rawH === rawH && !_v4MacroTrimCache.locked && (_v4DarkRetryCount++ % 10) !== 0) {
+    return _v4MacroTrimCache;
+  }
+  const fb = calibrateFallbackMacroblockTrim(rawW, rawH);
+  const scanW = Math.min(64, rawW);
+  const scanH = Math.min(64, rawH);
+  let detectedRight = fb.right;
+  let detectedBot = fb.bottom;
+  let rightDarkAll = true;
+  let botDarkAll = true;
+  try {
+    if (!_v4ScanRightCanvas) {
+      _v4ScanRightCanvas = document.createElement("canvas");
+      _v4ScanRightCtx = _v4ScanRightCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (_v4ScanRightCanvas.width !== scanW || _v4ScanRightCanvas.height !== 128) {
+      _v4ScanRightCanvas.width = scanW;
+      _v4ScanRightCanvas.height = 128;
+    }
+    const sy = Math.floor(rawH * 0.1);
+    const sh = Math.max(1, Math.floor(rawH * 0.75));
+    _v4ScanRightCtx.clearRect(0, 0, scanW, 128);
+    _v4ScanRightCtx.drawImage(sourceFrame, rawW - scanW, sy, scanW, sh, 0, 0, scanW, 128);
+    const rData = _v4ScanRightCtx.getImageData(0, 0, scanW, 128).data;
+    let trimR = 0;
+    for (let x = scanW - 1; x >= 0; x--) {
+      let colBlack = true;
+      for (let y = 8; y < 120; y += 7) {
+        const idx = (y * scanW + x) * 4;
+        if (rData[idx] > 3 || rData[idx + 1] > 3 || rData[idx + 2] > 3) {
+          colBlack = false;
+          rightDarkAll = false;
+          break;
+        }
+      }
+      if (!colBlack) break;
+      trimR++;
+    }
+    if (!rightDarkAll && trimR < scanW) {
+      detectedRight = trimR;
+    }
+
+    if (!_v4ScanBotCanvas) {
+      _v4ScanBotCanvas = document.createElement("canvas");
+      _v4ScanBotCtx = _v4ScanBotCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (_v4ScanBotCanvas.width !== 128 || _v4ScanBotCanvas.height !== scanH) {
+      _v4ScanBotCanvas.width = 128;
+      _v4ScanBotCanvas.height = scanH;
+    }
+    const sx = Math.floor(rawW * 0.1);
+    const sw = Math.max(1, Math.floor(rawW * 0.7));
+    _v4ScanBotCtx.clearRect(0, 0, 128, scanH);
+    _v4ScanBotCtx.drawImage(sourceFrame, sx, rawH - scanH, sw, scanH, 0, 0, 128, scanH);
+    const bData = _v4ScanBotCtx.getImageData(0, 0, 128, scanH).data;
+    let trimB = 0;
+    for (let y = scanH - 1; y >= 0; y--) {
+      let rowBlack = true;
+      for (let x = 8; x < 120; x += 7) {
+        const idx = (y * 128 + x) * 4;
+        if (bData[idx] > 3 || bData[idx + 1] > 3 || bData[idx + 2] > 3) {
+          rowBlack = false;
+          botDarkAll = false;
+          break;
+        }
+      }
+      if (!rowBlack) break;
+      trimB++;
+    }
+    if (!botDarkAll && trimB < scanH) {
+      detectedBot = trimB;
+    }
+  } catch (_) {}
+  const locked = !rightDarkAll && !botDarkAll;
+  _v4MacroTrimCache = {
+    rawW,
+    rawH,
+    top: 0,
+    left: 0,
+    right: detectedRight,
+    bottom: detectedBot,
+    locked,
+    source: locked ? "pixel-scan" : fb.source,
+  };
+  return _v4MacroTrimCache;
+}
+
+function drawFrame(f) {"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || effectiveIpad !== _lastNotifiedIpad) {
+      _lastNotifiedRawW = rawW;
+      _lastNotifiedRawH = rawH;
+      _lastNotifiedIpad = effectiveIpad;
+      try {
+        window.parent.postMessage({
+          type: "video-dimensions",
+          width: rawW,
+          height: rawH,
+          isIpad: effectiveIpad,
+          deviceFamily: _deviceFamily,
+          isStreamLandscape: rawW > rawH,
+        }, "*");
+      } catch (_) {}
+    }
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+
+    // Tahap 72: Native H.265 Macroblock Padding Trim on raw sourceFrame coordinates
+    // rawW = 1216, rawH = 2656 on iPhone 17 Pro
+    const scaleH = rawH / 2656;
+    const scaleW = rawW / 1216;
+
+    // Tahap 74: Set nativeTrimTop = 0 & nativeTrimLeft = 0 agar 0px terpotong di atas Dynamic Island & jam status bar
+    // Tahap 125: stream iPad (4:3 / 3:2) TIDAK memakai trim padding iPhone (0/0/0/0)
+    // Tahap 130: stream AirPlay Wi-Fi (H.264 / avc1) TIDAK memakai padding trim makroblok H.265 (0/0/0/0)
+    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const nativeTrimTop = 0;
+    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
+    const nativeTrimLeft = 0;
+    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);"##,
+                        r##"    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const macroTrimInfo = disableNativeTrim ? { top: 0, left: 0, right: 0, bottom: 0, source: "disabled" } : detectExactMacroblockTrim(sourceFrame, rawW, rawH);
+    const nativeTrimTop = 0;
+    const nativeTrimBot = disableNativeTrim ? 0 : macroTrimInfo.bottom;
+    const nativeTrimLeft = 0;
+    const nativeTrimRight = disableNativeTrim ? 0 : macroTrimInfo.right;
+    const preCleanW = Math.max(64, rawW - nativeTrimLeft - nativeTrimRight);
+    const preCleanH = Math.max(64, rawH - nativeTrimTop - nativeTrimBot);
+
+    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || preCleanW !== _lastNotifiedCleanW || preCleanH !== _lastNotifiedCleanH || effectiveIpad !== _lastNotifiedIpad) {
+      _lastNotifiedRawW = rawW;
+      _lastNotifiedRawH = rawH;
+      _lastNotifiedCleanW = preCleanW;
+      _lastNotifiedCleanH = preCleanH;
+      _lastNotifiedIpad = effectiveIpad;
+      try {
+        window.parent.postMessage({
+          type: "video-dimensions",
+          width: preCleanW,
+          height: preCleanH,
+          cleanW: preCleanW,
+          cleanH: preCleanH,
+          rawWidth: rawW,
+          rawHeight: rawH,
+          isIpad: effectiveIpad,
+          deviceFamily: _deviceFamily,
+          isStreamLandscape: preCleanW > preCleanH,
+        }, "*");
+      } catch (_) {}
+    }
+
+    const cw = canvas.width;
+    const ch = canvas.height;"##,
+                    );
+                    js_text = js_text.replace(
                         r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };"##,
-                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, baseTrim: 0, fitMode, rawW, rawH };"##,
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, macroblockSource: macroTrimInfo.source, baseTrim: 0, fitMode, rawW, rawH };"##,
                     );
                 }
                 return HttpResponse::ok_js(&js_text);
@@ -4480,10 +4925,11 @@ mod tests {
             let resp_mjs = handle_request(&req_mirror_js, &state, &web_root);
             assert_eq!(resp_mjs.status_code, 200);
             let mjs = String::from_utf8_lossy(&resp_mjs.body);
-            assert!(mjs.contains("__V4_TAHAP179_AUTOFIT__"), "mirror.js must apply Tahap 179 Auto-Fit patch");
+            assert!(mjs.contains("__V4_TAHAP179_AUTOFIT__"), "mirror.js must keep Auto-Fit marker");
+            assert!(mjs.contains("__V4_TAHAP180_DYNAMIC_AUTOFIT__"), "mirror.js must apply Tahap 180 Dynamic Macroblock Auto-Fit patch");
+            assert!(mjs.contains("detectExactMacroblockTrim"), "mirror.js must contain detectExactMacroblockTrim scanner");
+            assert!(mjs.contains("calibrateFallbackMacroblockTrim"), "mirror.js must contain calibrateFallbackMacroblockTrim table");
             assert!(mjs.contains("baseTrim: 0"), "mirror.js must keep baseTrim = 0");
-            assert!(mjs.contains("Math.round(58 * scaleH)"), "mirror.js must trim 58px bottom H.265 macroblock padding");
-            assert!(mjs.contains("Math.round(14 * scaleW)"), "mirror.js must trim 14px right H.265 macroblock padding");
 
             let req_mirror_css = HttpRequest {
                 method: "GET".to_string(),
@@ -4499,5 +4945,19 @@ mod tests {
             assert!(mcss.contains("__V4_TAHAP179_MIRROR_CSS__"), "mirror.css must apply Tahap 179 CSS patch");
             assert!(mcss.contains("object-fit: fill !important;"), "mirror.css must use object-fit: fill for Auto-Fit");
         }
+
+        // Verify +-3px deadband removal on /api/window/sync_device_aspect (347 must NOT snap to 346)
+        let req_aspect = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/window/sync_device_aspect".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"width":347,"open":false,"profile":"auto"}"#.to_string(),
+            body_bytes: Vec::new(),
+        };
+        let resp_aspect = handle_request(&req_aspect, &state, Path::new("web"));
+        assert_eq!(resp_aspect.status_code, 200);
+        let aspect_json = String::from_utf8_lossy(&resp_aspect.body);
+        assert!(aspect_json.contains(r#""portrait_width":347"#), "sync_device_aspect must preserve exact 347px without +-3px deadband: {}", aspect_json);
     }
 }
