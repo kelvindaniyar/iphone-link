@@ -545,6 +545,27 @@ unsafe fn ensure_child_widget_bounds(hwnd: *mut c_void, rc: &RECT) {
     }
 }
 
+unsafe fn prepare_webview_bounds_for_size(hwnd: *mut c_void, width: i32, height: i32) {
+    if hwnd.is_null() || width <= 0 || height <= 0 {
+        return;
+    }
+    let target_rc = RECT {
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: height,
+    };
+    let ctrl_raw = GLOBAL_WEBVIEW_CONTROLLER.load(Ordering::SeqCst);
+    if ctrl_raw != 0 {
+        let ctrl = ctrl_raw as *mut c_void;
+        let ctrl_vt = *(ctrl as *mut *const usize);
+        type PutBoundsFn = unsafe extern "system" fn(this: *mut c_void, bounds: *const RECT) -> i32;
+        let put_bounds: PutBoundsFn = std::mem::transmute(*ctrl_vt.add(6));
+        let _ = put_bounds(ctrl, &target_rc as *const RECT);
+    }
+    ensure_child_widget_bounds(hwnd, &target_rc);
+}
+
 pub fn notify_webview_bounds_sync(hwnd: *mut c_void) {
     if hwnd.is_null() {
         return;
@@ -1041,6 +1062,10 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
 
     let mut cur_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetWindowRect(hwnd, &mut cur_rc);
+    let cur_w = cur_rc.right - cur_rc.left;
+    let cur_h = cur_rc.bottom - cur_rc.top;
+    let is_widening = phys_w > cur_w || phys_h > cur_h;
+
     let is_pos_valid = cur_rc.left > 0 || cur_rc.top > 0;
     let mut cur_x = if is_pos_valid {
         SAVED_WINDOW_X.store(cur_rc.left, Ordering::SeqCst);
@@ -1056,7 +1081,7 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
     };
 
     let mon_w = GetSystemMetrics(0); // SM_CXSCREEN
-    let mut u_flags = 0x0004 | 0x0010 | 0x0020; // SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    let mut u_flags = 0x0004 | 0x0010 | 0x0100; // SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
     let mut position_adjusted = false;
     if mon_w > 0 && cur_x + phys_w > mon_w {
         cur_x = (mon_w - phys_w).max(0);
@@ -1068,6 +1093,13 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
         // Position changed or initializing from (0,0)
     } else {
         u_flags |= 0x0002; // SWP_NOMOVE
+    }
+
+    // Zero-Flicker Drawer Sequence (Tahap 179):
+    // When widening, prepare child WebView2 bounds BEFORE widening HWND so .side-drawer surface is ready.
+    // When shrinking, shrink HWND first with SWP_NOCOPYBITS then sync WebView2 bounds.
+    if is_widening {
+        prepare_webview_bounds_for_size(hwnd, phys_w, phys_h);
     }
 
     SetWindowPos(

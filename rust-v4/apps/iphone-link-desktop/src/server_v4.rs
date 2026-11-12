@@ -13,10 +13,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub static INDEX_HTML_SERVED: AtomicUsize = AtomicUsize::new(0);
 pub static APP_CSS_SERVED: AtomicUsize = AtomicUsize::new(0);
@@ -57,6 +57,8 @@ pub static GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE: AtomicUsize = AtomicUsize:
 pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
 pub static GLOBAL_PENDING_TEST: Mutex<Option<String>> = Mutex::new(None);
 pub static GLOBAL_MIRROR_TEST_REPORT: Mutex<String> = Mutex::new(String::new());
+pub static LAST_SET_DRAWER_STATE: AtomicBool = AtomicBool::new(false);
+pub static LAST_SET_DRAWER_MS: AtomicU64 = AtomicU64::new(0);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -854,7 +856,53 @@ iframe#screen-view {
   color-scheme: dark !important;
 }
 
-/* Portrait + Drawer OPEN (iPhone, iPad 4:3, & Custom): left column = exact calc(100vw - 360px), right drawer = flush 360px (0px gap) */
+/* Tahap 179: Zero-Flicker Top Bar Lock (38px 1-Row Invariant) & Zero-Transition Drawer Layout */
+html body #app-root .app-bar,
+html body .app-bar {
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  flex: 0 0 38px !important;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  transition: none !important;
+  animation: none !important;
+}
+@media (max-width: 600px) {
+  html body #app-root .app-bar .brand-title,
+  html body .app-bar .brand-title,
+  html body #app-root.drawer-open .app-bar .brand-title,
+  html body #app-root .app-bar #restart-screen .btn-label,
+  html body .app-bar #restart-screen .btn-label,
+  html body #app-root.drawer-open .app-bar #restart-screen .btn-label,
+  html body #app-root .app-bar #stop-screen .btn-label,
+  html body .app-bar #stop-screen .btn-label,
+  html body #app-root.drawer-open .app-bar #stop-screen .btn-label {
+    display: none !important;
+  }
+}
+
+html body #app-root.app,
+html body .app,
+html body .main-body,
+html body .display-col,
+html body .workspace,
+html body .stage,
+html body #phone-shell,
+html body #phone-screen,
+html body #screen-view,
+html body .side-drawer,
+html body .control-pane {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Portrait + Drawer OPEN (iPhone, iPad 4:3, & Custom): left column preserves stage width seamlessly, right drawer = flush 360px (0px gap) */
 html body #app-root.app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
 html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
 html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])),
@@ -870,17 +918,31 @@ html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body {
   gap: 0 !important;
 }
 html body #app-root.app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
-html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
 html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
 html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col,
-html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
-html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col,
-html body #app-root.app.is-landscape:not(.is-fullsize).drawer-open .display-col,
 html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col {
-  width: calc(100vw - 360px) !important;
-  min-width: calc(100vw - 360px) !important;
-  max-width: calc(100vw - 360px) !important;
-  flex: 0 0 calc(100vw - 360px) !important;
+  width: max(var(--display-width, 346px), calc(100vw - 360px)) !important;
+  min-width: max(var(--display-width, 346px), calc(100vw - 360px)) !important;
+  max-width: max(var(--display-width, 346px), calc(100vw - 360px)) !important;
+  flex: 0 0 max(var(--display-width, 346px), calc(100vw - 360px)) !important;
+  box-sizing: border-box !important;
+  transition: none !important;
+}
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col {
+  width: max(564px, calc(100vw - 360px)) !important;
+  min-width: max(564px, calc(100vw - 360px)) !important;
+  max-width: max(564px, calc(100vw - 360px)) !important;
+  flex: 0 0 max(564px, calc(100vw - 360px)) !important;
+  box-sizing: border-box !important;
+  transition: none !important;
+}
+html body #app-root.app.is-landscape:not(.is-fullsize).drawer-open .display-col {
+  width: max(840px, calc(100vw - 360px)) !important;
+  min-width: max(840px, calc(100vw - 360px)) !important;
+  max-width: max(840px, calc(100vw - 360px)) !important;
+  flex: 0 0 max(840px, calc(100vw - 360px)) !important;
   box-sizing: border-box !important;
   transition: none !important;
 }
@@ -1411,6 +1473,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         });
     }
 
+    window.__v4LastDrawerTouch = 0;
+    window.__v4LastSentDrawerState = null;
+    window.__v4LastSentDrawerMs = 0;
     window.__v4StretchGlitchCount = 0;
     window.__v4MaxDisplayColDuringClose = 0;
     window.__v4LastVideoAspectSync = null;
@@ -1425,44 +1490,74 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         } catch (_) {}
     }
 
-    function installDrawerAntiStretchObserver() {
-        var appEl = document.getElementById('app-root') || document.querySelector('.app');
-        if (!appEl || typeof MutationObserver === 'undefined') return;
-        var prevDrawerOpen = appEl.classList.contains('drawer-open');
-        var obs = new MutationObserver(function() {
-            syncIpadDisplayWidthVar();
-            var nowDrawerOpen = appEl.classList.contains('drawer-open');
-            if (prevDrawerOpen && !nowDrawerOpen) {
-                var isLand = appEl.classList.contains('is-landscape');
-                var isIpad = appEl.classList.contains('is-ipad') || (window.__v4ActiveDeviceProfile === 'ipad');
-                var curDw = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--display-width') || '346', 10) || 346;
-                var expectedMax = isLand ? 840 : (isIpad ? 564 : curDw);
-                var maxObs = 0;
-                var sampleCount = 0;
-                function sampleFrame() {
-                    var dc = document.querySelector('.display-col') || document.getElementById('display-col');
-                    if (dc && dc.getBoundingClientRect) {
-                        var w = Math.round(dc.getBoundingClientRect().width);
-                        if (w > maxObs) maxObs = w;
-                    }
-                    sampleCount++;
-                    if (sampleCount < 14) {
-                        requestAnimationFrame(sampleFrame);
-                    } else {
-                        if (maxObs > window.__v4MaxDisplayColDuringClose) {
-                            window.__v4MaxDisplayColDuringClose = maxObs;
-                        }
-                        if (maxObs > expectedMax + 3) {
-                            window.__v4StretchGlitchCount = (window.__v4StretchGlitchCount || 0) + 1;
-                        }
-                        sendDomBeacon(false);
-                    }
-                }
-                sampleFrame();
+    function runDrawerToggleFlickerVerify() {
+        try {
+            var btn = document.getElementById('btn-settings');
+            var appBar = document.querySelector('.app-bar');
+            if (!btn || !appBar) {
+                postApi('/api/test/mirror_report', { ok: false, error: 'missing_btn_or_appbar' });
+                return;
             }
-            prevDrawerOpen = nowDrawerOpen;
-        });
-        obs.observe(appEl, { attributes: true, attributeFilter: ['class'] });
+            if (window.isDrawerOpen && typeof window.toggleSettings === 'function') {
+                window.toggleSettings(false);
+            }
+            setTimeout(function() {
+                var maxH = 0;
+                var minH = 9999;
+                var samples = [];
+                function sampleBar() {
+                    try {
+                        var h = Math.round(appBar.getBoundingClientRect().height * 100) / 100;
+                        if (h > 0) {
+                            if (h > maxH) maxH = h;
+                            if (h < minH) minH = h;
+                        }
+                    } catch (_) {}
+                }
+                sampleBar();
+                var ro = null;
+                if (typeof ResizeObserver !== 'undefined') {
+                    ro = new ResizeObserver(function() { sampleBar(); });
+                    ro.observe(appBar);
+                }
+                var iv = setInterval(sampleBar, 16);
+                var steps = [];
+                var clickIdx = 0;
+                function doNextClick() {
+                    sampleBar();
+                    if (clickIdx >= 6) {
+                        clearInterval(iv);
+                        if (ro) { try { ro.disconnect(); } catch (_) {} }
+                        sampleBar();
+                        postApi('/api/test/mirror_report', {
+                            ok: true,
+                            clicks: steps.length,
+                            maxAppBarHeight: maxH,
+                            minAppBarHeight: minH,
+                            steps: steps
+                        });
+                        return;
+                    }
+                    clickIdx++;
+                    btn.click();
+                    sampleBar();
+                    setTimeout(function() {
+                        sampleBar();
+                        var curH = Math.round(appBar.getBoundingClientRect().height * 100) / 100;
+                        steps.push({
+                            step: clickIdx,
+                            drawerOpen: !!window.isDrawerOpen,
+                            appBarHeight: curH,
+                            innerWidth: window.innerWidth || 0
+                        });
+                        doNextClick();
+                    }, 300);
+                }
+                doNextClick();
+            }, 250);
+        } catch (err) {
+            postApi('/api/test/mirror_report', { ok: false, error: String(err) });
+        }
     }
 
     window.addEventListener('message', function(e) {
@@ -1554,21 +1649,25 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
         function executeFrameChecks(iw, idoc) {
             try {
+                var appEl = document.getElementById('app-root') || document.querySelector('.app');
+                if (appEl) {
+                    appEl.classList.add('is-streaming');
+                    appEl.classList.remove('is-ipad');
+                }
                 var off = idoc.createElement('canvas');
                 off.width = 1216;
                 off.height = 2656;
                 var octx = off.getContext('2d');
-                octx.fillStyle = '#121826';
+                // Active iPhone 17 Pro screen area x=0..1202, y=0..2598 in bright white/blue
+                octx.fillStyle = '#000000';
                 octx.fillRect(0, 0, 1216, 2656);
-                // 4 active edge markers (top=red, bottom=green, left=blue, right=yellow)
+                octx.fillStyle = 'rgb(240, 245, 255)';
+                octx.fillRect(0, 0, 1202, 2598);
+                // Active edge markers at (x=4, y=4) and (x=1198, y=2594)
                 octx.fillStyle = '#ff2020';
-                octx.fillRect(580, 4, 56, 24);
-                octx.fillStyle = '#20ff20';
-                octx.fillRect(580, 2628, 56, 24);
-                octx.fillStyle = '#2080ff';
-                octx.fillRect(4, 1300, 24, 56);
-                octx.fillStyle = '#ffe020';
-                octx.fillRect(1188, 1300, 24, 56);
+                octx.fillRect(0, 0, 12, 12);
+                octx.fillStyle = '#20e040';
+                octx.fillRect(1190, 2586, 12, 12);
 
                 var c = idoc.getElementById('c');
                 var cCtx = c.getContext('2d');
@@ -1582,39 +1681,48 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                         var vf = new iw.VideoFrame(off, { timestamp: tsOffset });
                         iw.drawFrame(vf);
                         waitTwoRafs(iw, function() {
-                            var topPx = Array.from(cCtx.getImageData(608, 12, 1, 1).data);
-                            var botPx = Array.from(cCtx.getImageData(608, 2644, 1, 1).data);
-                            var leftPx = Array.from(cCtx.getImageData(12, 1328, 1, 1).data);
-                            var rightPx = Array.from(cCtx.getImageData(1204, 1328, 1, 1).data);
-                            var topOk = (topPx[0] > 200 && topPx[1] < 80);
-                            var botOk = (botPx[1] > 200 && botPx[0] < 80);
-                            var leftOk = (leftPx[2] > 200 && leftPx[0] < 80);
-                            var rightOk = (rightPx[0] > 200 && rightPx[1] > 180 && rightPx[2] < 80);
+                            var rightEdgePx = Array.from(cCtx.getImageData(c.width - 2, Math.floor(c.height / 2), 1, 1).data);
+                            var bottomEdgePx = Array.from(cCtx.getImageData(Math.floor(c.width / 2), c.height - 2, 1, 1).data);
+                            var topLeftMarkerPx = Array.from(cCtx.getImageData(4, 4, 1, 1).data);
+                            var brX = Math.max(0, Math.min(c.width - 1, Math.round(1196 * c.width / 1202)));
+                            var brY = Math.max(0, Math.min(c.height - 1, Math.round(2592 * c.height / 2598)));
+                            var botRightMarkerPx = Array.from(cCtx.getImageData(brX, brY, 1, 1).data);
+
+                            var rightBright = (rightEdgePx[0] > 200 && rightEdgePx[1] > 200 && rightEdgePx[2] > 200);
+                            var bottomBright = (bottomEdgePx[0] > 200 && bottomEdgePx[1] > 200 && bottomEdgePx[2] > 200);
+                            var topLeftOk = (topLeftMarkerPx[0] > 200 && topLeftMarkerPx[1] < 80);
+                            var botRightOk = (botRightMarkerPx[1] > 180 && botRightMarkerPx[0] < 80);
+
                             var tr = iw._lastCleanTransform || {};
                             var cs = iw.getComputedStyle(c);
                             var rc = c.getBoundingClientRect();
+                            var psEl = document.getElementById('phone-screen');
+                            var psRc = psEl ? psEl.getBoundingClientRect() : rc;
                             nextCb({
                                 mode: mode,
                                 canvasWidth: c.width,
                                 canvasHeight: c.height,
                                 cleanW: tr.cleanW || 0,
                                 cleanH: tr.cleanH || 0,
-                                baseTrim: (tr.baseTrim === 0 || (tr.srcTrimBot === 0 && tr.srcTrimRight === 0 && tr.srcTrimTop === 0 && tr.srcTrimLeft === 0)) ? 0 : 1,
-                                srcTrimTop: tr.srcTrimTop || 0,
-                                srcTrimBot: tr.srcTrimBot || 0,
-                                srcTrimLeft: tr.srcTrimLeft || 0,
-                                srcTrimRight: tr.srcTrimRight || 0,
+                                baseTrim: tr.baseTrim || 0,
+                                nativeTrimTop: tr.nativeTrimTop !== undefined ? tr.nativeTrimTop : -1,
+                                nativeTrimLeft: tr.nativeTrimLeft !== undefined ? tr.nativeTrimLeft : -1,
+                                nativeTrimRight: tr.nativeTrimRight !== undefined ? tr.nativeTrimRight : -1,
+                                nativeTrimBot: tr.nativeTrimBot !== undefined ? tr.nativeTrimBot : -1,
                                 objectFit: cs.objectFit || '',
                                 rectWidth: Math.round(rc.width),
                                 rectHeight: Math.round(rc.height),
-                                all4EdgesVisible: Boolean(topOk && botOk && leftOk && rightOk),
-                                topOk: topOk,
-                                botOk: botOk,
-                                leftOk: leftOk,
-                                rightOk: rightOk
+                                phoneScreenWidth: Math.round(psRc.width),
+                                phoneScreenHeight: Math.round(psRc.height),
+                                rightEdgePx: rightEdgePx,
+                                bottomEdgePx: bottomEdgePx,
+                                rightBright: rightBright,
+                                bottomBright: bottomBright,
+                                topLeftOk: topLeftOk,
+                                botRightOk: botRightOk
                             });
                         });
-                    }, 60);
+                    }, 80);
                 }
 
                 inspectMode('autofit', 1000, function(resAutoFit) {
@@ -1622,14 +1730,11 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                         var afBtn = document.querySelector('[data-fit-choice="autofit"]');
                         if (afBtn) afBtn.click();
                         iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
-                        var appEl = document.getElementById('app-root') || document.querySelector('.app');
                         if (appEl) appEl.classList.remove('is-ipad');
-                        // Test ZenLink Smart Device Aspect Sync on 9:16 stream (1080x1920 -> idealPortraitWidth 422)
                         window.__v4LastVideoAspectSync = null;
                         window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
                         setTimeout(function() {
-                            var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : { className: appEl ? appEl.className : '', prof: window.__v4ActiveDeviceProfile };
-                            // Restore 1216x2656 -> 346px default
+                            var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
                             window.postMessage({ type: 'video-dimensions', width: 1216, height: 2656, cleanW: 1216, cleanH: 2656, isIpad: false }, '*');
                             setTimeout(function() {
                                 postApi('/api/test/mirror_report', {
@@ -1658,8 +1763,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         installDragListeners();
         updateParallaxVars();
         syncIpadDisplayWidthVar();
-        installDrawerAntiStretchObserver();
         sanitizeAllSegmentedGroupsOnBoot();
+
+        document.addEventListener('click', function(e) {
+            if (e.target && e.target.closest && e.target.closest('#btn-settings, #close-settings')) {
+                window.__v4LastDrawerTouch = Date.now();
+            }
+        }, true);
 
         // Ensure theme buttons have proper IDs and listeners
         var lightBtn = document.querySelector('[data-theme-choice="light"]');
@@ -1700,8 +1810,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     if (s && s.pendingTest === 'verify_mirror_autofit') {
                         runSyntheticMirrorAutofitVerify();
                     }
+                    if (s && s.pendingTest === 'verify_drawer_toggle_flicker') {
+                        runDrawerToggleFlickerVerify();
+                    }
                     if (s && s.window && typeof s.window.drawer_open === 'boolean') {
-                        if (typeof toggleSettings === 'function' && window.isDrawerOpen !== s.window.drawer_open) {
+                        var timeSinceDrawerTouch = Date.now() - (window.__v4LastDrawerTouch || 0);
+                        if (timeSinceDrawerTouch > 1200 && typeof toggleSettings === 'function' && window.isDrawerOpen !== s.window.drawer_open) {
                             toggleSettings(s.window.drawer_open);
                             setTimeout(function() { sendDomBeacon(false); }, 300);
                         }
@@ -1763,12 +1877,21 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return postApi('/api/window/toggle_fullscreen', { target: target_state });
         },
         set_drawer: function(open) {
-            return postApi('/api/window/set_drawer', { open: !!open });
+            var target = !!open;
+            var now = Date.now();
+            window.__v4LastDrawerTouch = now;
+            if (window.__v4LastSentDrawerState === target && (now - (window.__v4LastSentDrawerMs || 0)) < 80) {
+                return Promise.resolve({ ok: true, deduplicated: true, drawer_open: target });
+            }
+            window.__v4LastSentDrawerState = target;
+            window.__v4LastSentDrawerMs = now;
+            return postApi('/api/window/set_drawer', { open: target });
         },
         toggle_side_drawer: function(open) {
-            return postApi('/api/window/set_drawer', { open: !!open });
+            return window.pywebview.api.set_drawer(open);
         },
         set_orientation: function(landscape, drawer_open) {
+            window.__v4LastDrawerTouch = Date.now();
             return postApi('/api/window/set_orientation', {
                 landscape: !!landscape,
                 drawer: drawer_open !== undefined ? !!drawer_open : undefined
@@ -3175,13 +3298,24 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains(r#""open": true"#)
             || req.body.contains(r#""drawer":true"#)
             || req.body.contains(r#""drawer": true"#);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let prev_ms = LAST_SET_DRAWER_MS.load(Ordering::SeqCst);
+        let prev_open = LAST_SET_DRAWER_STATE.load(Ordering::SeqCst);
+        let cur_global_open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let is_duplicate = cur_global_open == open && prev_open == open && now_ms.saturating_sub(prev_ms) < 80;
+
+        LAST_SET_DRAWER_STATE.store(open, Ordering::SeqCst);
+        LAST_SET_DRAWER_MS.store(now_ms, Ordering::SeqCst);
         st.is_drawer_open = open;
         st.geometry.is_drawer_open = open;
         GLOBAL_DRAWER_OPEN.store(open, Ordering::SeqCst);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if hwnd_usize != 0 {
+        if !is_duplicate && hwnd_usize != 0 {
             apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
         }
 
@@ -3292,6 +3426,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             *g_tst = Some("verify_mirror_autofit".to_string());
         }
         return HttpResponse::ok_json(r#"{"ok":true,"queued":true,"test":"verify_mirror_autofit"}"#);
+    }
+
+    if path == "/api/test/verify_drawer_toggle_flicker" {
+        if let Ok(mut g_rep) = GLOBAL_MIRROR_TEST_REPORT.lock() {
+            g_rep.clear();
+        }
+        if let Ok(mut g_tst) = GLOBAL_PENDING_TEST.lock() {
+            *g_tst = Some("verify_drawer_toggle_flicker".to_string());
+        }
+        return HttpResponse::ok_json(r#"{"ok":true,"queued":true,"test":"verify_drawer_toggle_flicker"}"#);
     }
 
     if path == "/api/test/mirror_report" {
@@ -3973,28 +4117,33 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
             if clean_rel.starts_with("mirror.css") || clean_rel == "mirror.css" {
                 let mut css_text = String::from_utf8_lossy(&bytes).to_string();
-                if !css_text.contains("__V4_TAHAP178_MIRROR_CSS__") {
+                if !css_text.contains("__V4_TAHAP179_MIRROR_CSS__") {
                     css_text.push_str(r##"
 
-/* __V4_TAHAP178_MIRROR_CSS__ - True 1:1 Uncropped Auto-Fit (ZenLink Fit::Contain Parity) */
+/* __V4_TAHAP179_MIRROR_CSS__ - Exact Macroblock Trim + Full-Stage Fill on Auto-Fit (0px Black Bar) */
+canvas#c.fit-autofit,
+canvas#c.fit-fill,
 body.fit-autofit #c,
-body.fit-autofit canvas,
-body:not(.fit-fill):not(.fit-contain) #c,
-body:not(.fit-fill):not(.fit-contain) canvas {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  object-fit: contain !important;
-  display: block !important;
-}
 body.fit-fill #c,
-body.fit-fill canvas {
+body.fit-autofit canvas,
+body.fit-fill canvas,
+body:not(.fit-contain) #c,
+body:not(.fit-contain) canvas {
   width: 100vw !important;
   height: 100vh !important;
   max-width: 100vw !important;
   max-height: 100vh !important;
   object-fit: fill !important;
+  display: block !important;
+}
+canvas#c.fit-contain,
+body.fit-contain #c,
+body.fit-contain canvas {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
   display: block !important;
 }
 "##);
@@ -4004,56 +4153,19 @@ body.fit-fill canvas {
 
             if clean_rel.starts_with("mirror.js") || clean_rel == "mirror.js" {
                 let mut js_text = String::from_utf8_lossy(&bytes).to_string();
-                if !js_text.contains("__V4_TAHAP178_AUTOFIT__") {
+                if !js_text.contains("__V4_TAHAP179_AUTOFIT__") {
                     js_text = js_text.replace(
-                        r##"  if (fitMode === "autofit" || fitMode === "fill") {
-    // Tahap 69 & 71: Auto-Fit & Fill ALWAYS fill 100vw and 100vh (0px bottom black bar)
-    canvas.style.width = "100vw";
-    canvas.style.height = "100vh";
-    canvas.style.maxWidth = "100vw";
-    canvas.style.maxHeight = "100vh";
-    canvas.style.objectFit = "fill";
-  } else {
-    // fitMode === "contain" (Original Ratio)
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-    canvas.style.objectFit = "contain";
-  }"##,
-                        r##"  // __V4_TAHAP178_AUTOFIT__: True 1:1 Contain on Auto-Fit & Original Ratio (ZenLink Fit::Contain Parity)
-  if (fitMode === "fill") {
-    canvas.style.width = "100vw";
-    canvas.style.height = "100vh";
-    canvas.style.maxWidth = "100vw";
-    canvas.style.maxHeight = "100vh";
-    canvas.style.objectFit = "fill";
-  } else {
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-    canvas.style.maxWidth = "100%";
-    canvas.style.maxHeight = "100%";
-    canvas.style.objectFit = "contain";
-  }"##,
-                    );
-                    js_text = js_text.replace(
-                        r##"  if (fitMode === "contain" && canvas.width > 0 && canvas.height > 0) {"##,
-                        r##"  if ((fitMode === "contain" || fitMode === "autofit") && canvas.width > 0 && canvas.height > 0) {"##,
-                    );
-                    js_text = js_text.replace(
-                        r##"    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
-    const nativeTrimTop = 0;
-    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
-    const nativeTrimLeft = 0;
-    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);"##,
-                        r##"    // Tahap 178: baseTrim = 0 when manual Edge Crop is 0 (0 active pixels cropped)
-    const disableNativeTrim = true;
-    const nativeTrimTop = 0;
-    const nativeTrimBot = 0;
-    const nativeTrimLeft = 0;
-    const nativeTrimRight = 0;"##,
+                        r##"  document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
+  document.body.classList.add(`fit-${fitMode}`);"##,
+                        r##"  // __V4_TAHAP179_AUTOFIT__: Exact H.265 Macroblock Trim (14px/58px) with baseTrim=0 & object-fit: fill on Auto-Fit
+  document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
+  document.body.classList.add(`fit-${fitMode}`);
+  canvas.classList.remove("fit-fill", "fit-contain", "fit-autofit");
+  canvas.classList.add(`fit-${fitMode}`);"##,
                     );
                     js_text = js_text.replace(
                         r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };"##,
-                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, baseTrim: 0, fitMode, rawW, rawH };"##,
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, baseTrim: 0, fitMode, rawW, rawH };"##,
                     );
                 }
                 return HttpResponse::ok_js(&js_text);
@@ -4368,9 +4480,24 @@ mod tests {
             let resp_mjs = handle_request(&req_mirror_js, &state, &web_root);
             assert_eq!(resp_mjs.status_code, 200);
             let mjs = String::from_utf8_lossy(&resp_mjs.body);
-            assert!(mjs.contains("__V4_TAHAP178_AUTOFIT__"), "mirror.js must apply True 1:1 Auto-Fit patch");
-            assert!(mjs.contains("const nativeTrimBot = 0;"), "mirror.js must set baseTrim = 0");
-            assert!(!mjs.contains("Math.round(58 * scaleH)"), "mirror.js must not crop 58px bottom");
+            assert!(mjs.contains("__V4_TAHAP179_AUTOFIT__"), "mirror.js must apply Tahap 179 Auto-Fit patch");
+            assert!(mjs.contains("baseTrim: 0"), "mirror.js must keep baseTrim = 0");
+            assert!(mjs.contains("Math.round(58 * scaleH)"), "mirror.js must trim 58px bottom H.265 macroblock padding");
+            assert!(mjs.contains("Math.round(14 * scaleW)"), "mirror.js must trim 14px right H.265 macroblock padding");
+
+            let req_mirror_css = HttpRequest {
+                method: "GET".to_string(),
+                path: "/mirror.css".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            };
+            let resp_mcss = handle_request(&req_mirror_css, &state, &web_root);
+            assert_eq!(resp_mcss.status_code, 200);
+            let mcss = String::from_utf8_lossy(&resp_mcss.body);
+            assert!(mcss.contains("__V4_TAHAP179_MIRROR_CSS__"), "mirror.css must apply Tahap 179 CSS patch");
+            assert!(mcss.contains("object-fit: fill !important;"), "mirror.css must use object-fit: fill for Auto-Fit");
         }
     }
 }
