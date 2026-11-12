@@ -47,7 +47,16 @@ pub static GLOBAL_SEGMENTED_DETAILS: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DEVICE_PROFILE: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DRAWER_RECT_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_DRAWER_RIGHT_OVERFLOW: AtomicIsize = AtomicIsize::new(0);
+pub static GLOBAL_DISPLAY_COL_WIDTH: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_SIDE_DRAWER_WIDTH: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_SIDE_DRAWER_RIGHT_GAP: AtomicIsize = AtomicIsize::new(0);
+pub static GLOBAL_DRAWER_SCROLL_RIGHT_GAP: AtomicIsize = AtomicIsize::new(0);
+pub static GLOBAL_INNER_WIDTH: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_STRETCH_GLITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
+pub static GLOBAL_PENDING_TEST: Mutex<Option<String>> = Mutex::new(None);
+pub static GLOBAL_MIRROR_TEST_REPORT: Mutex<String> = Mutex::new(String::new());
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -845,38 +854,110 @@ iframe#screen-view {
   color-scheme: dark !important;
 }
 
-/* Portrait + Drawer OPEN: left column takes remaining width, drawer takes exact 360px without clipping */
+/* Portrait + Drawer OPEN (iPhone, iPad 4:3, & Custom): left column = exact calc(100vw - 360px), right drawer = flush 360px (0px gap) */
+html body #app-root.app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
+html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])),
+html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open),
 html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body {
   display: flex !important;
   flex-direction: row !important;
+  justify-content: flex-start !important;
+  align-items: stretch !important;
   width: 100vw !important;
   height: calc(100vh - 38px) !important;
   overflow: hidden !important;
+  gap: 0 !important;
 }
+html body #app-root.app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .display-col,
+html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
+html body #app-root.app:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer:not([hidden])) .display-col,
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize) .main-body:has(.side-drawer.open) .display-col,
+html body #app-root.app.is-landscape:not(.is-fullsize).drawer-open .display-col,
 html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .display-col {
   width: calc(100vw - 360px) !important;
   min-width: calc(100vw - 360px) !important;
   max-width: calc(100vw - 360px) !important;
   flex: 0 0 calc(100vw - 360px) !important;
+  box-sizing: border-box !important;
+  transition: none !important;
 }
+html body #app-root.app:not(.is-fullsize).drawer-open .side-drawer,
+html body #app-root.app:not(.is-fullsize).drawer-open #control-pane,
+html body #app-root.app.is-ipad:not(.is-fullsize).drawer-open .side-drawer,
+html body #app-root.app.is-ipad:not(.is-fullsize).drawer-open #control-pane,
+html body #app-root.app:not(.is-fullsize) .main-body .side-drawer:not([hidden]),
+html body #app-root.app:not(.is-fullsize) .main-body #control-pane.open,
 html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .side-drawer,
 html body .app:not(.is-landscape):not(.is-fullsize).drawer-open .control-pane {
   width: 360px !important;
   min-width: 360px !important;
   max-width: 360px !important;
   flex: 0 0 360px !important;
+  margin-left: auto !important;
+  margin-right: 0 !important;
+  right: 0 !important;
+  box-sizing: border-box !important;
+  transition: none !important;
+}
+html body #app-root #control-pane .drawer-header,
+html body #app-root #control-pane .drawer-scroll,
+html body #app-root #control-pane .drawer-content,
+html body #app-root .side-drawer .drawer-header,
+html body #app-root .side-drawer .drawer-scroll,
+html body #app-root .side-drawer .drawer-content {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-right: 0 !important;
+  box-sizing: border-box !important;
 }
 
-/* Portrait + Drawer CLOSED: full 100vw width for display-col and inner stages */
-html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .display-col,
+/* Anti-Stretch Glitch Lock saat Menutup Drawer (Portrait iPhone / iPad & Landscape Non-Fullsize) */
+html body #app-root.app .display-col,
+html body #app-root.app .workspace,
+html body #app-root.app .stage,
+html body #app-root.app #phone-shell,
+html body #app-root.app #phone-screen,
+html body #app-root.app #screen-view {
+  transition: none !important;
+}
+html body #app-root.app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .display-col,
+html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .display-col {
+  width: min(100vw, var(--display-width, 346px)) !important;
+  min-width: 0 !important;
+  max-width: var(--display-width, 346px) !important;
+  flex: 0 1 var(--display-width, 346px) !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .display-col {
+  width: min(100vw, 564px) !important;
+  min-width: 0 !important;
+  max-width: 564px !important;
+  flex: 0 1 564px !important;
+}
+html body #app-root.app.is-landscape:not(.is-fullsize):not(.drawer-open) .display-col {
+  width: min(100vw, 840px) !important;
+  min-width: 0 !important;
+  max-width: 840px !important;
+  flex: 0 1 840px !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+html body #app-root.app:not(.is-fullsize):not(.drawer-open) .workspace,
+html body #app-root.app:not(.is-fullsize):not(.drawer-open) .stage,
+html body #app-root.app:not(.is-fullsize):not(.drawer-open) #phone-shell,
+html body #app-root.app:not(.is-fullsize):not(.drawer-open) #phone-screen,
 html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .workspace,
 html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) .stage,
 html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) #phone-shell,
 html body .app:not(.is-landscape):not(.is-fullsize):not(.drawer-open) #phone-screen {
-  width: 100vw !important;
-  min-width: 100vw !important;
-  max-width: 100vw !important;
-  flex: 1 1 100vw !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  flex: 1 1 auto !important;
 }
 "#;
 
@@ -955,6 +1036,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         if (btn) {
             enforceSingleActivePerSegmentedGroup(btn);
         }
+        if (skipPost && typeof window.applyDeviceProfile === 'function') {
+            try { window.applyDeviceProfile(p, { persist: false, syncNative: false }); } catch (_) {}
+        }
         if (!skipPost) {
             var isDrawer = !!(appEl && (appEl.classList.contains('drawer-open') || (document.querySelector('.side-drawer') && !document.querySelector('.side-drawer').hidden)));
             postApi('/api/window/set_device_profile', { profile: p, family: isIpad ? 'ipad' : 'iphone', resize: true, open: isDrawer, drawer: isDrawer });
@@ -969,6 +1053,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function handleResetDefaultSize() {
         window.__v4LastProfileTouch = Date.now();
         window.__v4ActiveDeviceProfile = 'auto';
+        if (typeof window.applyDeviceProfile === 'function') {
+            try { window.applyDeviceProfile('auto', { persist: true, syncNative: false }); } catch (_) {}
+        }
         document.documentElement.style.setProperty('--display-width', '346px');
         if (document.body) document.body.style.setProperty('--display-width', '346px');
         var appEl = document.getElementById('app-root') || document.querySelector('.app');
@@ -1109,6 +1196,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     function sendDomBeacon(rafVerified) {
         try {
+            syncIpadDisplayWidthVar();
             var appEl = document.querySelector(".app") || document.body;
             var disp = window.getComputedStyle ? window.getComputedStyle(appEl).display : "block";
             var appRect = appEl.getBoundingClientRect ? appEl.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
@@ -1187,11 +1275,23 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var badgeEl = document.querySelector('.lang-badge, .seg .badge');
             var badgeBg = (badgeEl && window.getComputedStyle) ? window.getComputedStyle(badgeEl).backgroundColor : "rgba(0, 0, 0, 0)";
 
-            var drawerRectWidth = (sideDrawer && sideDrawer.getBoundingClientRect) ? Math.round(sideDrawer.getBoundingClientRect().width) : 0;
-            var drawerRight = (sideDrawer && sideDrawer.getBoundingClientRect) ? Math.round(sideDrawer.getBoundingClientRect().right) : 0;
+            var displayColEl = document.querySelector('.display-col') || document.getElementById('display-col');
+            var displayColWidth = (displayColEl && displayColEl.getBoundingClientRect) ? Math.round(displayColEl.getBoundingClientRect().width) : 0;
+            var sdRect = (sideDrawer && sideDrawer.getBoundingClientRect) ? sideDrawer.getBoundingClientRect() : null;
+            var drawerRectWidth = (sideDrawer && !sideDrawer.hidden && sdRect && sdRect.width > 0) ? Math.round(sdRect.width) : 0;
+            var sideDrawerWidth = drawerRectWidth;
+            var drawerRight = (sdRect && sdRect.right) ? Math.round(sdRect.right) : 0;
             var winInnerWidth = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || 0;
             var drawerRightOverflow = (sideDrawer && !sideDrawer.hidden && drawerRight > winInnerWidth) ? (drawerRight - winInnerWidth) : 0;
+            var sideDrawerRightGap = (sideDrawer && !sideDrawer.hidden && sdRect && sdRect.width > 0) ? Math.abs(Math.round(winInnerWidth - sdRect.right)) : 0;
+            var drawerScrollEl = sideDrawer ? (sideDrawer.querySelector('.drawer-scroll') || sideDrawer.querySelector('.drawer-content')) : null;
+            var dsRect = (drawerScrollEl && drawerScrollEl.getBoundingClientRect) ? drawerScrollEl.getBoundingClientRect() : null;
+            var drawerScrollRightGap = (sideDrawer && !sideDrawer.hidden && sdRect && sdRect.width > 0 && dsRect && dsRect.width > 0)
+                ? Math.abs(Math.round(sdRect.right - dsRect.right))
+                : 0;
             var activeProf = window.__v4ActiveDeviceProfile || "auto";
+            var stretchGlitchCount = window.__v4StretchGlitchCount || 0;
+            var maxDisplayColDuringClose = window.__v4MaxDisplayColDuringClose || 0;
 
             var segmentedClean = true;
             var segmentedDetails = [];
@@ -1258,7 +1358,14 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 segmentedDetails: segmentedDetails.join('; '),
                 activeDeviceProfile: activeProf,
                 drawerRectWidth: drawerRectWidth,
-                drawerRightOverflow: drawerRightOverflow
+                drawerRightOverflow: drawerRightOverflow,
+                displayColWidth: displayColWidth,
+                sideDrawerWidth: sideDrawerWidth,
+                sideDrawerRightGap: sideDrawerRightGap,
+                drawerScrollRightGap: drawerScrollRightGap,
+                innerWidth: winInnerWidth,
+                stretchGlitchCount: stretchGlitchCount,
+                maxDisplayColDuringClose: maxDisplayColDuringClose
             });
         } catch (_) {}
     }
@@ -1304,9 +1411,254 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         });
     }
 
+    window.__v4StretchGlitchCount = 0;
+    window.__v4MaxDisplayColDuringClose = 0;
+    window.__v4LastVideoAspectSync = null;
+
+    function syncIpadDisplayWidthVar() {
+        try {
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            if (appEl && appEl.classList.contains('is-ipad') && !appEl.classList.contains('is-landscape')) {
+                document.documentElement.style.setProperty('--display-width', '564px');
+                appEl.style.setProperty('--display-width', '564px');
+            }
+        } catch (_) {}
+    }
+
+    function installDrawerAntiStretchObserver() {
+        var appEl = document.getElementById('app-root') || document.querySelector('.app');
+        if (!appEl || typeof MutationObserver === 'undefined') return;
+        var prevDrawerOpen = appEl.classList.contains('drawer-open');
+        var obs = new MutationObserver(function() {
+            syncIpadDisplayWidthVar();
+            var nowDrawerOpen = appEl.classList.contains('drawer-open');
+            if (prevDrawerOpen && !nowDrawerOpen) {
+                var isLand = appEl.classList.contains('is-landscape');
+                var isIpad = appEl.classList.contains('is-ipad') || (window.__v4ActiveDeviceProfile === 'ipad');
+                var curDw = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--display-width') || '346', 10) || 346;
+                var expectedMax = isLand ? 840 : (isIpad ? 564 : curDw);
+                var maxObs = 0;
+                var sampleCount = 0;
+                function sampleFrame() {
+                    var dc = document.querySelector('.display-col') || document.getElementById('display-col');
+                    if (dc && dc.getBoundingClientRect) {
+                        var w = Math.round(dc.getBoundingClientRect().width);
+                        if (w > maxObs) maxObs = w;
+                    }
+                    sampleCount++;
+                    if (sampleCount < 14) {
+                        requestAnimationFrame(sampleFrame);
+                    } else {
+                        if (maxObs > window.__v4MaxDisplayColDuringClose) {
+                            window.__v4MaxDisplayColDuringClose = maxObs;
+                        }
+                        if (maxObs > expectedMax + 3) {
+                            window.__v4StretchGlitchCount = (window.__v4StretchGlitchCount || 0) + 1;
+                        }
+                        sendDomBeacon(false);
+                    }
+                }
+                sampleFrame();
+            }
+            prevDrawerOpen = nowDrawerOpen;
+        });
+        obs.observe(appEl, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    window.addEventListener('message', function(e) {
+        try {
+            if (!e || !e.data || e.data.type !== 'video-dimensions') return;
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            if (!appEl) return;
+            var cleanW = Number(e.data.cleanW || e.data.width) || 0;
+            var cleanH = Number(e.data.cleanH || e.data.height) || 0;
+            if (cleanW <= 0 || cleanH <= 0) return;
+
+            var isLandscape = appEl.classList.contains('is-landscape');
+            var isFullsize = appEl.classList.contains('is-fullsize');
+            var prof = window.__v4ActiveDeviceProfile || 'auto';
+            var isIpad = appEl.classList.contains('is-ipad') || prof === 'ipad' || Boolean(e.data.isIpad && prof === 'auto');
+            if (isIpad) {
+                syncIpadDisplayWidthVar();
+                return;
+            }
+            if (isLandscape || isFullsize) return;
+
+            var deviceAspect = cleanW / cleanH;
+            if (deviceAspect > 0.35 && deviceAspect < 0.72) {
+                var stageH = 832 - 38 - 44; // 750px logical stage height (ZenLink True 1:1 parity)
+                var idealW = Math.max(344, Math.min(430, Math.round(stageH * deviceAspect)));
+                if (Math.abs(idealW - 346) <= 3) {
+                    idealW = 346;
+                }
+                window.__v4LastVideoAspectSync = {
+                    cleanW: cleanW,
+                    cleanH: cleanH,
+                    deviceAspect: Number(deviceAspect.toFixed(5)),
+                    idealPortraitWidth: idealW
+                };
+                var curDw = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--display-width') || '346', 10) || 346;
+                if (Math.abs(idealW - curDw) > 1) {
+                    document.documentElement.style.setProperty('--display-width', idealW + 'px');
+                    appEl.style.setProperty('--display-width', idealW + 'px');
+                    var isDrawer = appEl.classList.contains('drawer-open');
+                    postApi('/api/window/sync_device_aspect', {
+                        width: idealW,
+                        open: isDrawer,
+                        drawer: isDrawer,
+                        profile: prof
+                    });
+                }
+            }
+        } catch (_) {}
+    });
+
+    function waitTwoRafs(win, cb) {
+        win.requestAnimationFrame(function() {
+            win.requestAnimationFrame(function() {
+                setTimeout(cb, 30);
+            });
+        });
+    }
+
+    function runSyntheticMirrorAutofitVerify() {
+        var sv = document.getElementById('screen-view');
+        if (!sv) {
+            postApi('/api/test/mirror_report', { ok: false, error: 'missing_screen_view' });
+            return;
+        }
+        sv.hidden = false;
+        sv.style.display = 'block';
+        var curSrc = sv.getAttribute('src') || '';
+        if (!curSrc.startsWith('/mirror.html')) {
+            sv.src = '/mirror.html?v=tahap178_verify';
+        }
+        var attempts = 0;
+        function waitIframeReady() {
+            attempts++;
+            var iw = null;
+            var idoc = null;
+            try {
+                iw = sv.contentWindow;
+                idoc = sv.contentDocument || (iw && iw.document);
+            } catch (_) {}
+            if (iw && idoc && idoc.getElementById('c') && typeof iw.drawFrame === 'function' && typeof iw.VideoFrame === 'function') {
+                executeFrameChecks(iw, idoc);
+                return;
+            }
+            if (attempts < 40) {
+                setTimeout(waitIframeReady, 100);
+            } else {
+                postApi('/api/test/mirror_report', { ok: false, error: 'iframe_timeout' });
+            }
+        }
+        function executeFrameChecks(iw, idoc) {
+            try {
+                var off = idoc.createElement('canvas');
+                off.width = 1216;
+                off.height = 2656;
+                var octx = off.getContext('2d');
+                octx.fillStyle = '#121826';
+                octx.fillRect(0, 0, 1216, 2656);
+                // 4 active edge markers (top=red, bottom=green, left=blue, right=yellow)
+                octx.fillStyle = '#ff2020';
+                octx.fillRect(580, 4, 56, 24);
+                octx.fillStyle = '#20ff20';
+                octx.fillRect(580, 2628, 56, 24);
+                octx.fillStyle = '#2080ff';
+                octx.fillRect(4, 1300, 24, 56);
+                octx.fillStyle = '#ffe020';
+                octx.fillRect(1188, 1300, 24, 56);
+
+                var c = idoc.getElementById('c');
+                var cCtx = c.getContext('2d');
+
+                function inspectMode(mode, tsOffset, nextCb) {
+                    var fitBtn = document.querySelector('[data-fit-choice="' + mode + '"]');
+                    if (fitBtn) fitBtn.click();
+                    iw.postMessage({ type: 'set-fit-mode', mode: mode }, '*');
+                    iw.postMessage({ type: 'set-crop', crop: { top: 0, bottom: 0, left: 0, right: 0 } }, '*');
+                    setTimeout(function() {
+                        var vf = new iw.VideoFrame(off, { timestamp: tsOffset });
+                        iw.drawFrame(vf);
+                        waitTwoRafs(iw, function() {
+                            var topPx = Array.from(cCtx.getImageData(608, 12, 1, 1).data);
+                            var botPx = Array.from(cCtx.getImageData(608, 2644, 1, 1).data);
+                            var leftPx = Array.from(cCtx.getImageData(12, 1328, 1, 1).data);
+                            var rightPx = Array.from(cCtx.getImageData(1204, 1328, 1, 1).data);
+                            var topOk = (topPx[0] > 200 && topPx[1] < 80);
+                            var botOk = (botPx[1] > 200 && botPx[0] < 80);
+                            var leftOk = (leftPx[2] > 200 && leftPx[0] < 80);
+                            var rightOk = (rightPx[0] > 200 && rightPx[1] > 180 && rightPx[2] < 80);
+                            var tr = iw._lastCleanTransform || {};
+                            var cs = iw.getComputedStyle(c);
+                            var rc = c.getBoundingClientRect();
+                            nextCb({
+                                mode: mode,
+                                canvasWidth: c.width,
+                                canvasHeight: c.height,
+                                cleanW: tr.cleanW || 0,
+                                cleanH: tr.cleanH || 0,
+                                baseTrim: (tr.baseTrim === 0 || (tr.srcTrimBot === 0 && tr.srcTrimRight === 0 && tr.srcTrimTop === 0 && tr.srcTrimLeft === 0)) ? 0 : 1,
+                                srcTrimTop: tr.srcTrimTop || 0,
+                                srcTrimBot: tr.srcTrimBot || 0,
+                                srcTrimLeft: tr.srcTrimLeft || 0,
+                                srcTrimRight: tr.srcTrimRight || 0,
+                                objectFit: cs.objectFit || '',
+                                rectWidth: Math.round(rc.width),
+                                rectHeight: Math.round(rc.height),
+                                all4EdgesVisible: Boolean(topOk && botOk && leftOk && rightOk),
+                                topOk: topOk,
+                                botOk: botOk,
+                                leftOk: leftOk,
+                                rightOk: rightOk
+                            });
+                        });
+                    }, 60);
+                }
+
+                inspectMode('autofit', 1000, function(resAutoFit) {
+                    inspectMode('contain', 2000, function(resContain) {
+                        var afBtn = document.querySelector('[data-fit-choice="autofit"]');
+                        if (afBtn) afBtn.click();
+                        iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
+                        var appEl = document.getElementById('app-root') || document.querySelector('.app');
+                        if (appEl) appEl.classList.remove('is-ipad');
+                        // Test ZenLink Smart Device Aspect Sync on 9:16 stream (1080x1920 -> idealPortraitWidth 422)
+                        window.__v4LastVideoAspectSync = null;
+                        window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
+                        setTimeout(function() {
+                            var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : { className: appEl ? appEl.className : '', prof: window.__v4ActiveDeviceProfile };
+                            // Restore 1216x2656 -> 346px default
+                            window.postMessage({ type: 'video-dimensions', width: 1216, height: 2656, cleanW: 1216, cleanH: 2656, isIpad: false }, '*');
+                            setTimeout(function() {
+                                postApi('/api/test/mirror_report', {
+                                    ok: true,
+                                    autofit: resAutoFit,
+                                    contain: resContain,
+                                    aspect9x16: aspect916
+                                });
+                            }, 200);
+                        }, 220);
+                    });
+                });
+            } catch (err) {
+                postApi('/api/test/mirror_report', { ok: false, error: String(err) });
+            }
+        }
+        waitIframeReady();
+    }
+    window.__v4RunMirrorAutofitVerify = runSyntheticMirrorAutofitVerify;
+
     function initBridge() {
+        var isMainAppWindow = Boolean(document.getElementById('app-root') || document.querySelector('.side-drawer') || document.getElementById('screen-view'));
+        if (!isMainAppWindow) {
+            return;
+        }
         installDragListeners();
         updateParallaxVars();
+        syncIpadDisplayWidthVar();
+        installDrawerAntiStretchObserver();
         sanitizeAllSegmentedGroupsOnBoot();
 
         // Ensure theme buttons have proper IDs and listeners
@@ -1329,10 +1681,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
         requestAnimationFrame(checkRaf);
         setTimeout(function() {
+            syncIpadDisplayWidthVar();
             sanitizeAllSegmentedGroupsOnBoot();
             sendDomBeacon(false);
         }, 300);
         setTimeout(function() {
+            syncIpadDisplayWidthVar();
             sanitizeAllSegmentedGroupsOnBoot();
             sendDomBeacon(false);
         }, 1000);
@@ -1342,6 +1696,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
                     if (s && s.pendingClick) {
                         window.__v4ClickSelector(s.pendingClick);
+                    }
+                    if (s && s.pendingTest === 'verify_mirror_autofit') {
+                        runSyntheticMirrorAutofitVerify();
                     }
                     if (s && s.window && typeof s.window.drawer_open === 'boolean') {
                         if (typeof toggleSettings === 'function' && window.isDrawerOpen !== s.window.drawer_open) {
@@ -1357,6 +1714,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                             setTimeout(function() { sendDomBeacon(false); }, 100);
                         }
                     }
+                    syncIpadDisplayWidthVar();
                     var desiredTheme = (s && s.webviewMetrics && s.webviewMetrics.activeTheme) || (s && s.settings && s.settings.theme);
                     if (desiredTheme) {
                         var curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -1366,7 +1724,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }
                 }).catch(function(){});
             } catch (_) {}
-        }, 400);
+        }, 250);
     }
 
     if (document.readyState === "loading") {
@@ -2263,17 +2621,30 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
                     None => String::new(),
                 };
+                let pending_test = GLOBAL_PENDING_TEST.lock().ok().and_then(|mut g| g.take());
+                let pending_test_str = match pending_test {
+                    Some(ref s) => format!(r#","pendingTest":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
+                    None => String::new(),
+                };
                 let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
                 let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
                 let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
                 let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
                 let seg_details = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
                 let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+                let dc_width = GLOBAL_DISPLAY_COL_WIDTH.load(Ordering::SeqCst);
+                let sd_width = GLOBAL_SIDE_DRAWER_WIDTH.load(Ordering::SeqCst);
+                let sd_right_gap = GLOBAL_SIDE_DRAWER_RIGHT_GAP.load(Ordering::SeqCst);
+                let ds_right_gap = GLOBAL_DRAWER_SCROLL_RIGHT_GAP.load(Ordering::SeqCst);
+                let inner_w = GLOBAL_INNER_WIDTH.load(Ordering::SeqCst);
+                let stretch_cnt = GLOBAL_STRETCH_GLITCH_COUNT.load(Ordering::SeqCst);
+                let max_close_w = GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.load(Ordering::SeqCst);
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{}}}}}"#,
+                        r#","version":"4.0.0"{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{}}}}}"#,
                         pending_click_str,
+                        pending_test_str,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -2297,7 +2668,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         safe_seg_details,
                         active_prof,
                         dr_width,
-                        dr_overflow
+                        dr_overflow,
+                        dc_width,
+                        sd_width,
+                        sd_right_gap,
+                        ds_right_gap,
+                        inner_w,
+                        stretch_cnt,
+                        max_close_w
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -2306,6 +2684,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     if !pending_click_str.is_empty() {
                         if let Some(pos) = sanitized.rfind('}') {
                             sanitized.insert_str(pos, &pending_click_str);
+                        }
+                    }
+                    if !pending_test_str.is_empty() {
+                        if let Some(pos) = sanitized.rfind('}') {
+                            sanitized.insert_str(pos, &pending_test_str);
                         }
                     }
                     if !sanitized.contains("activeTheme") {
@@ -2368,6 +2751,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
             None => String::new(),
         };
+        let pending_test = GLOBAL_PENDING_TEST.lock().ok().and_then(|mut g| g.take());
+        let pending_test_str = match pending_test {
+            Some(ref s) => format!(r#","pendingTest":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
+            None => String::new(),
+        };
         let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
         let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
         let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
@@ -2377,6 +2765,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let active_prof = GLOBAL_DEVICE_PROFILE.lock().map(|s| if s.is_empty() { "auto".to_string() } else { s.clone() }).unwrap_or_else(|_| "auto".to_string());
         let dr_width = GLOBAL_DRAWER_RECT_WIDTH.load(Ordering::SeqCst);
         let dr_overflow = GLOBAL_DRAWER_RIGHT_OVERFLOW.load(Ordering::SeqCst);
+        let dc_width = GLOBAL_DISPLAY_COL_WIDTH.load(Ordering::SeqCst);
+        let sd_width = GLOBAL_SIDE_DRAWER_WIDTH.load(Ordering::SeqCst);
+        let sd_right_gap = GLOBAL_SIDE_DRAWER_RIGHT_GAP.load(Ordering::SeqCst);
+        let ds_right_gap = GLOBAL_DRAWER_SCROLL_RIGHT_GAP.load(Ordering::SeqCst);
+        let inner_w = GLOBAL_INNER_WIDTH.load(Ordering::SeqCst);
+        let stretch_cnt = GLOBAL_STRETCH_GLITCH_COUNT.load(Ordering::SeqCst);
+        let max_close_w = GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.load(Ordering::SeqCst);
 
         let json = format!(
             r#"{{
@@ -2469,7 +2864,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "segmentedDetails": "{}",
     "activeDeviceProfile": "{}",
     "drawerRectWidth": {},
-    "drawerRightOverflow": {}
+    "drawerRightOverflow": {},
+    "displayColWidth": {},
+    "sideDrawerWidth": {},
+    "sideDrawerRightGap": {},
+    "drawerScrollRightGap": {},
+    "innerWidth": {},
+    "stretchGlitchCount": {},
+    "maxDisplayColWidthDuringClose": {}
   }},
   "version": "4.0.0"{}"#,
             udid,
@@ -2529,11 +2931,19 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             active_prof,
             dr_width,
             dr_overflow,
-            if pending_click_str.is_empty() { "\n}" } else { "\n" }
+            dc_width,
+            sd_width,
+            sd_right_gap,
+            ds_right_gap,
+            inner_w,
+            stretch_cnt,
+            max_close_w,
+            if pending_click_str.is_empty() && pending_test_str.is_empty() { "\n}" } else { "\n" }
         );
         let mut final_json = json;
-        if !pending_click_str.is_empty() {
+        if !pending_click_str.is_empty() || !pending_test_str.is_empty() {
             final_json.push_str(&pending_click_str);
+            final_json.push_str(&pending_test_str);
             final_json.push_str("\n}");
         }
         return HttpResponse::ok_json(&final_json);
@@ -2874,6 +3284,31 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":false,"error":"missing selector"}"#);
     }
 
+    if path == "/api/test/verify_mirror_autofit" {
+        if let Ok(mut g_rep) = GLOBAL_MIRROR_TEST_REPORT.lock() {
+            g_rep.clear();
+        }
+        if let Ok(mut g_tst) = GLOBAL_PENDING_TEST.lock() {
+            *g_tst = Some("verify_mirror_autofit".to_string());
+        }
+        return HttpResponse::ok_json(r#"{"ok":true,"queued":true,"test":"verify_mirror_autofit"}"#);
+    }
+
+    if path == "/api/test/mirror_report" {
+        if req.method == "POST" {
+            if let Ok(mut g_rep) = GLOBAL_MIRROR_TEST_REPORT.lock() {
+                *g_rep = req.body.clone();
+            }
+            return HttpResponse::ok_json(r#"{"ok":true,"saved":true}"#);
+        } else {
+            let rep = GLOBAL_MIRROR_TEST_REPORT.lock().map(|s| s.clone()).unwrap_or_default();
+            if rep.is_empty() {
+                return HttpResponse::ok_json(r#"{"ready":false}"#);
+            }
+            return HttpResponse::ok_json(&rep);
+        }
+    }
+
     if path == "/api/window/toggle_fullscreen" {
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
@@ -2917,8 +3352,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains(r#""family":"ipad""#)
             || req.body.contains(r#""family": "ipad""#)
             || req.body.contains("4:3")
-            || cur_prof == "ipad";
-        let portrait_w = if is_ipad { 564 } else { 346 };
+            || (cur_prof == "ipad" && !(req.body.contains(r#""profile":"auto""#) || req.body.contains(r#""profile":"iphone""#)));
+        let portrait_w = if is_ipad {
+            564
+        } else if (344..=430).contains(&width_val) {
+            if (width_val - 346).abs() <= 3 { 346 } else { width_val }
+        } else {
+            346
+        };
         GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
         if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
             *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
@@ -3104,6 +3545,27 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
         if let Some(ov) = parse_int_param(&req.body, "drawerRightOverflow") {
             GLOBAL_DRAWER_RIGHT_OVERFLOW.store(ov as isize, Ordering::SeqCst);
+        }
+        if let Some(dcw) = parse_int_param(&req.body, "displayColWidth") {
+            GLOBAL_DISPLAY_COL_WIDTH.store(dcw.max(0) as usize, Ordering::SeqCst);
+        }
+        if let Some(sdw) = parse_int_param(&req.body, "sideDrawerWidth") {
+            GLOBAL_SIDE_DRAWER_WIDTH.store(sdw.max(0) as usize, Ordering::SeqCst);
+        }
+        if let Some(sdrg) = parse_int_param(&req.body, "sideDrawerRightGap") {
+            GLOBAL_SIDE_DRAWER_RIGHT_GAP.store(sdrg as isize, Ordering::SeqCst);
+        }
+        if let Some(dsrg) = parse_int_param(&req.body, "drawerScrollRightGap") {
+            GLOBAL_DRAWER_SCROLL_RIGHT_GAP.store(dsrg as isize, Ordering::SeqCst);
+        }
+        if let Some(iw) = parse_int_param(&req.body, "innerWidth") {
+            GLOBAL_INNER_WIDTH.store(iw.max(0) as usize, Ordering::SeqCst);
+        }
+        if let Some(sgc) = parse_int_param(&req.body, "stretchGlitchCount") {
+            GLOBAL_STRETCH_GLITCH_COUNT.store(sgc.max(0) as usize, Ordering::SeqCst);
+        }
+        if let Some(mcd) = parse_int_param(&req.body, "maxDisplayColDuringClose") {
+            GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.store(mcd.max(0) as usize, Ordering::SeqCst);
         }
 
         if let Some(txt) = parse_string_param(&req.body, "startBtnText") {
@@ -3509,6 +3971,94 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 return HttpResponse::ok_css(&css_text);
             }
 
+            if clean_rel.starts_with("mirror.css") || clean_rel == "mirror.css" {
+                let mut css_text = String::from_utf8_lossy(&bytes).to_string();
+                if !css_text.contains("__V4_TAHAP178_MIRROR_CSS__") {
+                    css_text.push_str(r##"
+
+/* __V4_TAHAP178_MIRROR_CSS__ - True 1:1 Uncropped Auto-Fit (ZenLink Fit::Contain Parity) */
+body.fit-autofit #c,
+body.fit-autofit canvas,
+body:not(.fit-fill):not(.fit-contain) #c,
+body:not(.fit-fill):not(.fit-contain) canvas {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  display: block !important;
+}
+body.fit-fill #c,
+body.fit-fill canvas {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  object-fit: fill !important;
+  display: block !important;
+}
+"##);
+                }
+                return HttpResponse::ok_css(&css_text);
+            }
+
+            if clean_rel.starts_with("mirror.js") || clean_rel == "mirror.js" {
+                let mut js_text = String::from_utf8_lossy(&bytes).to_string();
+                if !js_text.contains("__V4_TAHAP178_AUTOFIT__") {
+                    js_text = js_text.replace(
+                        r##"  if (fitMode === "autofit" || fitMode === "fill") {
+    // Tahap 69 & 71: Auto-Fit & Fill ALWAYS fill 100vw and 100vh (0px bottom black bar)
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
+    canvas.style.maxWidth = "100vw";
+    canvas.style.maxHeight = "100vh";
+    canvas.style.objectFit = "fill";
+  } else {
+    // fitMode === "contain" (Original Ratio)
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.objectFit = "contain";
+  }"##,
+                        r##"  // __V4_TAHAP178_AUTOFIT__: True 1:1 Contain on Auto-Fit & Original Ratio (ZenLink Fit::Contain Parity)
+  if (fitMode === "fill") {
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
+    canvas.style.maxWidth = "100vw";
+    canvas.style.maxHeight = "100vh";
+    canvas.style.objectFit = "fill";
+  } else {
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.maxWidth = "100%";
+    canvas.style.maxHeight = "100%";
+    canvas.style.objectFit = "contain";
+  }"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"  if (fitMode === "contain" && canvas.width > 0 && canvas.height > 0) {"##,
+                        r##"  if ((fitMode === "contain" || fitMode === "autofit") && canvas.width > 0 && canvas.height > 0) {"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const nativeTrimTop = 0;
+    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
+    const nativeTrimLeft = 0;
+    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);"##,
+                        r##"    // Tahap 178: baseTrim = 0 when manual Edge Crop is 0 (0 active pixels cropped)
+    const disableNativeTrim = true;
+    const nativeTrimTop = 0;
+    const nativeTrimBot = 0;
+    const nativeTrimLeft = 0;
+    const nativeTrimRight = 0;"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };"##,
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, baseTrim: 0, fitMode, rawW, rawH };"##,
+                    );
+                }
+                return HttpResponse::ok_js(&js_text);
+            }
+
             return HttpResponse::ok_bytes(bytes, mime);
         }
     }
@@ -3525,7 +4075,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     <script src="/v4_bridge.js"></script>
 </head>
 <body>
-    <div class="app" style="display:flex;">
+    <div class="app" id="app-root" style="display:flex;">
         <button id="btn-settings" onclick="window.pywebview.api.set_drawer(true)">Settings</button>
     </div>
 </body>
@@ -3799,5 +4349,28 @@ mod tests {
         assert_eq!(resp_wp.status_code, 200);
         assert!(resp_wp.content_type == "image/jpeg" || resp_wp.content_type == "image/png");
         assert!(resp_wp.body.len() > 50000);
+
+        let req_mirror_js = HttpRequest {
+            method: "GET".to_string(),
+            path: "/mirror.js".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let web_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("handset")
+            .join("web");
+        if web_root.is_dir() {
+            let resp_mjs = handle_request(&req_mirror_js, &state, &web_root);
+            assert_eq!(resp_mjs.status_code, 200);
+            let mjs = String::from_utf8_lossy(&resp_mjs.body);
+            assert!(mjs.contains("__V4_TAHAP178_AUTOFIT__"), "mirror.js must apply True 1:1 Auto-Fit patch");
+            assert!(mjs.contains("const nativeTrimBot = 0;"), "mirror.js must set baseTrim = 0");
+            assert!(!mjs.contains("Math.round(58 * scaleH)"), "mirror.js must not crop 58px bottom");
+        }
     }
 }
