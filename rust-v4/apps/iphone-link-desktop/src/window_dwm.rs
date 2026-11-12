@@ -259,6 +259,20 @@ extern "system" {
     ) -> *mut c_void;
     fn BeginPaint(hwnd: *mut c_void, lpPaint: *mut c_void) -> *mut c_void;
     fn EndPaint(hwnd: *mut c_void, lpPaint: *const c_void) -> i32;
+    fn SetForegroundWindow(hWnd: *mut c_void) -> i32;
+    fn CreatePopupMenu() -> *mut c_void;
+    fn AppendMenuW(hMenu: *mut c_void, uFlags: u32, uIDNewItem: usize, lpNewItem: *const u16) -> i32;
+    fn TrackPopupMenu(
+        hMenu: *mut c_void,
+        uFlags: u32,
+        x: i32,
+        y: i32,
+        nReserved: i32,
+        hWnd: *mut c_void,
+        prcRect: *const RECT,
+    ) -> i32;
+    fn DestroyMenu(hMenu: *mut c_void) -> i32;
+    fn SetMenuDefaultItem(hMenu: *mut c_void, uItem: u32, fByPos: u32) -> i32;
 }
 
 #[link(name = "gdi32")]
@@ -272,9 +286,58 @@ extern "system" {
     fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: u32) -> i32;
 }
 
+#[repr(C)]
+pub struct NOTIFYICONDATAW {
+    pub cbSize: u32,
+    pub hWnd: *mut c_void,
+    pub uID: u32,
+    pub uFlags: u32,
+    pub uCallbackMessage: u32,
+    pub hIcon: *mut c_void,
+    pub szTip: [u16; 128],
+    pub dwState: u32,
+    pub dwStateMask: u32,
+    pub szInfo: [u16; 256],
+    pub uTimeoutOrVersion: u32,
+    pub szInfoTitle: [u16; 64],
+    pub dwInfoFlags: u32,
+    pub guidItem: [u8; 16],
+    pub hBalloonIcon: *mut c_void,
+}
+
 #[link(name = "shell32")]
 extern "system" {
     fn SetCurrentProcessExplicitAppUserModelID(AppID: *const u16) -> i32;
+    fn Shell_NotifyIconW(dwMessage: u32, lpData: *const NOTIFYICONDATAW) -> i32;
+}
+
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegOpenKeyExW(
+        hKey: isize,
+        lpSubKey: *const u16,
+        ulOptions: u32,
+        samDesired: u32,
+        phkResult: *mut isize,
+    ) -> i32;
+    fn RegQueryValueExW(
+        hKey: isize,
+        lpValueName: *const u16,
+        lpReserved: *mut u32,
+        lpType: *mut u32,
+        lpData: *mut u8,
+        lpcbData: *mut u32,
+    ) -> i32;
+    fn RegSetValueExW(
+        hKey: isize,
+        lpValueName: *const u16,
+        Reserved: u32,
+        dwType: u32,
+        lpData: *const u8,
+        cbData: u32,
+    ) -> i32;
+    fn RegDeleteValueW(hKey: isize, lpValueName: *const u16) -> i32;
+    fn RegCloseKey(hKey: isize) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -495,7 +558,7 @@ impl WindowGeometryManager {
 }
 
 // ============================================================================
-// SYSTEM TRAY INTEGRATION (Shell_NotifyIconW)
+// SYSTEM TRAY INTEGRATION (Shell_NotifyIconW) & WINDOWS AUTOSTART REGISTRY
 // ============================================================================
 
 pub const NIM_ADD: u32 = 0x00000000;
@@ -506,15 +569,366 @@ pub const NIF_ICON: u32 = 0x00000002;
 pub const NIF_TIP: u32 = 0x00000004;
 
 pub const WM_APP: u32 = 0x8000;
-pub const WM_TRAYICON: u32 = WM_APP + 101;
+pub const WM_TRAYICON: u32 = WM_APP + 42; // 0x802A
+
+pub const ID_TRAY_SHOW: usize = 1001;
+pub const ID_TRAY_HIDE: usize = 1002;
+pub const ID_TRAY_STARTUP: usize = 1003;
+pub const ID_TRAY_UPDATE: usize = 1004;
+pub const ID_TRAY_LANDSCAPE: usize = 1005;
+pub const ID_TRAY_STEALTH: usize = 1006;
+pub const ID_TRAY_AUDIO: usize = 1007;
+pub const ID_TRAY_CLEAR_CACHE: usize = 1008;
+pub const ID_TRAY_QUIT: usize = 1009;
+
+pub static GLOBAL_STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_AUDIO_PC_ACTIVE: AtomicBool = AtomicBool::new(true);
+pub static GLOBAL_TRAY_REGISTERED: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
+pub static GLOBAL_PENDING_TRAY_ACTION: Mutex<Option<String>> = Mutex::new(None);
+pub static GLOBAL_TRAY_APP_STATE: Mutex<Option<Arc<Mutex<AppState>>>> = Mutex::new(None);
+
+pub fn register_tray_app_state(state: Arc<Mutex<AppState>>) {
+    if let Ok(mut guard) = GLOBAL_TRAY_APP_STATE.lock() {
+        *guard = Some(state);
+    }
+}
 
 pub const TRAY_MENU_ITEMS: &[&str] = &[
-    "Show iPhone Link",
-    "Lock iPhone",
-    "Unlock iPhone",
-    "Settings",
-    "Exit",
+    "Show / Restore iPhone Link",
+    "Hide to System Tray",
+    "Start with Windows",
+    "Check for Updates...",
+    "Landscape Mode (Alt+H)",
+    "Stealth Dim Mode (Alt+D)",
+    "Stream Audio to PC",
+    "Clear Copy Cache (Alt+R)",
+    "Quit iPhone Link",
 ];
+
+// HKCU\Software\Microsoft\Windows\CurrentVersion\Run sign-extended HKEY_CURRENT_USER on Win64
+const HKEY_CURRENT_USER_VAL: isize = 0x80000001u32 as i32 as isize;
+const KEY_READ_VAL: u32 = 0x20019;
+const KEY_WRITE_VAL: u32 = 0x20006;
+const REG_SZ_VAL: u32 = 1;
+const REG_RUN_SUBKEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+pub const REG_RUN_VALUE_NAME: &str = "iPhoneLink";
+
+fn to_wide_null(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Checks whether HKCU\...\Run\iPhoneLink startup entry exists and is non-empty.
+pub fn is_start_with_windows_enabled() -> bool {
+    is_start_with_windows_enabled_for(REG_RUN_VALUE_NAME)
+}
+
+pub fn is_start_with_windows_enabled_for(value_name: &str) -> bool {
+    unsafe {
+        let subkey_w = to_wide_null(REG_RUN_SUBKEY);
+        let value_w = to_wide_null(value_name);
+        let mut hkey: isize = 0;
+        let rc = RegOpenKeyExW(
+            HKEY_CURRENT_USER_VAL,
+            subkey_w.as_ptr(),
+            0,
+            KEY_READ_VAL,
+            &mut hkey,
+        );
+        if rc != 0 || hkey == 0 {
+            return false;
+        }
+        let mut reg_type: u32 = 0;
+        let mut cb_data: u32 = 0;
+        let q_rc = RegQueryValueExW(
+            hkey,
+            value_w.as_ptr(),
+            ptr::null_mut(),
+            &mut reg_type,
+            ptr::null_mut(),
+            &mut cb_data,
+        );
+        let _ = RegCloseKey(hkey);
+        q_rc == 0 && cb_data > 2
+    }
+}
+
+/// Enables or disables Start with Windows in HKCU\...\Run ("iPhoneLink").
+pub fn set_start_with_windows(enable: bool) -> Result<bool, String> {
+    let exe_path = std::env::current_exe().map_err(|e| format!("current_exe failed: {}", e))?;
+    set_start_with_windows_for(enable, REG_RUN_VALUE_NAME, &exe_path)
+}
+
+pub fn set_start_with_windows_for(
+    enable: bool,
+    value_name: &str,
+    exe_path: &Path,
+) -> Result<bool, String> {
+    unsafe {
+        let subkey_w = to_wide_null(REG_RUN_SUBKEY);
+        let value_w = to_wide_null(value_name);
+        let mut hkey: isize = 0;
+        let rc = RegOpenKeyExW(
+            HKEY_CURRENT_USER_VAL,
+            subkey_w.as_ptr(),
+            0,
+            KEY_WRITE_VAL,
+            &mut hkey,
+        );
+        if rc != 0 || hkey == 0 {
+            return Err(format!("RegOpenKeyExW failed with code {}", rc));
+        }
+
+        if enable {
+            let cmd = format!("\"{}\"", exe_path.display());
+            let cmd_w = to_wide_null(&cmd);
+            let cb_bytes = (cmd_w.len() * std::mem::size_of::<u16>()) as u32;
+            let set_rc = RegSetValueExW(
+                hkey,
+                value_w.as_ptr(),
+                0,
+                REG_SZ_VAL,
+                cmd_w.as_ptr() as *const u8,
+                cb_bytes,
+            );
+            let _ = RegCloseKey(hkey);
+            if set_rc != 0 {
+                return Err(format!("RegSetValueExW failed with code {}", set_rc));
+            }
+            Ok(true)
+        } else {
+            let del_rc = RegDeleteValueW(hkey, value_w.as_ptr());
+            let _ = RegCloseKey(hkey);
+            // ERROR_SUCCESS (0) or ERROR_FILE_NOT_FOUND (2) both mean disabled cleanly
+            if del_rc != 0 && del_rc != 2 {
+                return Err(format!("RegDeleteValueW failed with code {}", del_rc));
+            }
+            Ok(false)
+        }
+    }
+}
+
+/// Registers (or updates) the Windows System Tray icon via Shell_NotifyIconW.
+pub fn register_tray_icon(hwnd: *mut c_void) -> bool {
+    if hwnd.is_null() {
+        return false;
+    }
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = 1;
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        nid.uCallbackMessage = WM_TRAYICON;
+
+        let mut hicon = load_app_icon(16, 16);
+        if hicon.is_null() {
+            hicon = load_app_icon(32, 32);
+        }
+        nid.hIcon = hicon;
+
+        let tip_w: Vec<u16> = "iPhone Link v4.0 - Native iPhone Mirroring".encode_utf16().collect();
+        let max_len = tip_w.len().min(127);
+        nid.szTip[..max_len].copy_from_slice(&tip_w[..max_len]);
+        nid.szTip[max_len] = 0;
+
+        let was_reg = GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst);
+        let msg = if was_reg { NIM_MODIFY } else { NIM_ADD };
+        let ok = Shell_NotifyIconW(msg, &nid) != 0 || (was_reg && Shell_NotifyIconW(NIM_ADD, &nid) != 0);
+        if ok {
+            GLOBAL_TRAY_REGISTERED.store(true, Ordering::SeqCst);
+        }
+        ok
+    }
+}
+
+/// Deletes the tray icon cleanly via Shell_NotifyIconW(NIM_DELETE).
+pub fn unregister_tray_icon(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = 1;
+        let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+        GLOBAL_TRAY_REGISTERED.store(false, Ordering::SeqCst);
+    }
+}
+
+pub fn restore_window_from_tray(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        ShowWindow(hwnd, 5); // SW_SHOW
+        ShowWindow(hwnd, 9); // SW_RESTORE
+        SetForegroundWindow(hwnd);
+        PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
+    }
+}
+
+pub fn hide_window_to_tray(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+    if !GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst) {
+        let _ = register_tray_icon(hwnd);
+    }
+    unsafe {
+        ShowWindow(hwnd, 0); // SW_HIDE
+    }
+}
+
+pub fn queue_pending_tray_action(action: &str) {
+    if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+        *g = Some(action.to_string());
+    }
+}
+
+fn handle_tray_menu_command(hwnd: *mut c_void, cmd: usize) {
+    match cmd {
+        ID_TRAY_SHOW => {
+            restore_window_from_tray(hwnd);
+        }
+        ID_TRAY_HIDE => {
+            hide_window_to_tray(hwnd);
+        }
+        ID_TRAY_STARTUP => {
+            let next = !is_start_with_windows_enabled();
+            let _ = set_start_with_windows(next);
+        }
+        ID_TRAY_UPDATE => {
+            restore_window_from_tray(hwnd);
+            GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
+            if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
+                if let Some(ref arc_st) = *guard {
+                    if let Ok(mut st) = arc_st.lock() {
+                        st.is_drawer_open = true;
+                        st.geometry.is_drawer_open = true;
+                    }
+                }
+            }
+            apply_hwnd_geometry_from_state(hwnd);
+            queue_pending_tray_action("check_updates");
+        }
+        ID_TRAY_LANDSCAPE => {
+            let next_land = !GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+            GLOBAL_IS_LANDSCAPE.store(next_land, Ordering::SeqCst);
+            if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
+                if let Some(ref arc_st) = *guard {
+                    if let Ok(mut st) = arc_st.lock() {
+                        st.is_landscape = next_land;
+                        st.geometry.is_landscape = next_land;
+                    }
+                }
+            }
+            apply_hwnd_geometry_from_state(hwnd);
+            queue_pending_tray_action(&format!("set_landscape:{}", next_land));
+        }
+        ID_TRAY_STEALTH => {
+            let mut ctrl = iphone_link_apple::hid::IndigoHidController::new();
+            let _ = ctrl.execute_stealth_dim_toggle();
+            let next_stealth = !GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+            GLOBAL_STEALTH_ACTIVE.store(next_stealth, Ordering::SeqCst);
+            if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
+                if let Some(ref arc_st) = *guard {
+                    if let Ok(mut st) = arc_st.lock() {
+                        st.stealth_dim = next_stealth;
+                    }
+                }
+            }
+            queue_pending_tray_action(&format!("set_stealth:{}", next_stealth));
+        }
+        ID_TRAY_AUDIO => {
+            let next_pc = !GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
+            GLOBAL_AUDIO_PC_ACTIVE.store(next_pc, Ordering::SeqCst);
+            if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
+                if let Some(ref arc_st) = *guard {
+                    if let Ok(mut st) = arc_st.lock() {
+                        st.audio_routing = if next_pc { "pc".to_string() } else { "device".to_string() };
+                        st.audio_muted = !next_pc;
+                    }
+                }
+            }
+            queue_pending_tray_action(&format!("set_audio_pc:{}", next_pc));
+        }
+        ID_TRAY_CLEAR_CACHE => {
+            crate::ocr_engine::clear_copy_cache();
+            queue_pending_tray_action("clear_cache");
+        }
+        ID_TRAY_QUIT => {
+            unregister_tray_icon(hwnd);
+            unsafe {
+                PostMessageW(hwnd, 0x0010, 0, 0); // WM_CLOSE
+            }
+        }
+        _ => {}
+    }
+}
+
+unsafe fn show_native_tray_context_menu(hwnd: *mut c_void) {
+    const MF_STRING: u32 = 0x0000;
+    const MF_CHECKED: u32 = 0x0008;
+    const MF_SEPARATOR: u32 = 0x0800;
+    const TPM_RIGHTBUTTON: u32 = 0x0002;
+    const TPM_NONOTIFY: u32 = 0x0080;
+    const TPM_RETURNCMD: u32 = 0x0100;
+
+    let hmenu = CreatePopupMenu();
+    if hmenu.is_null() {
+        return;
+    }
+
+    let startup_checked = is_start_with_windows_enabled();
+    let landscape_checked = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let stealth_checked = GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let audio_checked = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
+
+    let add_item = |id: usize, text: &str, checked: bool| {
+        let w = to_wide_null(text);
+        let flags = MF_STRING | if checked { MF_CHECKED } else { 0 };
+        AppendMenuW(hmenu, flags, id, w.as_ptr());
+    };
+    let add_sep = || {
+        AppendMenuW(hmenu, MF_SEPARATOR, 0, ptr::null());
+    };
+
+    add_item(ID_TRAY_SHOW, "Show / Restore iPhone Link", false);
+    let _ = SetMenuDefaultItem(hmenu, ID_TRAY_SHOW as u32, 0);
+    add_item(ID_TRAY_HIDE, "Hide to System Tray", false);
+    add_sep();
+    add_item(ID_TRAY_STARTUP, "Start with Windows", startup_checked);
+    add_item(ID_TRAY_UPDATE, "Check for Updates...", false);
+    add_sep();
+    add_item(ID_TRAY_LANDSCAPE, "Landscape Mode (Alt+H)", landscape_checked);
+    add_item(ID_TRAY_STEALTH, "Stealth Dim Mode (Alt+D)", stealth_checked);
+    add_item(ID_TRAY_AUDIO, "Stream Audio to PC", audio_checked);
+    add_item(ID_TRAY_CLEAR_CACHE, "Clear Copy Cache (Alt+R)", false);
+    add_sep();
+    add_item(ID_TRAY_QUIT, "Quit iPhone Link", false);
+
+    let mut pt = POINT { x: 0, y: 0 };
+    GetCursorPos(&mut pt);
+    SetForegroundWindow(hwnd);
+
+    let cmd = TrackPopupMenu(
+        hmenu,
+        TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+        pt.x,
+        pt.y,
+        0,
+        hwnd,
+        ptr::null(),
+    );
+    PostMessageW(hwnd, 0, 0, 0); // WM_NULL (MSDN required for TrackPopupMenu focus cleanup)
+    DestroyMenu(hmenu);
+
+    if cmd > 0 {
+        handle_tray_menu_command(hwnd, cmd as usize);
+    }
+}
 
 // ============================================================================
 // INTERACTIVE WINDOW CREATION & MESSAGE PUMP
@@ -1011,6 +1425,21 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
         }
+        WM_TRAYICON => {
+            let mouse_msg = (lparam as u32) & 0xFFFF;
+            match mouse_msg {
+                0x0202 | 0x0203 => {
+                    // WM_LBUTTONUP | WM_LBUTTONDBLCLK
+                    restore_window_from_tray(hwnd);
+                }
+                0x0205 | 0x007B => {
+                    // WM_RBUTTONUP | WM_CONTEXTMENU
+                    show_native_tray_context_menu(hwnd);
+                }
+                _ => {}
+            }
+            0
+        }
         0x0005 => {
             // WM_SIZE
             notify_webview_bounds_sync(hwnd);
@@ -1018,6 +1447,7 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
         }
         0x0002 => {
             // WM_DESTROY
+            unregister_tray_icon(hwnd);
             PostQuitMessage(0);
             0
         }
@@ -1415,6 +1845,8 @@ pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, St
         );
         ShowWindow(hwnd, 5); // SW_SHOW
         UpdateWindow(hwnd);
+        GLOBAL_MAIN_HWND.store(hwnd as isize, Ordering::SeqCst);
+        let _ = register_tray_icon(hwnd);
 
         Ok(hwnd)
     }
@@ -1782,5 +2214,37 @@ mod tests {
         assert!(probe.is_ok(), "Offscreen HWND probe must succeed");
         let res = probe.unwrap();
         assert!(res.elapsed_ms < 150, "Offscreen probe must complete in < 150ms without blocking");
+    }
+
+    #[test]
+    fn test_tray_menu_items_and_notifyicondata_layout() {
+        assert_eq!(WM_TRAYICON, 0x802A);
+        assert_eq!(TRAY_MENU_ITEMS.len(), 9);
+        assert_eq!(TRAY_MENU_ITEMS[0], "Show / Restore iPhone Link");
+        assert!(TRAY_MENU_ITEMS.contains(&"Start with Windows"));
+        assert!(TRAY_MENU_ITEMS.contains(&"Check for Updates..."));
+        assert!(TRAY_MENU_ITEMS.contains(&"Quit iPhone Link"));
+        for item in TRAY_MENU_ITEMS {
+            assert!(item.is_ascii(), "Tray item must be pure ASCII: {}", item);
+            assert!(!item.contains('\u{2014}') && !item.contains('\u{2013}'));
+        }
+        assert_eq!(std::mem::size_of::<NOTIFYICONDATAW>(), 976);
+    }
+
+    #[test]
+    fn test_registry_startup_helper_isolated_value() {
+        let test_val = "iPhoneLink_UnitTest_Temp";
+        let _ = set_start_with_windows_for(false, test_val, Path::new(r"C:\Temp\iPhone Link.exe"));
+        assert!(!is_start_with_windows_enabled_for(test_val));
+
+        let res_on = set_start_with_windows_for(true, test_val, Path::new(r"C:\Temp\iPhone Link.exe"));
+        assert!(res_on.is_ok(), "RegSetValueExW failed: {:?}", res_on);
+        assert_eq!(res_on.unwrap(), true);
+        assert!(is_start_with_windows_enabled_for(test_val));
+
+        let res_off = set_start_with_windows_for(false, test_val, Path::new(r"C:\Temp\iPhone Link.exe"));
+        assert!(res_off.is_ok(), "RegDeleteValueW failed: {:?}", res_off);
+        assert_eq!(res_off.unwrap(), false);
+        assert!(!is_start_with_windows_enabled_for(test_val));
     }
 }

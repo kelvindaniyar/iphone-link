@@ -55,18 +55,26 @@ pub static GLOBAL_INNER_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_STRETCH_GLITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
+pub static GLOBAL_PENDING_INPUT: Mutex<Option<(String, String)>> = Mutex::new(None);
 pub static GLOBAL_PENDING_TEST: Mutex<Option<String>> = Mutex::new(None);
 pub static GLOBAL_MIRROR_TEST_REPORT: Mutex<String> = Mutex::new(String::new());
 pub static LAST_SET_DRAWER_STATE: AtomicBool = AtomicBool::new(false);
 pub static LAST_SET_DRAWER_MS: AtomicU64 = AtomicU64::new(0);
+pub static SAVED_UNLOCK_PIN: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_UNLOCK_PIN: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_UPDATE_VERSION: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_LAST_TRAY_ACTION: Mutex<String> = Mutex::new(String::new());
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
+use crate::updater::compute_sha256;
 use crate::window_dwm::{
     apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop,
-    move_hwnd_by, move_hwnd_to, toggle_fullscreen_state,
-    trigger_hwnd_drag, WindowGeometryManager, GLOBAL_DRAWER_OPEN, GLOBAL_IS_FULLSCREEN,
-    GLOBAL_IS_LANDSCAPE, GLOBAL_PORTRAIT_WIDTH, RECT,
+    is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to, register_tray_app_state,
+    register_tray_icon, set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag,
+    unregister_tray_icon, WindowGeometryManager, GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN,
+    GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE, GLOBAL_PENDING_TRAY_ACTION,
+    GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, RECT, TRAY_MENU_ITEMS,
 };
 
 use iphone_link_apple::hid::IndigoHidController;
@@ -1751,6 +1759,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var appIsMirroring = Boolean(appRoot && appRoot.classList.contains('is-mirroring'));
             var appIsStreaming = Boolean(appRoot && appRoot.classList.contains('is-streaming'));
             var seVisibleNow = Boolean(seEl && !seEl.hidden && window.getComputedStyle(seEl).display !== 'none');
+            var cardUpdEl = document.getElementById('card-updater');
+            var cardUpdaterCollapsed = Boolean(cardUpdEl && cardUpdEl.classList.contains('is-collapsed'));
 
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
@@ -1803,6 +1813,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 isFullsize: appIsFullsize,
                 isMirroring: appIsMirroring,
                 isStreaming: appIsStreaming,
+                unlockPinValue: ((document.getElementById('input-unlock-pin') || {}).value || ''),
+                updateVersionText: (((document.getElementById('update-current-version') || {}).textContent || '').trim()),
+                creditAppNameText: (((document.querySelector('.credit-app-name') || {}).textContent || '').trim()),
+                lastTrayAction: (window.__v4LastTrayAction || ''),
+                updaterScrolled: Boolean(window.__v4UpdaterScrolledIntoView),
+                cardUpdaterCollapsed: cardUpdaterCollapsed,
+                checkUpdateClicked: Boolean(window.__v4CheckUpdateClicked),
                 screenEmptyVisible: seVisibleNow
             });
         } catch (_) {}
@@ -2492,6 +2509,261 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.__v4RunMirrorAutofitVerify = runSyntheticMirrorAutofitVerify;
     window.__v4RunTahap182UiVerify = runTahap182UiVerify;
 
+    function sanitizePinDigits(rawVal) {
+        return String(rawVal || '').replace(/\D/g, '').slice(0, 6);
+    }
+
+    function syncVersionLabels() {
+        try {
+            var updVer = document.getElementById('update-current-version');
+            if (updVer && updVer.textContent.trim() !== 'iPhone Link v4.0.0') {
+                updVer.textContent = 'iPhone Link v4.0.0';
+            }
+            var credName = document.querySelector('.credit-app-name');
+            if (credName && credName.textContent.trim() !== 'iPhone Link v4.0') {
+                credName.textContent = 'iPhone Link v4.0';
+            }
+        } catch (_) {}
+    }
+
+    function hydratePinFromSettings(data) {
+        if (!data || typeof data !== 'object') return;
+        try {
+            var fid = String(data.folderInstanceId || '');
+            if (fid) {
+                window.__v4FolderInstanceId = fid;
+                localStorage.setItem('iphone_link_folder_instance_id', fid);
+            }
+            var serverPin = sanitizePinDigits(data.unlockPin || '');
+            var hasSettingsFile = Boolean(data.hasUserSettingsFile);
+            if (serverPin) {
+                window.__v4SavedUnlockPin = serverPin;
+                window.__v4IntentionalWipe = false;
+                localStorage.setItem('iphone_link_unlock_pin', serverPin);
+                localStorage.setItem('pane-unlock-pin', serverPin);
+                var pinEl = document.getElementById('input-unlock-pin');
+                if (pinEl && document.activeElement !== pinEl && pinEl.value !== serverPin) {
+                    pinEl.value = serverPin;
+                }
+            } else if (!hasSettingsFile && !window.__v4PinTypedThisSession) {
+                window.__v4SavedUnlockPin = '';
+                localStorage.removeItem('iphone_link_unlock_pin');
+                localStorage.removeItem('pane-unlock-pin');
+                var pinElClear = document.getElementById('input-unlock-pin');
+                if (pinElClear && document.activeElement !== pinElClear && pinElClear.value !== '') {
+                    pinElClear.value = '';
+                }
+            }
+        } catch (_) {}
+    }
+
+    if (!window.__v4FetchWrapped && typeof window.fetch === 'function') {
+        window.__v4FetchWrapped = true;
+        var __origFetch = window.fetch.bind(window);
+        window.__v4OrigFetch = __origFetch;
+        window.fetch = function(input, init) {
+            var urlStr = (typeof input === 'string') ? input : ((input && input.url) || '');
+            var method = (((init && init.method) || (input && input.method) || 'GET') + '').toUpperCase();
+            var p = __origFetch.apply(window, arguments);
+            if ((urlStr.indexOf('/api/settings') !== -1 || urlStr.indexOf('/api/keyboard/settings') !== -1) && method === 'GET') {
+                return p.then(function(resp) {
+                    try {
+                        if (!resp || !resp.ok) return resp;
+                        return resp.clone().json().then(function(data) {
+                            hydratePinFromSettings(data);
+                            syncVersionLabels();
+                            return new Response(JSON.stringify(data), {
+                                status: resp.status,
+                                statusText: resp.statusText,
+                                headers: resp.headers
+                            });
+                        }).catch(function() { return resp; });
+                    } catch (_) {
+                        return resp;
+                    }
+                });
+            }
+            return p;
+        };
+    }
+
+    var __v4PinSyncInFlight = false;
+    var __v4PinSyncPending = null;
+    function flushPinSyncQueue(useKeepalive) {
+        if (__v4PinSyncPending === null) return;
+        if (__v4PinSyncInFlight && !useKeepalive) return;
+        var nextPin = __v4PinSyncPending;
+        __v4PinSyncPending = null;
+        __v4PinSyncInFlight = true;
+        var fn = window.__v4OrigFetch || window.fetch;
+        try {
+            fn('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ unlockPin: nextPin }),
+                keepalive: Boolean(useKeepalive)
+            }).then(function() {
+                __v4PinSyncInFlight = false;
+                if (__v4PinSyncPending !== null) {
+                    flushPinSyncQueue(false);
+                } else {
+                    setTimeout(function() { sendDomBeacon(false); }, 40);
+                }
+            }).catch(function() {
+                __v4PinSyncInFlight = false;
+            });
+        } catch (_) {
+            __v4PinSyncInFlight = false;
+        }
+    }
+
+    function persistUnlockPinDual(rawVal, useKeepalive) {
+        var clean = sanitizePinDigits(rawVal);
+        window.__v4SavedUnlockPin = clean;
+        window.__v4PinTypedThisSession = true;
+        window.__v4IntentionalWipe = false;
+        try {
+            if (window.__v4FolderInstanceId) {
+                localStorage.setItem('iphone_link_folder_instance_id', window.__v4FolderInstanceId);
+            }
+            localStorage.setItem('iphone_link_unlock_pin', clean);
+            localStorage.setItem('pane-unlock-pin', clean);
+        } catch (_) {}
+        __v4PinSyncPending = clean;
+        flushPinSyncQueue(Boolean(useKeepalive));
+    }
+
+    function guardPinInputAgainstAccidentalWipe() {
+        try {
+            if (window.__v4IntentionalWipe) return;
+            var saved = sanitizePinDigits(window.__v4SavedUnlockPin || localStorage.getItem('iphone_link_unlock_pin') || localStorage.getItem('pane-unlock-pin') || '');
+            if (!saved) return;
+            var pinEl = document.getElementById('input-unlock-pin');
+            if (pinEl && document.activeElement !== pinEl && pinEl.value !== saved) {
+                pinEl.value = saved;
+            }
+            localStorage.setItem('iphone_link_unlock_pin', saved);
+            localStorage.setItem('pane-unlock-pin', saved);
+            if (window.__v4FolderInstanceId) {
+                localStorage.setItem('iphone_link_folder_instance_id', window.__v4FolderInstanceId);
+            }
+        } catch (_) {}
+    }
+
+    function bindPinPersistence() {
+        var pinEl = document.getElementById('input-unlock-pin');
+        if (pinEl && !pinEl.__v4PinBound) {
+            pinEl.__v4PinBound = true;
+            pinEl.addEventListener('input', function() {
+                var clean = sanitizePinDigits(pinEl.value);
+                if (pinEl.value !== clean) pinEl.value = clean;
+                persistUnlockPinDual(clean, false);
+            });
+            pinEl.addEventListener('change', function() {
+                var clean = sanitizePinDigits(pinEl.value);
+                if (pinEl.value !== clean) pinEl.value = clean;
+                persistUnlockPinDual(clean, true);
+            });
+            pinEl.addEventListener('blur', function() {
+                var clean = sanitizePinDigits(pinEl.value);
+                persistUnlockPinDual(clean, true);
+            });
+        }
+        var wipeBtn = document.getElementById('btn-wipe-privacy');
+        if (wipeBtn && !wipeBtn.__v4WipeBound) {
+            wipeBtn.__v4WipeBound = true;
+            wipeBtn.addEventListener('click', function() {
+                window.__v4IntentionalWipe = true;
+                window.__v4PinTypedThisSession = false;
+                window.__v4SavedUnlockPin = '';
+                __v4PinSyncPending = null;
+                try {
+                    localStorage.removeItem('iphone_link_unlock_pin');
+                    localStorage.removeItem('pane-unlock-pin');
+                } catch (_) {}
+                setTimeout(function() { sendDomBeacon(false); }, 150);
+            }, true);
+        }
+        var stealthBtn = document.getElementById('btn-stealth-mode');
+        if (stealthBtn && !stealthBtn.__v4StealthGuardBound) {
+            stealthBtn.__v4StealthGuardBound = true;
+            stealthBtn.addEventListener('click', function() {
+                setTimeout(guardPinInputAgainstAccidentalWipe, 0);
+                setTimeout(guardPinInputAgainstAccidentalWipe, 80);
+                setTimeout(guardPinInputAgainstAccidentalWipe, 250);
+            });
+        }
+    }
+
+    function handlePendingTrayAction(act) {
+        if (!act) return;
+        window.__v4LastTrayAction = String(act);
+        try {
+            if (act === 'check_updates') {
+                window.__v4LastDrawerTouch = Date.now();
+                var appElU = document.getElementById('app-root') || document.querySelector('.app');
+                if (appElU) {
+                    appElU.classList.add('drawer-open');
+                }
+                var cpEl = document.getElementById('control-pane');
+                if (cpEl) cpEl.hidden = false;
+                if (typeof toggleSettings === 'function') {
+                    toggleSettings(true);
+                }
+                setTimeout(function() {
+                    var cardUpd = document.getElementById('card-updater');
+                    if (cardUpd) {
+                        cardUpd.classList.remove('is-collapsed');
+                        var btnCol = document.getElementById('btn-update-collapse');
+                        if (btnCol) btnCol.setAttribute('aria-expanded', 'true');
+                        if (typeof cardUpd.scrollIntoView === 'function') {
+                            cardUpd.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                        window.__v4UpdaterScrolledIntoView = true;
+                    }
+                    var btnChk = document.getElementById('btn-check-update');
+                    if (btnChk) {
+                        window.__v4CheckUpdateClicked = true;
+                        if (!btnChk.disabled) btnChk.click();
+                    }
+                    setTimeout(function() { sendDomBeacon(false); }, 180);
+                }, 140);
+                return;
+            }
+            if (act.indexOf('set_landscape:') === 0) {
+                var targetL = act.slice(-4) === 'true';
+                var appElL = document.getElementById('app-root') || document.querySelector('.app');
+                var isLandNow = Boolean(appElL && appElL.classList.contains('is-landscape'));
+                if (isLandNow !== targetL) {
+                    var btnRot = document.getElementById('btn-rotate-landscape');
+                    if (btnRot) btnRot.click();
+                }
+            } else if (act.indexOf('set_stealth:') === 0) {
+                var targetS = act.slice(-4) === 'true';
+                if (typeof window.triggerToggleStealthDim === 'function') {
+                    window.triggerToggleStealthDim(targetS);
+                }
+                setTimeout(guardPinInputAgainstAccidentalWipe, 120);
+            } else if (act.indexOf('set_audio_pc:') === 0) {
+                var targetA = act.slice(-4) === 'true';
+                var btnAu = document.getElementById(targetA ? 'btn-audio-out-pc' : 'btn-audio-out-device');
+                if (btnAu) btnAu.click();
+            } else if (act === 'clear_cache') {
+                if (typeof window.triggerClearCopyCacheWithFeedback === 'function') {
+                    window.triggerClearCopyCacheWithFeedback();
+                } else {
+                    var btnCc = document.getElementById('btn-clear-copy-cache');
+                    if (btnCc) btnCc.click();
+                }
+            }
+        } catch (_) {}
+        setTimeout(function() { sendDomBeacon(false); }, 180);
+    }
+
+    window.__v4PersistUnlockPin = persistUnlockPinDual;
+    window.__v4HydratePinFromSettings = hydratePinFromSettings;
+    window.__v4HandleTrayAction = handlePendingTrayAction;
+
     function initBridge() {
         var isMainAppWindow = Boolean(document.getElementById('app-root') || document.querySelector('.side-drawer') || document.getElementById('screen-view'));
         if (!isMainAppWindow) {
@@ -2503,6 +2775,20 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         syncMirroringStateClass();
         sanitizeAllSegmentedGroupsOnBoot();
         sanitizeErrorBanners();
+        syncVersionLabels();
+        bindPinPersistence();
+        try {
+            fetch('/api/settings').then(function(r) { return r.json(); }).then(function(data) {
+                hydratePinFromSettings(data);
+                syncVersionLabels();
+            }).catch(function(){});
+        } catch (_) {}
+        window.addEventListener('beforeunload', function() {
+            var pEl = document.getElementById('input-unlock-pin');
+            if (pEl && !window.__v4IntentionalWipe && sanitizePinDigits(pEl.value)) {
+                persistUnlockPinDual(pEl.value, true);
+            }
+        });
 
         // Override app.js global computeDisplayWidthCss so exits from Full Screen keep exact 564px (iPad) or dynamic portrait width
         window.computeDisplayWidthCss = computeV4DisplayWidthCss;
@@ -2573,12 +2859,18 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             syncIpadDisplayWidthVar();
             syncMirroringStateClass();
             sanitizeAllSegmentedGroupsOnBoot();
+            syncVersionLabels();
+            bindPinPersistence();
+            guardPinInputAgainstAccidentalWipe();
             sendDomBeacon(false);
         }, 300);
         setTimeout(function() {
             syncIpadDisplayWidthVar();
             syncMirroringStateClass();
             sanitizeAllSegmentedGroupsOnBoot();
+            syncVersionLabels();
+            bindPinPersistence();
+            guardPinInputAgainstAccidentalWipe();
             sendDomBeacon(false);
         }, 1000);
 
@@ -2586,10 +2878,26 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             try {
                 syncMirroringStateClass();
                 sanitizeErrorBanners();
+                syncVersionLabels();
+                guardPinInputAgainstAccidentalWipe();
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
                     if (s && s.pendingClick) {
                         window.__v4ClickSelector(s.pendingClick);
                         setTimeout(function() { sendDomBeacon(false); }, 180);
+                    }
+                    if (s && s.pendingInput && s.pendingInput.selector) {
+                        var piEl = document.querySelector(s.pendingInput.selector);
+                        if (piEl) {
+                            piEl.focus();
+                            piEl.value = String(s.pendingInput.value || '');
+                            piEl.dispatchEvent(new Event('input', { bubbles: true }));
+                            piEl.dispatchEvent(new Event('change', { bubbles: true }));
+                            piEl.blur();
+                            setTimeout(function() { sendDomBeacon(false); }, 180);
+                        }
+                    }
+                    if (s && s.pendingTrayAction) {
+                        handlePendingTrayAction(s.pendingTrayAction);
                     }
                     if (s && s.pendingTest === 'verify_mirror_autofit') {
                         runSyntheticMirrorAutofitVerify();
@@ -2645,6 +2953,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return Promise.resolve(true);
         },
         close: function() {
+            try {
+                var pEl = document.getElementById('input-unlock-pin');
+                if (pEl && !window.__v4IntentionalWipe && sanitizePinDigits(pEl.value)) {
+                    persistUnlockPinDual(pEl.value, true);
+                }
+            } catch (_) {}
             if (window.chrome && window.chrome.webview) {
                 try { window.chrome.webview.postMessage("close"); } catch (_) {}
             }
@@ -2837,6 +3151,8 @@ pub struct AppState {
     pub audio_buffer_preset: String,
     pub lip_sync: bool,
     pub device_profile: String,
+    pub update_channel: String,
+    pub auto_check_update: bool,
     pub server_port: u16,
     pub geometry: WindowGeometryManager,
 }
@@ -2868,6 +3184,8 @@ impl Default for AppState {
             audio_buffer_preset: "normal".to_string(),
             lip_sync: true,
             device_profile: "auto".to_string(),
+            update_channel: "stable".to_string(),
+            auto_check_update: true,
             server_port: DEFAULT_PORT,
             geometry: WindowGeometryManager::new(1.0),
         }
@@ -3120,25 +3438,267 @@ fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> 
     None
 }
 
-fn build_settings_json(st: &AppState) -> String {
+fn escape_json_str(s: &str) -> String {
+    s.replace('\\', r#"\\"#).replace('"', r#"\""#)
+}
+
+fn sanitize_pin_digits(raw: &str) -> String {
+    raw.chars().filter(|c| c.is_ascii_digit()).take(6).collect()
+}
+
+fn parse_bool_param(body: &str, param: &str) -> Option<bool> {
+    let t1 = format!(r#""{}":true"#, param);
+    let t2 = format!(r#""{}": true"#, param);
+    let f1 = format!(r#""{}":false"#, param);
+    let f2 = format!(r#""{}": false"#, param);
+    if body.contains(&t1) || body.contains(&t2) {
+        Some(true)
+    } else if body.contains(&f1) || body.contains(&f2) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn body_contains_key(body: &str, key: &str) -> bool {
+    let k1 = format!(r#""{}":"#, key);
+    let k2 = format!(r#""{}": "#, key);
+    body.contains(&k1) || body.contains(&k2)
+}
+
+fn current_exe_dir_normalized() -> PathBuf {
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return dir.to_path_buf();
+        }
+    }
+    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Deterministic 12-char hex identifier for the installation folder (SHA-256 of canonical EXE directory).
+pub fn get_deterministic_folder_instance_id_for_dir(dir: &Path) -> String {
+    let canon = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let raw = canon.to_string_lossy().to_string();
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    let normalized = stripped.replace('\\', "/").to_lowercase();
+    let hash = compute_sha256(normalized.as_bytes());
+    hash.chars().take(12).collect()
+}
+
+pub fn get_deterministic_folder_instance_id() -> String {
+    get_deterministic_folder_instance_id_for_dir(&current_exe_dir_normalized())
+}
+
+pub fn user_settings_file_path() -> PathBuf {
+    current_exe_dir_normalized().join("user_settings.json")
+}
+
+fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unlock_pin: &str) -> String {
     format!(
-        r#"{{"crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","audioOut":"{}","audioSinkEnabled":{},"audioVolume":{},"audioMuted":{},"audioBufferPreset":"{}","lipSync":{},"trackpadSpeed":{},"crossPlatformShortcuts":true,"pastePcClipboard":true,"autoRotate":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":true,"updateChannel":"stable","language":"{}","version":"4.0.0"}}"#,
+        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","audioOut":"{}","audioSinkEnabled":{},"audioVolume":{},"audioMuted":{},"audioBufferPreset":"{}","lipSync":{},"trackpadSpeed":{},"crossPlatformShortcuts":true,"pastePcClipboard":true,"autoRotate":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"4.0.0"}}"#,
+        escape_json_str(folder_id),
+        has_file,
+        escape_json_str(unlock_pin),
         st.crop_top,
         st.crop_bottom,
         st.crop_left,
         st.crop_right,
-        st.fit_mode,
-        st.theme,
-        st.audio_routing,
+        escape_json_str(&st.fit_mode),
+        escape_json_str(&st.theme),
+        escape_json_str(&st.audio_routing),
         st.audio_routing == "bluetooth",
         st.audio_volume,
         st.audio_muted,
-        st.audio_buffer_preset,
+        escape_json_str(&st.audio_buffer_preset),
         st.lip_sync,
         st.trackpad_speed,
         st.auto_rotate,
-        st.device_profile,
+        escape_json_str(&st.device_profile),
+        st.auto_check_update,
+        escape_json_str(&st.update_channel),
         st.language.code()
+    )
+}
+
+fn build_settings_json(st: &AppState) -> String {
+    let pin = SAVED_UNLOCK_PIN
+        .lock()
+        .map(|g| sanitize_pin_digits(&g))
+        .unwrap_or_default();
+    let folder_id = get_deterministic_folder_instance_id();
+    let has_file = user_settings_file_path().is_file();
+    format_user_settings_json(st, &folder_id, has_file, &pin)
+}
+
+pub fn save_user_settings_to_path(path: &Path, st: &AppState, unlock_pin: &str) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    if !dir.as_os_str().is_empty() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let folder_id = get_deterministic_folder_instance_id_for_dir(dir);
+    let clean_pin = sanitize_pin_digits(unlock_pin);
+    let json = format_user_settings_json(st, &folder_id, true, &clean_pin);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(json.as_bytes())?;
+    file.flush()?;
+    let _ = file.sync_all();
+    Ok(())
+}
+
+fn save_user_settings_to_disk(st: &AppState) {
+    let pin = SAVED_UNLOCK_PIN
+        .lock()
+        .map(|g| sanitize_pin_digits(&g))
+        .unwrap_or_default();
+    let path = user_settings_file_path();
+    let _ = save_user_settings_to_path(&path, st, &pin);
+}
+
+pub fn load_user_settings_from_path(path: &Path, st: &mut AppState) -> String {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return String::new();
+    };
+    if let Some(pin_raw) = parse_string_param(&raw, "unlockPin") {
+        let clean = sanitize_pin_digits(&pin_raw);
+        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+            *g = clean.clone();
+        }
+    }
+    if let Some(lang) = parse_string_param(&raw, "language") {
+        if lang == "en" {
+            st.language = Lang::En;
+        } else if lang == "id" {
+            st.language = Lang::Id;
+        }
+    }
+    if let Some(thm) = parse_string_param(&raw, "theme") {
+        if thm == "light" || thm == "dark" {
+            st.theme = thm;
+        }
+    }
+    if let Some(ar) = parse_bool_param(&raw, "autoRotate") {
+        st.auto_rotate = ar;
+    }
+    if let Some(prof) = parse_string_param(&raw, "deviceProfile") {
+        if !prof.is_empty() {
+            st.device_profile = prof;
+        }
+    }
+    if let Some(fm) = parse_string_param(&raw, "fitMode") {
+        if !fm.is_empty() {
+            st.fit_mode = fm;
+        }
+    }
+    if let Some(ch) = parse_string_param(&raw, "updateChannel") {
+        if ch == "stable" || ch == "beta" {
+            st.update_channel = ch;
+        }
+    }
+    if let Some(acu) = parse_bool_param(&raw, "autoCheckUpdate") {
+        st.auto_check_update = acu;
+    }
+    if let Some(aout) = parse_string_param(&raw, "audioOut") {
+        if !aout.is_empty() {
+            st.audio_routing = aout;
+        }
+    }
+    if let Some(am) = parse_bool_param(&raw, "audioMuted") {
+        st.audio_muted = am;
+    }
+    if let Some(vol) = parse_int_param(&raw, "audioVolume") {
+        st.audio_volume = vol.clamp(0, 100);
+    }
+    if let Some(ts) = parse_int_param(&raw, "trackpadSpeed") {
+        st.trackpad_speed = ts.clamp(10, 300);
+    }
+    SAVED_UNLOCK_PIN
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+pub fn init_persistent_settings_from_disk(st: &mut AppState) {
+    let path = user_settings_file_path();
+    let _ = load_user_settings_from_path(&path, st);
+}
+
+pub fn wipe_privacy_files_in_dir(dir: &Path) {
+    for name in ["user_settings.json", "typed_history.json", "wifi_state.json", "debug_metrics.json"] {
+        let p = dir.join(name);
+        if p.is_file() {
+            let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+fn wipe_all_privacy_state_and_files() {
+    clear_copy_cache();
+    if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+        g.clear();
+    }
+    if let Ok(mut g_dom) = GLOBAL_DOM_UNLOCK_PIN.lock() {
+        g_dom.clear();
+    }
+    let exe_dir = current_exe_dir_normalized();
+    wipe_privacy_files_in_dir(&exe_dir);
+    if let Ok(cwd) = env::current_dir() {
+        if cwd != exe_dir {
+            wipe_privacy_files_in_dir(&cwd);
+        }
+    }
+}
+
+fn build_tray_items_array_json(st: &AppState) -> String {
+    let startup_on = is_start_with_windows_enabled();
+    let landscape_on = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let audio_pc_on = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
+    let ids = [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009];
+    let mut parts = Vec::with_capacity(TRAY_MENU_ITEMS.len());
+    for (idx, label) in TRAY_MENU_ITEMS.iter().enumerate() {
+        let id = *ids.get(idx).unwrap_or(&(1001 + idx));
+        let checked = match id {
+            1003 => startup_on,
+            1005 => landscape_on,
+            1006 => stealth_on,
+            1007 => audio_pc_on,
+            _ => false,
+        };
+        let is_default = id == 1001;
+        parts.push(format!(
+            r#"{{"id":{},"label":"{}","checked":{},"default":{}}}"#,
+            id,
+            escape_json_str(label),
+            checked,
+            is_default
+        ));
+    }
+    format!("[{}]", parts.join(","))
+}
+
+fn build_tray_state_json(action: &str, handled: bool, st: &AppState) -> String {
+    let startup_on = is_start_with_windows_enabled();
+    let landscape_on = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let audio_pc_on = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
+    let audio_active = st.is_streaming && !st.audio_muted;
+    let items_json = build_tray_items_array_json(st);
+    format!(
+        r#"{{"ok":true,"action":"{}","handled":{},"drawer_open":{},"landscape":{},"stealth":{},"audio":{},"audioPc":{},"startWithWindows":{},"menuItemCount":{},"trayMenuItems":{}}}"#,
+        escape_json_str(action),
+        handled,
+        GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+        landscape_on,
+        stealth_on,
+        audio_active,
+        audio_pc_on,
+        startup_on,
+        TRAY_MENU_ITEMS.len(),
+        items_json
     )
 }
 
@@ -3561,6 +4121,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     Some(ref s) => format!(r#","pendingTest":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
                     None => String::new(),
                 };
+                let pending_tray = GLOBAL_PENDING_TRAY_ACTION.lock().ok().and_then(|mut g| g.take());
+                let pending_tray_str = match pending_tray {
+                    Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
+                    None => String::new(),
+                };
+                let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.take());
+                let pending_input_str = match pending_input {
+                    Some((ref sel, ref val)) => format!(
+                        r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
+                        escape_json_str(sel),
+                        escape_json_str(val)
+                    ),
+                    None => String::new(),
+                };
                 let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
                 let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
                 let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
@@ -3574,12 +4148,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let inner_w = GLOBAL_INNER_WIDTH.load(Ordering::SeqCst);
                 let stretch_cnt = GLOBAL_STRETCH_GLITCH_COUNT.load(Ordering::SeqCst);
                 let max_close_w = GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.load(Ordering::SeqCst);
+                let dom_pin_val = GLOBAL_DOM_UNLOCK_PIN.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_upd_ver = GLOBAL_DOM_UPDATE_VERSION.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_tray_act = GLOBAL_DOM_LAST_TRAY_ACTION.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{}}}}}"#,
+                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
+                        pending_tray_str,
+                        pending_input_str,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -3610,7 +4189,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         ds_right_gap,
                         inner_w,
                         stretch_cnt,
-                        max_close_w
+                        max_close_w,
+                        dom_pin_val,
+                        dom_upd_ver,
+                        dom_tray_act,
+                        GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
+                        GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
+                        is_start_with_windows_enabled()
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -3624,6 +4209,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     if !pending_test_str.is_empty() {
                         if let Some(pos) = sanitized.rfind('}') {
                             sanitized.insert_str(pos, &pending_test_str);
+                        }
+                    }
+                    if !pending_tray_str.is_empty() {
+                        if let Some(pos) = sanitized.rfind('}') {
+                            sanitized.insert_str(pos, &pending_tray_str);
+                        }
+                    }
+                    if !pending_input_str.is_empty() {
+                        if let Some(pos) = sanitized.rfind('}') {
+                            sanitized.insert_str(pos, &pending_input_str);
                         }
                     }
                     if !sanitized.contains("activeTheme") {
@@ -3689,6 +4284,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let pending_test = GLOBAL_PENDING_TEST.lock().ok().and_then(|mut g| g.take());
         let pending_test_str = match pending_test {
             Some(ref s) => format!(r#","pendingTest":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
+            None => String::new(),
+        };
+        let pending_tray = GLOBAL_PENDING_TRAY_ACTION.lock().ok().and_then(|mut g| g.take());
+        let pending_tray_str = match pending_tray {
+            Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
+            None => String::new(),
+        };
+        let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.take());
+        let pending_input_str = match pending_input {
+            Some((ref sel, ref val)) => format!(
+                r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
+                escape_json_str(sel),
+                escape_json_str(val)
+            ),
             None => String::new(),
         };
         let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
@@ -3806,7 +4415,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "drawerScrollRightGap": {},
     "innerWidth": {},
     "stretchGlitchCount": {},
-    "maxDisplayColWidthDuringClose": {}
+    "maxDisplayColWidthDuringClose": {},
+    "unlockPinValue": "{}",
+    "updateVersionText": "{}",
+    "lastTrayAction": "{}",
+    "stealthActive": {},
+    "audioPcActive": {},
+    "startWithWindows": {}
   }},
   "version": "4.0.0"{}"#,
             udid,
@@ -3873,26 +4488,40 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             inner_w,
             stretch_cnt,
             max_close_w,
-            if pending_click_str.is_empty() && pending_test_str.is_empty() { "\n}" } else { "\n" }
+            GLOBAL_DOM_UNLOCK_PIN.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_UPDATE_VERSION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_LAST_TRAY_ACTION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
+            GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
+            is_start_with_windows_enabled(),
+            if pending_click_str.is_empty() && pending_test_str.is_empty() && pending_tray_str.is_empty() && pending_input_str.is_empty() { "\n}" } else { "\n" }
         );
         let mut final_json = json;
-        if !pending_click_str.is_empty() || !pending_test_str.is_empty() {
+        if !pending_click_str.is_empty() || !pending_test_str.is_empty() || !pending_tray_str.is_empty() || !pending_input_str.is_empty() {
             final_json.push_str(&pending_click_str);
             final_json.push_str(&pending_test_str);
+            final_json.push_str(&pending_tray_str);
+            final_json.push_str(&pending_input_str);
             final_json.push_str("\n}");
         }
         return HttpResponse::ok_json(&final_json);
     }
 
     // Try forwarding to worker for backend-managed endpoints
-    if path.starts_with("/api/device/")
-        || path.starts_with("/api/devices/")
-        || path.starts_with("/api/audio/")
-        || path.starts_with("/api/wifi/")
-        || path.starts_with("/api/keyboard/")
+    let skip_early_forward = path == "/api/keyboard/settings"
+        || path == "/api/device/wipe-privacy-data"
+        || path == "/api/device/stealth"
+        || path == "/api/device/wake-unlock"
+        || path == "/api/device/pin"
         || path.starts_with("/api/update/")
-        || path.starts_with("/api/screen")
-        || path.starts_with("/api/ocr/")
+        || path.starts_with("/api/audio");
+    if !skip_early_forward
+        && (path.starts_with("/api/device/")
+            || path.starts_with("/api/devices/")
+            || path.starts_with("/api/wifi/")
+            || path.starts_with("/api/keyboard/")
+            || path.starts_with("/api/screen")
+            || path.starts_with("/api/ocr/"))
     {
         if let Some(resp) = forward_to_worker(req) {
             if resp.status_code == 200 {
@@ -3924,36 +4553,84 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(&json);
     }
 
-    // 3. API: Settings
+    // 3. API: Settings (Persistent Disk + Cross-Restart PIN + folderInstanceId)
     if path == "/api/settings" || path == "/api/keyboard/settings" {
         if req.method == "POST" {
             let mut st = state.lock().unwrap();
-            if req.body.contains(r#""language": "en""#) || req.body.contains(r#""language":"en""#) {
-                st.language = Lang::En;
-            } else if req.body.contains(r#""language": "id""#) || req.body.contains(r#""language":"id""#) {
-                st.language = Lang::Id;
-            }
-
-            if req.body.contains(r#""theme": "light""#) || req.body.contains(r#""theme":"light""#) {
-                st.theme = "light".to_string();
-                GLOBAL_DARK_MODE.store(false, Ordering::SeqCst);
-                if st.window_hwnd != 0 {
-                    let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, false);
-                }
-            } else if req.body.contains(r#""theme": "dark""#) || req.body.contains(r#""theme":"dark""#) {
-                st.theme = "dark".to_string();
-                GLOBAL_DARK_MODE.store(true, Ordering::SeqCst);
-                if st.window_hwnd != 0 {
-                    let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, true);
+            if let Some(lang) = parse_string_param(&req.body, "language") {
+                if lang == "en" {
+                    st.language = Lang::En;
+                } else if lang == "id" {
+                    st.language = Lang::Id;
                 }
             }
 
-            if req.body.contains(r#""autoRotate":true"#) || req.body.contains(r#""autoRotate": true"#) {
-                st.auto_rotate = true;
-            } else if req.body.contains(r#""autoRotate":false"#) || req.body.contains(r#""autoRotate": false"#) {
-                st.auto_rotate = false;
+            if let Some(thm) = parse_string_param(&req.body, "theme") {
+                if thm == "light" {
+                    st.theme = "light".to_string();
+                    GLOBAL_DARK_MODE.store(false, Ordering::SeqCst);
+                    if st.window_hwnd != 0 {
+                        let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, false);
+                    }
+                } else if thm == "dark" {
+                    st.theme = "dark".to_string();
+                    GLOBAL_DARK_MODE.store(true, Ordering::SeqCst);
+                    if st.window_hwnd != 0 {
+                        let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, true);
+                    }
+                }
             }
 
+            if let Some(ar) = parse_bool_param(&req.body, "autoRotate") {
+                st.auto_rotate = ar;
+            }
+            if let Some(prof) = parse_string_param(&req.body, "deviceProfile") {
+                if !prof.is_empty() {
+                    st.device_profile = prof;
+                }
+            }
+            if let Some(fm) = parse_string_param(&req.body, "fitMode") {
+                if !fm.is_empty() {
+                    st.fit_mode = fm;
+                }
+            }
+            if let Some(ch) = parse_string_param(&req.body, "updateChannel") {
+                if ch == "stable" || ch == "beta" {
+                    st.update_channel = ch;
+                }
+            }
+            if let Some(acu) = parse_bool_param(&req.body, "autoCheckUpdate") {
+                st.auto_check_update = acu;
+            }
+            if let Some(aout) = parse_string_param(&req.body, "audioOut") {
+                if !aout.is_empty() {
+                    st.audio_routing = aout;
+                    GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+                }
+            }
+            if let Some(am) = parse_bool_param(&req.body, "audioMuted") {
+                st.audio_muted = am;
+                GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+            }
+            if let Some(ts) = parse_int_param(&req.body, "trackpadSpeed") {
+                st.trackpad_speed = ts.clamp(10, 300);
+            }
+
+            if body_contains_key(&req.body, "unlockPin")
+                || body_contains_key(&req.body, "passcode")
+                || body_contains_key(&req.body, "pin")
+            {
+                let raw_pin = parse_string_param(&req.body, "unlockPin")
+                    .or_else(|| parse_string_param(&req.body, "passcode"))
+                    .or_else(|| parse_string_param(&req.body, "pin"))
+                    .unwrap_or_default();
+                let clean_pin = sanitize_pin_digits(&raw_pin);
+                if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+                    *g = clean_pin;
+                }
+            }
+
+            save_user_settings_to_disk(&st);
             let settings_obj = build_settings_json(&st);
             return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","saved":true,"settings":{}}}"#, settings_obj));
         } else {
@@ -3972,11 +4649,26 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         } else {
             st.device_profile = "auto".to_string();
         }
+        save_user_settings_to_disk(&st);
         let settings_obj = build_settings_json(&st);
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"deviceProfile":"{}","settings":{}}}"#,
             st.device_profile, settings_obj
         ));
+    }
+
+    if path == "/api/device/pin" {
+        let raw_pin = parse_string_param(&req.body, "unlockPin")
+            .or_else(|| parse_string_param(&req.body, "passcode"))
+            .or_else(|| parse_string_param(&req.body, "pin"))
+            .unwrap_or_default();
+        let clean_pin = sanitize_pin_digits(&raw_pin);
+        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+            *g = clean_pin.clone();
+        }
+        let st = state.lock().unwrap();
+        save_user_settings_to_disk(&st);
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","unlockPin":"{}"}}"#, escape_json_str(&clean_pin)));
     }
 
     // 4. API: Device actions (HID Indigo)
@@ -3989,8 +4681,33 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/device/wake-unlock" {
+        let req_pin = parse_string_param(&req.body, "passcode")
+            .or_else(|| parse_string_param(&req.body, "unlockPin"))
+            .or_else(|| parse_string_param(&req.body, "pin"))
+            .map(|p| sanitize_pin_digits(&p))
+            .unwrap_or_default();
+        let saved_pin = SAVED_UNLOCK_PIN
+            .lock()
+            .map(|g| sanitize_pin_digits(&g))
+            .unwrap_or_default();
+        let effective_pin = if !req_pin.is_empty() { req_pin.clone() } else { saved_pin };
+
+        let mut fwd_req = req.clone();
+        if !effective_pin.is_empty() && req_pin.is_empty() {
+            let patched = format!(r#"{{"passcode":"{}"}}"#, escape_json_str(&effective_pin));
+            fwd_req.body_bytes = patched.as_bytes().to_vec();
+            fwd_req.body = patched;
+        }
+        if let Some(resp) = forward_to_worker(&fwd_req) {
+            if resp.status_code == 200 {
+                let mut st = state.lock().unwrap();
+                st.intentionally_locked = false;
+                return resp;
+            }
+        }
         let mut ctrl = IndigoHidController::new();
-        let steps = ctrl.execute_wake_and_unlock_pin("123456");
+        let pin_for_hid = if effective_pin.is_empty() { "123456" } else { effective_pin.as_str() };
+        let steps = ctrl.execute_wake_and_unlock_pin(pin_for_hid);
         let mut st = state.lock().unwrap();
         st.intentionally_locked = false;
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","steps":{}}}"#, steps.2.len()));
@@ -4001,15 +4718,32 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let st = state.lock().unwrap();
             return HttpResponse::ok_json(&format!(r#"{{"ok":true,"stealth":{}}}"#, st.stealth_dim));
         }
+        if let Some(resp) = forward_to_worker(req) {
+            if resp.status_code == 200 {
+                let body_txt = String::from_utf8_lossy(&resp.body);
+                if let Some(sv) = parse_bool_param(&body_txt, "stealth") {
+                    let mut st = state.lock().unwrap();
+                    st.stealth_dim = sv;
+                    GLOBAL_STEALTH_ACTIVE.store(sv, Ordering::SeqCst);
+                }
+                return resp;
+            }
+        }
         let mut ctrl = IndigoHidController::new();
         let res = ctrl.execute_stealth_dim_toggle().unwrap_or("ok");
         let mut st = state.lock().unwrap();
-        st.stealth_dim = !st.stealth_dim;
+        st.stealth_dim = parse_bool_param(&req.body, "enabled").unwrap_or(!st.stealth_dim);
+        GLOBAL_STEALTH_ACTIVE.store(st.stealth_dim, Ordering::SeqCst);
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","mode":"{}","stealth":{}}}"#, res, st.stealth_dim));
     }
 
     if path == "/api/device/wipe-privacy-data" || path == "/api/ocr/clear-chunks" || path == "/api/keyboard/clear-chunks" {
-        clear_copy_cache();
+        if path == "/api/device/wipe-privacy-data" {
+            wipe_all_privacy_state_and_files();
+        } else {
+            clear_copy_cache();
+        }
+        let _ = forward_to_worker(req);
         return HttpResponse::ok_json(r#"{"ok":true,"status":"ok","wiped":true}"#);
     }
 
@@ -4052,12 +4786,39 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"status":"ok"}"#);
     }
 
-    // 6. API: Audio & Update & Wallpaper
+    // 6. API: Audio & Update & Wallpaper & System Startup & Tray
     if path.starts_with("/api/audio") {
-        let mut st = state.lock().unwrap();
-        if path == "/api/audio/mute" {
-            st.audio_muted = !st.audio_muted;
+        if let Some(aout) = parse_string_param(&req.body, "audioOut") {
+            let mut st = state.lock().unwrap();
+            st.audio_routing = aout;
+            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
         }
+        if let Some(am) = parse_bool_param(&req.body, "muted") {
+            let mut st = state.lock().unwrap();
+            st.audio_muted = am;
+            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+        }
+        if path == "/api/audio/mute" {
+            let mut st = state.lock().unwrap();
+            st.audio_muted = !st.audio_muted;
+            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+        }
+        if let Some(resp) = forward_to_worker(req) {
+            if resp.status_code == 200 {
+                let body_txt = String::from_utf8_lossy(&resp.body);
+                if let Some(mut st) = state.lock().ok() {
+                    if let Some(aout) = parse_string_param(&body_txt, "audioOut") {
+                        st.audio_routing = aout;
+                    }
+                    if let Some(am) = parse_bool_param(&body_txt, "muted") {
+                        st.audio_muted = am;
+                    }
+                    GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+                }
+                return resp;
+            }
+        }
+        let st = state.lock().unwrap();
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"active":{},"audioOut":"{}","volume":{},"muted":{},"bufferPreset":"{}","lipSync":{}}}"#,
             st.is_streaming && !st.audio_muted,
@@ -4070,9 +4831,43 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/update/status" || path == "/api/update/check" || path == "/api/update/install" {
-        return HttpResponse::ok_json(
-            r#"{"ok":true,"status":"up_to_date","currentVersion":"4.0.0","current_version":"4.0.0","latestVersion":"4.0.0","updateAvailable":false,"channel":"stable"}"#,
-        );
+        let ch = parse_string_param(&req.body, "channel").unwrap_or_else(|| {
+            state.lock().map(|s| s.update_channel.clone()).unwrap_or_else(|_| "stable".to_string())
+        });
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"status":"up_to_date","currentVersion":"4.0.0","current_version":"4.0.0","latestVersion":"4.0.0","updateAvailable":false,"channel":"{}"}}"#,
+            escape_json_str(&ch)
+        ));
+    }
+
+    if path == "/api/system/startup" {
+        if req.method == "POST" {
+            let target = parse_bool_param(&req.body, "enable")
+                .or_else(|| parse_bool_param(&req.body, "enabled"))
+                .unwrap_or_else(|| !is_start_with_windows_enabled());
+            match set_start_with_windows(target) {
+                Ok(enabled_now) => {
+                    return HttpResponse::ok_json(&format!(
+                        r#"{{"ok":true,"enabled":{},"registryKey":"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run","valueName":"iPhoneLink"}}"#,
+                        enabled_now
+                    ));
+                }
+                Err(e) => {
+                    return HttpResponse {
+                        status_code: 500,
+                        status_text: "Internal Server Error",
+                        content_type: "application/json; charset=utf-8",
+                        body: format!(r#"{{"ok":false,"error":"{}"}}"#, escape_json_str(&e)).into_bytes(),
+                    };
+                }
+            }
+        } else {
+            let enabled_now = is_start_with_windows_enabled();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"enabled":{},"registryKey":"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run","valueName":"iPhoneLink"}}"#,
+                enabled_now
+            ));
+        }
     }
 
     if path == "/api/system/wallpaper" {
@@ -4090,13 +4885,120 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"wallpaperSig":"{}"}}"#, sig));
     }
 
-    if path == "/api/tray-state" {
+    if path == "/api/tray-state" || path == "/api/tray/menu" {
         let st = state.lock().unwrap();
-        return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"stealth":{},"audio":{}}}"#,
-            st.stealth_dim,
-            st.is_streaming && !st.audio_muted
-        ));
+        let json = build_tray_state_json("status", true, &st);
+        return HttpResponse::ok_json(&json);
+    }
+
+    if path == "/api/tray/trigger_action" {
+        let action = parse_string_param(&req.body, "action").unwrap_or_default();
+        let mut handled = true;
+        match action.as_str() {
+            "show" | "restore" => {
+                let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
+                if hwnd_usize != 0 {
+                    unsafe {
+                        show_window_native(hwnd_usize as *mut _, 5);
+                        show_window_native(hwnd_usize as *mut _, 9);
+                        PostMessageW(hwnd_usize as *mut _, 0x8001, 0, 0);
+                    }
+                }
+            }
+            "hide" => {
+                let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
+                if hwnd_usize != 0 {
+                    unsafe {
+                        show_window_native(hwnd_usize as *mut _, 0);
+                    }
+                }
+            }
+            "toggle_startup" => {
+                let next = !is_start_with_windows_enabled();
+                let _ = set_start_with_windows(next);
+            }
+            "check_updates" => {
+                let hwnd_usize = {
+                    let mut st = state.lock().unwrap();
+                    st.is_drawer_open = true;
+                    st.geometry.is_drawer_open = true;
+                    GLOBAL_DRAWER_OPEN.store(true, Ordering::SeqCst);
+                    st.window_hwnd
+                };
+                if hwnd_usize != 0 {
+                    unsafe {
+                        show_window_native(hwnd_usize as *mut _, 5);
+                        show_window_native(hwnd_usize as *mut _, 9);
+                    }
+                    apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+                }
+                if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+                    *g = Some("check_updates".to_string());
+                }
+            }
+            "toggle_landscape" => {
+                let next_land = !GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+                let hwnd_usize = {
+                    let mut st = state.lock().unwrap();
+                    st.is_landscape = next_land;
+                    st.geometry.is_landscape = next_land;
+                    GLOBAL_IS_LANDSCAPE.store(next_land, Ordering::SeqCst);
+                    st.window_hwnd
+                };
+                if hwnd_usize != 0 {
+                    apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+                }
+                if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+                    *g = Some(format!("set_landscape:{}", next_land));
+                }
+            }
+            "toggle_stealth" => {
+                let mut ctrl = IndigoHidController::new();
+                let _ = ctrl.execute_stealth_dim_toggle();
+                let next_stealth = !GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+                GLOBAL_STEALTH_ACTIVE.store(next_stealth, Ordering::SeqCst);
+                {
+                    let mut st = state.lock().unwrap();
+                    st.stealth_dim = next_stealth;
+                }
+                if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+                    *g = Some(format!("set_stealth:{}", next_stealth));
+                }
+            }
+            "toggle_audio" => {
+                let next_pc = !GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
+                GLOBAL_AUDIO_PC_ACTIVE.store(next_pc, Ordering::SeqCst);
+                {
+                    let mut st = state.lock().unwrap();
+                    st.audio_routing = if next_pc { "pc".to_string() } else { "device".to_string() };
+                    st.audio_muted = !next_pc;
+                }
+                if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+                    *g = Some(format!("set_audio_pc:{}", next_pc));
+                }
+            }
+            "clear_cache" => {
+                clear_copy_cache();
+                if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
+                    *g = Some("clear_cache".to_string());
+                }
+            }
+            "quit" | "exit" => {
+                let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
+                if hwnd_usize != 0 {
+                    unregister_tray_icon(hwnd_usize as *mut _);
+                    unsafe {
+                        post_quit_message(hwnd_usize as *mut _);
+                    }
+                }
+            }
+            _ => {
+                handled = false;
+            }
+        }
+        let st = state.lock().unwrap();
+        let json = build_tray_state_json(&action, handled, &st);
+        return HttpResponse::ok_json(&json);
     }
 
     if path == "/debug-metrics" {
@@ -4224,6 +5126,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Some(sel) = parse_string_param(&req.body, "selector") {
             if let Ok(mut g_sel) = GLOBAL_PENDING_CLICK.lock() {
                 *g_sel = Some(sel);
+            }
+            return HttpResponse::ok_json(r#"{"ok":true,"queued":true}"#);
+        }
+        return HttpResponse::ok_json(r#"{"ok":false,"error":"missing selector"}"#);
+    }
+
+    if path == "/api/window/set_input_value" || path == "/api/test/set_input_value" {
+        if let Some(sel) = parse_string_param(&req.body, "selector") {
+            let val = parse_string_param(&req.body, "value").unwrap_or_default();
+            if let Ok(mut g_inp) = GLOBAL_PENDING_INPUT.lock() {
+                *g_inp = Some((sel, val));
             }
             return HttpResponse::ok_json(r#"{"ok":true,"queued":true}"#);
         }
@@ -4583,6 +5496,21 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 *g_ua = ua;
             }
         }
+        if let Some(pin_dom) = parse_string_param(&req.body, "unlockPinValue") {
+            if let Ok(mut g_pin) = GLOBAL_DOM_UNLOCK_PIN.lock() {
+                *g_pin = sanitize_pin_digits(&pin_dom);
+            }
+        }
+        if let Some(ver_dom) = parse_string_param(&req.body, "updateVersionText") {
+            if let Ok(mut g_ver) = GLOBAL_DOM_UPDATE_VERSION.lock() {
+                *g_ver = ver_dom;
+            }
+        }
+        if let Some(act_dom) = parse_string_param(&req.body, "lastTrayAction") {
+            if let Ok(mut g_act) = GLOBAL_DOM_LAST_TRAY_ACTION.lock() {
+                *g_act = act_dom;
+            }
+        }
 
         if has_edg && btn_vis && btn_text_ok {
             DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
@@ -4782,11 +5710,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
         if hwnd_usize != 0 {
+            let _ = register_tray_icon(hwnd_usize as *mut _);
             unsafe {
                 show_window_native(hwnd_usize as *mut _, 0); // SW_HIDE
             }
         }
-        return HttpResponse::ok_json(r#"{"ok":true,"status":"hidden"}"#);
+        return HttpResponse::ok_json(r#"{"ok":true,"status":"hidden","trayActive":true}"#);
     }
 
     if path == "/api/window/restore_from_tray" {
@@ -4797,6 +5726,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             unsafe {
                 show_window_native(hwnd_usize as *mut _, 5); // SW_SHOW
                 show_window_native(hwnd_usize as *mut _, 9); // SW_RESTORE
+                PostMessageW(hwnd_usize as *mut _, 0x8001, 0, 0); // WM_APP_SYNC_GEOMETRY
             }
         }
         return HttpResponse::ok_json(r#"{"ok":true,"status":"restored"}"#);
@@ -5530,6 +6460,7 @@ pub struct NativeServer {
 
 impl NativeServer {
     pub fn start(state: Arc<Mutex<AppState>>, web_dir: PathBuf, port: u16) -> Result<Self, String> {
+        register_tray_app_state(state.clone());
         let mut listener_opt = None;
         for _ in 0..15 {
             if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
@@ -5747,5 +6678,126 @@ mod tests {
         let codec_json = String::from_utf8_lossy(&resp_codec.body);
         assert!(codec_json.contains(r#""displayWidth":1178"#) && codec_json.contains(r#""displayHeight":2598"#),
             "/codec fallback must report 1178x2598: {}", codec_json);
+    }
+
+    #[test]
+    fn test_tahap183_tray_startup_pin_persistence_and_wipe() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. Verify V4_BRIDGE_JS includes Tahap 183 PIN persistence & tray update handlers
+        assert!(V4_BRIDGE_JS.contains("hydratePinFromSettings"));
+        assert!(V4_BRIDGE_JS.contains("persistUnlockPinDual"));
+        assert!(V4_BRIDGE_JS.contains("guardPinInputAgainstAccidentalWipe"));
+        assert!(V4_BRIDGE_JS.contains("handlePendingTrayAction"));
+        assert!(V4_BRIDGE_JS.contains("iPhone Link v4.0.0"));
+
+        // 2. Deterministic folderInstanceId & disk save/load/wipe roundtrip
+        let tmp_dir = env::temp_dir().join("iphone_link_tahap183_test");
+        let _ = fs::create_dir_all(&tmp_dir);
+        let fid1 = get_deterministic_folder_instance_id_for_dir(&tmp_dir);
+        let fid2 = get_deterministic_folder_instance_id_for_dir(&tmp_dir);
+        assert_eq!(fid1.len(), 12);
+        assert_eq!(fid1, fid2);
+
+        let settings_file = tmp_dir.join("user_settings.json");
+        let mut st_disk = AppState::default();
+        st_disk.theme = "light".to_string();
+        st_disk.update_channel = "beta".to_string();
+        save_user_settings_to_path(&settings_file, &st_disk, "246810").expect("save settings");
+        assert!(settings_file.is_file());
+
+        let mut st_reloaded = AppState::default();
+        let loaded_pin = load_user_settings_from_path(&settings_file, &mut st_reloaded);
+        assert_eq!(loaded_pin, "246810");
+        assert_eq!(st_reloaded.theme, "light");
+        assert_eq!(st_reloaded.update_channel, "beta");
+
+        wipe_privacy_files_in_dir(&tmp_dir);
+        assert!(!settings_file.exists());
+        let _ = fs::remove_dir_all(&tmp_dir);
+
+        // 3. Verify GET /api/tray-state & POST /api/tray/trigger_action ("check_updates")
+        let resp_tray = handle_request(&HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/tray-state".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_tray.status_code, 200);
+        let tray_json = String::from_utf8_lossy(&resp_tray.body);
+        assert!(tray_json.contains("Show / Restore iPhone Link"));
+        assert!(tray_json.contains("Start with Windows"));
+        assert!(tray_json.contains("Check for Updates..."));
+
+        let resp_upd = handle_request(&HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/tray/trigger_action".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"action":"check_updates"}"#.to_string(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_upd.status_code, 200);
+        let upd_json = String::from_utf8_lossy(&resp_upd.body);
+        assert!(upd_json.contains(r#""drawer_open":true"#));
+        let queued = GLOBAL_PENDING_TRAY_ACTION.lock().unwrap().take();
+        assert_eq!(queued.as_deref(), Some("check_updates"));
+
+        // 4. Verify POST /api/settings with unlockPin preserves & GET /api/settings returns isFreshFolder:false
+        let resp_save_pin = handle_request(&HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/settings".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"unlockPin":"246810"}"#.to_string(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_save_pin.status_code, 200);
+        let save_json = String::from_utf8_lossy(&resp_save_pin.body);
+        assert!(save_json.contains(r#""unlockPin":"246810""#));
+        assert!(save_json.contains(r#""isFreshFolder":false"#));
+
+        // Saving unrelated setting (e.g. stealth or channel) must NEVER wipe SAVED_UNLOCK_PIN
+        let _ = handle_request(&HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/settings".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"updateChannel":"beta"}"#.to_string(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        let resp_get = handle_request(&HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/settings".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        let get_json = String::from_utf8_lossy(&resp_get.body);
+        assert!(get_json.contains(r#""unlockPin":"246810""#), "PIN must remain after unrelated settings update: {}", get_json);
+
+        // 5. Explicit wipe clears PIN and deletes user_settings.json
+        let resp_wipe = handle_request(&HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/device/wipe-privacy-data".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: "{}".to_string(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_wipe.status_code, 200);
+        let resp_get_after_wipe = handle_request(&HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/settings".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        let after_json = String::from_utf8_lossy(&resp_get_after_wipe.body);
+        assert!(after_json.contains(r#""unlockPin":"""#), "PIN must be empty after wipe: {}", after_json);
     }
 }

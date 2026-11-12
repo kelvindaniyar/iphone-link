@@ -319,7 +319,10 @@ fn run_self_test() -> i32 {
     let mock_work = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
     let geom_fs = geom.toggle_fullscreen(mock_work).width() > 1200;
     let geom_restored = geom.toggle_fullscreen(mock_work).width() == LANDSCAPE_WIDTH_OPEN;
-    let tray_menu_valid = TRAY_MENU_ITEMS.len() == 5 && TRAY_MENU_ITEMS[0] == "Show iPhone Link";
+    let tray_menu_valid = TRAY_MENU_ITEMS.len() == 9
+        && TRAY_MENU_ITEMS[0] == "Show / Restore iPhone Link"
+        && TRAY_MENU_ITEMS.contains(&"Start with Windows")
+        && TRAY_MENU_ITEMS.contains(&"Check for Updates...");
 
     let dwm_suite_passed = dwm_probe_passed
         && geom_p_closed
@@ -731,12 +734,21 @@ fn main() {
     }
     spawn_coredevice_worker();
     let web_dir = find_web_dir();
-    let state = Arc::new(Mutex::new(server_v4::AppState::default()));
+    let mut st_init = server_v4::AppState::default();
+    server_v4::init_persistent_settings_from_disk(&mut st_init);
+    let initial_dark_mode = st_init.theme != "light";
+    server_v4::GLOBAL_DARK_MODE.store(initial_dark_mode, std::sync::atomic::Ordering::SeqCst);
+    window_dwm::GLOBAL_AUDIO_PC_ACTIVE.store(
+        st_init.audio_routing == "pc" && !st_init.audio_muted,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    let state = Arc::new(Mutex::new(st_init));
+    window_dwm::register_tray_app_state(state.clone());
     let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)
         .expect("Failed to start Native Server");
     let port = server.port;
 
-    let hwnd = window_dwm::create_main_interactive_window(true)
+    let hwnd = window_dwm::create_main_interactive_window(initial_dark_mode)
         .expect("Failed to create main Win32 window");
     {
         let mut st = state.lock().unwrap();
