@@ -34,6 +34,8 @@ pub static GLOBAL_DARK_MODE: AtomicBool = AtomicBool::new(true);
 pub static GLOBAL_DOM_THEME: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_THEME_LIGHT_X: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_THEME_LIGHT_Y: AtomicUsize = AtomicUsize::new(0);
+pub static GLOBAL_WIREFRAME_CLEAN: AtomicBool = AtomicBool::new(true);
+pub static GLOBAL_WIREFRAME_DETAILS: Mutex<String> = Mutex::new(String::new());
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
@@ -55,7 +57,7 @@ pub const DEFAULT_PORT: u16 = 8765;
 // EMBEDDED FALLBACKS FOR TRUE ACRYLIC AND NATIVE BRIDGE
 // ============================================================================
 
-pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 True DWM Hardware Real-Time Acrylic & 3D Liquid Glass (Tahap 174) */
+pub const V4_TRUE_ACRYLIC_CSS: &str = r#"/* iPhone Link v4.0 Spatial Liquid Glass (Tahap 175) */
 :root,
 html,
 body,
@@ -70,12 +72,17 @@ body[data-theme="dark"],
   --bg-acrylic: transparent !important;
   --bg-flyout: transparent !important;
   --surface: transparent !important;
-  --panel: rgba(255, 255, 255, 0.04) !important;
+  --panel: transparent !important;
   --card: rgba(255, 255, 255, 0.04) !important;
+  --card-bg: transparent !important;
+  --border: rgba(255, 255, 255, 0.14) !important;
+  --fg: #f8fafc !important;
+  --text: #f8fafc !important;
+  --muted: #cbd5e1 !important;
   --wallpaper-bg-image: none !important;
 }
 
-/* 1. Variabel Global Light Mode: 100% Transparan pada Latar Utama & Frosted Tipis pada Komponen */
+/* 1. Variabel Global Light Mode: 100% Transparan pada Latar Utama & Frosted Pearl */
 html[data-theme="light"],
 body[data-theme="light"],
 .app[data-theme="light"],
@@ -88,13 +95,13 @@ body[data-theme="light"],
   --bg-acrylic: transparent !important;
   --bg-flyout: transparent !important;
   --surface: transparent !important;
-  --panel: rgba(255, 255, 255, 0.14) !important;
+  --panel: transparent !important;
   --card: rgba(255, 255, 255, 0.16) !important;
-  --card-bg: rgba(255, 255, 255, 0.16) !important;
-  --border: rgba(255, 255, 255, 0.38) !important;
+  --card-bg: transparent !important;
+  --border: rgba(15, 23, 42, 0.12) !important;
   --fg: #0f172a !important;
   --text: #0f172a !important;
-  --muted: #1e293b !important;
+  --muted: #334155 !important;
   --wallpaper-bg-image: none !important;
 }
 
@@ -113,6 +120,7 @@ body[data-theme="light"],
   background: none !important;
   background-image: none !important;
 }
+
 html,
 body,
 html[data-theme="dark"],
@@ -134,9 +142,50 @@ body[data-theme="light"],
   -webkit-font-smoothing: antialiased !important;
   text-rendering: geometricPrecision !important;
 }
+
+/* ELIMINASI TOTAL WIREFRAME BOXES PADA ELEMEN TEKS, BRAND, PLACEHOLDER, & BARIS SLIDER */
+html body .brand,
+html body .app-title-area,
+html body .brand-title,
+html body #screen-empty,
+html body .screen-empty,
+html body .placeholder,
+html body .placeholder > *,
+html body #screen-empty h1,
+html body #screen-empty h2,
+html body #screen-empty p,
+html body #screen-empty .sub,
+html body .drawer-header,
+html body .drawer-title,
+html body .drawer-body,
+html body .drawer-scroll,
+html body .drawer-content,
+html body .drawer-footer-credits,
+html body .credit-main,
+html body .credit-sub,
+html body .section-label,
+html body .card-title,
+html body .field-label,
+html body .crop-grid,
+html body .crop-item,
+html body .crop-row,
+html body .crop-label,
+html body .slider-row,
+html body .control-row,
+html body .row:not(.card):not(.seg) {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-width: 0px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* TIER 1: LAUNCHPAD / STAGE KIRI (Paling Bening + Ambient Hero Glow Halus) */
+html[data-theme="dark"] body .app,
 html body .app,
-html body .app:not(.is-fullsize),
-html[data-theme="dark"] body .app {
+html body .app:not(.is-fullsize) {
   width: 100vw !important;
   height: 100vh !important;
   max-width: 100vw !important;
@@ -147,14 +196,13 @@ html[data-theme="dark"] body .app {
   border-radius: 0px !important;
   border: none !important;
   box-shadow: none !important;
-  background: rgba(14, 18, 26, 0.04) !important;
-  background-color: rgba(14, 18, 26, 0.04) !important;
+  background: linear-gradient(165deg, rgba(10, 14, 24, 0.10) 0%, rgba(8, 12, 20, 0.16) 100%) !important;
+  background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
 }
 
-/* 2. Kontainer Utama Light Mode: Frost Putih Tipis 18% agar Blur DWM Tembus Penuh seperti Dark Mode! */
 html[data-theme="light"] body .app,
 html[data-theme="light"] body .app:not(.is-fullsize),
 body[data-theme="light"] .app,
@@ -169,14 +217,22 @@ body[data-theme="light"] .app,
   border-radius: 0px !important;
   border: none !important;
   box-shadow: none !important;
-  background: linear-gradient(165deg, rgba(240, 246, 255, 0.10) 0%, rgba(225, 235, 250, 0.12) 100%) !important;
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.18) 0%, rgba(240, 246, 255, 0.22) 100%) !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
 }
 
-/* 3. Seluruh Wrapper Dalam di Dark & Light Mode WAJIB 100% Transparan (0% Putih Solid!) */
+/* Ambient Hero Glow di Tengah Launchpad Saat Belum Mirroring */
+html body .app:not(.is-streaming) .display-col {
+  background: radial-gradient(circle at 50% 42%, rgba(10, 132, 255, 0.14) 0%, rgba(56, 189, 248, 0.04) 40%, transparent 72%) !important;
+}
+html[data-theme="light"] body .app:not(.is-streaming) .display-col {
+  background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.36) 0%, rgba(186, 230, 253, 0.16) 42%, transparent 74%) !important;
+}
+
+/* Seluruh Wrapper Dalam di Dark & Light Mode WAJIB 100% Transparan */
 html body .main-body,
 html body .display-col,
 html body .app:not(.is-landscape) .display-col,
@@ -185,13 +241,10 @@ html body .workspace,
 html body .stage,
 html body .screen-stage,
 html body #phone-shell,
-html body #screen-empty,
-html body .screen-empty,
 html body #launchpad-shell,
 html body .launchpad-shell,
 html body #launchpad-idle-view,
 html body .launchpad-idle-view,
-html body .placeholder,
 html body .screen-viewport,
 html body .app:not(.is-streaming) #phone-screen,
 html[data-theme="dark"] body .app:not(.is-streaming) #phone-screen,
@@ -203,20 +256,12 @@ html[data-theme="light"] body .workspace,
 html[data-theme="light"] body .stage,
 html[data-theme="light"] body .screen-stage,
 html[data-theme="light"] body #phone-shell,
-html[data-theme="light"] body #screen-empty,
-html[data-theme="light"] body .screen-empty,
 html[data-theme="light"] body #launchpad-shell,
 html[data-theme="light"] body .launchpad-shell,
 html[data-theme="light"] body #launchpad-idle-view,
 html[data-theme="light"] body .launchpad-idle-view,
-html[data-theme="light"] body .placeholder,
 html[data-theme="light"] body .screen-viewport,
-html[data-theme="light"] body .app:not(.is-streaming) #phone-screen,
-html[data-theme="light"] body .drawer-body,
-html[data-theme="light"] body .drawer-scroll,
-html[data-theme="light"] body .drawer-content,
-html[data-theme="light"] body .drawer-header,
-html[data-theme="light"] body .drawer-footer-credits {
+html[data-theme="light"] body .app:not(.is-streaming) #phone-screen {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
@@ -260,13 +305,13 @@ body::-webkit-scrollbar {
   -webkit-user-select: none !important;
 }
 
-/* 4. Top Bar, Quick Nav & Side Drawer */
+/* TIER 2: TOP BAR, QUICK NAV, & SIDE DRAWER KANAN (Elevasi Kaca Tegas & Berkarakter) */
 html body .app-bar,
 html[data-theme="dark"] body .app-bar {
   border-radius: 0px !important;
-  background: rgba(12, 16, 24, 0.06) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14) !important;
+  background: linear-gradient(180deg, rgba(22, 30, 46, 0.16) 0%, rgba(12, 17, 28, 0.10) 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.20), 0 4px 16px rgba(0, 0, 0, 0.18) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
@@ -274,21 +319,21 @@ html[data-theme="dark"] body .app-bar {
 }
 html[data-theme="light"] body .app-bar {
   border-radius: 0px !important;
-  background: rgba(255, 255, 255, 0.14) !important;
-  background-color: transparent !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.35) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.50) !important;
+  background: linear-gradient(180deg, rgba(252, 254, 255, 0.32) 0%, rgba(240, 246, 255, 0.24) 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.68) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.90), 0 4px 14px rgba(15, 23, 42, 0.06) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 10 !important;
 }
+
 html body .quick-nav,
 html[data-theme="dark"] body .quick-nav {
   border-radius: 0px !important;
-  background: rgba(12, 16, 24, 0.08) !important;
-  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.14) !important;
+  background: linear-gradient(0deg, rgba(12, 17, 28, 0.16) 0%, rgba(20, 28, 44, 0.10) 100%) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.16) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
@@ -296,9 +341,9 @@ html[data-theme="dark"] body .quick-nav {
 }
 html[data-theme="light"] body .quick-nav {
   border-radius: 0px !important;
-  background: rgba(255, 255, 255, 0.14) !important;
-  background-color: transparent !important;
-  border-top: 1px solid rgba(255, 255, 255, 0.35) !important;
+  background: linear-gradient(0deg, rgba(242, 247, 255, 0.30) 0%, rgba(252, 254, 255, 0.22) 100%) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.68) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.88) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
@@ -319,10 +364,9 @@ html[data-theme="dark"] body #control-pane,
 html[data-theme="dark"] body .side-drawer,
 html[data-theme="dark"] body .control-pane {
   border-radius: 0px !important;
-  background: rgba(14, 18, 28, 0.05) !important;
-  background-color: rgba(14, 18, 28, 0.05) !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.14) !important;
-  box-shadow: -6px 0 20px rgba(0, 0, 0, 0.18), inset 1px 0 0 0 rgba(255, 255, 255, 0.14) !important;
+  background: linear-gradient(180deg, rgba(16, 22, 34, 0.08) 0%, rgba(10, 14, 24, 0.12) 100%) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.20), inset 1px 0 0 0 rgba(255, 255, 255, 0.14) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
@@ -332,15 +376,15 @@ html[data-theme="light"] body #control-pane,
 html[data-theme="light"] body .side-drawer,
 html[data-theme="light"] body .control-pane {
   border-radius: 0px !important;
-  background: linear-gradient(180deg, rgba(245, 250, 255, 0.08) 0%, rgba(230, 240, 255, 0.10) 100%) !important;
-  background-color: transparent !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.38) !important;
-  box-shadow: inset 1px 0 0 0 rgba(255, 255, 255, 0.45) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(240, 246, 255, 0.18) 100%) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.72) !important;
+  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.08), inset 1px 0 0 0 rgba(255, 255, 255, 0.90) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   position: relative !important;
   z-index: 20 !important;
 }
+
 html body #control-pane section,
 html body #control-pane form,
 html body #control-pane .control-group,
@@ -386,7 +430,7 @@ html[data-theme="light"] body .side-drawer .panel-audio-settings {
   box-shadow: none !important;
 }
 
-/* 5. Kartu, Tombol & Segmented Controls di Dark & Light Mode */
+/* TIER 3: 3D SPECULAR LIQUID GLASS CARDS (.card & .launchpad-device-card) */
 html body .card,
 html body .glass-card,
 html body .launchpad-device-card,
@@ -394,15 +438,22 @@ html body .device-card,
 html body #control-pane .card,
 html body #control-pane .glass-card,
 html body .side-drawer .card,
-html body .side-drawer .glass-card {
+html body .side-drawer .glass-card,
+html[data-theme="dark"] body .card,
+html[data-theme="dark"] body .glass-card,
+html[data-theme="dark"] body .launchpad-device-card {
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
-  background-color: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  border-radius: 14px !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.18) !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.10),
+    0 8px 22px -4px rgba(0, 0, 0, 0.24) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
 html[data-theme="light"] body .card,
 html[data-theme="light"] body .glass-card,
 html[data-theme="light"] body .launchpad-device-card,
@@ -414,40 +465,192 @@ html[data-theme="light"] body #control-pane .glass-card,
 html[data-theme="light"] body .side-drawer .card,
 html[data-theme="light"] body .side-drawer .glass-card,
 html[data-theme="light"] body .card-details {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 100%) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.24) 0%, rgba(242, 248, 255, 0.14) 100%) !important;
   background-color: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.45) !important;
-  border-radius: 14px !important;
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.65), 0 4px 16px rgba(15, 23, 42, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.72) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.90),
+    0 4px 18px rgba(15, 23, 42, 0.07) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* PILAR 3: Track & Tombol Segmented Controls */
+html body .seg,
+html body .segmented,
+html body .seg-group,
+html body .segmented-theme,
+html body .segmented-lang,
+html body .segmented-fit,
+html body .segmented-device-profile,
+html body div.seg {
+  background: rgba(6, 10, 18, 0.32) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 999px !important;
+  padding: 3px !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.38) !important;
+}
 html[data-theme="light"] body .seg,
 html[data-theme="light"] body .segmented,
-html[data-theme="light"] body .seg-group {
-  background: rgba(15, 23, 42, 0.08) !important;
-  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+html[data-theme="light"] body .seg-group,
+html[data-theme="light"] body .segmented-theme,
+html[data-theme="light"] body .segmented-lang,
+html[data-theme="light"] body .segmented-fit,
+html[data-theme="light"] body .segmented-device-profile,
+html[data-theme="light"] body div.seg {
+  background: rgba(15, 23, 42, 0.09) !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10) !important;
 }
+
+/* Tombol Inactive di Dalam Segmented Control (100% Polos Tanpa Border Kotak) */
+html body .seg button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html body .segmented button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html body .seg-group button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html body button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html body button.seg-btn:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  color: rgba(248, 250, 252, 0.78) !important;
+  box-shadow: none !important;
+  font-weight: 500 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body .seg button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html[data-theme="light"] body .segmented button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html[data-theme="light"] body .seg-group button:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html[data-theme="light"] body button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html[data-theme="light"] body button.seg-btn:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) {
+  color: #334155 !important;
+}
+
+/* Tombol ACTIVE di Dalam Segmented Control: Vibrant Crystal-Blue Pill! */
+html body .seg button.active,
+html body .seg button.is-active,
+html body .seg button[aria-checked="true"],
+html body .seg button[aria-pressed="true"],
+html body .segmented button.active,
+html body .segmented button.is-active,
+html body .segmented button[aria-checked="true"],
+html body .segmented button[aria-pressed="true"],
+html body .seg-group button.active,
+html body .seg-group button.is-active,
+html body .seg-btn.active,
+html body .seg-btn.is-active,
+html body button.seg.active,
+html body button.seg.is-active,
+html body button.seg[aria-checked="true"],
+html body button.seg[aria-pressed="true"],
+html body button.seg-btn.active,
+html body button.seg-btn.is-active,
+html body button.seg-btn[aria-checked="true"],
+html body button.seg-btn[aria-pressed="true"],
 html[data-theme="light"] body .seg button.active,
 html[data-theme="light"] body .seg button.is-active,
+html[data-theme="light"] body .seg button[aria-checked="true"],
+html[data-theme="light"] body .seg button[aria-pressed="true"],
+html[data-theme="light"] body .segmented button.active,
+html[data-theme="light"] body .segmented button.is-active,
+html[data-theme="light"] body .segmented button[aria-checked="true"],
+html[data-theme="light"] body .segmented button[aria-pressed="true"],
+html[data-theme="light"] body .seg-group button.active,
+html[data-theme="light"] body .seg-group button.is-active,
 html[data-theme="light"] body .seg-btn.active,
 html[data-theme="light"] body .seg-btn.is-active,
-html[data-theme="light"] body .seg.is-active {
-  background: rgba(255, 255, 255, 0.42) !important;
-  color: #0f172a !important;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.80) !important;
+html[data-theme="light"] body button.seg.active,
+html[data-theme="light"] body button.seg.is-active,
+html[data-theme="light"] body button.seg[aria-checked="true"],
+html[data-theme="light"] body button.seg[aria-pressed="true"],
+html[data-theme="light"] body button.seg-btn.active,
+html[data-theme="light"] body button.seg-btn.is-active,
+html[data-theme="light"] body button.seg-btn[aria-checked="true"],
+html[data-theme="light"] body button.seg-btn[aria-pressed="true"] {
+  background: linear-gradient(135deg, #0A84FF 0%, #0066CC 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+  box-shadow:
+    0 2px 10px rgba(10, 132, 255, 0.38),
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.48) !important;
+}
+
+html body button.seg.active svg,
+html body button.seg.is-active svg,
+html body button.seg[aria-checked="true"] svg,
+html body button.seg[aria-pressed="true"] svg,
+html body button.seg-btn.active svg,
+html body button.seg-btn.is-active svg,
+html body .segmented button.active svg,
+html body .segmented button.is-active svg,
+html body .segmented button[aria-checked="true"] svg,
+html[data-theme="light"] body button.seg.active svg,
+html[data-theme="light"] body button.seg.is-active svg,
+html[data-theme="light"] body button.seg[aria-checked="true"] svg,
+html[data-theme="light"] body button.seg[aria-pressed="true"] svg,
+html[data-theme="light"] body button.seg-btn.active svg,
+html[data-theme="light"] body button.seg-btn.is-active svg,
+html[data-theme="light"] body .segmented button.active svg,
+html[data-theme="light"] body .segmented button.is-active svg,
+html[data-theme="light"] body .segmented button[aria-checked="true"] svg {
+  stroke: #ffffff !important;
+  color: #ffffff !important;
+}
+html body button.seg.active span,
+html body button.seg.is-active span,
+html body button.seg[aria-checked="true"] span,
+html body button.seg[aria-pressed="true"] span,
+html body button.seg-btn.active span,
+html body button.seg-btn.is-active span,
+html body .segmented button.active span,
+html body .segmented button.is-active span,
+html body .segmented button[aria-checked="true"] span,
+html[data-theme="light"] body button.seg.active span,
+html[data-theme="light"] body button.seg.is-active span,
+html[data-theme="light"] body button.seg[aria-checked="true"] span,
+html[data-theme="light"] body button.seg[aria-pressed="true"] span,
+html[data-theme="light"] body button.seg-btn.active span,
+html[data-theme="light"] body button.seg-btn.is-active span,
+html[data-theme="light"] body .segmented button.active span,
+html[data-theme="light"] body .segmented button.is-active span,
+html[data-theme="light"] body .segmented button[aria-checked="true"] span {
+  color: #ffffff !important;
+}
+
+/* Tombol Aksi Biasa (Non-Segmented & Non-Primary) di Dark & Light Mode */
+html body .bar-btn,
+html body .icon-btn,
+html body .nav-btn,
+html body .action-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
 }
 html[data-theme="light"] body .bar-btn,
 html[data-theme="light"] body .icon-btn,
 html[data-theme="light"] body .nav-btn,
 html[data-theme="light"] body .action-btn,
-html[data-theme="light"] body button:not(.primary):not(#show-screen):not(#btn-save-crop) {
-  background: rgba(255, 255, 255, 0.22) !important;
-  border-color: rgba(255, 255, 255, 0.42) !important;
+html[data-theme="light"] body .card button:not(.primary):not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]):not(#show-screen):not(#btn-save-crop):not(.seg button) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(240, 246, 255, 0.38) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
   color: #0f172a !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
 }
 
-/* 6. Keterbacaan Teks Tajam di Atas Kaca Bening Light Mode */
+/* Input & Select di Light Mode */
+html[data-theme="light"] body input[type="text"],
+html[data-theme="light"] body input[type="password"],
+html[data-theme="light"] body input[type="number"],
+html[data-theme="light"] body select {
+  background: rgba(255, 255, 255, 0.52) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  color: #0f172a !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+}
+
+/* Keterbacaan Teks Tajam di Atas Kaca Bening Light Mode */
 html[data-theme="light"] body,
 html[data-theme="light"] body h1,
 html[data-theme="light"] body h2,
@@ -532,11 +735,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         if (lightBtn) {
             lightBtn.id = 'theme-light';
             lightBtn.classList.toggle('is-active', t === 'light');
+            lightBtn.classList.toggle('active', t === 'light');
             lightBtn.setAttribute('aria-checked', String(t === 'light'));
         }
         if (darkBtn) {
             darkBtn.id = 'theme-dark';
             darkBtn.classList.toggle('is-active', t === 'dark');
+            darkBtn.classList.toggle('active', t === 'dark');
             darkBtn.setAttribute('aria-checked', String(t === 'dark'));
         }
         try {
@@ -603,6 +808,24 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var infoLp = elLp ? (elLp.tagName + "." + elLp.className + " id:" + elLp.id + " bg:" + (window.getComputedStyle ? window.getComputedStyle(elLp).backgroundColor : "")) : "none";
             var infoDr = elDr ? (elDr.tagName + "." + elDr.className + " id:" + elDr.id + " bg:" + (window.getComputedStyle ? window.getComputedStyle(elDr).backgroundColor : "")) : "none";
 
+            var wireframeSelectors = ['.brand', '.placeholder', '#screen-empty h1', '#screen-empty h2', '#screen-empty .sub', '.drawer-header'];
+            var wireframeClean = true;
+            var wireframeDetails = [];
+            for (var wi = 0; wi < wireframeSelectors.length; wi++) {
+                var wel = document.querySelector(wireframeSelectors[wi]);
+                if (wel && window.getComputedStyle) {
+                    var wcs = window.getComputedStyle(wel);
+                    var btw = wcs.borderTopWidth || '0px';
+                    var bbg = wcs.backgroundColor || 'rgba(0, 0, 0, 0)';
+                    var isClean = (btw === '0px' || btw === '0' || wcs.borderStyle === 'none') &&
+                                  (bbg === 'rgba(0, 0, 0, 0)' || bbg === 'transparent' || bbg === '');
+                    if (!isClean) {
+                        wireframeClean = false;
+                        wireframeDetails.push(wireframeSelectors[wi] + '[bw:' + btw + '|bg:' + bbg + ']');
+                    }
+                }
+            }
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: curW,
@@ -628,7 +851,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 infoTop: infoTop,
                 infoLp: infoLp,
                 infoDr: infoDr,
-                probeChain: probeChain
+                probeChain: probeChain,
+                wireframeClean: wireframeClean,
+                wireframeDetails: wireframeDetails.join('; ')
             });
         } catch (_) {}
     }
@@ -718,7 +943,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }
                 }).catch(function(){});
             } catch (_) {}
-        }, 250);
+        }, 400);
     }
 
     if (document.readyState === "loading") {
@@ -1593,10 +1818,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let active_thm = if is_dark { "dark" } else { "light" };
                 let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
                 let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
+                let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
+                let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
+                let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}"}}}}"#,
+                        r#","version":"4.0.0","webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}"}}}}"#,
                         INDEX_HTML_SERVED.load(Ordering::SeqCst),
                         APP_CSS_SERVED.load(Ordering::SeqCst),
                         APP_JS_SERVED.load(Ordering::SeqCst),
@@ -1610,7 +1838,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         safe_ua,
                         GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
                         active_thm,
-                        dom_thm_str
+                        dom_thm_str,
+                        wf_clean,
+                        safe_wf_details
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -1619,8 +1849,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     sanitized = sanitized.replace(
                         r#""domReadyBeacon":"#,
                         &format!(
-                            r#""activeTheme": "{}", "domTheme": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
-                            active_thm, dom_thm_str, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                            r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                            active_thm, dom_thm_str, wf_clean, safe_wf_details, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                         )
                     );
                 }
@@ -1666,6 +1896,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let active_thm = if is_dark { "dark" } else { "light" };
         let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
         let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
+        let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
+        let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
+        let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
 
         let json = format!(
             r#"{{
@@ -1746,7 +1979,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "userAgent": "{}",
     "rafVerified": {},
     "activeTheme": "{}",
-    "domTheme": "{}"
+    "domTheme": "{}",
+    "wireframeClean": {},
+    "wireframeDetails": "{}"
   }},
   "version": "4.0.0"
 }}"#,
@@ -1794,7 +2029,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
             GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
             active_thm,
-            dom_thm_str
+            dom_thm_str,
+            wf_clean,
+            safe_wf_details
         );
         return HttpResponse::ok_json(&json);
     }
@@ -2110,9 +2347,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let dom_active = if dom_thm.is_empty() { active } else { &dom_thm };
         let light_x = GLOBAL_THEME_LIGHT_X.load(Ordering::SeqCst);
         let light_y = GLOBAL_THEME_LIGHT_Y.load(Ordering::SeqCst);
+        let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
+        let wf_det = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"theme":"{}","activeTheme":"{}","domTheme":"{}","themeLightX":{},"themeLightY":{}}}"#,
-            active, active, dom_active, light_x, light_y
+            r#"{{"ok":true,"theme":"{}","activeTheme":"{}","domTheme":"{}","themeLightX":{},"themeLightY":{},"wireframeClean":{},"wireframeDetails":"{}"}}"#,
+            active, active, dom_active, light_x, light_y, wf_clean, wf_det.replace('"', r#"\""#)
         ));
     }
 
@@ -2293,6 +2532,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Some(y) = parse_int_param(&req.body, "themeLightY") {
             if y > 0 {
                 GLOBAL_THEME_LIGHT_Y.store(y as usize, Ordering::SeqCst);
+            }
+        }
+
+        let wf_clean = req.body.contains(r#""wireframeClean":true"#) || req.body.contains(r#""wireframeClean": true"#);
+        GLOBAL_WIREFRAME_CLEAN.store(wf_clean, Ordering::SeqCst);
+        if let Some(details) = parse_string_param(&req.body, "wireframeDetails") {
+            if let Ok(mut g_wf) = GLOBAL_WIREFRAME_DETAILS.lock() {
+                *g_wf = details;
             }
         }
 
