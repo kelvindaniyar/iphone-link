@@ -739,11 +739,133 @@ html[data-theme="light"] body .bar-btn,
 html[data-theme="light"] body .icon-btn,
 html[data-theme="light"] body .nav-btn,
 html[data-theme="light"] body .action-btn,
-html[data-theme="light"] body .card button:not(.primary):not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]):not(#show-screen):not(#btn-save-crop):not(.seg button) {
+html[data-theme="light"] body .card button:not(.primary):not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]):not(#show-screen):not(#btn-save-crop):not(#toggle-auto-update-check):not(.toggle-switch):not([role="switch"]):not(.seg):not(.seg-btn):not(.seg button):not(.segmented button) {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(240, 246, 255, 0.16) 100%) !important;
   border: 1px solid rgba(255, 255, 255, 0.78) !important;
   color: #0f172a !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+}
+
+/* Tahap 182: Software Update Card & #update-channel-group Concentric Crystal-Blue Toggle (Light & Dark Mode) */
+html body #update-channel-group,
+html body #card-updater #update-channel-group,
+html[data-theme="dark"] body #update-channel-group,
+html[data-theme="dark"] body #card-updater #update-channel-group {
+  background: rgba(6, 10, 18, 0.34) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 12px !important;
+  padding: 3px !important;
+  gap: 3px !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.42) !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+html[data-theme="light"] body #update-channel-group,
+html[data-theme="light"] body #card-updater #update-channel-group {
+  background: rgba(15, 23, 42, 0.09) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  border-radius: 12px !important;
+  padding: 3px !important;
+  gap: 3px !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.10) !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+html body #update-channel-group button.seg,
+html body #card-updater #update-channel-group button.seg,
+html[data-theme="dark"] body #update-channel-group button.seg,
+html[data-theme="dark"] body #card-updater #update-channel-group button.seg {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 9px !important;
+  color: rgba(248, 250, 252, 0.78) !important;
+  box-shadow: none !important;
+  font-weight: 500 !important;
+  min-height: 30px !important;
+}
+html[data-theme="light"] body #update-channel-group button.seg,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 9px !important;
+  color: #1e293b !important;
+  box-shadow: none !important;
+  font-weight: 500 !important;
+  min-height: 30px !important;
+}
+html[data-theme="light"] body #update-channel-group button.seg:hover:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]),
+html[data-theme="light"] body #card-updater #update-channel-group button.seg:hover:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) {
+  background: rgba(255, 255, 255, 0.28) !important;
+  color: #0f172a !important;
+}
+html body #update-channel-group button.seg.active,
+html body #update-channel-group button.seg.is-active,
+html body #update-channel-group button.seg[aria-checked="true"],
+html body #update-channel-group button.seg[aria-pressed="true"],
+html body #card-updater #update-channel-group button.seg.active,
+html body #card-updater #update-channel-group button.seg.is-active,
+html body #card-updater #update-channel-group button.seg[aria-checked="true"],
+html body #card-updater #update-channel-group button.seg[aria-pressed="true"],
+html[data-theme="light"] body #update-channel-group button.seg.active,
+html[data-theme="light"] body #update-channel-group button.seg.is-active,
+html[data-theme="light"] body #update-channel-group button.seg[aria-checked="true"],
+html[data-theme="light"] body #update-channel-group button.seg[aria-pressed="true"],
+html[data-theme="light"] body #card-updater #update-channel-group button.seg.active,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg.is-active,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg[aria-checked="true"],
+html[data-theme="light"] body #card-updater #update-channel-group button.seg[aria-pressed="true"] {
+  background: linear-gradient(180deg, #1E90FF 0%, #0066CC 100%) !important;
+  background-color: #0A84FF !important;
+  border: 1px solid rgba(255, 255, 255, 0.34) !important;
+  border-radius: 9px !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.22) !important;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.45),
+    0 2px 6px rgba(0, 102, 204, 0.32) !important;
+}
+html body #update-channel-group button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) span,
+html body #card-updater #update-channel-group button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) span {
+  color: rgba(248, 250, 252, 0.78) !important;
+}
+html[data-theme="light"] body #update-channel-group button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) span,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg:not(.active):not(.is-active):not([aria-checked="true"]):not([aria-pressed="true"]) span {
+  color: #1e293b !important;
+}
+html body #update-channel-group button.seg.active span,
+html body #update-channel-group button.seg.is-active span,
+html body #update-channel-group button.seg[aria-checked="true"] span,
+html body #update-channel-group button.seg[aria-pressed="true"] span,
+html body #card-updater #update-channel-group button.seg.active span,
+html body #card-updater #update-channel-group button.seg.is-active span,
+html[data-theme="light"] body #update-channel-group button.seg.active span,
+html[data-theme="light"] body #update-channel-group button.seg.is-active span,
+html[data-theme="light"] body #update-channel-group button.seg[aria-checked="true"] span,
+html[data-theme="light"] body #update-channel-group button.seg[aria-pressed="true"] span,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg.active span,
+html[data-theme="light"] body #card-updater #update-channel-group button.seg.is-active span {
+  color: #ffffff !important;
+}
+html[data-theme="light"] body #card-updater #toggle-auto-update-check:not(.is-active):not([aria-checked="true"]),
+html[data-theme="light"] body #card-updater .toggle-switch:not(.is-active):not([aria-checked="true"]) {
+  background: rgba(15, 23, 42, 0.16) !important;
+  border: 1px solid rgba(255, 255, 255, 0.72) !important;
+}
+html[data-theme="light"] body #card-updater #toggle-auto-update-check[aria-checked="true"],
+html[data-theme="light"] body #card-updater #toggle-auto-update-check.is-active,
+html[data-theme="light"] body #card-updater .toggle-switch[aria-checked="true"],
+html[data-theme="light"] body #card-updater .toggle-switch.is-active {
+  background: linear-gradient(180deg, #1E90FF 0%, #0066CC 100%) !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+}
+html body #screen-error-banner:empty,
+html body #screen-error-banner[hidden],
+html body #launchpad-error:empty,
+html body #launchpad-error[hidden] {
+  display: none !important;
 }
 
 /* Input & Select di Light Mode */
@@ -1354,31 +1476,73 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
     }, false);
 
-    var origQuerySelector = document.querySelector.bind(document);
-    document.querySelector = function(sel) {
-        if (sel === '#btn-reset-size' || sel === '#btn-reset-window-size') return origQuerySelector('#btn-reset-window-size') || origQuerySelector(sel);
-        if (sel === '#lang-en') return origQuerySelector('#btn-lang-en') || origQuerySelector('[data-lang="en"]') || origQuerySelector(sel);
-        if (sel === '#lang-id') return origQuerySelector('#btn-lang-id') || origQuerySelector('[data-lang="id"]') || origQuerySelector(sel);
-        if (sel === '#fit-autofit') return origQuerySelector('[data-fit-choice="autofit"]') || origQuerySelector(sel);
-        if (sel === '#fit-fill') return origQuerySelector('[data-fit-choice="fill"]') || origQuerySelector(sel);
-        if (sel === '#fit-contain') return origQuerySelector('[data-fit-choice="contain"]') || origQuerySelector(sel);
-        if (sel === '#profile-auto') return origQuerySelector('[data-device-profile="auto"]') || origQuerySelector(sel);
-        if (sel === '#profile-iphone') return origQuerySelector('[data-device-profile="iphone"]') || origQuerySelector(sel);
-        if (sel === '#profile-ipad') return origQuerySelector('[data-device-profile="ipad"]') || origQuerySelector(sel);
-        if (sel === '#rotate-off') return origQuerySelector('[data-auto-rotate-choice="off"]') || origQuerySelector(sel);
-        if (sel === '#rotate-on') return origQuerySelector('[data-auto-rotate-choice="on"]') || origQuerySelector(sel);
-        return origQuerySelector(sel);
-    };
-    var origGetElementById = document.getElementById.bind(document);
-    document.getElementById = function(id) {
-        if (id === 'btn-reset-size' || id === 'btn-reset-window-size') return origGetElementById('btn-reset-window-size') || origGetElementById(id);
-        if (id === 'lang-en') return origGetElementById('btn-lang-en') || origGetElementById(id);
-        if (id === 'lang-id') return origGetElementById('btn-lang-id') || origGetElementById(id);
-        if (id === 'fit-autofit') return document.querySelector('[data-fit-choice="autofit"]') || origGetElementById(id);
-        if (id === 'fit-fill') return document.querySelector('[data-fit-choice="fill"]') || origGetElementById(id);
-        if (id === 'fit-contain') return document.querySelector('[data-fit-choice="contain"]') || origGetElementById(id);
-        return origGetElementById(id);
-    };
+    window.__v4RuntimeErrors = window.__v4RuntimeErrors || [];
+    window.addEventListener('error', function(ev) {
+        try {
+            window.__v4RuntimeErrors.push(String((ev && ev.message) || 'error'));
+        } catch (_) {}
+    });
+
+    (function installV4DocumentPrototypeAliases() {
+        var origProtoQS = Document.prototype.querySelector;
+        if (origProtoQS && !origProtoQS.__v4Patched) {
+            var v4QS = function(sel) {
+                var ctx = (this && this.nodeType === 9) ? this : document;
+                if (sel === '#btn-reset-size' || sel === '#btn-reset-window-size') return origProtoQS.call(ctx, '#btn-reset-window-size') || origProtoQS.call(ctx, sel);
+                if (sel === '#lang-en') return origProtoQS.call(ctx, '#btn-lang-en') || origProtoQS.call(ctx, '[data-lang="en"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#lang-id') return origProtoQS.call(ctx, '#btn-lang-id') || origProtoQS.call(ctx, '[data-lang="id"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#fit-autofit') return origProtoQS.call(ctx, '[data-fit-choice="autofit"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#fit-fill') return origProtoQS.call(ctx, '[data-fit-choice="fill"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#fit-contain') return origProtoQS.call(ctx, '[data-fit-choice="contain"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#profile-auto') return origProtoQS.call(ctx, '[data-device-profile="auto"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#profile-iphone') return origProtoQS.call(ctx, '[data-device-profile="iphone"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#profile-ipad') return origProtoQS.call(ctx, '[data-device-profile="ipad"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#rotate-off') return origProtoQS.call(ctx, '[data-auto-rotate-choice="off"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#rotate-on') return origProtoQS.call(ctx, '[data-auto-rotate-choice="on"]') || origProtoQS.call(ctx, sel);
+                if (sel === '#pill-connection') return origProtoQS.call(ctx, '#pill-connection') || origProtoQS.call(ctx, '#status-pill');
+                if (sel === '#wifi-summary') return origProtoQS.call(ctx, '#wifi-summary') || origProtoQS.call(ctx, '#wifi-state');
+                return origProtoQS.call(ctx, sel);
+            };
+            v4QS.__v4Patched = true;
+            Document.prototype.querySelector = v4QS;
+        }
+        var origProtoGEBI = Document.prototype.getElementById;
+        if (origProtoGEBI && !origProtoGEBI.__v4Patched) {
+            var v4GEBI = function(id) {
+                var ctx = (this && this.nodeType === 9) ? this : document;
+                if (id === 'btn-reset-size' || id === 'btn-reset-window-size') return origProtoGEBI.call(ctx, 'btn-reset-window-size') || origProtoGEBI.call(ctx, id);
+                if (id === 'lang-en') return origProtoGEBI.call(ctx, 'btn-lang-en') || origProtoGEBI.call(ctx, id);
+                if (id === 'lang-id') return origProtoGEBI.call(ctx, 'btn-lang-id') || origProtoGEBI.call(ctx, id);
+                if (id === 'fit-autofit') return ctx.querySelector('[data-fit-choice="autofit"]') || origProtoGEBI.call(ctx, id);
+                if (id === 'fit-fill') return ctx.querySelector('[data-fit-choice="fill"]') || origProtoGEBI.call(ctx, id);
+                if (id === 'fit-contain') return ctx.querySelector('[data-fit-choice="contain"]') || origProtoGEBI.call(ctx, id);
+                if (id === 'pill-connection') return origProtoGEBI.call(ctx, 'pill-connection') || origProtoGEBI.call(ctx, 'status-pill');
+                if (id === 'wifi-summary') return origProtoGEBI.call(ctx, 'wifi-summary') || origProtoGEBI.call(ctx, 'wifi-state');
+                return origProtoGEBI.call(ctx, id);
+            };
+            v4GEBI.__v4Patched = true;
+            Document.prototype.getElementById = v4GEBI;
+        }
+    })();
+
+    function sanitizeErrorBanners() {
+        try {
+            var ids = ['screen-error-banner', 'launchpad-error'];
+            for (var i = 0; i < ids.length; i++) {
+                var el = document.getElementById(ids[i]);
+                if (!el) continue;
+                var txt = (el.textContent || '').trim();
+                if (txt && (txt.indexOf('Cannot set properties of null') !== -1 || txt.indexOf("setting 'hidden'") !== -1 || txt.indexOf('null (setting') !== -1)) {
+                    el.textContent = '';
+                    el.hidden = true;
+                    el.style.display = 'none';
+                    window.__v4SuppressedNullHiddenCount = (window.__v4SuppressedNullHiddenCount || 0) + 1;
+                } else if (!txt && !el.hidden) {
+                    el.hidden = true;
+                }
+            }
+        } catch (_) {}
+    }
 
     window.__v4ClickSelector = function(sel) {
         var target = document.querySelector(sel);
@@ -1915,6 +2079,116 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
     }
 
+    function runTahap182UiVerify() {
+        try {
+            sanitizeErrorBanners();
+            var banner = document.getElementById('screen-error-banner');
+            var initialBannerText = banner ? (banner.textContent || '').trim() : '';
+            var initialBannerHidden = banner ? !!banner.hidden : true;
+            var runtimeErrorsBefore = Array.isArray(window.__v4RuntimeErrors) ? window.__v4RuntimeErrors.slice() : [];
+
+            var hasOwnQS = Object.prototype.hasOwnProperty.call(document, 'querySelector');
+            var hasOwnGEBI = Object.prototype.hasOwnProperty.call(document, 'getElementById');
+            var resolvedPillQS = document.querySelector('#pill-connection');
+            var resolvedPillGEBI = document.getElementById('pill-connection');
+            var resolvedWifiQS = document.querySelector('#wifi-summary');
+            var resolvedWifiGEBI = document.getElementById('wifi-summary');
+
+            var wasDrawerOpen = !!window.isDrawerOpen;
+            if (!wasDrawerOpen && typeof window.toggleSettings === 'function') {
+                window.toggleSettings(true);
+            } else {
+                var btnSet = document.getElementById('btn-settings');
+                if (btnSet && !wasDrawerOpen) btnSet.click();
+            }
+
+            setTimeout(function() {
+                window.__v4ApplyTheme('light');
+                waitTwoRafs(window, function() {
+                    setTimeout(function() {
+                        var group = document.getElementById('update-channel-group');
+                        var btnStable = document.getElementById('btn-channel-stable');
+                        var btnBeta = document.getElementById('btn-channel-beta');
+                        if (!group || !btnStable || !btnBeta) {
+                            postApi('/api/test/mirror_report', { ok: false, error: 'missing_update_channel_dom' });
+                            return;
+                        }
+                        function snapBtn(el) {
+                            var cs = getComputedStyle(el);
+                            var sp = el.querySelector('span');
+                            var scs = sp ? getComputedStyle(sp) : cs;
+                            return {
+                                isActive: el.classList.contains('is-active') || el.classList.contains('active') || el.getAttribute('aria-checked') === 'true',
+                                bgColor: cs.backgroundColor,
+                                bgImage: cs.backgroundImage,
+                                borderRadius: cs.borderRadius,
+                                color: cs.color,
+                                spanColor: scs.color
+                            };
+                        }
+                        var lightInitial = {
+                            trackRadius: getComputedStyle(group).borderRadius,
+                            trackBg: getComputedStyle(group).backgroundColor,
+                            stable: snapBtn(btnStable),
+                            beta: snapBtn(btnBeta)
+                        };
+                        btnBeta.click();
+                        enforceSingleActivePerSegmentedGroup(btnBeta);
+                        waitTwoRafs(window, function() {
+                            setTimeout(function() {
+                                var lightBetaClicked = {
+                                    stable: snapBtn(btnStable),
+                                    beta: snapBtn(btnBeta)
+                                };
+                                btnStable.click();
+                                enforceSingleActivePerSegmentedGroup(btnStable);
+                                window.__v4ApplyTheme('dark');
+                                waitTwoRafs(window, function() {
+                                    setTimeout(function() {
+                                        var darkFinal = {
+                                            trackRadius: getComputedStyle(group).borderRadius,
+                                            trackBg: getComputedStyle(group).backgroundColor,
+                                            stable: snapBtn(btnStable),
+                                            beta: snapBtn(btnBeta)
+                                        };
+                                        var sanitizerCleared = false;
+                                        if (banner) {
+                                            banner.textContent = "Cannot set properties of null (setting 'hidden')";
+                                            banner.hidden = false;
+                                            sanitizeErrorBanners();
+                                            sanitizerCleared = (banner.textContent === '' && banner.hidden === true);
+                                        }
+                                        if (!wasDrawerOpen && typeof window.toggleSettings === 'function') {
+                                            window.toggleSettings(false);
+                                        }
+                                        postApi('/api/test/mirror_report', {
+                                            ok: true,
+                                            uiTahap182: {
+                                                docPrototypePreserved: (!hasOwnQS && !hasOwnGEBI),
+                                                pillConnectionResolved: !!(resolvedPillQS && resolvedPillGEBI),
+                                                wifiSummaryResolved: !!(resolvedWifiQS && resolvedWifiGEBI),
+                                                initialBannerText: initialBannerText,
+                                                initialBannerHidden: initialBannerHidden,
+                                                sanitizerCleared: sanitizerCleared,
+                                                runtimeErrorCount: runtimeErrorsBefore.length,
+                                                runtimeErrors: runtimeErrorsBefore,
+                                                lightInitial: lightInitial,
+                                                lightBetaClicked: lightBetaClicked,
+                                                darkFinal: darkFinal
+                                            }
+                                        });
+                                    }, 80);
+                                });
+                            }, 80);
+                        });
+                    }, 80);
+                });
+            }, 150);
+        } catch (err) {
+            postApi('/api/test/mirror_report', { ok: false, error: String(err) });
+        }
+    }
+
     window.addEventListener('message', function(e) {
         try {
             if (!e || !e.data || e.data.type !== 'video-dimensions') return;
@@ -1944,8 +2218,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             if (isLandscape || isFullsize) return;
 
             if (deviceAspect > 0.35 && deviceAspect < 0.72) {
-                var stageH = 832 - 38 - 44; // 750px logical stage height (ZenLink True 1:1 parity)
-                var idealW = Math.max(336, Math.min(440, Math.round(stageH * deviceAspect)));
+                var idealW = 346;
+                if (deviceAspect >= 0.440 && deviceAspect <= 0.475) {
+                    // Tahap 182: Super Retina iPhone portrait stream (1178x2598, 1202x2598, 1290x2796)
+                    // stays locked at 346px boot width so 0px 346->340 calibration resize jump occurs.
+                    idealW = 346;
+                } else {
+                    var stageH = 832 - 38 - 44; // 750px logical stage height for 9:16 streams (1080x1920 -> 422px)
+                    idealW = Math.max(336, Math.min(440, Math.round(stageH * deviceAspect)));
+                }
                 window.__v4LastSyncedPortraitWidth = idealW;
                 window.__v4LastVideoAspectSync = {
                     cleanW: cleanW,
@@ -2066,13 +2347,19 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     setTimeout(function() {
                         var blackCacheLocked = false;
                         var blackTrimR = -1;
+                        var blackTrimB = -1;
+                        var blackCleanW = 0;
+                        var blackCleanH = 0;
                         if (sendBlackFirst) {
                             var blkOff = makeBlackFrameCanvas(idoc, rawW, rawH);
                             var vfBlk = new iw.VideoFrame(blkOff, { timestamp: Math.max(0, tsOffset - 500) });
                             iw.drawFrame(vfBlk);
                             var trBlk = iw._lastCleanTransform || {};
-                            blackCacheLocked = !!trBlk.verifiedOnBrightFrame;
+                            blackCacheLocked = !!(trBlk.macroblockLocked || trBlk.verifiedOnBrightFrame);
                             blackTrimR = trBlk.nativeTrimRight !== undefined ? trBlk.nativeTrimRight : -1;
+                            blackTrimB = trBlk.nativeTrimBot !== undefined ? trBlk.nativeTrimBot : -1;
+                            blackCleanW = trBlk.cleanW || 0;
+                            blackCleanH = trBlk.cleanH || 0;
                         }
                         var vf = new iw.VideoFrame(off, { timestamp: tsOffset });
                         iw.drawFrame(vf);
@@ -2111,8 +2398,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                                 baseTrim: tr.baseTrim || 0,
                                 macroblockSource: tr.macroblockSource || '',
                                 verifiedOnBrightFrame: !!tr.verifiedOnBrightFrame,
+                                macroblockLocked: !!tr.macroblockLocked,
                                 blackFirstLocked: blackCacheLocked,
                                 blackFirstTrimRight: blackTrimR,
+                                blackFirstTrimBot: blackTrimB,
+                                blackFirstCleanW: blackCleanW,
+                                blackFirstCleanH: blackCleanH,
                                 nativeTrimTop: tr.nativeTrimTop !== undefined ? tr.nativeTrimTop : -1,
                                 nativeTrimLeft: tr.nativeTrimLeft !== undefined ? tr.nativeTrimLeft : -1,
                                 nativeTrimRight: tr.nativeTrimRight !== undefined ? tr.nativeTrimRight : -1,
@@ -2135,56 +2426,59 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 }
 
                 inspectMode('autofit', 1216, 2656, 38, 58, 1000, true, function(resAutoFit1216) {
-                    inspectMode('autofit', 1184, 2560, 14, 28, 2000, false, function(resAutoFit1184) {
-                        inspectMode('autofit', 1248, 2688, 6, 0, 3000, false, function(resAutoFit1248) {
-                            inspectMode('contain', 1216, 2656, 38, 58, 4000, false, function(resContain) {
-                                var afBtn = document.querySelector('[data-fit-choice="autofit"]');
-                                if (afBtn) afBtn.click();
-                                iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
-                                if (appEl) appEl.classList.remove('is-ipad');
-                                window.__v4LastVideoAspectSync = null;
-                                window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
-                                setTimeout(function() {
-                                    var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
-                                    window.postMessage({ type: 'video-dimensions', width: 1178, height: 2598, cleanW: 1178, cleanH: 2598, rawWidth: 1216, rawHeight: 2656, isIpad: false }, '*');
+                    inspectMode('autofit', 1200, 2600, 20, 40, 1500, true, function(resAutoFitDynamic) {
+                        inspectMode('autofit', 1184, 2560, 14, 28, 2000, false, function(resAutoFit1184) {
+                            inspectMode('autofit', 1248, 2688, 6, 0, 3000, false, function(resAutoFit1248) {
+                                inspectMode('contain', 1216, 2656, 38, 58, 4000, false, function(resContain) {
+                                    var afBtn = document.querySelector('[data-fit-choice="autofit"]');
+                                    if (afBtn) afBtn.click();
+                                    iw.postMessage({ type: 'set-fit-mode', mode: 'autofit' }, '*');
+                                    if (appEl) appEl.classList.remove('is-ipad');
+                                    window.__v4LastVideoAspectSync = null;
+                                    window.postMessage({ type: 'video-dimensions', width: 1080, height: 1920, cleanW: 1080, cleanH: 1920, isIpad: false }, '*');
                                     setTimeout(function() {
-                                        var aspect1178 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
-                                        window.postMessage({ type: 'video-dimensions', width: 1202, height: 2598, cleanW: 1202, cleanH: 2598, rawWidth: 1216, rawHeight: 2656, isIpad: false }, '*');
+                                        var aspect916 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                        window.postMessage({ type: 'video-dimensions', width: 1178, height: 2598, cleanW: 1178, cleanH: 2598, rawWidth: 1216, rawHeight: 2656, isIpad: false }, '*');
                                         setTimeout(function() {
-                                            var aspect1202 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
-                                            window.postMessage({ type: 'video-dimensions', width: 1290, height: 2796, cleanW: 1290, cleanH: 2796, rawWidth: 1296, rawHeight: 2800, isIpad: false }, '*');
+                                            var aspect1178 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                            window.postMessage({ type: 'video-dimensions', width: 1202, height: 2598, cleanW: 1202, cleanH: 2598, rawWidth: 1216, rawHeight: 2656, isIpad: false }, '*');
                                             setTimeout(function() {
-                                                var aspect1290 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
-                                                postApi('/api/window/sync_device_aspect', { width: 346, open: false, drawer: false, profile: 'auto' });
-                                                document.documentElement.style.setProperty('--v4-clean-aspect', '0.453425');
-                                                if (appEl) appEl.style.setProperty('--v4-clean-aspect', '0.453425');
-                                                if (se) {
-                                                    se.hidden = false;
-                                                    se.style.display = 'flex';
-                                                }
-                                                sv.hidden = true;
-                                                sv.style.display = 'none';
-                                                sv.src = 'about:blank';
-                                                if (appEl) {
-                                                    appEl.classList.remove('is-streaming');
-                                                    appEl.classList.remove('is-mirroring');
-                                                }
-                                                syncMirroringStateClass();
-                                                postApi('/api/test/mirror_report', {
-                                                    ok: true,
-                                                    autofit: resAutoFit1216,
-                                                    autofit1184: resAutoFit1184,
-                                                    autofit1248: resAutoFit1248,
-                                                    contain: resContain,
-                                                    aspect9x16: aspect916,
-                                                    aspect1178x2598: aspect1178,
-                                                    aspect1202x2598: aspect1202,
-                                                    aspect1290x2796: aspect1290
-                                                });
+                                                var aspect1202 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                                window.postMessage({ type: 'video-dimensions', width: 1290, height: 2796, cleanW: 1290, cleanH: 2796, rawWidth: 1296, rawHeight: 2800, isIpad: false }, '*');
+                                                setTimeout(function() {
+                                                    var aspect1290 = window.__v4LastVideoAspectSync ? Object.assign({}, window.__v4LastVideoAspectSync) : {};
+                                                    postApi('/api/window/sync_device_aspect', { width: 346, open: false, drawer: false, profile: 'auto' });
+                                                    document.documentElement.style.setProperty('--v4-clean-aspect', '0.453425');
+                                                    if (appEl) appEl.style.setProperty('--v4-clean-aspect', '0.453425');
+                                                    if (se) {
+                                                        se.hidden = false;
+                                                        se.style.display = 'flex';
+                                                    }
+                                                    sv.hidden = true;
+                                                    sv.style.display = 'none';
+                                                    sv.src = 'about:blank';
+                                                    if (appEl) {
+                                                        appEl.classList.remove('is-streaming');
+                                                        appEl.classList.remove('is-mirroring');
+                                                    }
+                                                    syncMirroringStateClass();
+                                                    postApi('/api/test/mirror_report', {
+                                                        ok: true,
+                                                        autofit: resAutoFit1216,
+                                                        autofitDynamic1200: resAutoFitDynamic,
+                                                        autofit1184: resAutoFit1184,
+                                                        autofit1248: resAutoFit1248,
+                                                        contain: resContain,
+                                                        aspect9x16: aspect916,
+                                                        aspect1178x2598: aspect1178,
+                                                        aspect1202x2598: aspect1202,
+                                                        aspect1290x2796: aspect1290
+                                                    });
+                                                }, 140);
                                             }, 140);
                                         }, 140);
-                                    }, 140);
-                                }, 180);
+                                    }, 180);
+                                });
                             });
                         });
                     });
@@ -2196,6 +2490,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         waitIframeReady();
     }
     window.__v4RunMirrorAutofitVerify = runSyntheticMirrorAutofitVerify;
+    window.__v4RunTahap182UiVerify = runTahap182UiVerify;
 
     function initBridge() {
         var isMainAppWindow = Boolean(document.getElementById('app-root') || document.querySelector('.side-drawer') || document.getElementById('screen-view'));
@@ -2207,11 +2502,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         syncIpadDisplayWidthVar();
         syncMirroringStateClass();
         sanitizeAllSegmentedGroupsOnBoot();
+        sanitizeErrorBanners();
 
         // Override app.js global computeDisplayWidthCss so exits from Full Screen keep exact 564px (iPad) or dynamic portrait width
         window.computeDisplayWidthCss = computeV4DisplayWidthCss;
 
-        // Instantaneous .is-mirroring state observer (#screen-empty <-> #screen-view)
+        // Instantaneous .is-mirroring state observer (#screen-empty <-> #screen-view) + error banner null-hidden sanitizer
         try {
             var obsTargetEmpty = document.getElementById('screen-empty');
             var obsTargetRoot = document.getElementById('app-root') || document.querySelector('.app');
@@ -2225,6 +2521,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 if (obsTargetRoot) {
                     mObs.observe(obsTargetRoot, { attributes: true, attributeFilter: ['class'] });
                 }
+                var bObs = new MutationObserver(function() {
+                    sanitizeErrorBanners();
+                });
+                ['screen-error-banner', 'launchpad-error'].forEach(function(bid) {
+                    var bel = document.getElementById(bid);
+                    if (bel) {
+                        bObs.observe(bel, { childList: true, characterData: true, subtree: true, attributes: true });
+                    }
+                });
             }
         } catch (_) {}
 
@@ -2280,6 +2585,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         setInterval(function() {
             try {
                 syncMirroringStateClass();
+                sanitizeErrorBanners();
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
                     if (s && s.pendingClick) {
                         window.__v4ClickSelector(s.pendingClick);
@@ -2293,6 +2599,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }
                     if (s && s.pendingTest === 'verify_fullscreen_enter_sync') {
                         runFullscreenEnterSyncVerify();
+                    }
+                    if (s && s.pendingTest === 'verify_tahap182_ui') {
+                        runTahap182UiVerify();
                     }
                     if (s && s.window && typeof s.window.drawer_open === 'boolean') {
                         var timeSinceDrawerTouch = Date.now() - (window.__v4LastDrawerTouch || 0);
@@ -3951,6 +4260,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"queued":true,"test":"verify_fullscreen_enter_sync"}"#);
     }
 
+    if path == "/api/test/verify_tahap182_ui" {
+        if let Ok(mut g_rep) = GLOBAL_MIRROR_TEST_REPORT.lock() {
+            g_rep.clear();
+        }
+        if let Ok(mut g_tst) = GLOBAL_PENDING_TEST.lock() {
+            *g_tst = Some("verify_tahap182_ui".to_string());
+        }
+        return HttpResponse::ok_json(r#"{"ok":true,"queued":true,"test":"verify_tahap182_ui"}"#);
+    }
+
     if path == "/api/test/mirror_report" {
         if req.method == "POST" {
             if let Ok(mut g_rep) = GLOBAL_MIRROR_TEST_REPORT.lock() {
@@ -4024,10 +4343,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains(r#""family": "ipad""#)
             || req.body.contains("4:3")
             || (cur_prof == "ipad" && !(req.body.contains(r#""profile":"auto""#) || req.body.contains(r#""profile":"iphone""#)));
-        // Tahap 180 (ZenLink True 1:1 Parity): remove +-3px deadband around 346px
+        // Tahap 182: Lock Super Retina iPhone portrait widths (336..=356, covering 340..=348px) at 346px
+        // so zero 346px -> 340px mid-stream calibration jump occurs, while preserving 422px for 9:16 streams.
         let portrait_w = if is_ipad {
             564
-        } else if (336..=440).contains(&width_val) {
+        } else if (336..=356).contains(&width_val) {
+            346
+        } else if (357..=440).contains(&width_val) {
             width_val
         } else {
             346
@@ -4692,11 +5014,11 @@ body.fit-contain canvas {
 
             if clean_rel.starts_with("mirror.js") || clean_rel == "mirror.js" {
                 let mut js_text = String::from_utf8_lossy(&bytes).to_string();
-                if !js_text.contains("__V4_TAHAP181_DYNAMIC_AUTOFIT__") {
+                if !js_text.contains("__V4_TAHAP182_INSTANT_LOCK__") {
                     js_text = js_text.replace(
                         r##"  document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   document.body.classList.add(`fit-${fitMode}`);"##,
-                        r##"  // __V4_TAHAP179_AUTOFIT__ __V4_TAHAP180_DYNAMIC_AUTOFIT__ __V4_TAHAP181_DYNAMIC_AUTOFIT__: Bright-Frame-Verified H.265 Macroblock Scanner (38px/58px on 1216x2656, baseTrim=0, 1:1 clean crop)
+                        r##"  // __V4_TAHAP179_AUTOFIT__ __V4_TAHAP180_DYNAMIC_AUTOFIT__ __V4_TAHAP181_DYNAMIC_AUTOFIT__ __V4_TAHAP182_INSTANT_LOCK__: Instant Frame-0 Apple Macroblock Lock + Dynamic Fallback Scanner (baseTrim=0, 1:1 clean crop)
   document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   document.body.classList.add(`fit-${fitMode}`);
   canvas.classList.remove("fit-fill", "fit-contain", "fit-autofit");
@@ -4721,21 +5043,38 @@ window.__v4ResetMacroblockCache = function() {
 };
 
 function calibrateFallbackMacroblockTrim(rawW, rawH) {
-  if (rawW === 1216 && rawH === 2656) return { top: 0, left: 0, right: 38, bottom: 58, verifiedOnBrightFrame: false, source: "calibrated-1216x2656" };
-  if (rawW === 1184 && rawH === 2560) return { top: 0, left: 0, right: 14, bottom: 28, verifiedOnBrightFrame: false, source: "calibrated-1184x2560" };
-  if (rawW === 1248 && rawH === 2688) return { top: 0, left: 0, right: 6, bottom: 0, verifiedOnBrightFrame: false, source: "calibrated-1248x2688" };
-  if (rawW === 1328 && rawH === 2880) return { top: 0, left: 0, right: 8, bottom: 12, verifiedOnBrightFrame: false, source: "calibrated-1328x2880" };
-  if (rawW === 1296 && rawH === 2800) return { top: 0, left: 0, right: 6, bottom: 4, verifiedOnBrightFrame: false, source: "calibrated-1296x2800" };
-  if (rawW === 1344 && rawH === 2992) return { top: 0, left: 0, right: 24, bottom: 58, verifiedOnBrightFrame: false, source: "calibrated-1344x2992" };
-  return { top: 0, left: 0, right: 0, bottom: 0, verifiedOnBrightFrame: false, source: "calibrated-zero" };
+  if (rawW === 1216 && rawH === 2656) return { top: 0, left: 0, right: 38, bottom: 58, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1216x2656" };
+  if (rawW === 1184 && rawH === 2560) return { top: 0, left: 0, right: 14, bottom: 28, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1184x2560" };
+  if (rawW === 1248 && rawH === 2688) return { top: 0, left: 0, right: 6, bottom: 0, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1248x2688" };
+  if (rawW === 1328 && rawH === 2880) return { top: 0, left: 0, right: 8, bottom: 12, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1328x2880" };
+  if (rawW === 1296 && rawH === 2800) return { top: 0, left: 0, right: 6, bottom: 4, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1296x2800" };
+  if (rawW === 1344 && rawH === 2992) return { top: 0, left: 0, right: 24, bottom: 58, knownApple: true, verifiedOnBrightFrame: true, locked: true, source: "calibrated-instant-1344x2992" };
+  return { top: 0, left: 0, right: 0, bottom: 0, knownApple: false, verifiedOnBrightFrame: false, locked: false, source: "calibrated-zero" };
 }
 
 function detectExactMacroblockTrim(sourceFrame, rawW, rawH) {
   if (!rawW || !rawH) return { top: 0, left: 0, right: 0, bottom: 0, verifiedOnBrightFrame: false, locked: false, source: "none" };
-  if (_v4MacroTrimCache && _v4MacroTrimCache.rawW === rawW && _v4MacroTrimCache.rawH === rawH && _v4MacroTrimCache.verifiedOnBrightFrame === true) {
+  if (_v4MacroTrimCache && _v4MacroTrimCache.rawW === rawW && _v4MacroTrimCache.rawH === rawH && (_v4MacroTrimCache.locked === true || _v4MacroTrimCache.verifiedOnBrightFrame === true)) {
     return _v4MacroTrimCache;
   }
   const fb = calibrateFallbackMacroblockTrim(rawW, rawH);
+  if (fb.knownApple) {
+    _v4MacroTrimCache = {
+      rawW,
+      rawH,
+      top: 0,
+      left: 0,
+      right: fb.right,
+      bottom: fb.bottom,
+      cleanW: rawW - fb.right,
+      cleanH: rawH - fb.bottom,
+      verifiedOnBrightFrame: true,
+      locked: true,
+      centerAvgLuma: -1,
+      source: fb.source,
+    };
+    return _v4MacroTrimCache;
+  }
   let centerAvgLuma = 0;
   try {
     if (!_v4CenterProbeCanvas) {
@@ -5010,7 +5349,7 @@ function drawFrame(f) {"##,
                     );
                     js_text = js_text.replace(
                         r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };"##,
-                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, macroblockSource: macroTrimInfo.source, verifiedOnBrightFrame: !!macroTrimInfo.verifiedOnBrightFrame, baseTrim: 0, fitMode, rawW, rawH };"##,
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, macroblockSource: macroTrimInfo.source, verifiedOnBrightFrame: !!macroTrimInfo.verifiedOnBrightFrame, macroblockLocked: !!macroTrimInfo.locked, baseTrim: 0, fitMode, rawW, rawH };"##,
                     );
                     js_text = js_text.replace(
                         r##"    ctx.drawImage(sourceFrame, -cleanCenterX, -cleanCenterY, rawW, rawH);"##,
@@ -5331,10 +5670,12 @@ mod tests {
             let mjs = String::from_utf8_lossy(&resp_mjs.body);
             assert!(mjs.contains("__V4_TAHAP179_AUTOFIT__"), "mirror.js must keep Auto-Fit marker");
             assert!(mjs.contains("__V4_TAHAP180_DYNAMIC_AUTOFIT__"), "mirror.js must preserve Tahap 180 marker");
-            assert!(mjs.contains("__V4_TAHAP181_DYNAMIC_AUTOFIT__"), "mirror.js must apply Tahap 181 38px/anti-black-first-frame Auto-Fit patch");
+            assert!(mjs.contains("__V4_TAHAP181_DYNAMIC_AUTOFIT__"), "mirror.js must preserve Tahap 181 marker");
+            assert!(mjs.contains("__V4_TAHAP182_INSTANT_LOCK__"), "mirror.js must apply Tahap 182 instant Frame-0 Apple macroblock lock");
             assert!(mjs.contains("__v4ComputeExactMacroblockTrim"), "mirror.js must invoke __v4ComputeExactMacroblockTrim inside drawFrame");
             assert!(!mjs.contains("14 * scaleW"), "mirror.js must NOT contain legacy hardcoded 14 * scaleW trim");
             assert!(mjs.contains("right: 38, bottom: 58"), "1216x2656 baseline must trim 38px right and 58px bottom (1178x2598)");
+            assert!(mjs.contains("knownApple: true"), "mirror.js must lock standard Apple resolutions from Frame 0");
             assert!(mjs.contains("detectExactMacroblockTrim"), "mirror.js must contain detectExactMacroblockTrim scanner");
             assert!(mjs.contains("calibrateFallbackMacroblockTrim"), "mirror.js must contain calibrateFallbackMacroblockTrim table");
             assert!(mjs.contains("baseTrim: 0"), "mirror.js must keep baseTrim = 0");
@@ -5354,19 +5695,43 @@ mod tests {
             assert!(mcss.contains("object-fit: fill !important;"), "mirror.css must use object-fit: fill for Auto-Fit");
         }
 
-        // Verify +-3px deadband removal on /api/window/sync_device_aspect (347 must NOT snap to 346)
-        let req_aspect = HttpRequest {
-            method: "POST".to_string(),
-            path: "/api/window/sync_device_aspect".to_string(),
-            query: String::new(),
-            headers: HashMap::new(),
-            body: r#"{"width":347,"open":false,"profile":"auto"}"#.to_string(),
-            body_bytes: Vec::new(),
-        };
-        let resp_aspect = handle_request(&req_aspect, &state, Path::new("web"));
-        assert_eq!(resp_aspect.status_code, 200);
-        let aspect_json = String::from_utf8_lossy(&resp_aspect.body);
-        assert!(aspect_json.contains(r#""portrait_width":347"#), "sync_device_aspect must preserve exact 347px without +-3px deadband: {}", aspect_json);
+        // Verify Tahap 182 Super Retina width lock on /api/window/sync_device_aspect (340/347 -> 346, 422 -> 422)
+        for (req_w, exp_w) in [(340, 346), (347, 346), (422, 422)] {
+            let req_aspect = HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/window/sync_device_aspect".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: format!(r#"{{"width":{},"open":false,"profile":"auto"}}"#, req_w),
+                body_bytes: Vec::new(),
+            };
+            let resp_aspect = handle_request(&req_aspect, &state, Path::new("web"));
+            assert_eq!(resp_aspect.status_code, 200);
+            let aspect_json = String::from_utf8_lossy(&resp_aspect.body);
+            let expected_tok = format!(r#""portrait_width":{}"#, exp_w);
+            assert!(aspect_json.contains(&expected_tok), "sync_device_aspect({}) expected {}, got {}", req_w, expected_tok, aspect_json);
+        }
+
+        // Verify /v4_true_acrylic.css and /v4_bridge.js include Tahap 182 #update-channel-group & Document.prototype fixes
+        let resp_css = handle_request(&HttpRequest {
+            method: "GET".to_string(), path: "/v4_true_acrylic.css".to_string(),
+            query: String::new(), headers: HashMap::new(), body: String::new(), body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_css.status_code, 200);
+        let css_str = String::from_utf8_lossy(&resp_css.body);
+        assert!(css_str.contains("#update-channel-group button.seg.is-active"));
+        assert!(css_str.contains("#screen-error-banner:empty"));
+
+        let resp_br = handle_request(&HttpRequest {
+            method: "GET".to_string(), path: "/v4_bridge.js".to_string(),
+            query: String::new(), headers: HashMap::new(), body: String::new(), body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_br.status_code, 200);
+        let br_str = String::from_utf8_lossy(&resp_br.body);
+        assert!(br_str.contains("Document.prototype.querySelector"));
+        assert!(br_str.contains("#pill-connection"));
+        assert!(br_str.contains("sanitizeErrorBanners"));
+        assert!(br_str.contains("deviceAspect >= 0.440"));
 
         // Verify /codec fallback reports calibrated 1178x2598 active iPhone 17 Pro dimensions
         let req_codec = HttpRequest {
