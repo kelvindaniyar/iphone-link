@@ -9,8 +9,11 @@ pub mod updater;
 pub mod window_dwm;
 
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
+use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -590,6 +593,80 @@ extern "system" {
         cbJobInformationLength: u32,
     ) -> i32;
     fn AssignProcessToJobObject(hJob: *mut std::ffi::c_void, hProcess: *mut std::ffi::c_void) -> i32;
+    fn DeleteFileW(lpFileName: *const u16) -> i32;
+    fn GetFileAttributesW(lpFileName: *const u16) -> u32;
+    fn SetFileAttributesW(lpFileName: *const u16, dwFileAttributes: u32) -> i32;
+}
+
+const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
+const FILE_ATTRIBUTE_READONLY: u32 = 0x0000_0001;
+
+fn to_wide_null(path_str: &OsStr) -> Vec<u16> {
+    path_str.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+fn delete_zone_identifier_ads(path: &Path) -> bool {
+    let mut ads_os = OsString::from(path.as_os_str());
+    ads_os.push(":Zone.Identifier");
+    let ads_w = to_wide_null(&ads_os);
+    unsafe {
+        if DeleteFileW(ads_w.as_ptr()) != 0 {
+            return true;
+        }
+        let path_w = to_wide_null(path.as_os_str());
+        let attrs = GetFileAttributesW(path_w.as_ptr());
+        if attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0 {
+            if SetFileAttributesW(path_w.as_ptr(), attrs & !FILE_ATTRIBUTE_READONLY) != 0 {
+                let deleted = DeleteFileW(ads_w.as_ptr()) != 0;
+                let _ = SetFileAttributesW(path_w.as_ptr(), attrs);
+                return deleted;
+            }
+        }
+    }
+    false
+}
+
+/// Recursively strips NTFS `:Zone.Identifier` (Mark-of-the-Web) streams under `root_dir`.
+pub fn unblock_directory_zone_identifiers(root_dir: &Path) -> usize {
+    if !root_dir.exists() {
+        return 0;
+    }
+    let mut removed = 0usize;
+    if delete_zone_identifier_ads(root_dir) {
+        removed += 1;
+    }
+
+    let mut stack = vec![root_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name_lower = entry
+                .file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            if name_lower == ".git"
+                || name_lower == "target"
+                || name_lower == "deps"
+                || name_lower == "incremental"
+                || name_lower == ".pane_webview_storage"
+                || name_lower == "iphone link.exe.webview2"
+                || name_lower == "node_modules"
+            {
+                continue;
+            }
+            if delete_zone_identifier_ads(&p) {
+                removed += 1;
+            }
+            if p.is_dir() {
+                stack.push(p);
+            }
+        }
+    }
+    removed
 }
 
 #[link(name = "ole32")]
@@ -605,33 +682,66 @@ fn spawn_coredevice_worker() {
         return;
     }
 
-    let mut py_candidates = Vec::new();
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            py_candidates.push(dir.join("venv").join("Scripts").join("pythonw.exe"));
-            py_candidates.push(dir.join("venv").join("Scripts").join("python.exe"));
-            if let Some(p1) = dir.parent() {
-                py_candidates.push(p1.join("venv").join("Scripts").join("pythonw.exe"));
-                py_candidates.push(p1.join("venv").join("Scripts").join("python.exe"));
+    let Some((target_py, py_root)) = server_v4::find_python_executable_and_root() else {
+        return;
+    };
+
+    let mut cmd = std::process::Command::new(&target_py);
+    cmd.args(&[
+        "-u",
+        "-m",
+        "handset.gui",
+        "--server-child",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8767",
+    ]);
+    cmd.current_dir(std::env::temp_dir());
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    // Build clean PYTHONPATH and PATH favoring self-contained runtime/ without pythonnet
+    let mut py_paths = vec![py_root.to_string_lossy().to_string()];
+    if let Some(py_dir) = target_py.parent() {
+        let runtime_site = py_dir.join("Lib").join("site-packages");
+        if runtime_site.is_dir() {
+            py_paths.push(runtime_site.to_string_lossy().to_string());
+        }
+        let runtime_handset = py_dir.join("handset");
+        if runtime_handset.is_dir() && py_dir != py_root {
+            py_paths.push(py_dir.to_string_lossy().to_string());
+        }
+        let is_embedded_runtime = py_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.eq_ignore_ascii_case("runtime"))
+            .unwrap_or(false);
+        if is_embedded_runtime {
+            cmd.env("PYTHONNOUSERSITE", "1");
+        }
+        let mut path_parts = vec![py_dir.to_string_lossy().to_string()];
+        let bin_dir = py_root.join("handset").join("bin");
+        if bin_dir.is_dir() {
+            path_parts.push(bin_dir.to_string_lossy().to_string());
+        }
+        if let Ok(exe_p) = env::current_exe() {
+            if let Some(exe_dir) = exe_p.parent() {
+                path_parts.push(exe_dir.to_string_lossy().to_string());
             }
         }
+        if let Ok(existing_path) = env::var("PATH") {
+            if !existing_path.is_empty() {
+                path_parts.push(existing_path);
+            }
+        }
+        cmd.env("PATH", path_parts.join(";"));
     }
-    py_candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\pythonw.exe"));
-    py_candidates.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\python.exe"));
-    py_candidates.push(PathBuf::from("venv/Scripts/pythonw.exe"));
-    py_candidates.push(PathBuf::from("venv/Scripts/python.exe"));
-    py_candidates.push(PathBuf::from("pythonw.exe"));
-    py_candidates.push(PathBuf::from("python.exe"));
-
-    let target_py = py_candidates
-        .into_iter()
-        .find(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("pythonw.exe"));
-
-    let mut cmd = std::process::Command::new(target_py);
-    cmd.args(&["-u", "-m", "handset.gui", "--server-child", "--host", "127.0.0.1", "--port", "8767"]);
-    cmd.current_dir(std::env::temp_dir());
-    cmd.env("PYTHONPATH", r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows");
+    cmd.env("PYTHONPATH", py_paths.join(";"));
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
+    cmd.env("COMPlus_LoadFromRemoteSources", "1");
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     if let Ok(child) = cmd.spawn() {
@@ -685,6 +795,11 @@ fn find_web_dir() -> PathBuf {
 
 fn main() {
     window_dwm::enable_per_monitor_v2_dpi_awareness();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let _ = unblock_directory_zone_identifiers(dir);
+        }
+    }
     let args: Vec<String> = env::args().collect();
 
     if args.iter().any(|a| a == "--self-test") {
@@ -768,4 +883,33 @@ fn main() {
     }
 
     window_dwm::run_message_pump();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unblock_directory_zone_identifiers;
+    use std::fs;
+
+    #[test]
+    fn test_unblock_directory_zone_identifiers_removes_motw_ads() {
+        let base = std::env::temp_dir().join(format!(
+            "iphone_link_t185_unblock_test_{}",
+            std::process::id()
+        ));
+        let sub = base.join("runtime");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&sub).unwrap();
+
+        let sample_dll = sub.join("test_module.dll");
+        fs::write(&sample_dll, b"MZTEST").unwrap();
+        let ads_path = format!("{}:Zone.Identifier", sample_dll.display());
+        fs::write(&ads_path, "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        assert!(std::path::Path::new(&ads_path).exists());
+
+        let cleared = unblock_directory_zone_identifiers(&base);
+        assert!(cleared >= 1, "expected at least 1 :Zone.Identifier removed, got {}", cleared);
+        assert!(!std::path::Path::new(&ads_path).exists(), ":Zone.Identifier ADS must be gone");
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }

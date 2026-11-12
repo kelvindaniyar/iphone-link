@@ -1768,6 +1768,64 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         return false;
     };
 
+    window.__v4ShowMainHevcBanner = function(codec) {
+        var existing = document.getElementById('v4-hevc-install-banner');
+        var isId = (window.__v4CurrentLang || 'id') === 'id';
+        if (!existing) {
+            existing = document.createElement('div');
+            existing.id = 'v4-hevc-install-banner';
+            existing.style.cssText = 'position:fixed;left:16px;right:16px;bottom:58px;z-index:99999;padding:12px 14px;border-radius:14px;background:rgba(15,23,42,0.88);backdrop-filter:blur(16px);border:1px solid rgba(56,189,248,0.45);color:#f8fafc;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 28px rgba(0,0,0,0.42);font-size:12px;';
+            document.body.appendChild(existing);
+        }
+        var msg = isId
+            ? 'Windows Anda belum memiliki Microsoft HEVC Video Extensions untuk mendekode video iPhone.'
+            : 'Your Windows PC is missing Microsoft HEVC Video Extensions to decode the iPhone video stream.';
+        var btnLabel = isId ? 'Pasang Codec Video HEVC (1-Klik)' : 'Install HEVC Video Codec (1-Click)';
+        existing.innerHTML = '';
+        var p = document.createElement('div');
+        p.textContent = msg + (codec ? ' (' + codec + ')' : '');
+        existing.appendChild(p);
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+        var btn = document.createElement('button');
+        btn.id = 'btn-install-hevc-1click';
+        btn.type = 'button';
+        btn.textContent = btnLabel;
+        btn.style.cssText = 'flex:1;padding:7px 12px;border-radius:9px;border:none;background:#0A84FF;color:#ffffff;font-weight:600;cursor:pointer;font-size:12px;';
+        btn.onclick = function() {
+            btn.disabled = true;
+            btn.textContent = isId ? 'Memasang HEVC Codec...' : 'Installing HEVC Codec...';
+            fetch('/api/system/install_hevc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            }).then(function(r) { return r.json(); }).then(function(res) {
+                if (res && res.installed) {
+                    btn.textContent = isId ? 'Terpasang! Memuat ulang stream...' : 'Installed! Reloading stream...';
+                    setTimeout(function() {
+                        try { existing.remove(); } catch (_) {}
+                        var mf = document.getElementById('mirror-frame');
+                        if (mf && mf.contentWindow) mf.contentWindow.location.reload();
+                    }, 600);
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = isId ? 'Coba Pasang Lagi (HEVC)' : 'Retry Install HEVC Codec';
+                }
+            }).catch(function() {
+                btn.disabled = false;
+                btn.textContent = btnLabel;
+            });
+        };
+        row.appendChild(btn);
+        var closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.textContent = 'X';
+        closeBtn.style.cssText = 'padding:6px 10px;border-radius:9px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:#cbd5e1;cursor:pointer;';
+        closeBtn.onclick = function() { try { existing.remove(); } catch (_) {} };
+        row.appendChild(closeBtn);
+        existing.appendChild(row);
+    };
+
     window.__v4ApplyTheme = function(theme) {
         var t = theme === 'light' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', t);
@@ -2496,7 +2554,14 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
     window.addEventListener('message', function(e) {
         try {
-            if (!e || !e.data || e.data.type !== 'video-dimensions') return;
+            if (!e || !e.data) return;
+            if (e.data.type === 'hevc-missing') {
+                if (typeof window.__v4ShowMainHevcBanner === 'function') {
+                    window.__v4ShowMainHevcBanner(e.data.codec || '');
+                }
+                return;
+            }
+            if (e.data.type !== 'video-dimensions') return;
             var appEl = document.getElementById('app-root') || document.querySelector('.app');
             if (!appEl) return;
             var cleanW = Number(e.data.cleanW || e.data.width) || 0;
@@ -4425,6 +4490,131 @@ fn current_exe_dir_normalized() -> PathBuf {
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn resolve_handset_root_for_runtime(py_dir: &Path, exe_dir: Option<&Path>, cwd: Option<&Path>) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = vec![
+        py_dir.to_path_buf(),
+        py_dir.join("Lib").join("site-packages"),
+    ];
+    if let Some(ed) = exe_dir {
+        roots.push(ed.to_path_buf());
+        roots.push(ed.join("runtime"));
+        let mut cur = Some(ed);
+        for _ in 0..4 {
+            if let Some(p) = cur {
+                roots.push(p.to_path_buf());
+                cur = p.parent();
+            }
+        }
+    }
+    if let Some(cd) = cwd {
+        roots.push(cd.to_path_buf());
+        roots.push(cd.join("runtime"));
+    }
+    roots.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows"));
+
+    for root in roots {
+        let hs = root.join("handset");
+        if hs.join("server.py").is_file() || hs.join("__init__.py").is_file() {
+            return Some(root);
+        }
+    }
+    None
+}
+
+/// Resolves Python executable and PYTHONPATH root, prioritizing self-contained `runtime/` beside `iPhone Link.exe`
+/// (zero system Python / zero `pythonnet` required), then falling back to `venv` or system `PATH`.
+pub fn find_python_executable_and_root_from(
+    exe_dir: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Option<(PathBuf, PathBuf)> {
+    // 1. Priority 1: Self-Contained Installed `runtime/` beside EXE (or `_internal/runtime/`)
+    let mut embedded_candidates: Vec<PathBuf> = Vec::new();
+    if let Some(ed) = exe_dir {
+        embedded_candidates.push(ed.join("runtime").join("pythonw.exe"));
+        embedded_candidates.push(ed.join("runtime").join("python.exe"));
+        embedded_candidates.push(ed.join("_internal").join("runtime").join("pythonw.exe"));
+        embedded_candidates.push(ed.join("_internal").join("runtime").join("python.exe"));
+    }
+    if let Some(cd) = cwd {
+        embedded_candidates.push(cd.join("runtime").join("pythonw.exe"));
+        embedded_candidates.push(cd.join("runtime").join("python.exe"));
+    }
+    for py in embedded_candidates {
+        if py.is_file() {
+            if let Some(py_dir) = py.parent() {
+                if let Some(root) = resolve_handset_root_for_runtime(py_dir, exe_dir, cwd) {
+                    return Some((py, root));
+                }
+            }
+        }
+    }
+
+    // 2. Priority 2: Local `venv` in portable/dev workspaces
+    let mut venv_candidates: Vec<PathBuf> = Vec::new();
+    if let Some(ed) = exe_dir {
+        let mut cur = Some(ed);
+        for _ in 0..4 {
+            if let Some(p) = cur {
+                venv_candidates.push(p.join("venv").join("Scripts").join("pythonw.exe"));
+                venv_candidates.push(p.join("venv").join("Scripts").join("python.exe"));
+                cur = p.parent();
+            }
+        }
+    }
+    if let Some(cd) = cwd {
+        venv_candidates.push(cd.join("venv").join("Scripts").join("pythonw.exe"));
+        venv_candidates.push(cd.join("venv").join("Scripts").join("python.exe"));
+    }
+    venv_candidates.push(PathBuf::from(
+        r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\pythonw.exe",
+    ));
+    venv_candidates.push(PathBuf::from(
+        r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\python.exe",
+    ));
+    for py in venv_candidates {
+        if py.is_file() {
+            if let Some(scripts_dir) = py.parent() {
+                let venv_root = scripts_dir.parent().unwrap_or(scripts_dir);
+                let repo_guess = venv_root.parent().unwrap_or(venv_root);
+                if let Some(root) = resolve_handset_root_for_runtime(repo_guess, exe_dir, cwd) {
+                    return Some((py, root));
+                }
+            }
+        }
+    }
+
+    // 3. Priority 3: System PATH Python (when handset/ exists nearby)
+    if let Some(path_env) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_env) {
+            for bin in ["pythonw.exe", "python.exe"] {
+                let py = dir.join(bin);
+                if py.is_file() {
+                    if let Some(root) = resolve_handset_root_for_runtime(&dir, exe_dir, cwd) {
+                        return Some((py, root));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub fn find_python_executable_and_root() -> Option<(PathBuf, PathBuf)> {
+    let exe_binding = env::current_exe().ok();
+    let exe_dir = exe_binding.as_ref().and_then(|p| p.parent());
+    let cwd_binding = env::current_dir().ok();
+    find_python_executable_and_root_from(exe_dir, cwd_binding.as_deref())
+}
+
+fn localappdata_settings_file_path() -> Option<PathBuf> {
+    env::var_os("LOCALAPPDATA").map(|v| {
+        PathBuf::from(v)
+            .join("iPhoneLink_NativeRust_v4")
+            .join("user_settings.json")
+    })
+}
+
 /// Deterministic 12-char hex identifier for the installation folder (SHA-256 of canonical EXE directory).
 pub fn get_deterministic_folder_instance_id_for_dir(dir: &Path) -> String {
     let canon = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
@@ -4440,7 +4630,16 @@ pub fn get_deterministic_folder_instance_id() -> String {
 }
 
 pub fn user_settings_file_path() -> PathBuf {
-    current_exe_dir_normalized().join("user_settings.json")
+    let primary = current_exe_dir_normalized().join("user_settings.json");
+    if primary.is_file() {
+        return primary;
+    }
+    if let Some(fallback) = localappdata_settings_file_path() {
+        if fallback.is_file() {
+            return fallback;
+        }
+    }
+    primary
 }
 
 fn extract_crop_object_slice(raw: &str) -> Option<&str> {
@@ -4525,8 +4724,12 @@ fn save_user_settings_to_disk(st: &AppState) {
         .lock()
         .map(|g| sanitize_pin_digits(&g))
         .unwrap_or_default();
-    let path = user_settings_file_path();
-    let _ = save_user_settings_to_path(&path, st, &pin);
+    let primary = current_exe_dir_normalized().join("user_settings.json");
+    if save_user_settings_to_path(&primary, st, &pin).is_err() {
+        if let Some(fallback) = localappdata_settings_file_path() {
+            let _ = save_user_settings_to_path(&fallback, st, &pin);
+        }
+    }
 }
 
 pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
@@ -4720,10 +4923,101 @@ fn wipe_all_privacy_state_and_files() {
     }
     let exe_dir = current_exe_dir_normalized();
     wipe_privacy_files_in_dir(&exe_dir);
+    if let Some(fallback) = localappdata_settings_file_path() {
+        if let Some(fb_dir) = fallback.parent() {
+            wipe_privacy_files_in_dir(fb_dir);
+        }
+    }
     if let Ok(cwd) = env::current_dir() {
         if cwd != exe_dir {
             wipe_privacy_files_in_dir(&cwd);
         }
+    }
+}
+
+fn find_hevc_appxbundle_path() -> Option<PathBuf> {
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+    let exe_dir = current_exe_dir_normalized();
+    search_dirs.push(exe_dir.clone());
+    search_dirs.push(exe_dir.join("assets"));
+    search_dirs.push(exe_dir.join("release"));
+    let mut cur = exe_dir.parent();
+    for _ in 0..4 {
+        if let Some(p) = cur {
+            search_dirs.push(p.to_path_buf());
+            search_dirs.push(p.join("release"));
+            cur = p.parent();
+        }
+    }
+    if let Ok(cwd) = env::current_dir() {
+        search_dirs.push(cwd.clone());
+        search_dirs.push(cwd.join("assets"));
+        search_dirs.push(cwd.join("release"));
+    }
+    search_dirs.push(PathBuf::from(r"D:\ZenLink-v2.5.14"));
+    search_dirs.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\release"));
+
+    for dir in search_dirs {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name_l = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if name_l.contains("hevc")
+                && (name_l.ends_with(".appxbundle")
+                    || name_l.ends_with(".msixbundle")
+                    || name_l.ends_with(".appx"))
+            {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn query_hevc_extension_status() -> (bool, String, String) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+    let ps_cmd = "Get-AppxPackage -Name '*HEVCVideoExtension*' | Select-Object -First 1 | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; Version=[string]$_.Version } } | ConvertTo-Json -Compress";
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd]);
+    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let pkg_name = parse_string_param(&stdout, "Name").unwrap_or_default();
+            let version = parse_string_param(&stdout, "Version").unwrap_or_default();
+            let installed = !pkg_name.is_empty() || !version.is_empty();
+            (installed, version, pkg_name)
+        }
+        _ => (false, String::new(), String::new()),
+    }
+}
+
+fn install_hevc_from_bundle(bundle_path: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+    let escaped = bundle_path.to_string_lossy().replace('\'', "''");
+    let ps_cmd = format!("Add-AppxPackage -Path '{}'", escaped);
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd]);
+    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+    match cmd.output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let msg = if err.is_empty() {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            } else {
+                err
+            };
+            Err(if msg.is_empty() { "Add-AppxPackage failed".to_string() } else { msg })
+        }
+        Err(e) => Err(format!("Failed to launch PowerShell: {}", e)),
     }
 }
 
@@ -5934,6 +6228,60 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     if path == "/api/system/wallpaper-sig" {
         let (_, _, sig) = get_current_wallpaper_data();
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"wallpaperSig":"{}"}}"#, sig));
+    }
+
+    if path == "/api/system/hevc_status" {
+        let (installed, version, pkg) = query_hevc_extension_status();
+        let bundle = find_hevc_appxbundle_path();
+        let bundled = bundle.is_some();
+        let bundle_str = bundle
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"installed":{},"version":"{}","package":"{}","bundled":{},"bundlePath":"{}"}}"#,
+            installed,
+            escape_json_str(&version),
+            escape_json_str(&pkg),
+            bundled,
+            escape_json_str(&bundle_str)
+        ));
+    }
+
+    if path == "/api/system/install_hevc" {
+        let (already_installed, existing_ver, existing_pkg) = query_hevc_extension_status();
+        if already_installed {
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"installed":true,"alreadyInstalled":true,"version":"{}","package":"{}"}}"#,
+                escape_json_str(&existing_ver),
+                escape_json_str(&existing_pkg)
+            ));
+        }
+        if let Some(bundle_path) = find_hevc_appxbundle_path() {
+            match install_hevc_from_bundle(&bundle_path) {
+                Ok(()) => {
+                    let (now_installed, now_ver, now_pkg) = query_hevc_extension_status();
+                    return HttpResponse::ok_json(&format!(
+                        r#"{{"ok":{},"installed":{},"alreadyInstalled":false,"version":"{}","package":"{}","bundle":"{}"}}"#,
+                        now_installed,
+                        now_installed,
+                        escape_json_str(&now_ver),
+                        escape_json_str(&now_pkg),
+                        escape_json_str(&bundle_path.to_string_lossy())
+                    ));
+                }
+                Err(err) => {
+                    return HttpResponse::ok_json(&format!(
+                        r#"{{"ok":false,"installed":false,"error":"{}","bundle":"{}"}}"#,
+                        escape_json_str(&err),
+                        escape_json_str(&bundle_path.to_string_lossy())
+                    ));
+                }
+            }
+        }
+        return HttpResponse::ok_json(
+            r#"{"ok":false,"installed":false,"storeUrl":"ms-windows-store://pdp/?ProductId=9NMZLZ57R3T7","error":"HEVC AppxBundle not found locally"}"#,
+        );
     }
 
     if path == "/api/tray-state" || path == "/api/tray/menu" {
@@ -7397,6 +7745,81 @@ function drawFrame(f) {"##,
                         r##"    ctx.drawImage(sourceFrame, srcTrimLeft, srcTrimTop, cleanW, cleanH, -cleanW / 2, -cleanH / 2, cleanW, cleanH);"##,
                     );
                 }
+                if !js_text.contains("__V4_TAHAP185_HEVC_PROMPT__") {
+                    js_text = js_text.replace(
+                        r##"  if (!support.supported) {
+    setStatus("This browser cannot decode the iPhone video stream.", "warn");
+    return;
+  }"##,
+                        r##"  if (!support.supported) {
+    setStatus("This browser cannot decode the iPhone video stream.", "warn");
+    if (typeof window.__v4ShowHevcInstallOverlay === "function") {
+      window.__v4ShowHevcInstallOverlay(codec);
+    }
+    return;
+  }"##,
+                    );
+                    js_text.push_str(
+                        r##"
+
+// __V4_TAHAP185_HEVC_PROMPT__ - 1-Click HEVC Codec Installer Overlay
+window.__v4ShowHevcInstallOverlay = function(codec) {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "hevc-missing", codec: codec || "" }, "*");
+    }
+  } catch (_) {}
+  try {
+    var box = document.getElementById("v4-hevc-stage-prompt");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "v4-hevc-stage-prompt";
+      box.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(9,13,22,0.72);backdrop-filter:blur(12px);padding:18px;";
+      document.body.appendChild(box);
+    }
+    var card = document.createElement("div");
+    card.style.cssText = "max-width:300px;width:100%;padding:16px;border-radius:14px;background:rgba(15,23,42,0.92);border:1px solid rgba(56,189,248,0.4);color:#f8fafc;text-align:center;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.48);";
+    var title = document.createElement("div");
+    title.style.cssText = "font-size:13px;font-weight:700;margin-bottom:6px;";
+    title.textContent = "Microsoft HEVC Codec Required";
+    card.appendChild(title);
+    var desc = document.createElement("div");
+    desc.style.cssText = "font-size:12px;color:#cbd5e1;margin-bottom:12px;line-height:1.45;";
+    desc.textContent = "This browser cannot decode the iPhone video stream (" + (codec || "HEVC") + "). Install Microsoft HEVC Video Extensions in 1 click.";
+    card.appendChild(desc);
+    var btn = document.createElement("button");
+    btn.id = "btn-install-hevc-stage";
+    btn.type = "button";
+    btn.textContent = "Install HEVC Video Codec (1-Click)";
+    btn.style.cssText = "width:100%;padding:9px 12px;border-radius:9px;border:none;background:#0A84FF;color:#ffffff;font-weight:600;font-size:12px;cursor:pointer;";
+    btn.onclick = function() {
+      btn.disabled = true;
+      btn.textContent = "Installing HEVC Video Extensions...";
+      fetch("/api/system/install_hevc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.installed) {
+          btn.textContent = "HEVC Codec Installed! Reloading...";
+          setTimeout(function() { window.location.reload(); }, 600);
+        } else {
+          btn.disabled = false;
+          btn.textContent = "Retry Install HEVC Video Codec (1-Click)";
+        }
+      }).catch(function() {
+        btn.disabled = false;
+        btn.textContent = "Install HEVC Video Codec (1-Click)";
+      });
+    };
+    card.appendChild(btn);
+    box.innerHTML = "";
+    box.appendChild(card);
+  } catch (_) {}
+};
+"##,
+                    );
+                }
                 return HttpResponse::ok_js(&js_text);
             }
 
@@ -7993,5 +8416,55 @@ mod tests {
         assert!(dismiss_json.contains(r#""wasOpen":true"#), "dismiss_json={}", dismiss_json);
         assert!(dismiss_json.contains(r#""menuOpen":false"#), "dismiss_json={}", dismiss_json);
         assert!(!GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_tahap185_find_python_runtime_priority_and_hevc_endpoints() {
+        // 1. Self-contained embedded runtime/ beside EXE takes Priority 1 (zero system Python)
+        let base = std::env::temp_dir().join(format!(
+            "iphone_link_t185_runtime_test_{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+        ));
+        let exe_dir = base.join("app");
+        let rt_dir = exe_dir.join("runtime");
+        let hs_dir = rt_dir.join("handset");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&hs_dir).unwrap();
+        let py_exe = rt_dir.join("pythonw.exe");
+        fs::write(&py_exe, b"MZ").unwrap();
+        fs::write(hs_dir.join("server.py"), b"# stub").unwrap();
+
+        let found = find_python_executable_and_root_from(Some(&exe_dir), None);
+        assert!(found.is_some(), "expected self-contained runtime/pythonw.exe to resolve");
+        let (found_py, found_root) = found.unwrap();
+        assert_eq!(found_py, py_exe);
+        assert_eq!(found_root, rt_dir);
+        let _ = fs::remove_dir_all(&base);
+
+        // 2. Verify /api/system/hevc_status responds HTTP 200 JSON with installed field
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let resp_hevc = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/system/hevc_status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_hevc.status_code, 200);
+        let hevc_json = String::from_utf8_lossy(&resp_hevc.body);
+        assert!(
+            hevc_json.contains(r#""ok":true"#) && hevc_json.contains(r#""installed":"#),
+            "hevc_status JSON invalid: {}",
+            hevc_json
+        );
+
+        // 3. Verify 1-Click HEVC banner wiring in V4_BRIDGE_JS and mirror.js serve hook
+        assert!(V4_BRIDGE_JS.contains("__v4ShowMainHevcBanner"));
+        assert!(V4_BRIDGE_JS.contains("/api/system/install_hevc"));
     }
 }
