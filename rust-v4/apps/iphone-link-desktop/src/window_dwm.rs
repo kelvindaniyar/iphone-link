@@ -260,6 +260,7 @@ extern "system" {
     fn BeginPaint(hwnd: *mut c_void, lpPaint: *mut c_void) -> *mut c_void;
     fn EndPaint(hwnd: *mut c_void, lpPaint: *const c_void) -> i32;
     fn SetForegroundWindow(hWnd: *mut c_void) -> i32;
+    fn SetFocus(hWnd: *mut c_void) -> *mut c_void;
     fn CreatePopupMenu() -> *mut c_void;
     fn AppendMenuW(hMenu: *mut c_void, uFlags: u32, uIDNewItem: usize, lpNewItem: *const u16) -> i32;
     fn TrackPopupMenu(
@@ -272,6 +273,7 @@ extern "system" {
         prcRect: *const RECT,
     ) -> i32;
     fn DestroyMenu(hMenu: *mut c_void) -> i32;
+    fn EndMenu() -> i32;
     fn SetMenuDefaultItem(hMenu: *mut c_void, uItem: u32, fByPos: u32) -> i32;
 }
 
@@ -584,9 +586,28 @@ pub const ID_TRAY_QUIT: usize = 1009;
 pub static GLOBAL_STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_AUDIO_PC_ACTIVE: AtomicBool = AtomicBool::new(true);
 pub static GLOBAL_TRAY_REGISTERED: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_TRAY_MENU_OPEN: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 pub static GLOBAL_PENDING_TRAY_ACTION: Mutex<Option<String>> = Mutex::new(None);
 pub static GLOBAL_TRAY_APP_STATE: Mutex<Option<Arc<Mutex<AppState>>>> = Mutex::new(None);
+
+/// Dismisses any currently open Win32 tray popup menu immediately.
+/// Safe to invoke from background HTTP threads: posts WM_CANCELMODE + WM_NULL to main HWND UI thread.
+pub fn dismiss_tray_menu_if_open() -> bool {
+    let was_open = GLOBAL_TRAY_MENU_OPEN.swap(false, Ordering::SeqCst);
+    if was_open {
+        let hwnd_val = GLOBAL_MAIN_HWND.load(Ordering::SeqCst);
+        unsafe {
+            let _ = EndMenu();
+            if hwnd_val != 0 {
+                let hwnd = hwnd_val as *mut c_void;
+                PostMessageW(hwnd, 0x001F, 0, 0); // WM_CANCELMODE
+                PostMessageW(hwnd, 0, 0, 0); // WM_NULL
+            }
+        }
+    }
+    was_open
+}
 
 pub fn register_tray_app_state(state: Arc<Mutex<AppState>>) {
     if let Ok(mut guard) = GLOBAL_TRAY_APP_STATE.lock() {
@@ -912,6 +933,8 @@ unsafe fn show_native_tray_context_menu(hwnd: *mut c_void) {
     let mut pt = POINT { x: 0, y: 0 };
     GetCursorPos(&mut pt);
     SetForegroundWindow(hwnd);
+    let _ = SetFocus(hwnd);
+    GLOBAL_TRAY_MENU_OPEN.store(true, Ordering::SeqCst);
 
     let cmd = TrackPopupMenu(
         hmenu,
@@ -922,6 +945,7 @@ unsafe fn show_native_tray_context_menu(hwnd: *mut c_void) {
         hwnd,
         ptr::null(),
     );
+    GLOBAL_TRAY_MENU_OPEN.store(false, Ordering::SeqCst);
     PostMessageW(hwnd, 0, 0, 0); // WM_NULL (MSDN required for TrackPopupMenu focus cleanup)
     DestroyMenu(hmenu);
 
@@ -1410,8 +1434,32 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             let _ = apply_true_files_acrylic_backdrop(hwnd, is_dark);
             res
         }
+        0x001F => {
+            // WM_CANCELMODE: Pastikan popup menu tray langsung tertutup bersih saat dibatalkan
+            GLOBAL_TRAY_MENU_OPEN.store(false, Ordering::SeqCst);
+            let _ = EndMenu();
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        0x0210 => {
+            // WM_PARENTNOTIFY: Klik mouse di dalam child WebView2 (Chrome_WidgetWin_0) menutup popup menu tray seketika
+            let child_evt = (wparam as u32) & 0xFFFF;
+            if matches!(child_evt, 0x0201 | 0x0204 | 0x0207 | 0x020B) && GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst) {
+                GLOBAL_TRAY_MENU_OPEN.store(false, Ordering::SeqCst);
+                let _ = EndMenu();
+                PostMessageW(hwnd, 0x001F, 0, 0);
+                PostMessageW(hwnd, 0, 0, 0);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         0x0006 => {
-            // WM_ACTIVATE: Pastikan backdrop DWM tetap terkunci aktif baik saat WA_INACTIVE (0) maupun WA_ACTIVE (1/2)
+            // WM_ACTIVATE: Tutup popup menu tray saat jendela kehilangan fokus (WA_INACTIVE = 0),
+            // dan kunci backdrop DWM tetap aktif baik saat WA_INACTIVE maupun WA_ACTIVE.
+            if (wparam & 0xFFFF) == 0 && GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst) {
+                GLOBAL_TRAY_MENU_OPEN.store(false, Ordering::SeqCst);
+                let _ = EndMenu();
+                PostMessageW(hwnd, 0x001F, 0, 0);
+                PostMessageW(hwnd, 0, 0, 0);
+            }
             let res = DefWindowProcW(hwnd, msg, wparam, lparam);
             let is_dark = crate::server_v4::is_dark_mode_active();
             let _ = apply_true_files_acrylic_backdrop(hwnd, is_dark);

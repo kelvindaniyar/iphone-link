@@ -7,7 +7,7 @@
 //! - REST API endpoints: /api/status, /api/settings, /api/device/*, /api/window/*, /api/social/*, /api/screen/*, /mirror/*
 //! - Native Win32 HWND + WebView2 bounds synchronization for resize, drawer, orientation, drag, and theme
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -54,8 +54,8 @@ pub static GLOBAL_DRAWER_SCROLL_RIGHT_GAP: AtomicIsize = AtomicIsize::new(0);
 pub static GLOBAL_INNER_WIDTH: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_STRETCH_GLITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE: AtomicUsize = AtomicUsize::new(0);
-pub static GLOBAL_PENDING_CLICK: Mutex<Option<String>> = Mutex::new(None);
-pub static GLOBAL_PENDING_INPUT: Mutex<Option<(String, String)>> = Mutex::new(None);
+pub static GLOBAL_PENDING_CLICK: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+pub static GLOBAL_PENDING_INPUT: Mutex<VecDeque<(String, String)>> = Mutex::new(VecDeque::new());
 pub static GLOBAL_PENDING_TEST: Mutex<Option<String>> = Mutex::new(None);
 pub static GLOBAL_MIRROR_TEST_REPORT: Mutex<String> = Mutex::new(String::new());
 pub static LAST_SET_DRAWER_STATE: AtomicBool = AtomicBool::new(false);
@@ -64,17 +64,23 @@ pub static SAVED_UNLOCK_PIN: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DOM_UNLOCK_PIN: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DOM_UPDATE_VERSION: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_DOM_LAST_TRAY_ACTION: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_LANG: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_LANG_ID_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_DOM_LANG_EN_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static GLOBAL_DOM_DRAWER_TITLE: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_DOM_TOGGLES_SUMMARY: Mutex<String> = Mutex::new(String::new());
+pub static GLOBAL_TRAY_DISMISSED_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
 use crate::updater::compute_sha256;
 use crate::window_dwm::{
-    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop,
+    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop, dismiss_tray_menu_if_open,
     is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to, register_tray_app_state,
     register_tray_icon, set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag,
     unregister_tray_icon, WindowGeometryManager, GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN,
     GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE, GLOBAL_PENDING_TRAY_ACTION,
-    GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, RECT, TRAY_MENU_ITEMS,
+    GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, GLOBAL_TRAY_MENU_OPEN, RECT, TRAY_MENU_ITEMS,
 };
 
 use iphone_link_apple::hid::IndigoHidController;
@@ -1277,9 +1283,85 @@ html body #app-root.app.is-fullsize.drawer-open #control-pane {
 }
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 174) */
+pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 184) */
 (function() {
     console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
+
+    function sanitizePinDigits(rawVal) {
+        return String(rawVal || '').replace(/\D/g, '').slice(0, 6);
+    }
+
+    function seedLocalStorageFromSettings(initData) {
+        if (!initData || typeof initData !== 'object') return;
+        try {
+            window.__v4BootSettings = Object.assign({}, window.__v4BootSettings || {}, initData);
+            var lang = (initData.language === 'en') ? 'en' : 'id';
+            window.__v4CurrentLang = lang;
+            localStorage.setItem('iphone_link_lang', lang);
+            localStorage.setItem('iphone_link_language', lang);
+            document.documentElement.setAttribute('lang', lang);
+            document.documentElement.setAttribute('data-lang', lang);
+
+            var thm = (initData.theme === 'light') ? 'light' : 'dark';
+            localStorage.setItem('pane-theme', thm);
+            document.documentElement.setAttribute('data-theme', thm);
+            try { document.documentElement.style.colorScheme = thm; } catch (_) {}
+
+            if (initData.fitMode === 'autofit' || initData.fitMode === 'fill' || initData.fitMode === 'contain') {
+                localStorage.setItem('pane-fit-mode', initData.fitMode);
+            }
+            if (typeof initData.autoRotate === 'boolean') {
+                localStorage.setItem('pane-auto-rotate', String(initData.autoRotate));
+            }
+            if (initData.deviceProfile === 'auto' || initData.deviceProfile === 'iphone' || initData.deviceProfile === 'ipad') {
+                window.__v4ActiveDeviceProfile = initData.deviceProfile;
+                localStorage.setItem('pane-device-profile', initData.deviceProfile);
+                var initDw = (initData.deviceProfile === 'ipad') ? '564px' : '346px';
+                document.documentElement.style.setProperty('--display-width', initDw);
+            }
+            if (initData.crop && typeof initData.crop === 'object') {
+                var cleanCrop = {
+                    top: Number(initData.crop.top || 0),
+                    bottom: Number(initData.crop.bottom || 0),
+                    left: Number(initData.crop.left || 0),
+                    right: Number(initData.crop.right || 0)
+                };
+                localStorage.setItem('pane-crop-edges', JSON.stringify(cleanCrop));
+            }
+            if (typeof initData.trackpadSpeed === 'number') {
+                localStorage.setItem('pane-trackpad-speed', String(initData.trackpadSpeed));
+            }
+            if (typeof initData.crossPlatformShortcuts === 'boolean') {
+                localStorage.setItem('pane-shortcuts', String(initData.crossPlatformShortcuts));
+            }
+            if (typeof initData.pastePcClipboard === 'boolean') {
+                localStorage.setItem('pane-paste-pc', String(initData.pastePcClipboard));
+            }
+            if (initData.transport) {
+                var trVal = (initData.transport === 'wifi') ? 'wifi' : 'usb';
+                localStorage.setItem('handset-transport', trVal);
+            }
+            if (initData.folderInstanceId) {
+                window.__v4FolderInstanceId = String(initData.folderInstanceId);
+                localStorage.setItem('iphone_link_folder_instance_id', window.__v4FolderInstanceId);
+            }
+            var pinDigits = sanitizePinDigits(initData.unlockPin || '');
+            if (pinDigits) {
+                window.__v4SavedUnlockPin = pinDigits;
+                window.__v4IntentionalWipe = false;
+                localStorage.setItem('iphone_link_unlock_pin', pinDigits);
+                localStorage.setItem('pane-unlock-pin', pinDigits);
+            } else if (!initData.hasUserSettingsFile) {
+                window.__v4SavedUnlockPin = '';
+                localStorage.removeItem('iphone_link_unlock_pin');
+                localStorage.removeItem('pane-unlock-pin');
+            }
+        } catch (_) {}
+    }
+
+    if (window.__V4_INITIAL_SETTINGS__) {
+        seedLocalStorageFromSettings(window.__V4_INITIAL_SETTINGS__);
+    }
 
     function postApi(url, payload) {
         return fetch(url, {
@@ -1287,6 +1369,54 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {})
         }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
+    }
+
+    window.__v4PendingPatch = {};
+    window.__v4PatchTimer = null;
+    window.__v4LastToggleChangeMs = 0;
+
+    function flushSettingsPatch(useKeepalive) {
+        try {
+            if (window.__v4JustWiped) {
+                window.__v4PendingPatch = {};
+                return Promise.resolve({ ok: true, skippedWipe: true });
+            }
+            var body = Object.assign({}, window.__v4PendingPatch || {});
+            window.__v4PendingPatch = {};
+            if (Object.keys(body).length === 0) {
+                return Promise.resolve({ ok: true, empty: true });
+            }
+            var fn = window.__v4OrigFetch || window.fetch;
+            return fn('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                keepalive: Boolean(useKeepalive)
+            }).then(function(r) { return r.json(); }).catch(function() { return { ok: false }; });
+        } catch (_) {
+            return Promise.resolve({ ok: false });
+        }
+    }
+
+    function persistSettingPartial(patch, immediate) {
+        if (!patch || typeof patch !== 'object' || window.__v4Hydrating) return;
+        window.__v4JustWiped = false;
+        window.__v4LastToggleChangeMs = Date.now();
+        window.__v4BootSettings = Object.assign({}, window.__v4BootSettings || {}, patch);
+        window.__v4PendingPatch = Object.assign({}, window.__v4PendingPatch || {}, patch);
+        if (window.__v4PatchTimer) {
+            clearTimeout(window.__v4PatchTimer);
+            window.__v4PatchTimer = null;
+        }
+        if (immediate) {
+            return flushSettingsPatch(true);
+        }
+        window.__v4PatchTimer = setTimeout(function() {
+            window.__v4PatchTimer = null;
+            flushSettingsPatch(false).then(function() {
+                setTimeout(function() { sendDomBeacon(false); }, 30);
+            });
+        }, 35);
     }
 
     function enforceSingleActivePerSegmentedGroup(clickedBtn) {
@@ -1312,7 +1442,20 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         }
     }
 
+    function clearSegmentedGroupSelection(segGroup) {
+        if (!segGroup) return;
+        var buttons = Array.from(segGroup.children || []).filter(function(el) {
+            return el.tagName === 'BUTTON' || el.classList.contains('seg-btn') || el.classList.contains('seg');
+        });
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].classList.remove('active', 'is-active');
+            buttons[i].setAttribute('aria-checked', 'false');
+            buttons[i].setAttribute('aria-pressed', 'false');
+        }
+    }
+
     function sanitizeAllSegmentedGroupsOnBoot() {
+        var bs = window.__v4BootSettings || {};
         var groups = document.querySelectorAll('.segmented, .seg-group, div.seg');
         for (var gi = 0; gi < groups.length; gi++) {
             var group = groups[gi];
@@ -1322,7 +1465,61 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 return el.tagName === 'BUTTON' || el.classList.contains('seg-btn') || el.classList.contains('seg');
             });
             if (buttons.length <= 1) continue;
-            var activeBtn = buttons.find(function(b) {
+
+            var resolvedBtn = null;
+            if (group.id === 'language-toggle-group') {
+                var authLang = window.__v4CurrentLang || document.documentElement.getAttribute('data-lang') || localStorage.getItem('iphone_link_language') || localStorage.getItem('iphone_link_lang') || 'id';
+                resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-lang') === authLang; });
+            } else if (group.querySelector('[data-theme-choice]')) {
+                var th = localStorage.getItem('pane-theme') || bs.theme;
+                if (th) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-theme-choice') === th; });
+            } else if (group.querySelector('[data-fit-choice]')) {
+                var fm = localStorage.getItem('pane-fit-mode') || bs.fitMode;
+                if (fm) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-fit-choice') === fm; });
+            } else if (group.id === 'segmented-device-profile') {
+                var dp = window.__v4ActiveDeviceProfile || bs.deviceProfile;
+                if (dp) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-device-profile') === dp; });
+            } else if (group.querySelector('[data-auto-rotate-choice]')) {
+                var arStr = localStorage.getItem('pane-auto-rotate');
+                var arChoice = (arStr === 'true' || bs.autoRotate === true) ? 'on' : ((arStr === 'false' || bs.autoRotate === false) ? 'off' : null);
+                if (arChoice) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-auto-rotate-choice') === arChoice; });
+            } else if (group.id === 'segmented-audio-out') {
+                var aout = bs.audioOut;
+                if (aout === 'bluetooth' || bs.bluetoothA2dp) {
+                    clearSegmentedGroupSelection(group);
+                    continue;
+                }
+                if (aout) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-audio-out') === aout; });
+            } else if (group.id === 'segmented-audio-buffer') {
+                if (bs.audioBufferPreset) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-audio-buffer') === bs.audioBufferPreset; });
+            } else if (group.id === 'segmented-lip-sync') {
+                if (typeof bs.lipSync === 'boolean') resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-lip-sync') === String(bs.lipSync); });
+            } else if (group.querySelector('[data-speed-choice]')) {
+                var spdVal = localStorage.getItem('pane-trackpad-speed') || (typeof bs.trackpadSpeed === 'number' ? String(bs.trackpadSpeed) : '');
+                if (spdVal) {
+                    var matchedSpd = buttons.find(function(b) { return b.getAttribute('data-speed-choice') === spdVal; });
+                    if (!matchedSpd) {
+                        clearSegmentedGroupSelection(group);
+                        continue;
+                    }
+                    resolvedBtn = matchedSpd;
+                }
+            } else if (group.querySelector('[data-shortcut-choice]')) {
+                var scStr = localStorage.getItem('pane-shortcuts');
+                if (scStr === null && typeof bs.crossPlatformShortcuts === 'boolean') scStr = String(bs.crossPlatformShortcuts);
+                if (scStr === 'true' || scStr === 'false') resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-shortcut-choice') === scStr; });
+            } else if (group.querySelector('[data-paste-pc-choice]')) {
+                var ppcStr = localStorage.getItem('pane-paste-pc');
+                if (ppcStr === null && typeof bs.pastePcClipboard === 'boolean') ppcStr = String(bs.pastePcClipboard);
+                if (ppcStr === 'true' || ppcStr === 'false') resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-paste-pc-choice') === ppcStr; });
+            } else if (group.querySelector('[data-transport]')) {
+                var trVal = localStorage.getItem('handset-transport') || bs.transport;
+                if (trVal) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-transport') === (trVal === 'wifi' ? 'wifi' : 'usb'); });
+            } else if (group.id === 'update-channel-group') {
+                if (bs.updateChannel) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-channel') === bs.updateChannel; });
+            }
+
+            var activeBtn = resolvedBtn || buttons.find(function(b) {
                 return b.classList.contains('is-active') ||
                        b.classList.contains('active') ||
                        b.getAttribute('aria-checked') === 'true' ||
@@ -1762,6 +1959,92 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var cardUpdEl = document.getElementById('card-updater');
             var cardUpdaterCollapsed = Boolean(cardUpdEl && cardUpdEl.classList.contains('is-collapsed'));
 
+            function isBtnLit(el) {
+                return Boolean(el && (el.classList.contains('is-active') || el.classList.contains('active') || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true'));
+            }
+            var langIdEl = document.getElementById('btn-lang-id');
+            var langEnEl = document.getElementById('btn-lang-en');
+            var activeLangId = isBtnLit(langIdEl);
+            var activeLangEn = isBtnLit(langEnEl);
+            var domLangNow = activeLangEn && !activeLangId ? 'en' : ((activeLangId && !activeLangEn) ? 'id' : (window.__v4CurrentLang || document.documentElement.getAttribute('data-lang') || ''));
+            var drawerTitleEl = document.querySelector('.drawer-title');
+            var drawerTitleTextNow = drawerTitleEl ? drawerTitleEl.textContent.trim() : '';
+            var showScreenEl = document.getElementById('show-screen');
+            var showScreenTxtNow = showScreenEl ? showScreenEl.textContent.trim() : '';
+
+            var actFit = '';
+            var fitBtns = document.querySelectorAll('[data-fit-choice]');
+            for (var fi = 0; fi < fitBtns.length; fi++) { if (isBtnLit(fitBtns[fi])) { actFit = fitBtns[fi].getAttribute('data-fit-choice') || ''; break; } }
+            var actProfDom = '';
+            var profBtns = document.querySelectorAll('#segmented-device-profile [data-device-profile]');
+            for (var pi = 0; pi < profBtns.length; pi++) { if (isBtnLit(profBtns[pi])) { actProfDom = profBtns[pi].getAttribute('data-device-profile') || ''; break; } }
+            var actRotDom = '';
+            var rotBtns = document.querySelectorAll('[data-auto-rotate-choice]');
+            for (var ri = 0; ri < rotBtns.length; ri++) { if (isBtnLit(rotBtns[ri])) { actRotDom = rotBtns[ri].getAttribute('data-auto-rotate-choice') || ''; break; } }
+            var btOutEl = document.getElementById('btn-audio-out-bt');
+            var actAout = isBtnLit(btOutEl) ? 'bluetooth' : '';
+            if (!actAout) {
+                var aoutBtns = document.querySelectorAll('#segmented-audio-out [data-audio-out]');
+                for (var ai = 0; ai < aoutBtns.length; ai++) { if (isBtnLit(aoutBtns[ai])) { actAout = aoutBtns[ai].getAttribute('data-audio-out') || ''; break; } }
+            }
+            var avolVal = (document.getElementById('audio-vol-slider') || {}).value || '';
+            var aMuteEl = document.getElementById('btn-audio-drawer') || document.getElementById('btn-audio-top');
+            var aMutedDom = Boolean(aMuteEl && aMuteEl.classList.contains('is-muted'));
+            var actAbuf = '';
+            var abufBtns = document.querySelectorAll('#segmented-audio-buffer [data-audio-buffer]');
+            for (var bi2 = 0; bi2 < abufBtns.length; bi2++) { if (isBtnLit(abufBtns[bi2])) { actAbuf = abufBtns[bi2].getAttribute('data-audio-buffer') || ''; break; } }
+            var actLip = '';
+            var lipBtns = document.querySelectorAll('#segmented-lip-sync [data-lip-sync]');
+            for (var li = 0; li < lipBtns.length; li++) { if (isBtnLit(lipBtns[li])) { actLip = lipBtns[li].getAttribute('data-lip-sync') || ''; break; } }
+            var spdDomVal = (document.getElementById('trackpad-speed-slider') || {}).value || '';
+            var actScDom = '';
+            var scBtns = document.querySelectorAll('[data-shortcut-choice]');
+            for (var si = 0; si < scBtns.length; si++) { if (isBtnLit(scBtns[si])) { actScDom = scBtns[si].getAttribute('data-shortcut-choice') || ''; break; } }
+            var actPpcDom = '';
+            var ppcBtns = document.querySelectorAll('[data-paste-pc-choice]');
+            for (var ppi = 0; ppi < ppcBtns.length; ppi++) { if (isBtnLit(ppcBtns[ppi])) { actPpcDom = ppcBtns[ppi].getAttribute('data-paste-pc-choice') || ''; break; } }
+            var actTrDom = '';
+            var trBtns = document.querySelectorAll('.segmented [data-transport]');
+            for (var tri = 0; tri < trBtns.length; tri++) { if (isBtnLit(trBtns[tri])) { actTrDom = trBtns[tri].getAttribute('data-transport') || ''; break; } }
+            var acEl = document.getElementById('toggle-auto-update-check');
+            var actAcDom = Boolean(acEl && (acEl.classList.contains('is-active') || acEl.classList.contains('active') || acEl.getAttribute('aria-checked') === 'true'));
+            var actUcDom = '';
+            var ucBtns = document.querySelectorAll('#update-channel-group [data-channel]');
+            for (var ui = 0; ui < ucBtns.length; ui++) { if (isBtnLit(ucBtns[ui])) { actUcDom = ucBtns[ui].getAttribute('data-channel') || ''; break; } }
+            var pinDomVal = ((document.getElementById('input-unlock-pin') || {}).value || '');
+            var cTopDom = (document.getElementById('crop-top-slider') || {}).value || '0';
+            var cBotDom = (document.getElementById('crop-bottom-slider') || {}).value || '0';
+            var cLeftDom = (document.getElementById('crop-left-slider') || {}).value || '0';
+            var cRightDom = (document.getElementById('crop-right-slider') || {}).value || '0';
+            var lpTrCableLit = isBtnLit(document.getElementById('launchpad-transport-cable'));
+            var lpTrWifiLit = isBtnLit(document.getElementById('launchpad-transport-wifi'));
+
+            var domTogglesSummary = [
+                'lang=' + domLangNow,
+                'theme=' + curTheme,
+                'fit=' + actFit,
+                'prof=' + actProfDom,
+                'rot=' + actRotDom,
+                'ct=' + cTopDom,
+                'cb=' + cBotDom,
+                'cl=' + cLeftDom,
+                'cr=' + cRightDom,
+                'aout=' + actAout,
+                'avol=' + avolVal,
+                'amut=' + String(aMutedDom),
+                'abuf=' + actAbuf,
+                'lip=' + actLip,
+                'spd=' + spdDomVal,
+                'sc=' + actScDom,
+                'ppc=' + actPpcDom,
+                'tr=' + actTrDom,
+                'lptr=' + (lpTrWifiLit ? 'wifi' : (lpTrCableLit ? 'usb' : '')),
+                'ac=' + String(actAcDom),
+                'uc=' + actUcDom,
+                'pin=' + pinDomVal,
+                'show=' + showScreenTxtNow.replace(/[;=]/g, ' ')
+            ].join(';');
+
             postApi('/api/window/dom_ready_beacon', {
                 display: disp,
                 w: curW,
@@ -1813,10 +2096,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 isFullsize: appIsFullsize,
                 isMirroring: appIsMirroring,
                 isStreaming: appIsStreaming,
-                unlockPinValue: ((document.getElementById('input-unlock-pin') || {}).value || ''),
+                unlockPinValue: pinDomVal,
                 updateVersionText: (((document.getElementById('update-current-version') || {}).textContent || '').trim()),
                 creditAppNameText: (((document.querySelector('.credit-app-name') || {}).textContent || '').trim()),
                 lastTrayAction: (window.__v4LastTrayAction || ''),
+                domLanguage: domLangNow,
+                activeLangId: activeLangId,
+                activeLangEn: activeLangEn,
+                drawerTitleText: drawerTitleTextNow,
+                domTogglesSummary: domTogglesSummary,
                 updaterScrolled: Boolean(window.__v4UpdaterScrolledIntoView),
                 cardUpdaterCollapsed: cardUpdaterCollapsed,
                 checkUpdateClicked: Boolean(window.__v4CheckUpdateClicked),
@@ -2509,10 +2797,6 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.__v4RunMirrorAutofitVerify = runSyntheticMirrorAutofitVerify;
     window.__v4RunTahap182UiVerify = runTahap182UiVerify;
 
-    function sanitizePinDigits(rawVal) {
-        return String(rawVal || '').replace(/\D/g, '').slice(0, 6);
-    }
-
     function syncVersionLabels() {
         try {
             var updVer = document.getElementById('update-current-version');
@@ -2524,6 +2808,619 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 credName.textContent = 'iPhone Link v4.0';
             }
         } catch (_) {}
+    }
+
+    function applyV4DomTranslations(lang) {
+        if (window.__v4TranslatingDom) return;
+        window.__v4TranslatingDom = true;
+        try {
+            var isEn = (lang === 'en');
+            var drawerTitle = document.querySelector('.drawer-title');
+            if (drawerTitle) {
+                drawerTitle.textContent = isEn ? 'Settings & Controls' : 'Pengaturan & Kontrol';
+            }
+            var showScreen = document.getElementById('show-screen');
+            if (showScreen) {
+                var showTxt = (showScreen.textContent || '').trim();
+                var lblSpan = showScreen.querySelector('.btn-label');
+                if (!showTxt || showTxt === 'Start mirroring' || showTxt === 'Mulai mirroring') {
+                    var targetShow = isEn ? 'Start mirroring' : 'Mulai mirroring';
+                    if (lblSpan) {
+                        if (lblSpan.textContent.trim() !== targetShow) lblSpan.textContent = targetShow;
+                    } else {
+                        showScreen.innerHTML = '<span class="btn-label" data-i18n="conn.start_mirror">' + targetShow + '</span>';
+                    }
+                }
+            }
+            var lpStartLbl = document.querySelector('#launchpad-start-btn .btn-label');
+            if (lpStartLbl) {
+                var lpTxt = lpStartLbl.textContent.trim();
+                if (!lpTxt || lpTxt === 'Start mirroring' || lpTxt === 'Mulai mirroring') {
+                    lpStartLbl.textContent = isEn ? 'Start mirroring' : 'Mulai mirroring';
+                }
+            }
+            var audioPcLbl = document.querySelector('#btn-audio-out-pc .btn-label');
+            if (audioPcLbl) audioPcLbl.textContent = isEn ? 'On this PC (USB)' : 'Di PC ini (USB)';
+            var audioDevLbl = document.querySelector('#btn-audio-out-device .btn-label');
+            if (audioDevLbl) audioDevLbl.textContent = isEn ? 'Device only' : 'Hanya perangkat';
+
+            var audioBadgeLbl = document.querySelector('#audio-status-badge .btn-label');
+            if (audioBadgeLbl) {
+                audioBadgeLbl.textContent = isEn
+                    ? 'Zero-Bluetooth USB Audio (48 kHz WASAPI \u00B7 ~40 ms)'
+                    : 'Audio USB Zero-Bluetooth (48 kHz WASAPI \u00B7 ~40 ms)';
+            }
+
+            var bufHint = document.getElementById('audio-buffer-hint');
+            if (bufHint) {
+                var activeBufBtn = document.querySelector('#segmented-audio-buffer .seg.is-active, #segmented-audio-buffer .seg.active');
+                var bufVal = activeBufBtn ? activeBufBtn.getAttribute('data-audio-buffer') : 'normal';
+                if (bufVal === 'low') {
+                    bufHint.textContent = isEn ? 'Low \u00B7 ~20 ms' : 'Rendah \u00B7 ~20 ms';
+                } else if (bufVal === 'high') {
+                    bufHint.textContent = isEn ? 'High \u00B7 ~80 ms' : 'Tinggi \u00B7 ~80 ms';
+                } else {
+                    bufHint.textContent = 'Normal \u00B7 ~40 ms';
+                }
+            }
+
+            var lipSeg = document.getElementById('segmented-lip-sync');
+            var lipItem = lipSeg ? lipSeg.closest('.setting-toggle-item') : null;
+            var lipLbl = lipItem ? lipItem.querySelector('.setting-toggle-header .btn-label') : null;
+            if (lipLbl) lipLbl.textContent = isEn ? 'Lip Sync' : 'Sinkron Audio (Lip Sync)';
+
+            var btSummary = document.querySelector('.audio-bt-fallback summary');
+            if (btSummary) btSummary.textContent = isEn ? 'Bluetooth A2DP Fallback Options' : 'Opsi Fallback Bluetooth A2DP';
+            var btUseLbl = document.querySelector('#btn-audio-out-bt .btn-label');
+            if (btUseLbl) btUseLbl.textContent = isEn ? 'Use Bluetooth' : 'Gunakan Bluetooth';
+            var btPairLbl = document.querySelector('#btn-audio-pair .btn-label');
+            if (btPairLbl) btPairLbl.textContent = isEn ? 'Pair BT' : 'Pasangkan BT';
+
+            var stealthCard = document.getElementById('panel-screen-stealth');
+            var stealthHdrLbl = stealthCard ? stealthCard.querySelector('.setting-toggle-header .btn-label') : null;
+            if (stealthHdrLbl) stealthHdrLbl.textContent = isEn ? 'Stealth Dim Mode (Alt+D)' : 'Mode Redup Stealth (Alt+D)';
+            var stealthBtnLbl = document.querySelector('#btn-stealth-mode .btn-label');
+            var stealthHintEl = document.getElementById('stealth-mode-hint');
+            if (stealthBtnLbl && stealthHintEl) {
+                var isStealthOn = stealthHintEl.textContent.trim().toUpperCase() === 'ON';
+                stealthBtnLbl.textContent = isEn
+                    ? ('Stealth Dim Mode: ' + (isStealthOn ? 'ON' : 'OFF'))
+                    : ('Mode Redup Stealth: ' + (isStealthOn ? 'ON' : 'OFF'));
+            }
+
+            var pinInput = document.getElementById('input-unlock-pin');
+            if (pinInput) {
+                pinInput.setAttribute('placeholder', isEn ? '4 or 6 digit PIN' : '4 atau 6 digit PIN');
+            }
+        } catch (_) {} finally {
+            window.__v4TranslatingDom = false;
+        }
+    }
+
+    function applyV4LanguageUiAfterAppJs(targetLang, persistToServer) {
+        var target = (targetLang === 'en') ? 'en' : 'id';
+        window.__v4CurrentLang = target;
+        document.documentElement.setAttribute('lang', target);
+        document.documentElement.setAttribute('data-lang', target);
+        try {
+            localStorage.setItem('iphone_link_lang', target);
+            localStorage.setItem('iphone_link_language', target);
+        } catch (_) {}
+        var targetBtn = document.getElementById(target === 'en' ? 'btn-lang-en' : 'btn-lang-id');
+        if (targetBtn) {
+            enforceSingleActivePerSegmentedGroup(targetBtn);
+        }
+        applyV4DomTranslations(target);
+        syncVersionLabels();
+        if (persistToServer) {
+            persistSettingPartial({ language: target }, false);
+        }
+        setTimeout(function() { sendDomBeacon(false); }, 40);
+    }
+
+    function wrapApplyLanguageIfReady() {
+        if (typeof window.applyLanguage === 'function' && !window.applyLanguage.__v4Wrapped) {
+            var origApplyLang = window.applyLanguage;
+            window.__v4OrigApplyLanguage = origApplyLang;
+            var wrappedApplyLang = function(lang, save) {
+                var target = (lang === 'en') ? 'en' : 'id';
+                window.__v4CurrentLang = target;
+                document.documentElement.setAttribute('lang', target);
+                document.documentElement.setAttribute('data-lang', target);
+                var res;
+                try { res = origApplyLang.call(this, target, save); } catch (_) {}
+                try { applyV4LanguageUiAfterAppJs(target, save !== false && !window.__v4Hydrating); } catch (_) {}
+                return res;
+            };
+            wrappedApplyLang.__v4Wrapped = true;
+            window.applyLanguage = wrappedApplyLang;
+        }
+        if (!window.__v4ShowScreenLangObs && typeof MutationObserver !== 'undefined') {
+            var showScreenEl = document.getElementById('show-screen');
+            if (showScreenEl) {
+                window.__v4ShowScreenLangObs = true;
+                var ssObs = new MutationObserver(function() {
+                    if (window.__v4TranslatingDom) return;
+                    applyV4DomTranslations(window.__v4CurrentLang || 'id');
+                });
+                ssObs.observe(showScreenEl, { childList: true, characterData: true, subtree: true });
+            }
+        }
+    }
+
+    function hydrateAllTogglesFromSettings(data) {
+        if (!data || typeof data !== 'object') return;
+        window.__v4Hydrating = true;
+        try {
+            seedLocalStorageFromSettings(data);
+            hydratePinFromSettings(data);
+
+            var lang = (data.language === 'en') ? 'en' : 'id';
+            if (typeof window.__v4OrigApplyLanguage === 'function') {
+                try { window.__v4OrigApplyLanguage(lang, false); } catch (_) {}
+            } else if (typeof window.applyLanguage === 'function') {
+                try { window.applyLanguage(lang, false); } catch (_) {}
+            }
+            applyV4LanguageUiAfterAppJs(lang, false);
+
+            var thm = (data.theme === 'light') ? 'light' : 'dark';
+            if (typeof window.__v4ApplyTheme === 'function') {
+                window.__v4ApplyTheme(thm);
+            }
+
+            if (data.fitMode === 'autofit' || data.fitMode === 'fill' || data.fitMode === 'contain') {
+                if (typeof window.applyFitMode === 'function') {
+                    try { window.applyFitMode(data.fitMode); } catch (_) {}
+                }
+                var fitBtn = document.querySelector('[data-fit-choice="' + data.fitMode + '"]');
+                if (fitBtn) enforceSingleActivePerSegmentedGroup(fitBtn);
+            }
+
+            if (data.deviceProfile === 'auto' || data.deviceProfile === 'iphone' || data.deviceProfile === 'ipad') {
+                if (typeof window.applyDeviceProfile === 'function') {
+                    try { window.applyDeviceProfile(data.deviceProfile, { persist: false, syncNative: false }); } catch (_) {}
+                }
+                var profBtn = document.querySelector('#segmented-device-profile [data-device-profile="' + data.deviceProfile + '"]');
+                if (profBtn) enforceSingleActivePerSegmentedGroup(profBtn);
+                window.__v4ActiveDeviceProfile = data.deviceProfile;
+                var dwCss = (data.deviceProfile === 'ipad') ? '564px' : '346px';
+                document.documentElement.style.setProperty('--display-width', dwCss);
+                var appElP = document.getElementById('app-root') || document.querySelector('.app');
+                if (appElP) {
+                    appElP.style.setProperty('--display-width', dwCss);
+                    appElP.classList.toggle('is-ipad', data.deviceProfile === 'ipad');
+                }
+            }
+
+            if (typeof data.autoRotate === 'boolean') {
+                if (typeof window.applyAutoRotateSetting === 'function') {
+                    try { window.applyAutoRotateSetting(data.autoRotate, false); } catch (_) {}
+                }
+                var arBtn = document.querySelector('[data-auto-rotate-choice="' + (data.autoRotate ? 'on' : 'off') + '"]');
+                if (arBtn) enforceSingleActivePerSegmentedGroup(arBtn);
+            }
+
+            if (data.crop && typeof data.crop === 'object') {
+                var cObj = {
+                    top: Number(data.crop.top || 0),
+                    bottom: Number(data.crop.bottom || 0),
+                    left: Number(data.crop.left || 0),
+                    right: Number(data.crop.right || 0)
+                };
+                if (typeof window.applyCrop === 'function') {
+                    try { window.applyCrop(cObj, true); } catch (_) {}
+                }
+                ['top', 'bottom', 'left', 'right'].forEach(function(edge) {
+                    var sEl = document.getElementById('crop-' + edge + '-slider');
+                    var nEl = document.getElementById('crop-' + edge + '-num');
+                    if (sEl) sEl.value = String(cObj[edge]);
+                    if (nEl) nEl.value = String(cObj[edge]);
+                });
+            }
+
+            var aout = (data.bluetoothA2dp || data.audioOut === 'bluetooth') ? 'bluetooth' : (data.audioOut || 'pc');
+            var avol = (typeof data.audioVolume === 'number') ? data.audioVolume : 100;
+            var amut = Boolean(data.audioMuted);
+            var abuf = data.audioBufferPreset || 'normal';
+            var lipOn = (typeof data.lipSync === 'boolean') ? data.lipSync : true;
+            if (typeof window.renderAudio === 'function') {
+                try {
+                    window.renderAudio({
+                        audioOut: aout,
+                        volume: avol,
+                        muted: amut,
+                        bufferPreset: abuf,
+                        lipSync: lipOn
+                    });
+                } catch (_) {}
+            }
+            var segAu = document.getElementById('segmented-audio-out');
+            var btBtn = document.getElementById('btn-audio-out-bt');
+            if (aout === 'bluetooth') {
+                clearSegmentedGroupSelection(segAu);
+                if (btBtn) {
+                    btBtn.classList.add('is-active', 'active');
+                    btBtn.setAttribute('aria-pressed', 'true');
+                }
+            } else {
+                if (btBtn) {
+                    btBtn.classList.remove('is-active', 'active');
+                    btBtn.setAttribute('aria-pressed', 'false');
+                }
+                var auBtn = document.querySelector('#segmented-audio-out [data-audio-out="' + aout + '"]');
+                if (auBtn) enforceSingleActivePerSegmentedGroup(auBtn);
+            }
+            var volSl = document.getElementById('audio-vol-slider');
+            var volTxt = document.getElementById('audio-vol-val');
+            if (volSl) volSl.value = String(avol);
+            if (volTxt) volTxt.textContent = String(avol) + '%';
+            ['btn-audio-top', 'btn-audio-drawer'].forEach(function(aid) {
+                var aBtn = document.getElementById(aid);
+                if (aBtn) {
+                    aBtn.classList.toggle('is-muted', amut);
+                    aBtn.classList.toggle('is-active', !amut);
+                }
+            });
+            var abufBtn = document.querySelector('#segmented-audio-buffer [data-audio-buffer="' + abuf + '"]');
+            if (abufBtn) enforceSingleActivePerSegmentedGroup(abufBtn);
+            var lipBtn = document.querySelector('#segmented-lip-sync [data-lip-sync="' + String(lipOn) + '"]');
+            if (lipBtn) enforceSingleActivePerSegmentedGroup(lipBtn);
+            var lipHint = document.getElementById('lip-sync-hint');
+            if (lipHint) lipHint.textContent = lipOn ? 'ON' : 'OFF';
+
+            if (typeof data.trackpadSpeed === 'number') {
+                if (typeof window.applyTrackpadSpeed === 'function') {
+                    try { window.applyTrackpadSpeed(data.trackpadSpeed, true); } catch (_) {}
+                }
+                var spdSl = document.getElementById('trackpad-speed-slider');
+                var spdNm = document.getElementById('trackpad-speed-num');
+                if (spdSl) spdSl.value = String(data.trackpadSpeed);
+                if (spdNm) spdNm.value = String(data.trackpadSpeed);
+                var spdGroup = document.querySelector('.segmented-speed');
+                var spdPresetBtn = document.querySelector('.segmented-speed [data-speed-choice="' + String(data.trackpadSpeed) + '"]');
+                if (spdPresetBtn) {
+                    enforceSingleActivePerSegmentedGroup(spdPresetBtn);
+                } else {
+                    clearSegmentedGroupSelection(spdGroup);
+                }
+            }
+
+            if (typeof data.crossPlatformShortcuts === 'boolean' || typeof data.pastePcClipboard === 'boolean') {
+                if (typeof window.applyKeyboardSettings === 'function') {
+                    try {
+                        window.applyKeyboardSettings({
+                            crossPlatformShortcuts: data.crossPlatformShortcuts !== false,
+                            pastePcClipboard: data.pastePcClipboard !== false
+                        }, true);
+                    } catch (_) {}
+                }
+                var scBtn = document.querySelector('[data-shortcut-choice="' + String(data.crossPlatformShortcuts !== false) + '"]');
+                if (scBtn) enforceSingleActivePerSegmentedGroup(scBtn);
+                var ppcBtn = document.querySelector('[data-paste-pc-choice="' + String(data.pastePcClipboard !== false) + '"]');
+                if (ppcBtn) enforceSingleActivePerSegmentedGroup(ppcBtn);
+            }
+
+            if (data.transport) {
+                var trNorm = (data.transport === 'wifi') ? 'wifi' : 'usb';
+                var trDrawerBtn = document.querySelector('.segmented [data-transport="' + trNorm + '"]');
+                if (trDrawerBtn) enforceSingleActivePerSegmentedGroup(trDrawerBtn);
+                var lpCable = document.getElementById('launchpad-transport-cable');
+                var lpWifi = document.getElementById('launchpad-transport-wifi');
+                if (lpCable) {
+                    lpCable.classList.toggle('is-active', trNorm === 'usb');
+                    lpCable.classList.toggle('active', trNorm === 'usb');
+                    lpCable.setAttribute('aria-checked', String(trNorm === 'usb'));
+                }
+                if (lpWifi) {
+                    lpWifi.classList.toggle('is-active', trNorm === 'wifi');
+                    lpWifi.classList.toggle('active', trNorm === 'wifi');
+                    lpWifi.setAttribute('aria-checked', String(trNorm === 'wifi'));
+                }
+            }
+
+            if (typeof window.syncUpdaterSettings === 'function') {
+                try {
+                    window.syncUpdaterSettings({
+                        autoCheckUpdate: data.autoCheckUpdate !== false,
+                        updateChannel: (data.updateChannel === 'beta') ? 'beta' : 'stable'
+                    });
+                } catch (_) {}
+            }
+            var acToggle = document.getElementById('toggle-auto-update-check');
+            if (acToggle && typeof data.autoCheckUpdate === 'boolean') {
+                acToggle.classList.toggle('is-active', data.autoCheckUpdate);
+                acToggle.classList.toggle('active', data.autoCheckUpdate);
+                acToggle.setAttribute('aria-checked', String(data.autoCheckUpdate));
+            }
+            if (data.updateChannel === 'stable' || data.updateChannel === 'beta') {
+                var ucBtn = document.querySelector('#update-channel-group [data-channel="' + data.updateChannel + '"]');
+                if (ucBtn) enforceSingleActivePerSegmentedGroup(ucBtn);
+            }
+
+            applyV4DomTranslations(lang);
+            sanitizeAllSegmentedGroupsOnBoot();
+            window.__v4BootHydratedOnce = true;
+        } catch (_) {} finally {
+            window.__v4Hydrating = false;
+        }
+    }
+
+    function readCurrentCropFromDom() {
+        return {
+            top: parseInt((document.getElementById('crop-top-slider') || {}).value || '0', 10) || 0,
+            bottom: parseInt((document.getElementById('crop-bottom-slider') || {}).value || '0', 10) || 0,
+            left: parseInt((document.getElementById('crop-left-slider') || {}).value || '0', 10) || 0,
+            right: parseInt((document.getElementById('crop-right-slider') || {}).value || '0', 10) || 0
+        };
+    }
+
+    function bindUniversalTogglePersistence() {
+        if (window.__v4UniversalListenersBound) return;
+        window.__v4UniversalListenersBound = true;
+
+        document.addEventListener('pointerdown', function() {
+            var now = Date.now();
+            if (now - (window.__v4LastDismissTrayMs || 0) > 40) {
+                window.__v4LastDismissTrayMs = now;
+                var fn = window.__v4OrigFetch || window.fetch;
+                try {
+                    fn('/api/tray/dismiss_menu', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}'
+                    }).catch(function(){});
+                } catch (_) {}
+            }
+        }, true);
+
+        document.addEventListener('wheel', function() {
+            var now = Date.now();
+            if (now - (window.__v4LastDismissTrayWheelMs || 0) > 200) {
+                window.__v4LastDismissTrayWheelMs = now;
+                var fn = window.__v4OrigFetch || window.fetch;
+                try {
+                    fn('/api/tray/dismiss_menu', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}'
+                    }).catch(function(){});
+                } catch (_) {}
+            }
+        }, { capture: true, passive: true });
+
+        document.addEventListener('click', function(e) {
+            if (window.__v4Hydrating) return;
+            var target = e.target && e.target.closest ? e.target.closest('button') : null;
+            if (!target) return;
+
+            if (target.id === 'btn-lang-id' || target.id === 'btn-lang-en' || target.hasAttribute('data-lang')) {
+                var nextLang = (target.getAttribute('data-lang') === 'en' || target.id === 'btn-lang-en') ? 'en' : 'id';
+                window.__v4LastToggleChangeMs = Date.now();
+                wrapApplyLanguageIfReady();
+                setTimeout(function() {
+                    applyV4LanguageUiAfterAppJs(nextLang, true);
+                }, 0);
+                return;
+            }
+
+            if (target.hasAttribute('data-fit-choice')) {
+                var fm = target.getAttribute('data-fit-choice');
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-fit-mode', fm); } catch (_) {}
+                persistSettingPartial({ fitMode: fm }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-device-profile')) {
+                var dp = target.getAttribute('data-device-profile') || 'auto';
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-device-profile', dp); } catch (_) {}
+                persistSettingPartial({ deviceProfile: dp }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-auto-rotate-choice')) {
+                var ar = target.getAttribute('data-auto-rotate-choice') === 'on';
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-auto-rotate', String(ar)); } catch (_) {}
+                persistSettingPartial({ autoRotate: ar }, false);
+                return;
+            }
+
+            if (target.id === 'btn-reset-crop' || target.id === 'btn-save-crop') {
+                setTimeout(function() {
+                    var cObj = target.id === 'btn-reset-crop' ? { top: 0, bottom: 0, left: 0, right: 0 } : readCurrentCropFromDom();
+                    try { localStorage.setItem('pane-crop-edges', JSON.stringify(cObj)); } catch (_) {}
+                    persistSettingPartial({ crop: cObj }, false);
+                }, 0);
+                return;
+            }
+
+            if (target.hasAttribute('data-audio-out')) {
+                var aout = target.getAttribute('data-audio-out') || 'pc';
+                var segAu = document.getElementById('segmented-audio-out');
+                var btBtn = document.getElementById('btn-audio-out-bt');
+                if (aout === 'bluetooth') {
+                    clearSegmentedGroupSelection(segAu);
+                    if (btBtn) {
+                        btBtn.classList.add('is-active', 'active');
+                        btBtn.setAttribute('aria-pressed', 'true');
+                    }
+                    persistSettingPartial({ audioOut: 'bluetooth', bluetoothA2dp: true }, false);
+                } else {
+                    if (btBtn) {
+                        btBtn.classList.remove('is-active', 'active');
+                        btBtn.setAttribute('aria-pressed', 'false');
+                    }
+                    enforceSingleActivePerSegmentedGroup(target);
+                    persistSettingPartial({ audioOut: aout, bluetoothA2dp: false }, false);
+                }
+                return;
+            }
+
+            if (target.id === 'btn-audio-top' || target.id === 'btn-audio-drawer') {
+                window.__v4LastToggleChangeMs = Date.now();
+                setTimeout(function() { sendDomBeacon(false); }, 120);
+                return;
+            }
+
+            if (target.hasAttribute('data-audio-buffer')) {
+                var ab = target.getAttribute('data-audio-buffer') || 'normal';
+                enforceSingleActivePerSegmentedGroup(target);
+                setTimeout(function() { applyV4DomTranslations(window.__v4CurrentLang || 'id'); }, 0);
+                persistSettingPartial({ audioBufferPreset: ab }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-lip-sync')) {
+                var ls = target.getAttribute('data-lip-sync') === 'true';
+                enforceSingleActivePerSegmentedGroup(target);
+                var lsh = document.getElementById('lip-sync-hint');
+                if (lsh) lsh.textContent = ls ? 'ON' : 'OFF';
+                persistSettingPartial({ lipSync: ls }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-speed-choice')) {
+                var spd = parseInt(target.getAttribute('data-speed-choice'), 10) || 100;
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-trackpad-speed', String(spd)); } catch (_) {}
+                persistSettingPartial({ trackpadSpeed: spd }, false);
+                return;
+            }
+
+            if (target.id === 'btn-save-speed') {
+                setTimeout(function() {
+                    var sv = parseInt((document.getElementById('trackpad-speed-slider') || {}).value || '100', 10) || 100;
+                    try { localStorage.setItem('pane-trackpad-speed', String(sv)); } catch (_) {}
+                    persistSettingPartial({ trackpadSpeed: sv }, false);
+                }, 0);
+                return;
+            }
+
+            if (target.hasAttribute('data-shortcut-choice')) {
+                var sc = target.getAttribute('data-shortcut-choice') === 'true';
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-shortcuts', String(sc)); } catch (_) {}
+                persistSettingPartial({ crossPlatformShortcuts: sc }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-paste-pc-choice')) {
+                var ppc = target.getAttribute('data-paste-pc-choice') === 'true';
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-paste-pc', String(ppc)); } catch (_) {}
+                persistSettingPartial({ pastePcClipboard: ppc }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-transport')) {
+                var tr = (target.getAttribute('data-transport') === 'wifi') ? 'wifi' : 'usb';
+                try { localStorage.setItem('handset-transport', tr); } catch (_) {}
+                setTimeout(function() {
+                    var drBtn = document.querySelector('.segmented [data-transport="' + tr + '"]');
+                    if (drBtn) enforceSingleActivePerSegmentedGroup(drBtn);
+                    var lpC = document.getElementById('launchpad-transport-cable');
+                    var lpW = document.getElementById('launchpad-transport-wifi');
+                    if (lpC) {
+                        lpC.classList.toggle('is-active', tr === 'usb');
+                        lpC.classList.toggle('active', tr === 'usb');
+                        lpC.setAttribute('aria-checked', String(tr === 'usb'));
+                    }
+                    if (lpW) {
+                        lpW.classList.toggle('is-active', tr === 'wifi');
+                        lpW.classList.toggle('active', tr === 'wifi');
+                        lpW.setAttribute('aria-checked', String(tr === 'wifi'));
+                    }
+                }, 0);
+                persistSettingPartial({ transport: tr }, false);
+                return;
+            }
+
+            if (target.id === 'toggle-auto-update-check') {
+                window.__v4LastToggleChangeMs = Date.now();
+                setTimeout(function() {
+                    var nextAc = target.classList.contains('is-active') || target.getAttribute('aria-checked') === 'true';
+                    target.classList.toggle('active', nextAc);
+                    target.setAttribute('aria-checked', String(nextAc));
+                    persistSettingPartial({ autoCheckUpdate: nextAc }, false);
+                }, 0);
+                return;
+            }
+
+            if (target.hasAttribute('data-channel')) {
+                var ch = (target.getAttribute('data-channel') === 'beta') ? 'beta' : 'stable';
+                enforceSingleActivePerSegmentedGroup(target);
+                persistSettingPartial({ updateChannel: ch }, false);
+                return;
+            }
+
+            if (target.hasAttribute('data-theme-choice')) {
+                var thm = (target.getAttribute('data-theme-choice') === 'light') ? 'light' : 'dark';
+                window.__v4LastThemeTouchMs = Date.now();
+                window.__v4LastToggleChangeMs = Date.now();
+                enforceSingleActivePerSegmentedGroup(target);
+                try { localStorage.setItem('pane-theme', thm); } catch (_) {}
+                persistSettingPartial({ theme: thm }, false);
+                postApi('/api/window/set_theme', { theme: thm });
+                return;
+            }
+
+            if (target.id === 'btn-wipe-privacy') {
+                window.__v4IntentionalWipe = true;
+                window.__v4JustWiped = true;
+                window.__v4PendingPatch = {};
+                if (window.__v4PatchTimer) {
+                    clearTimeout(window.__v4PatchTimer);
+                    window.__v4PatchTimer = null;
+                }
+                return;
+            }
+        }, true);
+
+        var onControlInputOrChange = function(e) {
+            if (window.__v4Hydrating) return;
+            var el = e.target;
+            if (!el || !el.id) return;
+            if (el.id.indexOf('crop-') === 0) {
+                var match = el.id.match(/^crop-(top|bottom|left|right)-(slider|num)$/);
+                if (match) {
+                    var edge = match[1];
+                    var kind = match[2];
+                    var val = Math.max(0, Math.min(120, parseInt(el.value || '0', 10) || 0));
+                    var peer = document.getElementById('crop-' + edge + '-' + (kind === 'slider' ? 'num' : 'slider'));
+                    if (peer && peer.value !== String(val)) peer.value = String(val);
+                    var cObj = readCurrentCropFromDom();
+                    try { localStorage.setItem('pane-crop-edges', JSON.stringify(cObj)); } catch (_) {}
+                    persistSettingPartial({ crop: cObj }, false);
+                }
+                return;
+            }
+            if (el.id === 'audio-vol-slider') {
+                var vol = Math.max(0, Math.min(100, parseInt(el.value || '100', 10) || 0));
+                var vTxt = document.getElementById('audio-vol-val');
+                if (vTxt) vTxt.textContent = String(vol) + '%';
+                persistSettingPartial({ audioVolume: vol }, false);
+                return;
+            }
+            if (el.id === 'trackpad-speed-slider' || el.id === 'trackpad-speed-num') {
+                var spd = Math.max(30, Math.min(200, parseInt(el.value || '100', 10) || 100));
+                var peerId = (el.id === 'trackpad-speed-slider') ? 'trackpad-speed-num' : 'trackpad-speed-slider';
+                var peerSpd = document.getElementById(peerId);
+                if (peerSpd && peerSpd.value !== String(spd)) peerSpd.value = String(spd);
+                var spdPreset = document.querySelector('.segmented-speed [data-speed-choice="' + String(spd) + '"]');
+                if (spdPreset) {
+                    enforceSingleActivePerSegmentedGroup(spdPreset);
+                } else {
+                    clearSegmentedGroupSelection(document.querySelector('.segmented-speed'));
+                }
+                try { localStorage.setItem('pane-trackpad-speed', String(spd)); } catch (_) {}
+                persistSettingPartial({ trackpadSpeed: spd }, false);
+                return;
+            }
+        };
+        document.addEventListener('input', onControlInputOrChange, false);
+        document.addEventListener('change', onControlInputOrChange, false);
     }
 
     function hydratePinFromSettings(data) {
@@ -2571,6 +3468,11 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                         if (!resp || !resp.ok) return resp;
                         return resp.clone().json().then(function(data) {
                             hydratePinFromSettings(data);
+                            var recentToggle = (Date.now() - (window.__v4LastToggleChangeMs || 0)) < 2500;
+                            var hasPending = Object.keys(window.__v4PendingPatch || {}).length > 0;
+                            if (!recentToggle && !hasPending) {
+                                hydrateAllTogglesFromSettings(data);
+                            }
                             syncVersionLabels();
                             return new Response(JSON.stringify(data), {
                                 status: resp.status,
@@ -2582,6 +3484,15 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                         return resp;
                     }
                 });
+            }
+            if (urlStr.indexOf('/api/device/wipe-privacy-data') !== -1 && method === 'POST') {
+                window.__v4IntentionalWipe = true;
+                window.__v4JustWiped = true;
+                window.__v4PendingPatch = {};
+                if (window.__v4PatchTimer) {
+                    clearTimeout(window.__v4PatchTimer);
+                    window.__v4PatchTimer = null;
+                }
             }
             return p;
         };
@@ -2773,13 +3684,22 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         updateParallaxVars();
         syncIpadDisplayWidthVar();
         syncMirroringStateClass();
+        wrapApplyLanguageIfReady();
+        bindUniversalTogglePersistence();
+        if (window.__V4_INITIAL_SETTINGS__) {
+            hydrateAllTogglesFromSettings(window.__V4_INITIAL_SETTINGS__);
+        }
         sanitizeAllSegmentedGroupsOnBoot();
         sanitizeErrorBanners();
         syncVersionLabels();
         bindPinPersistence();
         try {
             fetch('/api/settings').then(function(r) { return r.json(); }).then(function(data) {
-                hydratePinFromSettings(data);
+                if (!window.__v4LastToggleChangeMs) {
+                    hydrateAllTogglesFromSettings(data);
+                } else {
+                    hydratePinFromSettings(data);
+                }
                 syncVersionLabels();
             }).catch(function(){});
         } catch (_) {}
@@ -2787,6 +3707,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             var pEl = document.getElementById('input-unlock-pin');
             if (pEl && !window.__v4IntentionalWipe && sanitizePinDigits(pEl.value)) {
                 persistUnlockPinDual(pEl.value, true);
+            }
+            if (!window.__v4JustWiped) {
+                flushSettingsPatch(true);
             }
         });
 
@@ -2840,7 +3763,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         if (lightBtn) {
             lightBtn.id = 'theme-light';
             lightBtn.addEventListener('click', function() {
+                window.__v4LastThemeTouchMs = Date.now();
                 window.__v4ApplyTheme('light');
+                persistSettingPartial({ theme: 'light' }, false);
                 postApi('/api/window/set_theme', { theme: 'light' });
             }, true);
         }
@@ -2848,7 +3773,9 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         if (darkBtn) {
             darkBtn.id = 'theme-dark';
             darkBtn.addEventListener('click', function() {
+                window.__v4LastThemeTouchMs = Date.now();
                 window.__v4ApplyTheme('dark');
+                persistSettingPartial({ theme: 'dark' }, false);
                 postApi('/api/window/set_theme', { theme: 'dark' });
             }, true);
         }
@@ -2856,8 +3783,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         requestAnimationFrame(checkRaf);
         setTimeout(function() {
             window.computeDisplayWidthCss = computeV4DisplayWidthCss;
+            wrapApplyLanguageIfReady();
             syncIpadDisplayWidthVar();
             syncMirroringStateClass();
+            if (!window.__v4LastToggleChangeMs && window.__V4_BOOT_SETTINGS__) {
+                hydrateAllTogglesFromSettings(window.__V4_BOOT_SETTINGS__);
+            }
+            applyV4DomTranslations(window.__v4CurrentLang || 'id');
             sanitizeAllSegmentedGroupsOnBoot();
             syncVersionLabels();
             bindPinPersistence();
@@ -2865,8 +3797,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             sendDomBeacon(false);
         }, 300);
         setTimeout(function() {
+            wrapApplyLanguageIfReady();
             syncIpadDisplayWidthVar();
             syncMirroringStateClass();
+            if (!window.__v4LastToggleChangeMs && window.__V4_BOOT_SETTINGS__) {
+                hydrateAllTogglesFromSettings(window.__V4_BOOT_SETTINGS__);
+            }
+            applyV4DomTranslations(window.__v4CurrentLang || 'id');
             sanitizeAllSegmentedGroupsOnBoot();
             syncVersionLabels();
             bindPinPersistence();
@@ -2876,10 +3813,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
         setInterval(function() {
             try {
+                wrapApplyLanguageIfReady();
                 syncMirroringStateClass();
                 sanitizeErrorBanners();
                 syncVersionLabels();
                 guardPinInputAgainstAccidentalWipe();
+                applyV4DomTranslations(window.__v4CurrentLang || 'id');
                 fetch('/api/status').then(function(r){ return r.json(); }).then(function(s) {
                     if (s && s.pendingClick) {
                         window.__v4ClickSelector(s.pendingClick);
@@ -2930,7 +3869,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }
                     syncIpadDisplayWidthVar();
                     var desiredTheme = (s && s.webviewMetrics && s.webviewMetrics.activeTheme) || (s && s.settings && s.settings.theme);
-                    if (desiredTheme) {
+                    var timeSinceThemeTouch = Date.now() - (window.__v4LastThemeTouchMs || 0);
+                    if (desiredTheme && timeSinceThemeTouch > 1500) {
                         var curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
                         if (curTheme !== desiredTheme) {
                             window.__v4ApplyTheme(desiredTheme);
@@ -2959,10 +3899,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     persistUnlockPinDual(pEl.value, true);
                 }
             } catch (_) {}
-            if (window.chrome && window.chrome.webview) {
-                try { window.chrome.webview.postMessage("close"); } catch (_) {}
-            }
-            return postApi('/api/window/close', {});
+            var flushP = (!window.__v4JustWiped) ? flushSettingsPatch(true) : Promise.resolve({ ok: true });
+            return Promise.resolve(flushP).catch(function(){}).then(function() {
+                if (window.chrome && window.chrome.webview) {
+                    try { window.chrome.webview.postMessage("close"); } catch (_) {}
+                }
+                return postApi('/api/window/close', {});
+            });
         },
         minimize: function() {
             if (window.chrome && window.chrome.webview) {
@@ -3102,6 +4045,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return postApi('/api/window/set_drawer', { width: w, open: !!drawer_open });
         },
         set_theme: function(theme) {
+            window.__v4LastThemeTouchMs = Date.now();
             window.__v4ApplyTheme(theme);
             return postApi('/api/window/set_theme', { theme: theme });
         },
@@ -3150,6 +4094,9 @@ pub struct AppState {
     pub audio_muted: bool,
     pub audio_buffer_preset: String,
     pub lip_sync: bool,
+    pub bluetooth_a2dp: bool,
+    pub cross_platform_shortcuts: bool,
+    pub paste_pc_clipboard: bool,
     pub device_profile: String,
     pub update_channel: String,
     pub auto_check_update: bool,
@@ -3176,13 +4123,16 @@ impl Default for AppState {
             crop_bottom: 0,
             crop_left: 0,
             crop_right: 0,
-            fit_mode: "fill".to_string(),
+            fit_mode: "autofit".to_string(),
             trackpad_speed: 100,
             audio_routing: "pc".to_string(),
             audio_volume: 100,
             audio_muted: false,
             audio_buffer_preset: "normal".to_string(),
             lip_sync: true,
+            bluetooth_a2dp: false,
+            cross_platform_shortcuts: true,
+            paste_pc_clipboard: true,
             device_profile: "auto".to_string(),
             update_channel: "stable".to_string(),
             auto_check_update: true,
@@ -3493,9 +4443,19 @@ pub fn user_settings_file_path() -> PathBuf {
     current_exe_dir_normalized().join("user_settings.json")
 }
 
+fn extract_crop_object_slice(raw: &str) -> Option<&str> {
+    let key_idx = raw.find(r#""crop""#)?;
+    let after = &raw[key_idx + 6..];
+    let brace_open = after.find('{')?;
+    let rest = &after[brace_open..];
+    let brace_close = rest.find('}')?;
+    Some(&rest[..=brace_close])
+}
+
 fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unlock_pin: &str) -> String {
+    let bt_on = st.bluetooth_a2dp || st.audio_routing == "bluetooth";
     format!(
-        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","audioOut":"{}","audioSinkEnabled":{},"audioVolume":{},"audioMuted":{},"audioBufferPreset":"{}","lipSync":{},"trackpadSpeed":{},"crossPlatformShortcuts":true,"pastePcClipboard":true,"autoRotate":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"4.0.0"}}"#,
+        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"ctrlVPastesPc":{},"autoRotate":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"4.0.0"}}"#,
         escape_json_str(folder_id),
         has_file,
         escape_json_str(unlock_pin),
@@ -3505,13 +4465,24 @@ fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unl
         st.crop_right,
         escape_json_str(&st.fit_mode),
         escape_json_str(&st.theme),
+        escape_json_str(&st.transport),
         escape_json_str(&st.audio_routing),
-        st.audio_routing == "bluetooth",
+        escape_json_str(&st.audio_routing),
+        bt_on,
+        bt_on,
+        st.audio_volume,
         st.audio_volume,
         st.audio_muted,
+        st.audio_muted,
+        escape_json_str(&st.audio_buffer_preset),
         escape_json_str(&st.audio_buffer_preset),
         st.lip_sync,
         st.trackpad_speed,
+        st.trackpad_speed,
+        st.trackpad_speed,
+        st.cross_platform_shortcuts,
+        st.paste_pc_clipboard,
+        st.paste_pc_clipboard,
         st.auto_rotate,
         escape_json_str(&st.device_profile),
         st.auto_check_update,
@@ -3558,6 +4529,156 @@ fn save_user_settings_to_disk(st: &AppState) {
     let _ = save_user_settings_to_path(&path, st, &pin);
 }
 
+pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
+    let mut theme_changed_to: Option<bool> = None;
+    let mut touched = false;
+
+    if let Some(lang) = parse_string_param(raw, "language") {
+        if lang == "en" {
+            st.language = Lang::En;
+            touched = true;
+        } else if lang == "id" {
+            st.language = Lang::Id;
+            touched = true;
+        }
+    }
+    if let Some(thm) = parse_string_param(raw, "theme") {
+        if thm == "light" {
+            st.theme = "light".to_string();
+            theme_changed_to = Some(false);
+            touched = true;
+        } else if thm == "dark" {
+            st.theme = "dark".to_string();
+            theme_changed_to = Some(true);
+            touched = true;
+        }
+    }
+    if let Some(ar) = parse_bool_param(raw, "autoRotate") {
+        st.auto_rotate = ar;
+        touched = true;
+    }
+    if let Some(prof) = parse_string_param(raw, "deviceProfile") {
+        if prof == "auto" || prof == "iphone" || prof == "ipad" {
+            st.device_profile = prof.clone();
+            if let Ok(mut gp) = GLOBAL_DEVICE_PROFILE.lock() {
+                *gp = prof.clone();
+            }
+            GLOBAL_PORTRAIT_WIDTH.store(if prof == "ipad" { 564 } else { 346 }, Ordering::SeqCst);
+            touched = true;
+        }
+    }
+    if let Some(fm) = parse_string_param(raw, "fitMode") {
+        if fm == "autofit" || fm == "fill" || fm == "contain" {
+            st.fit_mode = fm;
+            touched = true;
+        }
+    }
+    if let Some(crop_slice) = extract_crop_object_slice(raw) {
+        if let Some(v) = parse_int_param(crop_slice, "top") {
+            st.crop_top = v.clamp(0, 120);
+            touched = true;
+        }
+        if let Some(v) = parse_int_param(crop_slice, "bottom") {
+            st.crop_bottom = v.clamp(0, 120);
+            touched = true;
+        }
+        if let Some(v) = parse_int_param(crop_slice, "left") {
+            st.crop_left = v.clamp(0, 120);
+            touched = true;
+        }
+        if let Some(v) = parse_int_param(crop_slice, "right") {
+            st.crop_right = v.clamp(0, 120);
+            touched = true;
+        }
+    }
+    if let Some(tr) = parse_string_param(raw, "transport") {
+        if tr == "wifi" {
+            st.transport = "wifi".to_string();
+            touched = true;
+        } else if tr == "usb" || tr == "cable" {
+            st.transport = "usb".to_string();
+            touched = true;
+        }
+    }
+    if let Some(ch) = parse_string_param(raw, "updateChannel") {
+        if ch == "stable" || ch == "beta" {
+            st.update_channel = ch;
+            touched = true;
+        }
+    }
+    if let Some(acu) = parse_bool_param(raw, "autoCheckUpdate") {
+        st.auto_check_update = acu;
+        touched = true;
+    }
+    if let Some(aout) = parse_string_param(raw, "audioOut").or_else(|| parse_string_param(raw, "audioTarget")) {
+        if aout == "pc" || aout == "device" || aout == "bluetooth" {
+            st.bluetooth_a2dp = aout == "bluetooth";
+            st.audio_routing = aout;
+            touched = true;
+        }
+    }
+    if let Some(bt) = parse_bool_param(raw, "bluetoothA2dp") {
+        st.bluetooth_a2dp = bt;
+        if bt {
+            st.audio_routing = "bluetooth".to_string();
+        }
+        touched = true;
+    }
+    if let Some(am) = parse_bool_param(raw, "audioMuted")
+        .or_else(|| parse_bool_param(raw, "pcMuted"))
+        .or_else(|| parse_bool_param(raw, "muted"))
+    {
+        st.audio_muted = am;
+        touched = true;
+    }
+    if let Some(vol) = parse_int_param(raw, "audioVolume")
+        .or_else(|| parse_int_param(raw, "pcVolume"))
+        .or_else(|| parse_int_param(raw, "volume"))
+    {
+        st.audio_volume = vol.clamp(0, 100);
+        touched = true;
+    }
+    if let Some(buf) = parse_string_param(raw, "audioBufferPreset")
+        .or_else(|| parse_string_param(raw, "audioBuffer"))
+        .or_else(|| parse_string_param(raw, "bufferPreset"))
+    {
+        if buf == "low" || buf == "normal" || buf == "high" {
+            st.audio_buffer_preset = buf;
+            touched = true;
+        }
+    }
+    if let Some(ls) = parse_bool_param(raw, "lipSync") {
+        st.lip_sync = ls;
+        touched = true;
+    }
+    if let Some(ts) = parse_int_param(raw, "trackpadSpeed")
+        .or_else(|| parse_int_param(raw, "gestureSpeed"))
+        .or_else(|| parse_int_param(raw, "speedSensitivity"))
+    {
+        st.trackpad_speed = ts.clamp(30, 200);
+        touched = true;
+    }
+    if let Some(cps) = parse_bool_param(raw, "crossPlatformShortcuts") {
+        st.cross_platform_shortcuts = cps;
+        touched = true;
+    }
+    if let Some(ppc) = parse_bool_param(raw, "pastePcClipboard").or_else(|| parse_bool_param(raw, "ctrlVPastesPc")) {
+        st.paste_pc_clipboard = ppc;
+        touched = true;
+    }
+    GLOBAL_AUDIO_PC_ACTIVE.store(
+        (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted,
+        Ordering::SeqCst,
+    );
+    if let Some(is_dark) = theme_changed_to {
+        GLOBAL_DARK_MODE.store(is_dark, Ordering::SeqCst);
+        if st.window_hwnd != 0 {
+            let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, is_dark);
+        }
+    }
+    touched
+}
+
 pub fn load_user_settings_from_path(path: &Path, st: &mut AppState) -> String {
     let Ok(raw) = fs::read_to_string(path) else {
         return String::new();
@@ -3565,56 +4686,10 @@ pub fn load_user_settings_from_path(path: &Path, st: &mut AppState) -> String {
     if let Some(pin_raw) = parse_string_param(&raw, "unlockPin") {
         let clean = sanitize_pin_digits(&pin_raw);
         if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
-            *g = clean.clone();
+            *g = clean;
         }
     }
-    if let Some(lang) = parse_string_param(&raw, "language") {
-        if lang == "en" {
-            st.language = Lang::En;
-        } else if lang == "id" {
-            st.language = Lang::Id;
-        }
-    }
-    if let Some(thm) = parse_string_param(&raw, "theme") {
-        if thm == "light" || thm == "dark" {
-            st.theme = thm;
-        }
-    }
-    if let Some(ar) = parse_bool_param(&raw, "autoRotate") {
-        st.auto_rotate = ar;
-    }
-    if let Some(prof) = parse_string_param(&raw, "deviceProfile") {
-        if !prof.is_empty() {
-            st.device_profile = prof;
-        }
-    }
-    if let Some(fm) = parse_string_param(&raw, "fitMode") {
-        if !fm.is_empty() {
-            st.fit_mode = fm;
-        }
-    }
-    if let Some(ch) = parse_string_param(&raw, "updateChannel") {
-        if ch == "stable" || ch == "beta" {
-            st.update_channel = ch;
-        }
-    }
-    if let Some(acu) = parse_bool_param(&raw, "autoCheckUpdate") {
-        st.auto_check_update = acu;
-    }
-    if let Some(aout) = parse_string_param(&raw, "audioOut") {
-        if !aout.is_empty() {
-            st.audio_routing = aout;
-        }
-    }
-    if let Some(am) = parse_bool_param(&raw, "audioMuted") {
-        st.audio_muted = am;
-    }
-    if let Some(vol) = parse_int_param(&raw, "audioVolume") {
-        st.audio_volume = vol.clamp(0, 100);
-    }
-    if let Some(ts) = parse_int_param(&raw, "trackpadSpeed") {
-        st.trackpad_speed = ts.clamp(10, 300);
-    }
+    let _ = apply_settings_json_body_to_state(&raw, st);
     SAVED_UNLOCK_PIN
         .lock()
         .map(|g| g.clone())
@@ -3688,7 +4763,7 @@ fn build_tray_state_json(action: &str, handled: bool, st: &AppState) -> String {
     let audio_active = st.is_streaming && !st.audio_muted;
     let items_json = build_tray_items_array_json(st);
     format!(
-        r#"{{"ok":true,"action":"{}","handled":{},"drawer_open":{},"landscape":{},"stealth":{},"audio":{},"audioPc":{},"startWithWindows":{},"menuItemCount":{},"trayMenuItems":{}}}"#,
+        r#"{{"ok":true,"action":"{}","handled":{},"drawer_open":{},"landscape":{},"stealth":{},"audio":{},"audioPc":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{},"menuItemCount":{},"trayMenuItems":{}}}"#,
         escape_json_str(action),
         handled,
         GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
@@ -3697,6 +4772,8 @@ fn build_tray_state_json(action: &str, handled: bool, st: &AppState) -> String {
         audio_active,
         audio_pc_on,
         startup_on,
+        GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
+        GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst),
         TRAY_MENU_ITEMS.len(),
         items_json
     )
@@ -4072,7 +5149,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 } else {
                     sanitized = sanitized
                         .replace(r#""status_text": "Wi-Fi siap""#, &format!(r#""status_text": "{}""#, status_text))
-                        .replace(r#""status_text": "Wi-Fi ready""#, &format!(r#""status_text": "{}""#, status_text));
+                        .replace(r#""status_text": "Wi-Fi ready""#, &format!(r#""status_text": "{}""#, status_text))
+                        .replace(r#""language": "id""#, &format!(r#""language": "{}""#, lang_code))
+                        .replace(r#""language": "en""#, &format!(r#""language": "{}""#, lang_code))
+                        .replace(r#""language":"id""#, &format!(r#""language":"{}""#, lang_code))
+                        .replace(r#""language":"en""#, &format!(r#""language":"{}""#, lang_code));
                 }
 
                 let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
@@ -4111,7 +5192,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
                 let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
                 let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
-                let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.take());
+                let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.pop_front());
                 let pending_click_str = match pending_click {
                     Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
                     None => String::new(),
@@ -4126,7 +5207,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
                     None => String::new(),
                 };
-                let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.take());
+                let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.pop_front());
                 let pending_input_str = match pending_input {
                     Some((ref sel, ref val)) => format!(
                         r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
@@ -4151,10 +5232,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let dom_pin_val = GLOBAL_DOM_UNLOCK_PIN.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
                 let dom_upd_ver = GLOBAL_DOM_UPDATE_VERSION.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
                 let dom_tray_act = GLOBAL_DOM_LAST_TRAY_ACTION.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_lang_val = GLOBAL_DOM_LANG.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_lang_id_act = GLOBAL_DOM_LANG_ID_ACTIVE.load(Ordering::SeqCst);
+                let dom_lang_en_act = GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst);
+                let dom_drawer_title = GLOBAL_DOM_DRAWER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
+                let dom_toggles_sum = GLOBAL_DOM_TOGGLES_SUMMARY.lock().map(|s| escape_json_str(&s)).unwrap_or_default();
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{}}}}}"#,
+                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
                         pending_tray_str,
@@ -4193,9 +5279,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         dom_pin_val,
                         dom_upd_ver,
                         dom_tray_act,
+                        dom_lang_val,
+                        dom_lang_id_act,
+                        dom_lang_en_act,
+                        dom_drawer_title,
+                        dom_toggles_sum,
                         GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
                         GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
-                        is_start_with_windows_enabled()
+                        is_start_with_windows_enabled(),
+                        GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
+                        GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst)
                     );
                     if let Some(last_brace) = sanitized.rfind('}') {
                         sanitized.replace_range(last_brace.., &metrics_str);
@@ -4225,8 +5318,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         sanitized = sanitized.replace(
                             r#""domReadyBeacon":"#,
                             &format!(
-                                r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "concentricTrackRadius": "{}", "concentricButtonRadius": "{}", "badgeBg": "{}", "segmentedClean": {}, "segmentedDetails": "{}", "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
-                                active_thm, dom_thm_str, wf_clean, safe_wf_details, conc_track, conc_btn, badge_bg, seg_clean, safe_seg_details, dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
+                                r#""activeTheme": "{}", "domTheme": "{}", "wireframeClean": {}, "wireframeDetails": "{}", "concentricTrackRadius": "{}", "concentricButtonRadius": "{}", "badgeBg": "{}", "segmentedClean": {}, "segmentedDetails": "{}", "domLanguage": "{}", "activeLangId": {}, "activeLangEn": {}, "drawerTitleText": "{}", "domTogglesSummary": "{}", "trayMenuOpen": {}, "trayDismissedCount": {}, "devicePixelRatio": {:.2}, "appWidth": {}, "appHeight": {}, "launchpadVisible": {}, "startBtnVisible": {}, "startBtnText": "{}", "userAgent": "{}", "rafVerified": {}, "domReadyBeacon":"#,
+                                active_thm, dom_thm_str, wf_clean, safe_wf_details, conc_track, conc_btn, badge_bg, seg_clean, safe_seg_details, dom_lang_val, dom_lang_id_act, dom_lang_en_act, dom_drawer_title, dom_toggles_sum, GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst), GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst), dpr_float, app_w, app_h, lp_vis, btn_vis, safe_btn, safe_ua, GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst)
                             )
                         );
                     }
@@ -4276,7 +5369,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
         let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
         let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
-        let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.take());
+        let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.pop_front());
         let pending_click_str = match pending_click {
             Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
             None => String::new(),
@@ -4291,7 +5384,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
             None => String::new(),
         };
-        let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.take());
+        let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.pop_front());
         let pending_input_str = match pending_input {
             Some((ref sel, ref val)) => format!(
                 r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
@@ -4419,9 +5512,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "unlockPinValue": "{}",
     "updateVersionText": "{}",
     "lastTrayAction": "{}",
+    "domLanguage": "{}",
+    "activeLangId": {},
+    "activeLangEn": {},
+    "drawerTitleText": "{}",
+    "domTogglesSummary": "{}",
     "stealthActive": {},
     "audioPcActive": {},
-    "startWithWindows": {}
+    "startWithWindows": {},
+    "trayMenuOpen": {},
+    "trayDismissedCount": {}
   }},
   "version": "4.0.0"{}"#,
             udid,
@@ -4491,9 +5591,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_DOM_UNLOCK_PIN.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
             GLOBAL_DOM_UPDATE_VERSION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
             GLOBAL_DOM_LAST_TRAY_ACTION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_LANG.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_LANG_ID_ACTIVE.load(Ordering::SeqCst),
+            GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst),
+            GLOBAL_DOM_DRAWER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
+            GLOBAL_DOM_TOGGLES_SUMMARY.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
             GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
             GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
             is_start_with_windows_enabled(),
+            GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
+            GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst),
             if pending_click_str.is_empty() && pending_test_str.is_empty() && pending_tray_str.is_empty() && pending_input_str.is_empty() { "\n}" } else { "\n" }
         );
         let mut final_json = json;
@@ -4553,68 +5660,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(&json);
     }
 
-    // 3. API: Settings (Persistent Disk + Cross-Restart PIN + folderInstanceId)
+    // 3. API: Settings (Persistent Disk + Universal Last-Used Auto-Save + Cross-Restart PIN + folderInstanceId)
     if path == "/api/settings" || path == "/api/keyboard/settings" {
         if req.method == "POST" {
             let mut st = state.lock().unwrap();
-            if let Some(lang) = parse_string_param(&req.body, "language") {
-                if lang == "en" {
-                    st.language = Lang::En;
-                } else if lang == "id" {
-                    st.language = Lang::Id;
-                }
-            }
-
-            if let Some(thm) = parse_string_param(&req.body, "theme") {
-                if thm == "light" {
-                    st.theme = "light".to_string();
-                    GLOBAL_DARK_MODE.store(false, Ordering::SeqCst);
-                    if st.window_hwnd != 0 {
-                        let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, false);
-                    }
-                } else if thm == "dark" {
-                    st.theme = "dark".to_string();
-                    GLOBAL_DARK_MODE.store(true, Ordering::SeqCst);
-                    if st.window_hwnd != 0 {
-                        let _ = apply_true_files_acrylic_backdrop(st.window_hwnd as *mut _, true);
-                    }
-                }
-            }
-
-            if let Some(ar) = parse_bool_param(&req.body, "autoRotate") {
-                st.auto_rotate = ar;
-            }
-            if let Some(prof) = parse_string_param(&req.body, "deviceProfile") {
-                if !prof.is_empty() {
-                    st.device_profile = prof;
-                }
-            }
-            if let Some(fm) = parse_string_param(&req.body, "fitMode") {
-                if !fm.is_empty() {
-                    st.fit_mode = fm;
-                }
-            }
-            if let Some(ch) = parse_string_param(&req.body, "updateChannel") {
-                if ch == "stable" || ch == "beta" {
-                    st.update_channel = ch;
-                }
-            }
-            if let Some(acu) = parse_bool_param(&req.body, "autoCheckUpdate") {
-                st.auto_check_update = acu;
-            }
-            if let Some(aout) = parse_string_param(&req.body, "audioOut") {
-                if !aout.is_empty() {
-                    st.audio_routing = aout;
-                    GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
-                }
-            }
-            if let Some(am) = parse_bool_param(&req.body, "audioMuted") {
-                st.audio_muted = am;
-                GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
-            }
-            if let Some(ts) = parse_int_param(&req.body, "trackpadSpeed") {
-                st.trackpad_speed = ts.clamp(10, 300);
-            }
+            let _ = apply_settings_json_body_to_state(&req.body, &mut st);
 
             if body_contains_key(&req.body, "unlockPin")
                 || body_contains_key(&req.body, "passcode")
@@ -4642,12 +5692,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     if path == "/api/settings/device-profile" {
         let mut st = state.lock().unwrap();
-        if req.body.contains("ipad") {
-            st.device_profile = "ipad".to_string();
+        let next_prof = if req.body.contains("ipad") {
+            "ipad".to_string()
         } else if req.body.contains("iphone") {
-            st.device_profile = "iphone".to_string();
+            "iphone".to_string()
         } else {
-            st.device_profile = "auto".to_string();
+            "auto".to_string()
+        };
+        st.device_profile = next_prof.clone();
+        GLOBAL_PORTRAIT_WIDTH.store(if next_prof == "ipad" { 564 } else { 346 }, Ordering::SeqCst);
+        if let Ok(mut gp) = GLOBAL_DEVICE_PROFILE.lock() {
+            *gp = next_prof;
         }
         save_user_settings_to_disk(&st);
         let settings_obj = build_settings_json(&st);
@@ -4788,45 +5843,41 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     // 6. API: Audio & Update & Wallpaper & System Startup & Tray
     if path.starts_with("/api/audio") {
-        if let Some(aout) = parse_string_param(&req.body, "audioOut") {
+        let is_mutating = req.method == "POST" || path == "/api/audio/mute";
+        if is_mutating {
             let mut st = state.lock().unwrap();
-            st.audio_routing = aout;
-            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
-        }
-        if let Some(am) = parse_bool_param(&req.body, "muted") {
-            let mut st = state.lock().unwrap();
-            st.audio_muted = am;
-            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
-        }
-        if path == "/api/audio/mute" {
-            let mut st = state.lock().unwrap();
-            st.audio_muted = !st.audio_muted;
-            GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
+            let _ = apply_settings_json_body_to_state(&req.body, &mut st);
+            if path == "/api/audio/mute" && parse_bool_param(&req.body, "muted").is_none() && parse_bool_param(&req.body, "audioMuted").is_none() {
+                st.audio_muted = !st.audio_muted;
+            }
+            GLOBAL_AUDIO_PC_ACTIVE.store(
+                (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted,
+                Ordering::SeqCst,
+            );
+            save_user_settings_to_disk(&st);
         }
         if let Some(resp) = forward_to_worker(req) {
             if resp.status_code == 200 {
                 let body_txt = String::from_utf8_lossy(&resp.body);
                 if let Some(mut st) = state.lock().ok() {
-                    if let Some(aout) = parse_string_param(&body_txt, "audioOut") {
-                        st.audio_routing = aout;
+                    let _ = apply_settings_json_body_to_state(&body_txt, &mut st);
+                    if is_mutating {
+                        save_user_settings_to_disk(&st);
                     }
-                    if let Some(am) = parse_bool_param(&body_txt, "muted") {
-                        st.audio_muted = am;
-                    }
-                    GLOBAL_AUDIO_PC_ACTIVE.store(st.audio_routing == "pc" && !st.audio_muted, Ordering::SeqCst);
                 }
                 return resp;
             }
         }
         let st = state.lock().unwrap();
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"active":{},"audioOut":"{}","volume":{},"muted":{},"bufferPreset":"{}","lipSync":{}}}"#,
+            r#"{{"ok":true,"active":{},"audioOut":"{}","volume":{},"muted":{},"bufferPreset":"{}","lipSync":{},"bluetoothA2dp":{}}}"#,
             st.is_streaming && !st.audio_muted,
             st.audio_routing,
             st.audio_volume,
             st.audio_muted,
             st.audio_buffer_preset,
-            st.lip_sync
+            st.lip_sync,
+            st.bluetooth_a2dp
         ));
     }
 
@@ -4971,7 +6022,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 {
                     let mut st = state.lock().unwrap();
                     st.audio_routing = if next_pc { "pc".to_string() } else { "device".to_string() };
+                    st.bluetooth_a2dp = false;
                     st.audio_muted = !next_pc;
+                    save_user_settings_to_disk(&st);
                 }
                 if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
                     *g = Some(format!("set_audio_pc:{}", next_pc));
@@ -4999,6 +6052,19 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let st = state.lock().unwrap();
         let json = build_tray_state_json(&action, handled, &st);
         return HttpResponse::ok_json(&json);
+    }
+
+    if path == "/api/tray/dismiss_menu" {
+        let was_open = dismiss_tray_menu_if_open();
+        if was_open {
+            GLOBAL_TRAY_DISMISSED_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"wasOpen":{},"menuOpen":{},"dismissedCount":{}}}"#,
+            was_open,
+            GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
+            GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst)
+        ));
     }
 
     if path == "/debug-metrics" {
@@ -5091,6 +6157,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         GLOBAL_DARK_MODE.store(!is_light, Ordering::SeqCst);
         let mut st = state.lock().unwrap();
         st.theme = if is_light { "light".to_string() } else { "dark".to_string() };
+        save_user_settings_to_disk(&st);
         let hwnd_usize = st.window_hwnd;
         let theme_str = st.theme.clone();
         drop(st);
@@ -5125,7 +6192,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     if path == "/api/window/click_selector" || path == "/api/test/click_selector" {
         if let Some(sel) = parse_string_param(&req.body, "selector") {
             if let Ok(mut g_sel) = GLOBAL_PENDING_CLICK.lock() {
-                *g_sel = Some(sel);
+                g_sel.push_back(sel);
             }
             return HttpResponse::ok_json(r#"{"ok":true,"queued":true}"#);
         }
@@ -5136,7 +6203,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         if let Some(sel) = parse_string_param(&req.body, "selector") {
             let val = parse_string_param(&req.body, "value").unwrap_or_default();
             if let Ok(mut g_inp) = GLOBAL_PENDING_INPUT.lock() {
-                *g_inp = Some((sel, val));
+                g_inp.push_back((sel, val));
             }
             return HttpResponse::ok_json(r#"{"ok":true,"queued":true}"#);
         }
@@ -5511,6 +6578,29 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 *g_act = act_dom;
             }
         }
+        if let Some(lang_dom) = parse_string_param(&req.body, "domLanguage") {
+            if let Ok(mut g_lang) = GLOBAL_DOM_LANG.lock() {
+                *g_lang = lang_dom;
+            }
+        }
+        GLOBAL_DOM_LANG_ID_ACTIVE.store(
+            req.body.contains(r#""activeLangId":true"#) || req.body.contains(r#""activeLangId": true"#),
+            Ordering::SeqCst,
+        );
+        GLOBAL_DOM_LANG_EN_ACTIVE.store(
+            req.body.contains(r#""activeLangEn":true"#) || req.body.contains(r#""activeLangEn": true"#),
+            Ordering::SeqCst,
+        );
+        if let Some(dt_dom) = parse_string_param(&req.body, "drawerTitleText") {
+            if let Ok(mut g_dt) = GLOBAL_DOM_DRAWER_TITLE.lock() {
+                *g_dt = dt_dom;
+            }
+        }
+        if let Some(tsum) = parse_string_param(&req.body, "domTogglesSummary") {
+            if let Ok(mut g_ts) = GLOBAL_DOM_TOGGLES_SUMMARY.lock() {
+                *g_ts = tsum;
+            }
+        }
 
         if has_edg && btn_vis && btn_text_ok {
             DOM_READY_BEACON.fetch_add(1, Ordering::SeqCst);
@@ -5564,13 +6654,21 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/set_device_profile" {
-        let is_ipad = req.body.contains(r#""profile":"ipad""#)
+        let next_prof = if req.body.contains(r#""profile":"ipad""#)
             || req.body.contains(r#""profile": "ipad""#)
-            || req.body.contains(r#""ipad""#);
+            || req.body.contains(r#""ipad""#)
+        {
+            "ipad".to_string()
+        } else if req.body.contains(r#""profile":"iphone""#) || req.body.contains(r#""profile": "iphone""#) {
+            "iphone".to_string()
+        } else {
+            "auto".to_string()
+        };
+        let is_ipad = next_prof == "ipad";
         let portrait_w = if is_ipad { 564 } else { 346 };
         GLOBAL_PORTRAIT_WIDTH.store(portrait_w, Ordering::SeqCst);
         if let Ok(mut prof) = GLOBAL_DEVICE_PROFILE.lock() {
-            *prof = if is_ipad { "ipad".to_string() } else { "auto".to_string() };
+            *prof = next_prof.clone();
         }
 
         if req.body.contains(r#""drawer":true"#) || req.body.contains(r#""drawer": true"#) || req.body.contains(r#""open":true"#) || req.body.contains(r#""open": true"#) {
@@ -5579,7 +6677,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
         }
 
-        let st = state.lock().unwrap();
+        let mut st = state.lock().unwrap();
+        st.device_profile = next_prof.clone();
+        save_user_settings_to_disk(&st);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
@@ -5598,7 +6698,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"profile":"{}","isIpadMode":{},"portrait_width":{},"width":{},"height":{}}}"#,
-            if is_ipad { "ipad" } else { "auto" }, is_ipad, portrait_w, cur_w, cur_h
+            next_prof, is_ipad, portrait_w, cur_w, cur_h
         ));
     }
 
@@ -5650,7 +6750,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             *prof = "auto".to_string();
         }
 
-        let st = state.lock().unwrap();
+        let mut st = state.lock().unwrap();
+        st.device_profile = "auto".to_string();
+        save_user_settings_to_disk(&st);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
@@ -5682,6 +6784,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/close" {
+        let _ = dismiss_tray_menu_if_open();
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
@@ -5877,6 +6980,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
             if clean_rel.eq_ignore_ascii_case("index.html") {
                 let mut html = String::from_utf8_lossy(&bytes).to_string();
+                let init_settings_json = state.lock().map(|s| build_settings_json(&s)).unwrap_or_else(|_| "{}".to_string());
+                let safe_init_json = init_settings_json.replace("</", "<\\/");
+                let seed_script = format!("<script>window.__V4_INITIAL_SETTINGS__={};</script>\n  ", safe_init_json);
                 if !html.contains("v4_true_acrylic.css") {
                     if let Some(pos) = html.rfind("</body>") {
                         html.insert_str(pos, "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n");
@@ -5888,12 +6994,17 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                 }
                 if !html.contains("v4_bridge.js") {
+                    let bridge_tag = format!("{}<script src=\"/v4_bridge.js\"></script>\n  ", seed_script);
                     if let Some(pos) = html.find("<script src=\"/keys.js") {
-                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n  ");
+                        html.insert_str(pos, &bridge_tag);
                     } else if let Some(pos) = html.find("<script src=\"/app.js") {
-                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n  ");
+                        html.insert_str(pos, &bridge_tag);
                     } else if let Some(pos) = html.find("</body>") {
-                        html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n");
+                        html.insert_str(pos, &format!("{}<script src=\"/v4_bridge.js\"></script>\n", seed_script));
+                    }
+                } else if !html.contains("__V4_INITIAL_SETTINGS__") {
+                    if let Some(pos) = html.find("<script src=\"/v4_bridge.js") {
+                        html.insert_str(pos, &seed_script);
                     }
                 }
                 return HttpResponse::ok_html(&html);
@@ -6799,5 +7910,88 @@ mod tests {
         }, &state, Path::new("web"));
         let after_json = String::from_utf8_lossy(&resp_get_after_wipe.body);
         assert!(after_json.contains(r#""unlockPin":"""#), "PIN must be empty after wipe: {}", after_json);
+    }
+
+    #[test]
+    fn test_tahap184_universal_persistence_language_sync_and_tray_dismiss() {
+        let mut state_raw = AppState::default();
+        assert_eq!(state_raw.fit_mode, "autofit");
+        assert_eq!(state_raw.language, Lang::Id);
+
+        let full_patch = r#"{"language":"en","theme":"light","fitMode":"contain","deviceProfile":"ipad","autoRotate":true,"crop":{"top":12,"bottom":24,"left":8,"right":16},"audioOut":"bluetooth","bluetoothA2dp":true,"audioVolume":72,"audioMuted":true,"audioBufferPreset":"high","lipSync":false,"trackpadSpeed":140,"crossPlatformShortcuts":false,"pastePcClipboard":false,"transport":"wifi","autoCheckUpdate":false,"updateChannel":"beta"}"#;
+        let touched = apply_settings_json_body_to_state(full_patch, &mut state_raw);
+        assert!(touched);
+        assert_eq!(state_raw.language, Lang::En);
+        assert_eq!(state_raw.theme, "light");
+        assert_eq!(state_raw.fit_mode, "contain");
+        assert_eq!(state_raw.device_profile, "ipad");
+        assert!(state_raw.auto_rotate);
+        assert_eq!(state_raw.crop_top, 12);
+        assert_eq!(state_raw.crop_bottom, 24);
+        assert_eq!(state_raw.crop_left, 8);
+        assert_eq!(state_raw.crop_right, 16);
+        assert_eq!(state_raw.audio_routing, "bluetooth");
+        assert!(state_raw.bluetooth_a2dp);
+        assert_eq!(state_raw.audio_volume, 72);
+        assert!(state_raw.audio_muted);
+        assert_eq!(state_raw.audio_buffer_preset, "high");
+        assert!(!state_raw.lip_sync);
+        assert_eq!(state_raw.trackpad_speed, 140);
+        assert!(!state_raw.cross_platform_shortcuts);
+        assert!(!state_raw.paste_pc_clipboard);
+        assert_eq!(state_raw.transport, "wifi");
+        assert!(!state_raw.auto_check_update);
+        assert_eq!(state_raw.update_channel, "beta");
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "iphone_link_t184_test_{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+        ));
+        let settings_file = tmp_dir.join("user_settings.json");
+        save_user_settings_to_path(&settings_file, &state_raw, "778899").unwrap();
+
+        let mut state_reloaded = AppState::default();
+        assert!(settings_file.exists());
+        let pin_loaded = load_user_settings_from_path(&settings_file, &mut state_reloaded);
+        assert_eq!(pin_loaded, "778899");
+        assert_eq!(state_reloaded.language, Lang::En);
+        assert_eq!(state_reloaded.theme, "light");
+        assert_eq!(state_reloaded.fit_mode, "contain");
+        assert_eq!(state_reloaded.device_profile, "ipad");
+        assert!(state_reloaded.auto_rotate);
+        assert_eq!(state_reloaded.crop_top, 12);
+        assert_eq!(state_reloaded.crop_bottom, 24);
+        assert_eq!(state_reloaded.crop_left, 8);
+        assert_eq!(state_reloaded.crop_right, 16);
+        assert_eq!(state_reloaded.audio_routing, "bluetooth");
+        assert!(state_reloaded.bluetooth_a2dp);
+        assert_eq!(state_reloaded.audio_volume, 72);
+        assert!(state_reloaded.audio_muted);
+        assert_eq!(state_reloaded.audio_buffer_preset, "high");
+        assert!(!state_reloaded.lip_sync);
+        assert_eq!(state_reloaded.trackpad_speed, 140);
+        assert!(!state_reloaded.cross_platform_shortcuts);
+        assert!(!state_reloaded.paste_pc_clipboard);
+        assert_eq!(state_reloaded.transport, "wifi");
+        assert!(!state_reloaded.auto_check_update);
+        assert_eq!(state_reloaded.update_channel, "beta");
+        let _ = fs::remove_dir_all(&tmp_dir);
+
+        // Verify tray dismiss endpoint clears GLOBAL_TRAY_MENU_OPEN and increments count
+        let state = Arc::new(Mutex::new(AppState::default()));
+        GLOBAL_TRAY_MENU_OPEN.store(true, Ordering::SeqCst);
+        let resp_dismiss = handle_request(&HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/tray/dismiss_menu".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: "{}".to_string(),
+            body_bytes: Vec::new(),
+        }, &state, Path::new("web"));
+        assert_eq!(resp_dismiss.status_code, 200);
+        let dismiss_json = String::from_utf8_lossy(&resp_dismiss.body);
+        assert!(dismiss_json.contains(r#""wasOpen":true"#), "dismiss_json={}", dismiss_json);
+        assert!(dismiss_json.contains(r#""menuOpen":false"#), "dismiss_json={}", dismiss_json);
+        assert!(!GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst));
     }
 }

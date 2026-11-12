@@ -739,9 +739,16 @@ fn main() {
     let initial_dark_mode = st_init.theme != "light";
     server_v4::GLOBAL_DARK_MODE.store(initial_dark_mode, std::sync::atomic::Ordering::SeqCst);
     window_dwm::GLOBAL_AUDIO_PC_ACTIVE.store(
-        st_init.audio_routing == "pc" && !st_init.audio_muted,
+        (st_init.audio_routing == "pc" || st_init.audio_routing == "bluetooth") && !st_init.audio_muted,
         std::sync::atomic::Ordering::SeqCst,
     );
+    window_dwm::GLOBAL_PORTRAIT_WIDTH.store(
+        if st_init.device_profile == "ipad" { 564 } else { 346 },
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    if let Ok(mut prof) = server_v4::GLOBAL_DEVICE_PROFILE.lock() {
+        *prof = st_init.device_profile.clone();
+    }
     let state = Arc::new(Mutex::new(st_init));
     window_dwm::register_tray_app_state(state.clone());
     let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)
