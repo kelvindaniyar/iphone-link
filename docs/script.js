@@ -1,7 +1,6 @@
 /* ==========================================================================
-   iPhone Link v4.0.0 - Official Interactive Website Script
-   Handles Theme Switcher, Bilingual ID/EN, 3D Hero Stack, Bento Spotlight,
-   Interactive Live App Simulator, Shortcuts Filter, SHA-256 Copy, & FAQ
+   iPhone Link v4.0.0 - Official Interactive Website Script (Anti-AI-Slop Edition)
+   Zero Emoji - 100% Inline Vector SVG Icons - Obsidian Carbon & Apple Daylight
    ========================================================================== */
 (function () {
   "use strict";
@@ -9,8 +8,26 @@
   var siteLang = "id";
   var siteTheme = "dark";
 
+  var SVG_MOON = '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+  var SVG_SUN = '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>';
+
+  var APP_SVGS = {
+    notes: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>',
+    instagram: '<svg viewBox="0 0 24 24"><rect width="20" height="20" x="2" y="2" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>',
+    efootball: '<svg viewBox="0 0 24 24"><line x1="6" x2="10" y1="12" y2="12"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="15" x2="15.01" y1="13" y2="13"/><line x1="18" x2="18.01" y1="11" y2="11"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>',
+    youtube: '<svg viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+    control: '<svg viewBox="0 0 24 24"><line x1="4" x2="20" y1="21" y2="21"/><line x1="4" x2="20" y1="14" y2="14"/><line x1="4" x2="20" y1="7" y2="7"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="14" r="2"/><circle cx="10" cy="21" r="2"/></svg>',
+    recents: '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
+    lockscreen: '<svg viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    safari: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+    photos: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>',
+    calendar: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>',
+    clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    files: '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
+  };
+
   /* --------------------------------------------------------------------------
-     1. THEME SWITCHER (DARK AURORA <-> LIGHT FROST)
+     1. THEME SWITCHER (OBSIDIAN CARBON #09090B <-> APPLE DAYLIGHT #F5F5F7)
      -------------------------------------------------------------------------- */
   var rootHtml = document.documentElement;
   var siteThemeBtn = document.getElementById("btn-site-theme");
@@ -21,10 +38,10 @@
     siteTheme = theme === "light" ? "light" : "dark";
     rootHtml.setAttribute("data-theme", siteTheme);
     if (siteThemeIcon) {
-      siteThemeIcon.innerHTML = siteTheme === "light" ? "&#9728;" : "&#9790;";
+      siteThemeIcon.innerHTML = siteTheme === "light" ? SVG_SUN : SVG_MOON;
     }
     if (metaThemeColor) {
-      metaThemeColor.setAttribute("content", siteTheme === "light" ? "#f4f6fb" : "#090a10");
+      metaThemeColor.setAttribute("content", siteTheme === "light" ? "#F5F5F7" : "#09090B");
     }
     try {
       localStorage.setItem("il_site_theme", siteTheme);
@@ -86,13 +103,13 @@
     });
   });
 
-  var ghStarCountEl = document.getElementById("gh-star-count");
-  if (ghStarCountEl && typeof fetch === "function") {
+  var ghStarNumEl = document.getElementById("gh-star-num");
+  if (ghStarNumEl && typeof fetch === "function") {
     fetch("https://api.github.com/repos/kelvindaniyar/iphone-link")
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (d && typeof d.stargazers_count === "number" && d.stargazers_count > 0) {
-          ghStarCountEl.innerHTML = "&#9733; " + d.stargazers_count;
+          ghStarNumEl.textContent = String(d.stargazers_count);
         }
       })
       .catch(function () {});
@@ -197,25 +214,25 @@
       bufHigh: "Tinggi",
       lipActive: "Aktif",
       secOcr: "KEYBOARD & PINTASAN OCR",
-      btnPaste: "\u{1F4CB} Tempel PC (Alt+V)",
-      btnOcr: "\u{1F4E5} Salin OCR (Alt+C)",
-      btnCache: "\u{1F9F9} Clear Cache (Alt+R)",
-      btnKb: "\u2328 Keyboard (Ctrl+K)",
+      btnPaste: "Tempel PC (Alt+V)",
+      btnOcr: "Salin OCR (Alt+C)",
+      btnCache: "Clear Cache (Alt+R)",
+      btnKb: "Keyboard (Ctrl+K)",
       secStealth: "KONTROL LAYAR & MODE REDUP",
-      btnWake: "\u{1F513} Buka (Alt+U)",
-      btnLock: "\u{1F512} Kunci (Alt+L)",
-      btnStealth: "\u{1F311} Stealth Dim Mode (Alt+D)",
+      btnWake: "Buka (Alt+U)",
+      btnLock: "Kunci (Alt+L)",
+      btnStealth: "Stealth Dim Mode (Alt+D)",
       pinLbl: "PIN 6-digit",
-      btnWipe: "\u{1F5D1} Hapus PIN & Data Privasi",
+      btnWipe: "Hapus PIN & Data Privasi",
       secUpdater: "KONEKSI & PEMBARUAN PERANGKAT LUNAK",
       connUsb: "Kabel",
       chanStable: "Stabil",
       autoUpdLbl: "Cek otomatis saat dibuka",
-      btnCheckUpd: "\u{1F504} Periksa Pembaruan",
+      btnCheckUpd: "Periksa Pembaruan",
       updReady: "v4.0.0 Native Rust Siap",
-      updLatest: "\u2713 iPhone Link v4.0.0 sudah versi terbaru!",
-      themeDark: "\u{1F319} Gelap",
-      themeLight: "\u2600 Terang",
+      updLatest: "iPhone Link v4.0.0 sudah versi terbaru!",
+      themeDark: "Gelap",
+      themeLight: "Terang",
       langId: "ID Indonesia",
       langEn: "EN English"
     },
@@ -233,25 +250,25 @@
       bufHigh: "High",
       lipActive: "Active",
       secOcr: "KEYBOARD & OCR SHORTCUTS",
-      btnPaste: "\u{1F4CB} Paste PC (Alt+V)",
-      btnOcr: "\u{1F4E5} Copy OCR (Alt+C)",
-      btnCache: "\u{1F9F9} Clear Cache (Alt+R)",
-      btnKb: "\u2328 Keyboard (Ctrl+K)",
+      btnPaste: "Paste PC (Alt+V)",
+      btnOcr: "Copy OCR (Alt+C)",
+      btnCache: "Clear Cache (Alt+R)",
+      btnKb: "Keyboard (Ctrl+K)",
       secStealth: "SCREEN & STEALTH CONTROL",
-      btnWake: "\u{1F513} Wake/Unlock (Alt+U)",
-      btnLock: "\u{1F512} Lock (Alt+L)",
-      btnStealth: "\u{1F311} Stealth Dim Mode (Alt+D)",
+      btnWake: "Wake/Unlock (Alt+U)",
+      btnLock: "Lock (Alt+L)",
+      btnStealth: "Stealth Dim Mode (Alt+D)",
       pinLbl: "6-digit PIN",
-      btnWipe: "\u{1F5D1} Clear PIN & Privacy Data",
+      btnWipe: "Clear PIN & Privacy Data",
       secUpdater: "CONNECTION & SOFTWARE UPDATE",
       connUsb: "USB Cable",
       chanStable: "Stable",
       autoUpdLbl: "Check automatically on startup",
-      btnCheckUpd: "\u{1F504} Check for Updates",
+      btnCheckUpd: "Check for Updates",
       updReady: "v4.0.0 Native Rust Ready",
-      updLatest: "\u2713 iPhone Link v4.0.0 is up to date!",
-      themeDark: "\u{1F319} Dark",
-      themeLight: "\u2600 Light",
+      updLatest: "iPhone Link v4.0.0 is up to date!",
+      themeDark: "Dark",
+      themeLight: "Light",
       langId: "ID Indonesia",
       langEn: "EN English"
     }
@@ -310,10 +327,6 @@
       var k = el.getAttribute("data-sim-txt");
       if (dict[k]) el.textContent = dict[k];
     });
-    var dBtn = document.getElementById("sim-theme-dark");
-    var lBtn = document.getElementById("sim-theme-light");
-    if (dBtn) dBtn.textContent = dict.themeDark;
-    if (lBtn) lBtn.textContent = dict.themeLight;
     if (simWindowEl) simWindowEl.setAttribute("data-sim-lang", simState.lang);
   }
 
@@ -365,12 +378,12 @@
     if (simState.stopped) {
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen" style="align-items:center;justify-content:center;text-align:center;">' +
-        '<div style="font-size:1.9rem;">&#128241;</div>' +
+        '<div style="color:#2997FF;margin-bottom:4px;"><svg class="ui-icon ico-lg" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg></div>' +
         '<strong>' + (isEn ? "Spatial Launchpad Ready" : "Launchpad Spatial Siap") + '</strong>' +
-        '<p style="margin:0;font-size:0.74rem;color:#cbd5e1;">' +
+        '<p style="margin:0;font-size:0.74rem;color:#A1A1AA;">' +
         (isEn ? "Stream paused. Click below to start live 60fps mirroring." : "Mirroring dijeda. Klik tombol di bawah untuk mulai kembali.") +
         '</p>' +
-        '<button type="button" class="sim-act-btn is-active" id="sim-launchpad-start" style="text-align:center;margin-top:6px;">' +
+        '<button type="button" class="sim-act-btn is-active" id="sim-launchpad-start" style="justify-content:center;margin-top:6px;">' +
         (isEn ? "Start mirroring" : "Mulai mirroring") + '</button></div>';
       var lpBtn = document.getElementById("sim-launchpad-start");
       if (lpBtn) {
@@ -385,12 +398,12 @@
 
     if (simState.screen === "lockscreen") {
       simScreenBodyEl.innerHTML =
-        '<div class="sim-subscreen" style="align-items:center;justify-content:center;text-align:center;background:linear-gradient(160deg,#020617,#1e1b4b);">' +
+        '<div class="sim-subscreen" style="align-items:center;justify-content:center;text-align:center;background:linear-gradient(160deg,#09090B,#111827);">' +
         '<div style="font-size:0.72rem;opacity:0.8;">' + (isEn ? "Friday, 14 Nov" : "Jumat, 14 Nov") + '</div>' +
         '<div style="font-size:2.3rem;font-weight:800;letter-spacing:-0.03em;">09:41</div>' +
-        '<div style="font-size:0.74rem;color:#94a3b8;">' + (isEn ? "Locked - Click Wake/Unlock (Alt+U)" : "Terkunci - Klik Buka (Alt+U)") + '</div>' +
+        '<div style="font-size:0.74rem;color:#A1A1AA;">' + (isEn ? "Locked - Click Wake/Unlock (Alt+U)" : "Terkunci - Klik Buka (Alt+U)") + '</div>' +
         '<div id="sim-lock-dots" style="font-family:var(--font-mono);font-size:1rem;letter-spacing:0.25em;margin:8px 0;">o o o o o o</div>' +
-        '<button type="button" class="sim-act-btn is-active" id="sim-quick-unlock">' + (isEn ? "Unlock with PIN" : "Buka dengan PIN") + '</button>' +
+        '<button type="button" class="sim-act-btn is-active" id="sim-quick-unlock" style="justify-content:center;">' + (isEn ? "Unlock with PIN" : "Buka dengan PIN") + '</button>' +
         '</div>';
       var quBtn = document.getElementById("sim-quick-unlock");
       if (quBtn) quBtn.addEventListener("click", triggerSimUnlock);
@@ -399,7 +412,7 @@
 
     if (simState.screen === "notes") {
       var noteExtra = simState.notesPasted
-        ? '<p style="margin:6px 0 0;color:#38bdf8;font-weight:700;">' + (isEn ? "[Pasted via Alt+V] Hello from Windows 11!" : "[Ditempel via Alt+V] Halo dari PC Windows 11!") + '</p>'
+        ? '<p style="margin:6px 0 0;color:#2997FF;font-weight:700;">' + (isEn ? "[Pasted via Alt+V] Hello from Windows 11!" : "[Ditempel via Alt+V] Halo dari PC Windows 11!") + '</p>'
         : "";
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen">' +
@@ -418,13 +431,13 @@
 
     if (simState.screen === "instagram") {
       simScreenBodyEl.innerHTML =
-        '<div class="sim-subscreen" style="background:linear-gradient(160deg,#4c0519,#1e1b4b);">' +
+        '<div class="sim-subscreen" style="background:linear-gradient(160deg,#18181B,#0F172A);">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
         '<strong style="font-size:0.8rem;">Instagram Reels</strong>' +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:3px 8px;font-size:0.68rem;">Home</button></div>' +
-        '<div style="flex:1;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;flex-direction:column;justify-content:flex-end;padding:12px;">' +
+        '<div style="flex:1;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);display:flex;flex-direction:column;justify-content:flex-end;padding:12px;">' +
         '<div style="font-size:0.78rem;font-weight:750;">@kelvin.daniyar</div>' +
-        '<div style="font-size:0.7rem;color:#e2e8f0;">iPhone Link v4.0.0 Native Rust Spatial Preview on Windows 11</div>' +
+        '<div style="font-size:0.7rem;color:#D4D4D8;">iPhone Link v4.0.0 Native Rust Spatial Preview on Windows 11</div>' +
         '</div></div>';
       bindScreenButtons();
       return;
@@ -432,12 +445,12 @@
 
     if (simState.screen === "efootball") {
       simScreenBodyEl.innerHTML =
-        '<div class="sim-subscreen" style="background:linear-gradient(180deg,#064e3b,#047857);">' +
+        '<div class="sim-subscreen" style="background:linear-gradient(180deg,#064E3B,#047857);">' +
         '<div style="display:flex;justify-content:space-between;font-size:0.74rem;font-weight:750;">' +
         '<span>eFootball 2027 (270 deg Auto-Rotate)</span>' +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:2px 8px;font-size:0.66rem;">Exit</button></div>' +
         '<div class="mini-pitch" style="flex:1;">' +
-        '<span style="position:relative;z-index:2;font-weight:800;font-size:0.86rem;background:rgba(0,0,0,0.62);padding:4px 14px;border-radius:999px;">HOME 3 - 1 AWAY | 60 FPS</span>' +
+        '<span style="position:relative;z-index:2;font-weight:800;font-size:0.86rem;background:rgba(9,9,11,0.68);padding:4px 14px;border-radius:999px;">HOME 3 - 1 AWAY | 60 FPS</span>' +
         '</div></div>';
       bindScreenButtons();
       return;
@@ -445,12 +458,13 @@
 
     if (simState.screen === "youtube") {
       simScreenBodyEl.innerHTML =
-        '<div class="sim-subscreen" style="background:#09090b;">' +
+        '<div class="sim-subscreen" style="background:#09090B;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
         '<strong style="font-size:0.78rem;">YouTube Fullscreen</strong>' +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:2px 8px;font-size:0.66rem;">Home</button></div>' +
-        '<div style="flex:1;border-radius:12px;background:linear-gradient(135deg,#dc2626,#1e293b);display:flex;align-items:center;justify-content:center;font-size:1.8rem;">&#9654;</div>' +
-        '<div style="height:5px;border-radius:999px;background:rgba(255,255,255,0.2);overflow:hidden;"><div style="width:62%;height:100%;background:#ef4444;"></div></div>' +
+        '<div style="flex:1;border-radius:12px;background:linear-gradient(135deg,#DC2626,#18181B);display:flex;align-items:center;justify-content:center;color:#FFFFFF;">' +
+        '<svg class="ui-icon ico-lg" style="width:28px;height:28px;" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></div>' +
+        '<div style="height:5px;border-radius:999px;background:rgba(255,255,255,0.2);overflow:hidden;"><div style="width:62%;height:100%;background:#EF4444;"></div></div>' +
         '</div>';
       bindScreenButtons();
       return;
@@ -461,8 +475,8 @@
         '<div class="sim-subscreen" style="justify-content:space-between;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;"><strong style="font-size:0.78rem;">Control Center</strong><button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:2px 8px;font-size:0.66rem;">Close</button></div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;margin-top:6px;">' +
-        '<div style="border-radius:14px;background:rgba(56,189,248,0.22);padding:10px;font-size:0.7rem;"><strong>AirPlay / Mirroring</strong><div>' + connLabel + ' Active</div></div>' +
-        '<div style="border-radius:14px;background:rgba(16,185,129,0.2);padding:10px;font-size:0.7rem;"><strong>Audio Output</strong><div>' + (simState.audioTarget === "pc" ? "Windows PC (" + simState.volume + "%)" : "iPhone Speakers") + '</div></div>' +
+        '<div style="border-radius:14px;background:rgba(41,151,255,0.16);border:1px solid rgba(41,151,255,0.28);padding:10px;font-size:0.7rem;"><strong>AirPlay / Mirroring</strong><div>' + connLabel + ' Active</div></div>' +
+        '<div style="border-radius:14px;background:rgba(16,185,129,0.16);border:1px solid rgba(16,185,129,0.28);padding:10px;font-size:0.7rem;"><strong>Audio Output</strong><div>' + (simState.audioTarget === "pc" ? "Windows PC (" + simState.volume + "%)" : "iPhone Speakers") + '</div></div>' +
         '</div></div>';
       bindScreenButtons();
       return;
@@ -482,43 +496,45 @@
       return;
     }
 
-    // Default: Home Screen with clickable apps + dock
+    // Default: Home Screen with clickable vector SVG app squircles + dock
     var tilesHtml =
-      tileMarkup("notes", "Notes OCR", "#f59e0b", "Nt", true) +
-      tileMarkup("instagram", "Instagram", "linear-gradient(135deg,#ec4899,#f97316)", "IG", true) +
-      tileMarkup("efootball", "eFootball", "#059669", "eF", true) +
-      tileMarkup("youtube", "YouTube", "#dc2626", "YT", true) +
-      tileMarkup("control", "Controls", "#334155", "CC", false) +
-      tileMarkup("recents", "Switcher", "#4f46e5", "SW", false) +
-      tileMarkup("lockscreen", "Lock", "#0f172a", "LK", false) +
-      tileMarkup("home", "Safari", "#0284c7", "Sf", false) +
-      tileMarkup("home", "Photos", "#0ea5e9", "Ph", false) +
-      tileMarkup("home", "Calendar", "#f8fafc", "7", false) +
-      tileMarkup("home", "Clock", "#18181b", "Cl", false) +
-      tileMarkup("home", "Files", "#2563eb", "Fl", false);
+      tileMarkup("notes", "Notes OCR", "linear-gradient(180deg,#F59E0B,#D97706)", "notes", true) +
+      tileMarkup("instagram", "Instagram", "linear-gradient(135deg,#F97316,#EA580C)", "instagram", true) +
+      tileMarkup("efootball", "eFootball", "linear-gradient(180deg,#10B981,#059669)", "efootball", true) +
+      tileMarkup("youtube", "YouTube", "linear-gradient(180deg,#EF4444,#DC2626)", "youtube", true) +
+      tileMarkup("control", "Controls", "linear-gradient(180deg,#3F3F46,#27272A)", "control", false) +
+      tileMarkup("recents", "Switcher", "linear-gradient(180deg,#2997FF,#0071E3)", "recents", false) +
+      tileMarkup("lockscreen", "Lock", "linear-gradient(180deg,#27272A,#18181B)", "lockscreen", false) +
+      tileMarkup("home", "Safari", "linear-gradient(180deg,#38BDF8,#0284C7)", "safari", false) +
+      tileMarkup("home", "Photos", "linear-gradient(180deg,#0EA5E9,#0369A1)", "photos", false) +
+      tileMarkup("home", "Calendar", "#FAFAFA", "calendar", false) +
+      tileMarkup("home", "Clock", "#18181B", "clock", false) +
+      tileMarkup("home", "Files", "linear-gradient(180deg,#0071E3,#005BB5)", "files", false);
 
     simScreenBodyEl.innerHTML =
       '<div class="sim-app-grid">' + tilesHtml + '</div>' +
       '<div class="sim-dock">' +
-      dockBtn("notes", "#f59e0b", "Nt") +
-      dockBtn("instagram", "#ec4899", "IG") +
-      dockBtn("efootball", "#059669", "eF") +
-      dockBtn("control", "#475569", "CC") +
+      dockBtn("notes", "linear-gradient(180deg,#F59E0B,#D97706)", "notes") +
+      dockBtn("instagram", "linear-gradient(135deg,#F97316,#EA580C)", "instagram") +
+      dockBtn("efootball", "linear-gradient(180deg,#10B981,#059669)", "efootball") +
+      dockBtn("control", "linear-gradient(180deg,#3F3F46,#27272A)", "control") +
       '</div>';
 
     bindScreenButtons();
   }
 
-  function tileMarkup(target, label, bg, shortTxt, hl) {
-    var txtColor = bg === "#f8fafc" ? "#dc2626" : "#ffffff";
+  function tileMarkup(target, label, bg, iconKey, hl) {
+    var txtColor = bg === "#FAFAFA" ? "#1D1D1F" : "#FFFFFF";
+    var svg = APP_SVGS[iconKey] || APP_SVGS.notes;
     return '<button type="button" class="sim-app-tile' + (hl ? ' highlight-demo' : '') + '" data-open-screen="' + target + '">' +
-      '<span class="tile-icon" style="background:' + bg + ';color:' + txtColor + ';font-weight:800;font-size:0.82rem;">' + shortTxt + '</span>' +
+      '<span class="tile-icon" style="background:' + bg + ';color:' + txtColor + ';">' + svg + '</span>' +
       '<span class="tile-name">' + label + '</span></button>';
   }
 
-  function dockBtn(target, bg, shortTxt) {
-    return '<button type="button" class="sim-app-tile" data-open-screen="' + target + '">' +
-      '<span class="tile-icon" style="width:36px;height:36px;background:' + bg + ';color:#fff;font-weight:800;font-size:0.75rem;">' + shortTxt + '</span></button>';
+  function dockBtn(target, bg, iconKey) {
+    var svg = APP_SVGS[iconKey] || APP_SVGS.notes;
+    return '<button type="button" class="sim-app-tile" data-open-screen="' + target + '" aria-label="' + target + '">' +
+      '<span class="tile-icon" style="width:36px;height:36px;background:' + bg + ';color:#FFFFFF;">' + svg + '</span></button>';
   }
 
   function bindScreenButtons() {
@@ -840,7 +856,7 @@
 
     var fbDev = document.getElementById("fb-device");
     var fbMsg = document.getElementById("fb-msg");
-    if (fbDev) fbDev.placeholder = siteLang === "en" ? "iPhone 17 Pro / iPhone 11 Pro Max / iPad (iOS 27.2)" : "iPhone 17 Pro / iPhone 11 Pro Max / iPad (iOS 27.2)";
+    if (fbDev) fbDev.placeholder = "iPhone 17 Pro / iPhone 11 Pro Max / iPad (iOS 27.2)";
     if (fbMsg) fbMsg.placeholder = siteLang === "en" ? "Share your experience, feature ideas, or feedback..." : "Ceritakan pengalaman, ide fitur, atau hal yang ingin ditingkatkan...";
 
     updateHeroStack(activeHeroDev);
@@ -905,7 +921,6 @@
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(txt).catch(function () {});
       }
-      var old = copyShaBtn.textContent;
       copyShaBtn.textContent = siteLang === "en" ? "Copied!" : "Tersalin!";
       setTimeout(function () {
         copyShaBtn.textContent = siteLang === "en" ? "Copy SHA-256" : "Salin SHA-256";
