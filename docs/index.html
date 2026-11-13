@@ -219,65 +219,66 @@
             </div>
           </div>
 
-          <!-- 3D Interactive Device Stack (PILAR 4: Natural Titanium Bezel & Authentic iOS 27.2 Viewport) -->
+          <!-- 3D Interactive Device Stack (TAHAP 190: Natural Titanium Bezel, Floating 3D Liquid Bubbles, & Auto-Morphing UI) -->
           <div class="hero-stack-wrap">
-            <div class="hero-stack-stage" id="hero-stack-stage">
+            <div class="hero-stack-stage" id="hero-stack-stage" data-morph-state="bubbles">
+              <!-- Floating 3D Iridescent Liquid Glass Spheres -->
+              <div class="hero-liquid-bubble" id="hero-liquid-bubble" aria-hidden="true">
+                <svg class="bubble-caustic-svg" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.2" stroke-dasharray="42 80" stroke-linecap="round"/></svg>
+              </div>
+              <div class="hero-liquid-bubble hero-liquid-bubble-sm" id="hero-liquid-bubble-sm" aria-hidden="true">
+                <svg class="bubble-caustic-svg" viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.24)" stroke-width="1.2" stroke-dasharray="24 50" stroke-linecap="round"/></svg>
+              </div>
+
               <!-- Card 1: iPhone 17 Pro -->
-              <div class="stack-card phone-card" data-stack-device="iphone17" data-pos="front">
+              <div class="stack-card phone-card is-front" data-stack-device="iphone17" data-pos="front">
                 <div class="stack-glare"></div>
-                <div class="stack-oled">
-                  <div>
-                    <div class="stack-statusbar">
-                      <span>09:41</span>
-                      <div class="stack-notch-di"></div>
-                      <span class="stack-status-icons" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
-                      </span>
-                    </div>
+                <div class="stack-oled oled-iphone17">
+                  <div class="stack-statusbar">
+                    <span>09:41</span>
+                    <div class="stack-notch-di"></div>
+                    <span class="stack-status-icons" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
+                    </span>
+                  </div>
 
-                    <div class="stack-widget-glass">
-                      <div class="stack-widget-head">
-                        <span>iPhone Link 4.0</span>
-                        <span>60 FPS H.265</span>
-                      </div>
-                      <div class="stack-widget-sub">1178x2598 &middot; Frame-0 Lock &middot; 0.00% Idle</div>
+                  <div class="mock-morph-stage" aria-hidden="true">
+                    <div class="morph-view-bubbles">
+                      <span class="glass-app-bubble" style="--i:0"></span>
+                      <span class="glass-app-bubble" style="--i:1"></span>
+                      <span class="glass-app-bubble" style="--i:2"></span>
+                      <span class="glass-app-bubble" style="--i:3"></span>
+                      <span class="glass-app-bubble" style="--i:4"></span>
+                      <span class="glass-app-bubble" style="--i:5"></span>
+                      <span class="glass-app-bubble" style="--i:6"></span>
+                      <span class="glass-app-bubble" style="--i:7"></span>
+                      <span class="glass-app-bubble" style="--i:8"></span>
+                      <span class="glass-app-bubble" style="--i:9"></span>
+                      <span class="glass-app-bubble" style="--i:10"></span>
+                      <span class="glass-app-bubble" style="--i:11"></span>
                     </div>
-
-                    <div class="mini-ios-grid" aria-hidden="true">
-                      <div class="mini-app-sq" style="background:rgba(16,185,129,0.22);color:#34D399;">
-                        <svg viewBox="0 0 24 24"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/></svg>
+                    <div class="morph-view-widgets">
+                      <div class="glass-widget-wide">
+                        <span class="gw-orb"></span>
+                        <div class="gw-bars">
+                          <span class="gw-bar-lg"></span>
+                          <span class="gw-bar-sm"></span>
+                        </div>
                       </div>
-                      <div class="mini-app-sq" style="background:rgba(255,255,255,0.14);color:#FAFAFA;">
-                        <svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(41,151,255,0.22);color:#2997FF;">
-                        <svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(245,158,11,0.24);color:#FBBF24;">
-                        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(249,115,22,0.22);color:#FB923C;">
-                        <svg viewBox="0 0 24 24"><rect width="20" height="20" x="2" y="2" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(239,68,68,0.22);color:#F87171;">
-                        <svg viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(16,185,129,0.22);color:#10B981;">
-                        <svg viewBox="0 0 24 24"><line x1="6" x2="10" y1="12" y2="12"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="15" x2="15.01" y1="13" y2="13"/><line x1="18" x2="18.01" y1="11" y2="11"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>
-                      </div>
-                      <div class="mini-app-sq" style="background:rgba(161,161,170,0.18);color:#D4D4D8;">
-                        <svg viewBox="0 0 24 24"><line x1="4" x2="20" y1="21" y2="21"/><line x1="4" x2="20" y1="14" y2="14"/><line x1="4" x2="20" y1="7" y2="7"/></svg>
+                      <div class="glass-widget-row">
+                        <div class="glass-widget-sq"><span class="gw-ring"></span><span class="gw-bar-sm"></span></div>
+                        <div class="glass-widget-sq"><span class="gw-pill"></span><span class="gw-bar-sm"></span></div>
                       </div>
                     </div>
                   </div>
 
-                  <div class="mini-dock" aria-hidden="true">
-                    <span class="mini-dock-ico"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>
-                    <span class="mini-dock-ico"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span>
-                    <span class="mini-dock-ico"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-                    <span class="mini-dock-ico"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+                  <div class="mock-dock-pill" aria-hidden="true">
+                    <span class="mock-dock-dot"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>
+                    <span class="mock-dock-dot"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span>
+                    <span class="mock-dock-dot"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                    <span class="mock-dock-dot"><svg class="ui-icon ico-sm" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
                   </div>
                 </div>
               </div>
@@ -285,73 +286,177 @@
               <!-- Card 2: iPhone 11 Pro Max -->
               <div class="stack-card phone-card" data-stack-device="iphone11" data-pos="right">
                 <div class="stack-glare"></div>
-                <div class="stack-oled" style="background:linear-gradient(165deg,#0B111E,#111827,#062C24);">
+                <div class="stack-oled oled-iphone11">
                   <div class="stack-statusbar">
                     <span>09:41</span>
                     <div class="stack-notch-classic"></div>
                     <span class="stack-status-icons" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
                     </span>
                   </div>
-                  <div class="stack-widget-glass">
-                    <div class="stack-widget-head">
-                      <span>iPhone 11 Pro Max</span>
-                      <span>iOS 27.2</span>
+
+                  <div class="mock-morph-stage" aria-hidden="true">
+                    <div class="morph-view-bubbles">
+                      <span class="glass-app-bubble" style="--i:0"></span>
+                      <span class="glass-app-bubble" style="--i:1"></span>
+                      <span class="glass-app-bubble" style="--i:2"></span>
+                      <span class="glass-app-bubble" style="--i:3"></span>
+                      <span class="glass-app-bubble" style="--i:4"></span>
+                      <span class="glass-app-bubble" style="--i:5"></span>
+                      <span class="glass-app-bubble" style="--i:6"></span>
+                      <span class="glass-app-bubble" style="--i:7"></span>
+                      <span class="glass-app-bubble" style="--i:8"></span>
+                      <span class="glass-app-bubble" style="--i:9"></span>
+                      <span class="glass-app-bubble" style="--i:10"></span>
+                      <span class="glass-app-bubble" style="--i:11"></span>
                     </div>
-                    <div class="stack-widget-sub">Notch Calibrated &middot; 1242x2688 @ 60fps</div>
+                    <div class="morph-view-widgets">
+                      <div class="glass-widget-wide">
+                        <span class="gw-orb"></span>
+                        <div class="gw-bars">
+                          <span class="gw-bar-lg"></span>
+                          <span class="gw-bar-sm"></span>
+                        </div>
+                      </div>
+                      <div class="glass-widget-row">
+                        <div class="glass-widget-sq"><span class="gw-ring"></span><span class="gw-bar-sm"></span></div>
+                        <div class="glass-widget-sq"><span class="gw-pill"></span><span class="gw-bar-sm"></span></div>
+                      </div>
+                    </div>
                   </div>
-                  <div style="padding:10px;border-radius:13px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);font-size:0.66rem;line-height:1.45;">
-                    <strong style="display:block;color:#2997FF;margin-bottom:3px;">USB &amp; Wi-Fi Low-Latency</strong>
-                    Alt+C Smart OCR &middot; Stealth Dim 0% &middot; Unfocused Blur Lock
+
+                  <div class="mock-dock-pill" aria-hidden="true">
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
                   </div>
-                  <div class="mini-dock"><span style="font-size:0.68rem;font-weight:650;">True DWM Acrylic</span></div>
                 </div>
               </div>
 
               <!-- Card 3: iPad (4:3) -->
               <div class="stack-card ipad-card" data-stack-device="ipad" data-pos="left">
                 <div class="stack-glare"></div>
-                <div class="stack-oled" style="background:linear-gradient(160deg,#0C1322,#0F172A,#0A192F);">
-                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.67rem;font-weight:700;">
-                    <span>iPadOS 4:3 Split View</span>
-                    <span style="color:#2997FF;">924x832 / 564x832</span>
+                <div class="stack-oled oled-ipad">
+                  <div class="stack-statusbar">
+                    <span>09:41</span>
+                    <div class="stack-notch-cam"></div>
+                    <span class="stack-status-icons" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
+                    </span>
                   </div>
-                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;margin:10px 0;">
-                    <div style="border-radius:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);padding:10px;font-size:0.66rem;">
-                      <strong style="display:block;margin-bottom:4px;">Apple Notes OCR</strong>
-                      Multi-Paragraph Stitcher (Alt+C)
+
+                  <div class="mock-morph-stage" aria-hidden="true">
+                    <div class="morph-view-bubbles is-grid-wide">
+                      <span class="glass-app-bubble" style="--i:0"></span>
+                      <span class="glass-app-bubble" style="--i:1"></span>
+                      <span class="glass-app-bubble" style="--i:2"></span>
+                      <span class="glass-app-bubble" style="--i:3"></span>
+                      <span class="glass-app-bubble" style="--i:4"></span>
+                      <span class="glass-app-bubble" style="--i:5"></span>
+                      <span class="glass-app-bubble" style="--i:6"></span>
+                      <span class="glass-app-bubble" style="--i:7"></span>
+                      <span class="glass-app-bubble" style="--i:8"></span>
+                      <span class="glass-app-bubble" style="--i:9"></span>
+                      <span class="glass-app-bubble" style="--i:10"></span>
+                      <span class="glass-app-bubble" style="--i:11"></span>
                     </div>
-                    <div style="border-radius:12px;background:rgba(41,151,255,0.12);border:1px solid rgba(41,151,255,0.22);padding:10px;font-size:0.66rem;">
-                      <strong style="display:block;margin-bottom:4px;color:#2997FF;">Safari Desktop</strong>
-                      2-Finger Trackpad Scroll
+                    <div class="morph-view-widgets">
+                      <div class="glass-widget-wide">
+                        <span class="gw-orb"></span>
+                        <div class="gw-bars">
+                          <span class="gw-bar-lg"></span>
+                          <span class="gw-bar-sm"></span>
+                        </div>
+                      </div>
+                      <div class="glass-widget-row">
+                        <div class="glass-widget-sq"><span class="gw-ring"></span><span class="gw-bar-sm"></span></div>
+                        <div class="glass-widget-sq"><span class="gw-pill"></span><span class="gw-bar-sm"></span></div>
+                      </div>
                     </div>
                   </div>
-                  <div class="mini-dock"><span style="font-size:0.68rem;font-weight:650;">Presisi Rasio 4:3 (0px Scrollbar Gap)</span></div>
+
+                  <div class="mock-dock-pill" aria-hidden="true">
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                  </div>
                 </div>
               </div>
 
               <!-- Card 4: Landscape Gaming (270 deg) -->
               <div class="stack-card gaming-card" data-stack-device="gaming" data-pos="back">
                 <div class="stack-glare"></div>
-                <div class="stack-oled" style="padding:10px;">
-                  <div style="display:flex;justify-content:space-between;font-size:0.67rem;font-weight:700;margin-bottom:6px;">
-                    <span>eFootball 2027 &middot; 270&deg; Landscape</span>
-                    <span style="color:#10B981;">60 FPS &middot; 120Hz HID</span>
+                <div class="stack-oled oled-gaming">
+                  <div class="stack-statusbar">
+                    <span>09:41</span>
+                    <div class="stack-notch-cam"></div>
+                    <span class="stack-status-icons" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
+                    </span>
                   </div>
-                  <div class="mini-pitch">
-                    <span style="position:relative;z-index:2;font-weight:750;font-size:0.74rem;background:rgba(9,9,11,0.72);border:1px solid rgba(255,255,255,0.18);padding:3px 11px;border-radius:999px;">HOME 3 - 1 AWAY</span>
+
+                  <div class="mock-morph-stage" aria-hidden="true">
+                    <div class="morph-view-bubbles is-grid-wide">
+                      <span class="glass-app-bubble" style="--i:0"></span>
+                      <span class="glass-app-bubble" style="--i:1"></span>
+                      <span class="glass-app-bubble" style="--i:2"></span>
+                      <span class="glass-app-bubble" style="--i:3"></span>
+                      <span class="glass-app-bubble" style="--i:4"></span>
+                      <span class="glass-app-bubble" style="--i:5"></span>
+                      <span class="glass-app-bubble" style="--i:6"></span>
+                      <span class="glass-app-bubble" style="--i:7"></span>
+                      <span class="glass-app-bubble" style="--i:8"></span>
+                      <span class="glass-app-bubble" style="--i:9"></span>
+                      <span class="glass-app-bubble" style="--i:10"></span>
+                      <span class="glass-app-bubble" style="--i:11"></span>
+                    </div>
+                    <div class="morph-view-widgets">
+                      <div class="glass-widget-wide">
+                        <span class="gw-orb"></span>
+                        <div class="gw-bars">
+                          <span class="gw-bar-lg"></span>
+                          <span class="gw-bar-sm"></span>
+                        </div>
+                      </div>
+                      <div class="glass-widget-row">
+                        <div class="glass-widget-sq"><span class="gw-ring"></span><span class="gw-bar-sm"></span></div>
+                        <div class="glass-widget-sq"><span class="gw-pill"></span><span class="gw-bar-sm"></span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mock-dock-pill" aria-hidden="true">
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
+                    <span class="mock-dock-dot"></span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div class="hero-stack-caption" id="hero-stack-caption">
-              <span class="cap-tag">iOS 27.2</span>
-              <span id="hero-caption-text"
-                    data-id="iPhone 17 Pro - Dynamic Island - 1178x2598 @ 60fps"
-                    data-en="iPhone 17 Pro - Dynamic Island - 1178x2598 @ 60fps">
-                iPhone 17 Pro - Dynamic Island - 1178x2598 @ 60fps
-              </span>
+            <div class="hero-device-caption-pill" id="hero-stack-caption">
+              <div class="hero-caption-title" id="hero-caption-title">iPhone 17 Pro</div>
+              <div class="hero-caption-sub" id="hero-caption-text"
+                   data-id="iOS 27.2 &middot; Dynamic Island &middot; 60fps H.265"
+                   data-en="iOS 27.2 &middot; Dynamic Island &middot; 60fps H.265">
+                iOS 27.2 &middot; Dynamic Island &middot; 60fps H.265
+              </div>
+            </div>
+
+            <div class="hero-stack-dots" id="hero-stack-dots" role="tablist" aria-label="Hero Device Indicators">
+              <button type="button" class="stack-dot is-active" data-stack-target="iphone17" aria-label="iPhone 17 Pro"></button>
+              <button type="button" class="stack-dot" data-stack-target="iphone11" aria-label="iPhone 11 Pro Max"></button>
+              <button type="button" class="stack-dot" data-stack-target="ipad" aria-label="iPad (4:3)"></button>
+              <button type="button" class="stack-dot" data-stack-target="gaming" aria-label="Landscape Gaming 270 deg"></button>
             </div>
           </div>
         </div>

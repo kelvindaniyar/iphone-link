@@ -217,25 +217,85 @@
   }
 
   /* --------------------------------------------------------------------------
-     4. HERO 3D INTERACTIVE DEVICE STACK
+     4. HERO 3D INTERACTIVE DEVICE STACK, 3D GLASS BUBBLES & AUTO-MORPHING UI
      -------------------------------------------------------------------------- */
   var HERO_ORDER = ["iphone17", "iphone11", "ipad", "gaming"];
   var HERO_META = {
-    iphone17: { id: "iPhone 17 Pro - Dynamic Island - 1178x2598 @ 60fps", en: "iPhone 17 Pro - Dynamic Island - 1178x2598 @ 60fps" },
-    iphone11: { id: "iPhone 11 Pro Max - Notch Terkalibrasi - USB / Wi-Fi", en: "iPhone 11 Pro Max - Calibrated Notch - USB / Wi-Fi" },
-    ipad: { id: "iPad (4:3) - Mode Split View 924x832 & 564x832", en: "iPad (4:3) - Split View Mode 924x832 & 564x832" },
-    gaming: { id: "Landscape Gaming 270 deg - eFootball 2027 120Hz HID", en: "Landscape Gaming 270 deg - eFootball 2027 120Hz HID" }
+    iphone17: {
+      title: { id: "iPhone 17 Pro", en: "iPhone 17 Pro" },
+      sub: { id: "iOS 27.2 · Dynamic Island · 60fps H.265", en: "iOS 27.2 · Dynamic Island · 60fps H.265" }
+    },
+    iphone11: {
+      title: { id: "iPhone 11 Pro Max", en: "iPhone 11 Pro Max" },
+      sub: { id: "iOS 27.2 · Notch Terkalibrasi · USB / Wi-Fi", en: "iOS 27.2 · Calibrated Notch · USB / Wi-Fi" }
+    },
+    ipad: {
+      title: { id: "iPad (4:3)", en: "iPad (4:3)" },
+      sub: { id: "iPadOS 27 · Mode Split View 924x832 & 564x832", en: "iPadOS 27 · Split View Mode 924x832 & 564x832" }
+    },
+    gaming: {
+      title: { id: "Landscape Gaming 270 deg", en: "Landscape Gaming 270 deg" },
+      sub: { id: "eFootball 2027 · 60 FPS H.265 & 120Hz HID", en: "eFootball 2027 · 60 FPS H.265 & 120Hz HID" }
+    }
   };
 
   var activeHeroDev = "iphone17";
   var heroHovered = false;
+  var heroMorphState = "bubbles";
   var heroStage = document.getElementById("hero-stack-stage");
+  var heroCaptionTitle = document.getElementById("hero-caption-title");
   var heroCaptionText = document.getElementById("hero-caption-text");
   var heroPills = document.querySelectorAll("[data-hero-dev]");
+  var heroDots = document.querySelectorAll("[data-stack-target]");
   var stackCards = document.querySelectorAll("[data-stack-device]");
+  var heroBubble = document.getElementById("hero-liquid-bubble");
+  var heroBubbleSm = document.getElementById("hero-liquid-bubble-sm");
+  var heroBubblePulseTimer = null;
+  var heroMorphTimer = null;
+
+  function triggerHeroBubblePulse() {
+    [heroBubble, heroBubbleSm].forEach(function (el) {
+      if (!el) return;
+      el.classList.remove("is-pulsing");
+      void el.offsetWidth;
+      el.classList.add("is-pulsing");
+    });
+    clearTimeout(heroBubblePulseTimer);
+    heroBubblePulseTimer = setTimeout(function () {
+      if (heroBubble) heroBubble.classList.remove("is-pulsing");
+      if (heroBubbleSm) heroBubbleSm.classList.remove("is-pulsing");
+    }, 720);
+  }
+
+  function setHeroScreenMorphState(nextState) {
+    heroMorphState = nextState === "widgets" ? "widgets" : "bubbles";
+    if (heroStage) {
+      heroStage.setAttribute("data-morph-state", heroMorphState);
+    }
+    return heroMorphState;
+  }
+
+  function startHeroMorphTimer() {
+    clearInterval(heroMorphTimer);
+    heroMorphTimer = setInterval(function () {
+      setHeroScreenMorphState(heroMorphState === "bubbles" ? "widgets" : "bubbles");
+    }, 2700);
+  }
+
+  window.toggleHeroScreenMorphState = function (forceState) {
+    var next = (forceState === "bubbles" || forceState === "widgets")
+      ? forceState
+      : (heroMorphState === "bubbles" ? "widgets" : "bubbles");
+    setHeroScreenMorphState(next);
+    if (heroStage) {
+      startHeroMorphTimer();
+    }
+    return next;
+  };
 
   function updateHeroStack(devKey) {
     if (!HERO_META[devKey]) return;
+    var changed = activeHeroDev !== devKey;
     activeHeroDev = devKey;
     var idx = HERO_ORDER.indexOf(devKey);
     var slots = ["front", "right", "back", "left"];
@@ -244,15 +304,29 @@
       var cKey = card.getAttribute("data-stack-device");
       var cIdx = HERO_ORDER.indexOf(cKey);
       var offset = (cIdx - idx + HERO_ORDER.length) % HERO_ORDER.length;
-      card.setAttribute("data-pos", slots[offset]);
+      var slot = slots[offset];
+      card.setAttribute("data-pos", slot);
+      card.classList.toggle("is-front", slot === "front");
     });
 
     heroPills.forEach(function (btn) {
       btn.classList.toggle("is-active", btn.getAttribute("data-hero-dev") === devKey);
     });
+    heroDots.forEach(function (dot) {
+      var isAct = dot.getAttribute("data-stack-target") === devKey;
+      dot.classList.toggle("is-active", isAct);
+      dot.setAttribute("aria-selected", isAct ? "true" : "false");
+    });
 
+    var meta = HERO_META[devKey];
+    if (heroCaptionTitle) {
+      heroCaptionTitle.textContent = meta.title[siteLang] || meta.title.id;
+    }
     if (heroCaptionText) {
-      heroCaptionText.textContent = HERO_META[devKey][siteLang] || HERO_META[devKey].id;
+      heroCaptionText.textContent = meta.sub[siteLang] || meta.sub.id;
+    }
+    if (changed) {
+      triggerHeroBubblePulse();
     }
   }
 
@@ -262,13 +336,25 @@
     });
   });
 
+  heroDots.forEach(function (dot) {
+    dot.addEventListener("click", function () {
+      updateHeroStack(dot.getAttribute("data-stack-target"));
+    });
+  });
+
   stackCards.forEach(function (card) {
     card.addEventListener("click", function () {
-      updateHeroStack(card.getAttribute("data-stack-device"));
+      var devKey = card.getAttribute("data-stack-device");
+      if (devKey === activeHeroDev) {
+        window.toggleHeroScreenMorphState();
+      } else {
+        updateHeroStack(devKey);
+      }
     });
   });
 
   if (heroStage) {
+    setHeroScreenMorphState("bubbles");
     heroStage.addEventListener("mouseenter", function () { heroHovered = true; });
     heroStage.addEventListener("mouseleave", function () {
       heroHovered = false;
@@ -295,6 +381,7 @@
         updateHeroStack(HERO_ORDER[nextIdx]);
       }
     }, 5000);
+    startHeroMorphTimer();
   }
 
   /* --------------------------------------------------------------------------
