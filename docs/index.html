@@ -121,7 +121,7 @@
       <div class="nav-actions">
         <a href="https://github.com/kelvindaniyar/iphone-link" target="_blank" rel="noopener" class="nav-star-pill" title="GitHub Repository">
           <svg class="ui-icon ico-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
-          <span>GitHub</span>
+          <span><span class="gh-label">GitHub</span></span>
           <span class="nav-star-count" id="gh-star-count">
             <svg class="ui-icon ico-sm" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
             <span id="gh-star-num">Star</span>
@@ -136,7 +136,7 @@
           <button type="button" class="lang-btn is-active" id="btn-lang-id" data-lang-choice="id">ID</button>
           <button type="button" class="lang-btn" id="btn-lang-en" data-lang-choice="en">EN</button>
         </div>
-        <button type="button" class="nav-mobile-toggle" id="btn-mobile-nav" aria-label="Menu">
+        <button type="button" class="nav-mobile-toggle" id="btn-mobile-nav" data-mobile-menu="true" aria-label="Menu">
           <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
         </button>
       </div>
@@ -231,12 +231,12 @@
               </div>
 
               <!-- Card 1: iPhone 17 Pro -->
-              <div class="stack-card phone-card is-front" data-stack-device="iphone17" data-pos="front">
+              <div class="stack-card phone-card is-front" data-stack-device="iphone17" data-stack-card="iphone17" data-pos="front">
                 <div class="stack-glare"></div>
-                <div class="stack-oled oled-iphone17">
-                  <div class="stack-statusbar">
-                    <span>09:41</span>
-                    <div class="stack-notch-di"></div>
+                <div class="stack-oled stack-screen oled-iphone17">
+                  <div class="stack-statusbar mock-status-bar">
+                    <span class="stack-time">09:41</span>
+                    <div class="stack-notch-di mock-island"></div>
                     <span class="stack-status-icons" aria-hidden="true">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
@@ -284,12 +284,15 @@
               </div>
 
               <!-- Card 2: iPhone 11 Pro Max -->
-              <div class="stack-card phone-card" data-stack-device="iphone11" data-pos="right">
+              <div class="stack-card phone-card" data-stack-device="iphone11" data-stack-card="iphone11" data-pos="right">
                 <div class="stack-glare"></div>
-                <div class="stack-oled oled-iphone11">
-                  <div class="stack-statusbar">
-                    <span>09:41</span>
-                    <div class="stack-notch-classic"></div>
+                <div class="stack-oled stack-screen oled-iphone11">
+                  <div class="stack-statusbar mock-status-bar">
+                    <span class="stack-time">09:41</span>
+                    <div class="stack-notch-classic mock-notch">
+                      <span class="notch-speaker"></span>
+                      <span class="notch-camera"></span>
+                    </div>
                     <span class="stack-status-icons" aria-hidden="true">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>
@@ -337,11 +340,11 @@
               </div>
 
               <!-- Card 3: iPad (4:3) -->
-              <div class="stack-card ipad-card" data-stack-device="ipad" data-pos="left">
+              <div class="stack-card ipad-card" data-stack-device="ipad" data-stack-card="ipad" data-pos="left">
                 <div class="stack-glare"></div>
-                <div class="stack-oled oled-ipad">
-                  <div class="stack-statusbar">
-                    <span>09:41</span>
+                <div class="stack-oled stack-screen oled-ipad">
+                  <div class="stack-statusbar mock-status-bar">
+                    <span class="stack-time">09:41</span>
                     <div class="stack-notch-cam"></div>
                     <span class="stack-status-icons" aria-hidden="true">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>
@@ -390,11 +393,11 @@
               </div>
 
               <!-- Card 4: Landscape Gaming (270 deg) -->
-              <div class="stack-card gaming-card" data-stack-device="gaming" data-pos="back">
+              <div class="stack-card gaming-card" data-stack-device="gaming" data-stack-card="gaming" data-pos="back">
                 <div class="stack-glare"></div>
-                <div class="stack-oled oled-gaming">
-                  <div class="stack-statusbar">
-                    <span>09:41</span>
+                <div class="stack-oled stack-screen oled-gaming">
+                  <div class="stack-statusbar mock-status-bar">
+                    <span class="stack-time">09:41</span>
                     <div class="stack-notch-cam"></div>
                     <span class="stack-status-icons" aria-hidden="true">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/></svg>

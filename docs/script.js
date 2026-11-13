@@ -95,7 +95,7 @@
 
     var moveNavSlidingPill = function (targetLink) {
       if (!navSlidingPill) return;
-      if (!targetLink || window.innerWidth <= 760) {
+      if (!targetLink || window.innerWidth <= 1080) {
         navSlidingPill.style.opacity = "0";
         return;
       }
@@ -130,7 +130,7 @@
       a.addEventListener("click", function () {
         activeNavLink = a;
         syncNavPillToActive();
-        navLinksEl.classList.remove("open");
+        navLinksEl.classList.remove("open", "is-open");
       });
     });
 
@@ -139,6 +139,9 @@
     });
 
     window.addEventListener("resize", function () {
+      if (window.innerWidth > 1080) {
+        navLinksEl.classList.remove("open", "is-open");
+      }
       syncNavPillToActive();
     });
 
@@ -174,7 +177,9 @@
 
   if (mobileToggle && navLinksEl) {
     mobileToggle.addEventListener("click", function () {
-      navLinksEl.classList.toggle("open");
+      var willOpen = !(navLinksEl.classList.contains("is-open") || navLinksEl.classList.contains("open"));
+      navLinksEl.classList.toggle("is-open", willOpen);
+      navLinksEl.classList.toggle("open", willOpen);
     });
   }
 
@@ -252,6 +257,7 @@
   var heroBubbleSm = document.getElementById("hero-liquid-bubble-sm");
   var heroBubblePulseTimer = null;
   var heroMorphTimer = null;
+  var heroCarouselTimer = null;
 
   function triggerHeroBubblePulse() {
     [heroBubble, heroBubbleSm].forEach(function (el) {
@@ -330,15 +336,27 @@
     }
   }
 
+  function startHeroCarouselTimer() {
+    clearInterval(heroCarouselTimer);
+    heroCarouselTimer = setInterval(function () {
+      if (!heroHovered) {
+        var nextIdx = (HERO_ORDER.indexOf(activeHeroDev) + 1) % HERO_ORDER.length;
+        updateHeroStack(HERO_ORDER[nextIdx]);
+      }
+    }, 5000);
+  }
+
   heroPills.forEach(function (btn) {
     btn.addEventListener("click", function () {
       updateHeroStack(btn.getAttribute("data-hero-dev"));
+      startHeroCarouselTimer();
     });
   });
 
   heroDots.forEach(function (dot) {
     dot.addEventListener("click", function () {
       updateHeroStack(dot.getAttribute("data-stack-target"));
+      startHeroCarouselTimer();
     });
   });
 
@@ -350,6 +368,7 @@
       } else {
         updateHeroStack(devKey);
       }
+      startHeroCarouselTimer();
     });
   });
 
@@ -375,12 +394,7 @@
         frontCard.style.setProperty("--gy", Math.round((ny + 0.5) * 100) + "%");
       }
     });
-    setInterval(function () {
-      if (!heroHovered) {
-        var nextIdx = (HERO_ORDER.indexOf(activeHeroDev) + 1) % HERO_ORDER.length;
-        updateHeroStack(HERO_ORDER[nextIdx]);
-      }
-    }, 5000);
+    startHeroCarouselTimer();
     startHeroMorphTimer();
   }
 
