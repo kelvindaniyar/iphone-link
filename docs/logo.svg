@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Fluent Liquid Glass Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0078D4"/>
+      <stop offset="42%" stop-color="#00B4D8"/>
+      <stop offset="100%" stop-color="#4F46E5"/>
+    </linearGradient>
+
+    <!-- Top Gloss Sheen -->
+    <linearGradient id="gloss-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Crystal Border -->
+    <linearGradient id="crystal-border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#38BDF8" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#818CF8" stop-opacity="0.45"/>
+    </linearGradient>
+
+    <!-- Windows Desktop Window Glass -->
+    <linearGradient id="win-glass" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#E0E7FF" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <!-- iPhone Body / Titanium Chassis -->
+    <linearGradient id="phone-body" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="35%" stop-color="#E2E8F0"/>
+      <stop offset="70%" stop-color="#CBD5E1"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+
+    <!-- iPhone Screen OLED -->
+    <linearGradient id="oled-screen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="50%" stop-color="#090D16"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+
+    <!-- Screen Glass Specular Reflection -->
+    <linearGradient id="screen-glare" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.28"/>
+      <stop offset="30%" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Glowing Link Gradient -->
+    <linearGradient id="link-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#FFFFFF"/>
+    </linearGradient>
+
+    <!-- Drop Shadows -->
+    <filter id="soft-shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#020617" flood-opacity="0.45"/>
+    </filter>
+
+    <filter id="link-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#00F2FE" flood-opacity="0.75"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#0284C7" flood-opacity="0.5"/>
+    </filter>
+
+    <clipPath id="squircle-clip">
+      <rect x="16" y="16" width="480" height="480" rx="112"/>
+    </clipPath>
+
+    <clipPath id="iphone-screen-clip">
+      <rect x="100" y="86" width="188" height="340" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <!-- 1. SQUIRCLE BASE WITH FLUENT LIQUID GLASS -->
+  <g filter="url(#soft-shadow)">
+    <!-- Base Fill -->
+    <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg-grad)"/>
+    <!-- Top Sheen Highlight -->
+    <rect x="16" y="16" width="480" height="250" rx="112" fill="url(#gloss-grad)" clip-path="url(#squircle-clip)"/>
+    <!-- Crystal Border -->
+    <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="url(#crystal-border)" stroke-width="3"/>
+  </g>
+
+  <!-- 2. BACKGROUND RIGHT: TRANSLUCENT WINDOWS 11 GLASS PANE -->
+  <g transform="translate(196, 92)" opacity="0.95">
+    <!-- Window Frame -->
+    <rect x="0" y="0" width="236" height="328" rx="22" fill="url(#win-glass)" stroke="rgba(255, 255, 255, 0.45)" stroke-width="1.8"/>
+    <!-- Titlebar Separator -->
+    <line x1="0" y1="38" x2="236" y2="38" stroke="rgba(255, 255, 255, 0.22)" stroke-width="1.2"/>
+    <!-- Windows Window Controls (Min, Max, Close) -->
+    <g transform="translate(162, 14)">
+      <!-- Minimize -->
+      <line x1="4" y1="9" x2="14" y2="9" stroke="rgba(255, 255, 255, 0.85)" stroke-width="1.4" stroke-linecap="round"/>
+      <!-- Maximize -->
+      <rect x="24" y="4" width="10" height="10" rx="1.5" fill="none" stroke="rgba(255, 255, 255, 0.85)" stroke-width="1.4"/>
+      <!-- Close -->
+      <path d="M46 4 L56 14 M56 4 L46 14" stroke="#F87171" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <!-- Window Title Hint -->
+    <rect x="16" y="16" width="54" height="6" rx="3" fill="rgba(255, 255, 255, 0.5)"/>
+
+    <!-- Subtle Desktop Content Lines -->
+    <rect x="22" y="60" width="130" height="8" rx="4" fill="rgba(255, 255, 255, 0.28)"/>
+    <rect x="22" y="80" width="180" height="6" rx="3" fill="rgba(255, 255, 255, 0.16)"/>
+    <rect x="22" y="98" width="150" height="6" rx="3" fill="rgba(255, 255, 255, 0.16)"/>
+
+    <!-- Windows 11 Logo Hint in Window Pane -->
+    <g transform="translate(132, 175)" opacity="0.22">
+      <rect x="0" y="0" width="34" height="34" rx="3" fill="#FFFFFF"/>
+      <rect x="38" y="0" width="34" height="34" rx="3" fill="#FFFFFF"/>
+      <rect x="0" y="38" width="34" height="34" rx="3" fill="#FFFFFF"/>
+      <rect x="38" y="38" width="34" height="34" rx="3" fill="#FFFFFF"/>
+    </g>
+  </g>
+
+  <!-- 3. CONNECTIVITY RAYS & WAVES (BRIDGING IPHONE TO WINDOWS) -->
+  <g transform="translate(240, 220)" filter="url(#link-glow)">
+    <path d="M 0,-48 A 64,64 0 0,1 48,0 A 64,64 0 0,1 0,48" fill="none" stroke="#38BDF8" stroke-width="4.5" stroke-linecap="round" opacity="0.85"/>
+    <path d="M 12,-68 A 92,92 0 0,1 82,0 A 92,92 0 0,1 12,68" fill="none" stroke="#00F2FE" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+    <path d="M 24,-88 A 120,120 0 0,1 114,0 A 120,120 0 0,1 24,88" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+  </g>
+
+  <!-- 4. FOREGROUND: MODERN IPHONE 17 PRO CHASSIS -->
+  <g filter="url(#soft-shadow)">
+    <!-- Titanium Body -->
+    <rect x="92" y="78" width="204" height="356" rx="36" fill="url(#phone-body)" stroke="#FFFFFF" stroke-width="1.8"/>
+
+    <!-- Deep OLED Screen -->
+    <rect x="100" y="86" width="188" height="340" rx="28" fill="url(#oled-screen)"/>
+
+    <!-- Screen Glass Specular Highlight -->
+    <g clip-path="url(#iphone-screen-clip)">
+      <path d="M60 400 L260 80 L340 80 L140 400 Z" fill="url(#screen-glare)"/>
+      <path d="M110 440 L310 140 L330 140 L130 440 Z" fill="#FFFFFF" opacity="0.08"/>
+    </g>
+
+    <!-- Dynamic Island -->
+    <rect x="156" y="98" width="76" height="18" rx="9" fill="#000000"/>
+    <!-- Camera Sensor Reflection -->
+    <circle cx="218" cy="107" r="3.5" fill="#1E293B"/>
+    <circle cx="218" cy="107" r="1.5" fill="#0284C7" opacity="0.65"/>
+    <circle cx="172" cy="107" r="2.5" fill="#0F172A"/>
+
+    <!-- 5. CENTER SCREEN: "LINK" GLYPH (CHAIN & CONNECTIVITY EMBLEM) -->
+    <g transform="translate(194, 256)" filter="url(#link-glow)">
+      <!-- Left Link Loop -->
+      <path d="M -22,10 L -38,-6 C -48,-16 -48,-32 -38,-42 C -28,-52 -12,-52 -2,-42 L 14,-26" 
+            fill="none" stroke="url(#link-grad)" stroke-width="9" stroke-linecap="round"/>
+
+      <!-- Right Link Loop -->
+      <path d="M 22,-10 L 38,6 C 48,16 48,32 38,42 C 28,52 12,52 2,42 L -14,26" 
+            fill="none" stroke="url(#link-grad)" stroke-width="9" stroke-linecap="round"/>
+
+      <!-- Central Interlocking Bar / Spark -->
+      <line x1="-12" y1="-12" x2="12" y2="12" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>
+      <circle cx="0" cy="0" r="4.5" fill="#FFFFFF"/>
+    </g>
+
+    <!-- Home Indicator Bar -->
+    <rect x="154" y="412" width="80" height="4.5" rx="2.25" fill="#FFFFFF" opacity="0.75"/>
+  </g>
+</svg>
