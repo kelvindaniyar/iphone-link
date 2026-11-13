@@ -25,6 +25,9 @@
   <meta name="twitter:description" content="Your iPhone screen, native on Windows. USB &amp; Wi-Fi 60fps H.265, 100% Native Rust, Free &amp; Open Source (GPL-3.0).">
 
   <link rel="icon" type="image/svg+xml" href="logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 
   <script type="application/ld+json">
@@ -65,16 +68,38 @@
   </script>
 </head>
 <body>
-  <div class="aurora-canvas" aria-hidden="true">
-    <div class="aurora-orb orb-1"></div>
-    <div class="aurora-orb orb-2"></div>
-    <div class="aurora-orb orb-3"></div>
+  <!-- PILAR 2: INLINE SVG OPTICAL LIQUID GLASS FILTER -->
+  <svg id="liquid-glass-defs" width="0" height="0" style="position:absolute;width:0;height:0;pointer-events:none;" aria-hidden="true">
+    <defs>
+      <filter id="liquid-glass-refract" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.012 0.04" numOctaves="2" seed="7" result="noise" />
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G" result="displaced" />
+        <feSpecularLighting in="noise" surfaceScale="2.2" specularConstant="0.55" specularExponent="28" lighting-color="#ffffff" result="specOut">
+          <fePointLight x="180" y="-40" z="120" />
+        </feSpecularLighting>
+        <feComposite in="specOut" in2="SourceAlpha" operator="in" result="specClipped" />
+        <feMerge>
+          <feMergeNode in="displaced" />
+          <feMergeNode in="specClipped" />
+        </feMerge>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- PILAR 3: MULTI-ZONE LIVING ATMOSPHERIC MESH BACKGROUND + GRAIN -->
+  <div class="spatial-ambient-canvas" id="spatial-ambient-canvas" aria-hidden="true">
+    <div class="ambient-orb orb-hero-right"></div>
+    <div class="ambient-orb orb-hero-left"></div>
+    <div class="ambient-orb orb-sim-stage"></div>
+    <div class="ambient-orb orb-bento-mid"></div>
+    <div class="ambient-orb orb-download-low"></div>
+    <div class="spatial-grain-overlay"></div>
   </div>
   <div class="aurora-grid" aria-hidden="true"></div>
 
-  <!-- PILAR 1: FLOATING SPATIAL LIQUID GLASS NAVBAR -->
+  <!-- PILAR 2: FLOATING OPTICAL LIQUID GLASS NAVBAR + SLIDING LENS -->
   <header class="floating-nav-wrap">
-    <nav class="floating-nav" aria-label="Main Navigation">
+    <nav class="floating-nav" id="floating-nav" aria-label="Main Navigation">
       <a href="#hero" class="nav-brand">
         <img src="logo.svg" alt="iPhone Link Logo" width="26" height="26">
         <span>iPhone Link</span>
@@ -82,6 +107,7 @@
       </a>
 
       <ul class="nav-links" id="nav-links">
+        <span class="nav-sliding-pill" id="nav-sliding-pill" aria-hidden="true"></span>
         <li><a href="#pratinjau" data-id="Pratinjau" data-en="Preview">Pratinjau</a></li>
         <li><a href="#fitur" data-id="Fitur" data-en="Features">Fitur</a></li>
         <li><a href="#evolusi" data-id="NEW vs UPGRADE" data-en="NEW vs UPGRADE">NEW vs UPGRADE</a></li>
@@ -118,7 +144,7 @@
   </header>
 
   <main>
-    <!-- PILAR 1 & 2: HERO 2-COLUMN + SLOGAN UTAMA + 3D INTERACTIVE DEVICE STACK -->
+    <!-- PILAR 1: HERO GIANT BRAND LOCKUP + SLOGAN WAJIB + 3D INTERACTIVE DEVICE STACK -->
     <section id="hero" class="hero-section">
       <div class="container">
         <div class="hero-grid">
@@ -131,7 +157,12 @@
               </span>
             </div>
 
-            <h1 class="hero-title">Your iPhone screen, native on Windows.</h1>
+            <div class="hero-brand-lockup" id="hero-brand-lockup">
+              <span class="brand-lockup-name">iPhone Link</span>
+              <span class="brand-lockup-badge"><span class="badge-ver-text">4.0</span></span>
+            </div>
+
+            <h1 class="hero-title">Your iPhone screen, <span class="text-accent-grad">native on Windows.</span></h1>
 
             <p class="hero-gradient-sub"
                data-id="Satu jendela kristal untuk iPhone &amp; iPad-mu di Windows."
@@ -332,7 +363,7 @@
       <div class="container reveal">
         <div class="section-head centered">
           <span class="section-eyebrow" data-id="PRATINJAU LANGSUNG" data-en="LIVE INTERACTIVE PREVIEW">PRATINJAU LANGSUNG</span>
-          <h2 class="section-title" data-id="Coba sebelum mengunduh." data-en="Try before you download.">Coba sebelum mengunduh.</h2>
+          <h2 class="section-title"><span data-id="Coba sebelum " data-en="Try it before you ">Coba sebelum </span><span class="text-accent-grad" data-id="mengunduh." data-en="download.">mengunduh.</span></h2>
           <p class="section-desc"
              data-id="Simulasi interaktif langsung di browser - klik layar HP, dock bawah, atau ubah pengaturan di panel kanan!"
              data-en="Live interactive simulator in your browser - click the device screen, bottom nav bar, or adjust controls in the right drawer!">
@@ -510,6 +541,15 @@
                   <button type="button" class="sim-seg-btn is-active" id="sim-lang-id" data-sim-lang-btn="id">ID Indonesia</button>
                   <button type="button" class="sim-seg-btn" id="sim-lang-en" data-sim-lang-btn="en">EN English</button>
                 </div>
+                <div class="sim-row-between" style="margin-top:2px;">
+                  <span data-sim-txt="liquidGlassLbl">Liquid Glass</span>
+                  <button type="button" class="sim-act-btn is-active" id="sim-liquid-glass-toggle" style="width:auto;padding:4px 12px;">ON</button>
+                </div>
+                <div class="sim-row-between">
+                  <span data-sim-txt="glassThickLbl">Ketebalan Kaca (Glass Thickness)</span>
+                  <span id="sim-glass-thick-val" style="font-family:var(--font-mono);font-size:0.74rem;">58%</span>
+                </div>
+                <input type="range" min="0" max="100" value="58" class="sim-range" id="sim-glass-thickness" aria-label="Glass Thickness Slider">
               </div>
 
               <!-- 2. Ukuran & Rasio Layar -->
@@ -647,9 +687,9 @@
     <!-- PILAR 4: ASYMMETRIC SPOTLIGHT BENTO GRID (12 CARDS WITH INLINE VECTOR SVGs) -->
     <section id="fitur">
       <div class="container reveal">
-        <div class="section-head centered">
+        <div class="section-head">
           <span class="section-eyebrow" data-id="ARSITEKTUR &amp; FITUR UNGGULAN" data-en="FLAGSHIP ARCHITECTURE &amp; FEATURES">ARSITEKTUR &amp; FITUR UNGGULAN</span>
-          <h2 class="section-title" data-id="Semua yang kamu butuh, di satu jendela." data-en="Everything you need, in a single window.">Semua yang kamu butuh, di satu jendela.</h2>
+          <h2 class="section-title"><span data-id="Semua yang kamu butuh, " data-en="Everything you need, ">Semua yang kamu butuh, </span><span class="text-accent-grad" data-id="di satu jendela." data-en="in one window.">di satu jendela.</span></h2>
           <p class="section-desc"
              data-id="Setiap modul v4.0 dibangun di atas mesin Native Rust berlatensi rendah dengan tampilan Spatial Liquid Glass Windows 11."
              data-en="Every v4.0 module runs on a low-latency Native Rust engine styled with Windows 11 Spatial Liquid Glass.">
@@ -662,7 +702,7 @@
           <article class="bento-card bento-lead">
             <div>
               <div class="bento-head">
-                <div class="bento-icon" aria-hidden="true">
+                <div class="bento-icon ico-blue" aria-hidden="true">
                   <svg viewBox="0 0 24 24"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>
                 </div>
                 <span class="tag-badge tag-new">NATIVE RUST v4.0</span>
@@ -700,7 +740,7 @@
           <!-- 11 Specialist Bento Cards -->
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-cyan" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></svg>
               </div>
               <span class="tag-badge tag-new">NEW v4.0</span>
@@ -712,7 +752,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-rose" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -724,7 +764,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-teal" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -736,7 +776,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-amber" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><rect width="16" height="20" x="4" y="2" rx="2" ry="2"/><line x1="12" x2="12.01" y1="18" y2="18"/></svg>
               </div>
               <span class="tag-badge tag-new">NEW v4.0</span>
@@ -748,7 +788,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-emerald" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -760,7 +800,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-amber" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -772,7 +812,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-blue" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -784,7 +824,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-rose" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5"/></svg>
               </div>
               <span class="tag-badge tag-upgrade">UPGRADE</span>
@@ -796,7 +836,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-cyan" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
               </div>
               <span class="tag-badge tag-new">NEW v4.0</span>
@@ -808,7 +848,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-teal" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
               </div>
               <span class="tag-badge tag-new">NEW v4.0</span>
@@ -820,7 +860,7 @@
 
           <article class="bento-card">
             <div class="bento-head">
-              <div class="bento-icon" aria-hidden="true">
+              <div class="bento-icon ico-emerald" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="m16 16 2 2 4-4"/><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
               </div>
               <span class="tag-badge tag-new">NEW v4.0</span>
@@ -836,9 +876,9 @@
     <!-- PILAR 5: TWO SEPARATE TABLES (NEW vs UPGRADE) & GROUPED COMPETITOR MATRIX -->
     <section id="evolusi">
       <div class="container reveal">
-        <div class="section-head centered">
+        <div class="section-head">
           <span class="section-eyebrow" data-id="EVOLUSI MAJOR UPDATE" data-en="MAJOR UPDATE EVOLUTION">EVOLUSI MAJOR UPDATE</span>
-          <h2 class="section-title" data-id="Lompatan Generasi v2.0 ke Major Update v4.0" data-en="Generational Leap from v2.0 to Major Update v4.0">Lompatan Generasi v2.0 ke Major Update v4.0</h2>
+          <h2 class="section-title"><span data-id="Lebih dari sekadar " data-en="More than ">Lebih dari sekadar </span><span class="text-accent-grad" data-id="aplikasi mirroring." data-en="a mirror.">aplikasi mirroring.</span></h2>
           <p class="section-desc"
              data-id="Pemetaan transparan antara 12 inovasi baru di v4.0.0, 13 fitur andalan v2.0.0 yang ditingkatkan, dan perbandingan lengkap dengan kompetitor."
              data-en="Transparent breakdown of 12 all-new capabilities in v4.0.0, 13 upgraded v2.0.0 pillars, and a grouped comparison against alternatives.">
@@ -1054,7 +1094,7 @@
       <div class="container reveal">
         <div class="section-head">
           <span class="section-eyebrow" data-id="DUAL KONEKTIVITAS" data-en="DUAL CONNECTIVITY">DUAL KONEKTIVITAS</span>
-          <h2 class="section-title" data-id="Kabel atau Wi-Fi, kamu yang pilih." data-en="Cable or Wi-Fi, you choose.">Kabel atau Wi-Fi, kamu yang pilih.</h2>
+          <h2 class="section-title"><span data-id="Kabel atau Wi-Fi, " data-en="Wired or Wi-Fi, ">Kabel atau Wi-Fi, </span><span class="text-accent-grad" data-id="kamu yang pilih." data-en="your call.">kamu yang pilih.</span></h2>
           <p class="section-desc"
              data-id="Kebebasan penuh memilih latensi nol via USB untuk game kompetitif atau mirroring Wi-Fi rapi tanpa kabel di meja kerja."
              data-en="Complete freedom to pick zero-latency USB for competitive gaming or clean cable-free Wi-Fi mirroring at your desk.">
@@ -1120,9 +1160,9 @@
 
     <section id="performa">
       <div class="container reveal">
-        <div class="section-head centered">
+        <div class="section-head">
           <span class="section-eyebrow" data-id="ARSITEKTUR TANPA BEBAN" data-en="ZERO-OVERHEAD PIPELINE">ARSITEKTUR TANPA BEBAN</span>
-          <h2 class="section-title" data-id="Santai di CPU, tajam di layar." data-en="Easy on CPU, sharp on screen.">Santai di CPU, tajam di layar.</h2>
+          <h2 class="section-title"><span data-id="Santai di CPU, " data-en="Easy on the CPU, ">Santai di CPU, </span><span class="text-accent-grad" data-id="tajam di layar." data-en="sharp on the screen.">tajam di layar.</span></h2>
           <p class="section-desc"
              data-id="Stream H.265/HEVC asli dari chip Apple langsung diteruskan tanpa re-encode menuju dekoder GPU Direct3D 11 Windows."
              data-en="Native H.265/HEVC frames from Apple silicon flow straight to Windows Direct3D 11 / Media Foundation GPU decoders without re-encoding.">
@@ -1235,9 +1275,9 @@
     <!-- PILAR 7: CUSTOMIZATION, FILTERABLE SHORTCUTS & TIMELINE -->
     <section id="sesuaikan">
       <div class="container reveal">
-        <div class="section-head centered">
+        <div class="section-head">
           <span class="section-eyebrow" data-id="KUSTOMISASI &amp; PINTASAN" data-en="CUSTOMIZATION &amp; SHORTCUTS">KUSTOMISASI &amp; PINTASAN</span>
-          <h2 class="section-title" data-id="Atur sesukamu." data-en="Tune it your way.">Atur sesukamu.</h2>
+          <h2 class="section-title"><span data-id="Atur " data-en="Make it ">Atur </span><span class="text-accent-grad" data-id="sesukamu." data-en="yours.">sesukamu.</span></h2>
           <p class="section-desc"
              data-id="Setiap preferensi tersimpan lintas restart secara lokal serta dapat dikontrol penuh dengan pintasan keyboard."
              data-en="Every preference persists locally across restarts and puts full keyboard control at your fingertips.">
@@ -1294,8 +1334,11 @@
         </div>
 
         <!-- Timeline: Yang Baru di iPhone Link 4.0.0 -->
-        <div id="baru" style="margin-top:46px;">
-          <h3 style="text-align:center;margin:0 0 10px;font-size:1.45rem;" data-id="Yang Baru di iPhone Link 4.0.0" data-en="What's New in iPhone Link 4.0.0">Yang Baru di iPhone Link 4.0.0</h3>
+        <div id="baru" style="margin-top:52px;">
+          <div class="section-head" style="margin-bottom:24px;">
+            <span class="section-eyebrow" data-id="RIWAYAT RILIS" data-en="RELEASE HIGHLIGHTS">RIWAYAT RILIS</span>
+            <h2 class="section-title"><span data-id="Yang baru di " data-en="New in ">Yang baru di </span><span class="text-accent-grad">iPhone Link 4.0.0.</span></h2>
+          </div>
           <div class="timeline-4">
             <div class="tl-card">
               <span class="tl-badge">v4.0 CORE</span>
@@ -1327,7 +1370,7 @@
       <div class="container reveal">
         <div class="section-head centered">
           <span class="section-eyebrow" data-id="UNDUH RESMI GRATIS" data-en="FREE OFFICIAL RELEASES">UNDUH RESMI GRATIS</span>
-          <h2 class="section-title" data-id="Dapatkan iPhone Link 4.0.0" data-en="Get iPhone Link 4.0.0">Dapatkan iPhone Link 4.0.0</h2>
+          <h2 class="section-title" id="dl-section-title"><span data-id="Dapatkan " data-en="Get ">Dapatkan </span><span class="text-accent-grad">iPhone Link 4.0.0</span></h2>
           <p class="section-desc"
              data-id="Pilih Installer 64-Bit lengkap untuk pengalaman paling praktis tanpa perlu menginstal Python ataupun mencari codec tambahan."
              data-en="Choose the official 64-Bit Installer for the smoothest one-click setup with bundled runtime and HEVC codec included.">
@@ -1508,9 +1551,7 @@
       <div class="container reveal">
         <div class="glass-panel">
           <span class="section-eyebrow" data-id="CATATAN PERSONAL" data-en="A PERSONAL NOTE">CATATAN PERSONAL</span>
-          <h2 class="section-title" style="font-size:1.85rem;"
-              data-id="Sebuah catatan yang jujur dari Kelvin Daniyar"
-              data-en="An honest note from Kelvin Daniyar">Sebuah catatan yang jujur dari Kelvin Daniyar</h2>
+          <h2 class="section-title" style="font-size:1.85rem;"><span data-id="Sebuah catatan yang jujur dari " data-en="An honest note from ">Sebuah catatan yang jujur dari </span><span class="text-accent-grad">Kelvin Daniyar</span></h2>
           <p style="color:var(--text-secondary);margin:0 0 14px;"
              data-id="Dari umpan balik lebih dari 2.223+ pengguna aktif pada rilisan v2.0, saya mendapati dua tantangan nyata: kendala crash Python.Runtime.dll akibat Zone.Identifier Windows dan kebingungan menyiapkan Python maupun codec HEVC manual. Karena itulah iPhone Link v4.0.0 dibangun ulang sepenuhnya di atas Native Rust agar langsung jalan seketika di setiap PC Windows."
              data-en="Listening to feedback from 2,223+ active v2.0 users revealed two clear friction points: Python.Runtime.dll crashes caused by Windows Zone.Identifier blocks and the hassle of installing Python and HEVC codecs manually. That is why iPhone Link v4.0.0 was completely rebuilt in Native Rust to run cleanly out of the box on Windows.">
@@ -1541,7 +1582,7 @@
       <div class="container reveal">
         <div class="section-head centered">
           <span class="section-eyebrow">FAQ v4.0.0</span>
-          <h2 class="section-title" data-id="Pertanyaan yang sering diajukan." data-en="Frequently asked questions.">Pertanyaan yang sering diajukan.</h2>
+          <h2 class="section-title"><span data-id="Pertanyaan yang " data-en="Frequently asked ">Pertanyaan yang </span><span class="text-accent-grad" data-id="sering diajukan." data-en="questions.">sering diajukan.</span></h2>
         </div>
 
         <div class="faq-list" id="faq-list">

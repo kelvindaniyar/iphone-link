@@ -62,18 +62,119 @@
   }
 
   /* --------------------------------------------------------------------------
-     2. MOBILE NAV & SCROLL REVEAL
+     2. OPTICAL LIQUID GLASS NAVBAR, MOBILE NAV & SCROLL REVEAL
      -------------------------------------------------------------------------- */
+  var floatingNav = document.getElementById("floating-nav");
   var mobileToggle = document.getElementById("btn-mobile-nav");
   var navLinksEl = document.getElementById("nav-links");
+  var navSlidingPill = document.getElementById("nav-sliding-pill");
+  var activeNavLink = null;
+  var syncNavPillToActive = function () {};
+
+  if (floatingNav) {
+    floatingNav.addEventListener("pointermove", function (e) {
+      var rect = floatingNav.getBoundingClientRect();
+      var px = Math.round(((e.clientX - rect.left) / Math.max(1, rect.width)) * 100);
+      var py = Math.round(((e.clientY - rect.top) / Math.max(1, rect.height)) * 100);
+      floatingNav.style.setProperty("--nav-mx", px + "%");
+      floatingNav.style.setProperty("--nav-my", py + "%");
+    });
+
+    var updateNavScrolled = function () {
+      floatingNav.classList.toggle("is-scrolled", window.scrollY > 24);
+    };
+    updateNavScrolled();
+    window.addEventListener("scroll", updateNavScrolled, { passive: true });
+  }
+
+  if (navLinksEl) {
+    var navAnchors = Array.prototype.slice.call(navLinksEl.querySelectorAll("a"));
+    if (navAnchors.length > 0) {
+      activeNavLink = navAnchors[0];
+    }
+
+    var moveNavSlidingPill = function (targetLink) {
+      if (!navSlidingPill) return;
+      if (!targetLink || window.innerWidth <= 760) {
+        navSlidingPill.style.opacity = "0";
+        return;
+      }
+      var linksRect = navLinksEl.getBoundingClientRect();
+      var linkRect = targetLink.getBoundingClientRect();
+      if (linkRect.width <= 0 || linksRect.width <= 0) return;
+      var x = Math.round((linkRect.left - linksRect.left + navLinksEl.scrollLeft) * 10) / 10;
+      var w = Math.round(linkRect.width * 10) / 10;
+      navSlidingPill.dataset.x = String(x);
+      navSlidingPill.dataset.w = String(w);
+      navSlidingPill.style.width = w + "px";
+      navSlidingPill.style.transform = "translate3d(" + x + "px, 0, 0)";
+      navSlidingPill.style.opacity = "1";
+    };
+
+    syncNavPillToActive = function () {
+      navAnchors.forEach(function (a) {
+        a.classList.toggle("is-active", a === activeNavLink);
+      });
+      if (activeNavLink) {
+        moveNavSlidingPill(activeNavLink);
+      }
+    };
+
+    navAnchors.forEach(function (a) {
+      a.addEventListener("mouseenter", function () {
+        moveNavSlidingPill(a);
+      });
+      a.addEventListener("focus", function () {
+        moveNavSlidingPill(a);
+      });
+      a.addEventListener("click", function () {
+        activeNavLink = a;
+        syncNavPillToActive();
+        navLinksEl.classList.remove("open");
+      });
+    });
+
+    navLinksEl.addEventListener("mouseleave", function () {
+      syncNavPillToActive();
+    });
+
+    window.addEventListener("resize", function () {
+      syncNavPillToActive();
+    });
+
+    if ("IntersectionObserver" in window) {
+      var linkById = {};
+      navAnchors.forEach(function (a) {
+        var href = a.getAttribute("href") || "";
+        if (href.charAt(0) === "#" && href.length > 1) {
+          linkById[href.slice(1)] = a;
+        }
+      });
+      var navSpy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting && linkById[entry.target.id]) {
+            activeNavLink = linkById[entry.target.id];
+            syncNavPillToActive();
+          }
+        });
+      }, { rootMargin: "-35% 0px -50% 0px", threshold: 0.01 });
+      Object.keys(linkById).forEach(function (id) {
+        var sec = document.getElementById(id);
+        if (sec) navSpy.observe(sec);
+      });
+    }
+
+    requestAnimationFrame(syncNavPillToActive);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function () {
+        syncNavPillToActive();
+      });
+    }
+  }
+
   if (mobileToggle && navLinksEl) {
     mobileToggle.addEventListener("click", function () {
       navLinksEl.classList.toggle("open");
-    });
-    navLinksEl.querySelectorAll("a").forEach(function (a) {
-      a.addEventListener("click", function () {
-        navLinksEl.classList.remove("open");
-      });
     });
   }
 
@@ -234,7 +335,9 @@
       themeDark: "Gelap",
       themeLight: "Terang",
       langId: "ID Indonesia",
-      langEn: "EN English"
+      langEn: "EN English",
+      liquidGlassLbl: "Liquid Glass",
+      glassThickLbl: "Ketebalan Kaca (Glass Thickness)"
     },
     en: {
       secAppearance: "APPEARANCE & LANGUAGE",
@@ -270,7 +373,9 @@
       themeDark: "Dark",
       themeLight: "Light",
       langId: "ID Indonesia",
-      langEn: "EN English"
+      langEn: "EN English",
+      liquidGlassLbl: "Liquid Glass",
+      glassThickLbl: "Glass Thickness"
     }
   };
 
@@ -297,7 +402,9 @@
     stopped: false,
     screen: "home",
     channel: "stable",
-    notesPasted: false
+    notesPasted: false,
+    liquidGlass: true,
+    glassThickness: 58
   };
 
   var simWindowEl = document.getElementById("sim-app-window");
@@ -310,6 +417,63 @@
   var simCropFrameEl = document.getElementById("sim-crop-frame");
   var simToastEl = document.getElementById("sim-toast");
   var simToastTimer = null;
+
+  var simDrawerEl = document.getElementById("sim-drawer");
+  var simLiquidGlassBtn = document.getElementById("sim-liquid-glass-toggle");
+  var simGlassSlider = document.getElementById("sim-glass-thickness");
+  var simGlassValEl = document.getElementById("sim-glass-thick-val");
+
+  function applySimGlassPhysics() {
+    if (!simWindowEl) return;
+    var pct = Math.max(0, Math.min(100, Number(simState.glassThickness)));
+    var on = Boolean(simState.liquidGlass);
+    simWindowEl.setAttribute("data-liquid-glass", on ? "on" : "off");
+    simWindowEl.setAttribute("data-glass-thickness", String(pct));
+
+    if (simLiquidGlassBtn) {
+      simLiquidGlassBtn.textContent = on ? "ON" : "OFF";
+      simLiquidGlassBtn.classList.toggle("is-active", on);
+    }
+    if (simGlassSlider) {
+      simGlassSlider.value = String(pct);
+      simGlassSlider.disabled = !on;
+    }
+    if (simGlassValEl) {
+      simGlassValEl.textContent = pct + "%";
+    }
+
+    if (!on) {
+      simWindowEl.style.setProperty("--sim-glass-blur", "0px");
+      simWindowEl.style.setProperty("--sim-glass-alpha", "0.98");
+      simWindowEl.style.setProperty("--sim-glass-drawer-alpha", "0.98");
+      simWindowEl.style.backdropFilter = "none";
+      simWindowEl.style.webkitBackdropFilter = "none";
+      if (simDrawerEl) {
+        simDrawerEl.style.backdropFilter = "none";
+        simDrawerEl.style.webkitBackdropFilter = "none";
+      }
+      return;
+    }
+
+    var blurPx = Math.round(10 + (pct * 0.30));
+    var winAlpha = simState.theme === "light"
+      ? (0.94 - (pct / 100) * 0.24).toFixed(3)
+      : (0.94 - (pct / 100) * 0.26).toFixed(3);
+    var drawerAlpha = simState.theme === "light"
+      ? (0.92 - (pct / 100) * 0.26).toFixed(3)
+      : (0.92 - (pct / 100) * 0.28).toFixed(3);
+
+    var filterCss = "blur(" + blurPx + "px) saturate(" + Math.round(145 + pct * 0.7) + "%)";
+    simWindowEl.style.setProperty("--sim-glass-blur", blurPx + "px");
+    simWindowEl.style.setProperty("--sim-glass-alpha", winAlpha);
+    simWindowEl.style.setProperty("--sim-glass-drawer-alpha", drawerAlpha);
+    simWindowEl.style.backdropFilter = filterCss;
+    simWindowEl.style.webkitBackdropFilter = filterCss;
+    if (simDrawerEl) {
+      simDrawerEl.style.backdropFilter = filterCss;
+      simDrawerEl.style.webkitBackdropFilter = filterCss;
+    }
+  }
 
   function showSimToast(msg) {
     if (!simToastEl) return;
@@ -671,14 +835,36 @@
     });
   });
 
-  // Drawer Theme & Lang Buttons
+  // Drawer Theme, Liquid Glass & Lang Buttons
   document.querySelectorAll("[data-sim-theme-btn]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       simState.theme = btn.getAttribute("data-sim-theme-btn");
       setActiveInGroup("data-sim-theme-btn", simState.theme);
       renderSimViewport();
+      applySimGlassPhysics();
     });
   });
+
+  if (simLiquidGlassBtn) {
+    simLiquidGlassBtn.addEventListener("click", function () {
+      simState.liquidGlass = !simState.liquidGlass;
+      applySimGlassPhysics();
+      showSimToast("Liquid Glass: " + (simState.liquidGlass ? "ON" : "OFF"));
+    });
+  }
+
+  if (simGlassSlider) {
+    var onGlassSliderInput = function () {
+      simState.glassThickness = Number(simGlassSlider.value);
+      applySimGlassPhysics();
+    };
+    simGlassSlider.addEventListener("input", onGlassSliderInput);
+    simGlassSlider.addEventListener("change", function () {
+      onGlassSliderInput();
+      showSimToast("Glass Thickness: " + simState.glassThickness + "%");
+    });
+  }
+
   document.querySelectorAll("[data-sim-lang-btn]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       simState.lang = btn.getAttribute("data-sim-lang-btn");
@@ -864,6 +1050,8 @@
     setActiveInGroup("data-sim-lang-btn", siteLang);
     applySimDrawerTranslations();
     renderSimViewport();
+    applySimGlassPhysics();
+    requestAnimationFrame(syncNavPillToActive);
 
     try {
       localStorage.setItem("il_site_lang", siteLang);
