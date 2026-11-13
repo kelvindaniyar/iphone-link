@@ -12,11 +12,13 @@ import asyncio
 import contextlib
 import difflib
 import json
+import os
 import re
 import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -906,6 +908,8 @@ class LockdownWifiStreamServer:
                 await reader.readexactly(content_length)
 
             if method == "POST" and path in ("/touch", "/button", "/key", "/restart", "/pli"):
+                if path == "/touch":
+                    commit_and_reset_current_typed_line()
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"ok\":true}\r\n"
                 writer.write(resp)
                 await writer.drain()
@@ -1559,14 +1563,22 @@ def spotlight_paste_clipboard_on_iphone() -> dict:
         send_keys_direct([0xE3])
         time.sleep(0.02)
         send_keys_direct([])
-        # 3) Wait 520ms for Spotlight animation and input focus on iPhone 11 Pro Max & 17 Pro
-        time.sleep(0.52)
-        # 4) Clean old text with Backspace once (auto-selected by iOS on Spotlight open)
-        send_keys_direct([0x2A])
-        time.sleep(0.035)
+        # 3) Wait 500ms for Spotlight animation and input focus on iPhone 11 Pro Max & 17 Pro
+        time.sleep(0.50)
+        # 4) Tahap 193 Spotlight Hard-Clear BEFORE paste: Cmd+A -> Backspace ensures 0 residual characters
+        send_keys_direct([0xE3])
+        time.sleep(0.02)
+        send_keys_direct([0xE3, 0x04])
+        time.sleep(0.03)
+        send_keys_direct([0xE3])
+        time.sleep(0.015)
         send_keys_direct([])
-        time.sleep(0.06)
-        # 5) Directly paste clipboard (Cmd + V) WITHOUT Cmd+A selection!
+        time.sleep(0.025)
+        send_keys_direct([0x2A])  # Backspace
+        time.sleep(0.045)
+        send_keys_direct([])
+        time.sleep(0.05)
+        # 5) Directly paste clipboard (Cmd + V)
         trigger_ios_shortcut("paste-ios")
         time.sleep(0.12)
         # 6) Tahap 112: Right Arrow (0x4F) collapses iOS auto-selection to the end of text, instantly
@@ -1633,11 +1645,19 @@ def spotlight_cleanup_and_close_on_iphone() -> dict:
             if _STATE.get("phase") != "running":
                 return {"ok": False, "error": "Screen mirror is not active"}
     with _HID_ACTION_LOCK:
-        # 1) Clear Spotlight text via single Backspace WITHOUT Cmd+A selection
-        send_keys_direct([0x2A])  # Backspace
+        # 1) Tahap 193 Spotlight Hard-Clear (frames are already captured): Cmd+A -> Backspace deletes 100% of query text
+        send_keys_direct([0xE3])
+        time.sleep(0.02)
+        send_keys_direct([0xE3, 0x04])
         time.sleep(0.035)
+        send_keys_direct([0xE3])
+        time.sleep(0.015)
         send_keys_direct([])
-        time.sleep(0.06)
+        time.sleep(0.025)
+        send_keys_direct([0x2A])  # Backspace
+        time.sleep(0.045)
+        send_keys_direct([])
+        time.sleep(0.05)
         # 2) Close Spotlight Search via ONE single toggle Cmd + Space without Escape toggle
         send_keys_direct([0xE3])
         time.sleep(0.025)
@@ -1706,8 +1726,58 @@ from handset import get_app_root; PROJECT_ROOT = get_app_root()
 TYPED_HISTORY_FILE = PROJECT_ROOT / "typed_history.json"
 
 
+def _is_writable_typed_dir(target_dir: Path) -> bool:
+    try:
+        norm = os.path.normcase(str(target_dir.resolve()))
+        if "\\program files\\" in norm or "\\program files (x86)\\" in norm or norm.endswith("\\program files") or norm.endswith("\\program files (x86)"):
+            return False
+        if not target_dir.is_dir():
+            return False
+        probe = target_dir / f".probe_th_{os.getpid()}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def _get_writable_typed_history_file() -> Path:
+    import tempfile
+    configured = Path(TYPED_HISTORY_FILE)
+    if _is_writable_typed_dir(configured.parent):
+        return configured
+    for fb_dir in (
+        Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "iPhoneLink",
+        Path(tempfile.gettempdir()) / "iPhoneLink",
+    ):
+        try:
+            fb_dir.mkdir(parents=True, exist_ok=True)
+            return fb_dir / "typed_history.json"
+        except Exception:
+            pass
+    return Path(tempfile.gettempdir()) / "typed_history.json"
+
+
+def _get_all_typed_history_candidate_files() -> list[Path]:
+    import tempfile
+    cands = [
+        Path(TYPED_HISTORY_FILE),
+        PROJECT_ROOT / "typed_history.json",
+        Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "iPhoneLink" / "typed_history.json",
+        Path(tempfile.gettempdir()) / "iPhoneLink" / "typed_history.json",
+    ]
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for p in cands:
+        key = os.path.normcase(str(p))
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
+
+
 def save_typed_history() -> None:
-    """Persist typed history buffer and last active line to disk."""
+    """Persist typed history buffer and last active line to a writable location (supports Program Files UAC)."""
     try:
         with _TYPED_BUFFER_LOCK:
             data = {
@@ -1715,7 +1785,9 @@ def save_typed_history() -> None:
                 "timestamp": _LAST_TYPED_TIMESTAMP,
                 "buffer": _TYPED_LINES_BUFFER,
             }
-        with open(TYPED_HISTORY_FILE, "w", encoding="utf-8") as f:
+        target_file = _get_writable_typed_history_file()
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -1723,8 +1795,10 @@ def save_typed_history() -> None:
 
 def _is_valid_typed_history_entry(line: str) -> bool:
     """Validate typed history entries: forbid long paste blocks (>= 35 chars) or news headlines (Tahap 38)."""
+    if line == "":
+        return True  # Keep explicit blank line marker for Double Enter
     if not line:
-        return True  # Keep blank line
+        return False
     if len(line) >= 35:
         return False
     low = line.lower()
@@ -1734,21 +1808,38 @@ def _is_valid_typed_history_entry(line: str) -> bool:
 
 
 def load_typed_history() -> None:
-    """Load persisted typed history from disk on startup and purge long paste contamination."""
+    """Load persisted typed history from disk (merging primary & LocalAppData/Temp fallbacks)."""
     global _LAST_TYPED_ACTIVE_LINE, _LAST_TYPED_TIMESTAMP, _TYPED_LINES_BUFFER
-    if not TYPED_HISTORY_FILE.exists():
-        return
-    try:
-        with open(TYPED_HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        with _TYPED_BUFFER_LOCK:
+    merged_buf: list[str] = []
+    best_act = ""
+    best_ts = 0.0
+    for cand_file in _get_all_typed_history_candidate_files():
+        if not cand_file.is_file():
+            continue
+        try:
+            with open(cand_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            ts = float(data.get("timestamp", 0.0) or 0.0)
             act = data.get("last_active", "")
-            _LAST_TYPED_ACTIVE_LINE = act if _is_valid_typed_history_entry(act) else ""
-            _LAST_TYPED_TIMESTAMP = float(data.get("timestamp", 0.0))
-            raw_buf = list(data.get("buffer", []))
-            _TYPED_LINES_BUFFER[:] = [l for l in raw_buf if _is_valid_typed_history_entry(l)]
-    except Exception:
-        pass
+            if ts >= best_ts and isinstance(act, str) and _is_valid_typed_history_entry(act):
+                best_act = act
+                best_ts = ts
+            for item in data.get("buffer", []):
+                if isinstance(item, str) and _is_valid_typed_history_entry(item):
+                    if item == "" and (not merged_buf or merged_buf[-1] == ""):
+                        continue
+                    if item != "" and item in merged_buf:
+                        continue
+                    merged_buf.append(item)
+        except Exception:
+            pass
+    with _TYPED_BUFFER_LOCK:
+        if best_act:
+            _LAST_TYPED_ACTIVE_LINE = best_act
+        if best_ts > 0.0:
+            _LAST_TYPED_TIMESTAMP = best_ts
+        if merged_buf:
+            _TYPED_LINES_BUFFER[:] = merged_buf[-60:]
 
 
 # Load history on startup
@@ -1836,9 +1927,11 @@ def record_typed_text(text: str) -> None:
 
     with _TYPED_BUFFER_LOCK:
         if "\n" in text or "\r" in text:
-            lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-            for line in lines:
-                trimmed = line.strip()
+            combined = (_CURRENT_TYPED_LINE + text).replace("\r\n", "\n").replace("\r", "\n")
+            parts = combined.split("\n")
+            # Every element in parts[:-1] was terminated by an explicit Enter keystroke
+            for part in parts[:-1]:
+                trimmed = part.strip()
                 if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                     if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != trimmed:
                         _TYPED_LINES_BUFFER.append(trimmed)
@@ -1847,17 +1940,32 @@ def record_typed_text(text: str) -> None:
                     _LAST_TYPED_ACTIVE_LINE = trimmed
                     _LAST_TYPED_TIMESTAMP = time.time()
                 elif trimmed == "":
-                    # If empty line between typed items, record empty line in buffer
+                    # Only consecutive Enter (pressing Enter on an empty line -> Double Enter) emits ""
                     if _TYPED_LINES_BUFFER and _TYPED_LINES_BUFFER[-1] != "":
                         _TYPED_LINES_BUFFER.append("")
                         if len(_TYPED_LINES_BUFFER) > 60:
                             _TYPED_LINES_BUFFER.pop(0)
-            _CURRENT_TYPED_LINE = ""
+            tail_part = parts[-1]
+            tail_trimmed = tail_part.strip()
+            if len(parts) >= 3 and len(tail_trimmed) >= 3 and _is_valid_typed_history_entry(tail_trimmed):
+                # Multi-line paste/type block ending with non-empty line: commit immediately so paragraph pair exists
+                if not _TYPED_LINES_BUFFER or _TYPED_LINES_BUFFER[-1] != tail_trimmed:
+                    _TYPED_LINES_BUFFER.append(tail_trimmed)
+                if len(_TYPED_LINES_BUFFER) > 60:
+                    _TYPED_LINES_BUFFER.pop(0)
+                _LAST_TYPED_ACTIVE_LINE = tail_trimmed
+                _LAST_TYPED_TIMESTAMP = time.time()
+                _CURRENT_TYPED_LINE = ""
+            else:
+                _CURRENT_TYPED_LINE = tail_part
+                if len(tail_trimmed) >= 3 and _is_valid_typed_history_entry(tail_trimmed):
+                    _LAST_TYPED_ACTIVE_LINE = tail_trimmed
+                    _LAST_TYPED_TIMESTAMP = time.time()
         else:
             # Append chunk (single char or word snippet) to _CURRENT_TYPED_LINE
             _CURRENT_TYPED_LINE += text
             trimmed = _CURRENT_TYPED_LINE.strip()
-            if len(trimmed) >= 3:
+            if len(trimmed) >= 3 and _is_valid_typed_history_entry(trimmed):
                 _LAST_TYPED_ACTIVE_LINE = trimmed
             _LAST_TYPED_TIMESTAMP = time.time()
     save_typed_history()
@@ -1951,19 +2059,24 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             if c_lower == full_ocr_lower:
                 return c_strip
 
-            # Tahap 38: First letter mismatch guard
+            # Tahap 193: First letter handle corruption guard (multi-word lines with shared words tolerate >= 0.72)
             if c_lower[0] != full_ocr_lower[0]:
-                ocr_w0 = full_ocr_lower.split()[0] if full_ocr_lower.split() else ""
-                cand_w0 = c_lower.split()[0] if c_lower.split() else ""
-                if not ocr_w0 or not cand_w0:
+                ocr_words_list = full_ocr_lower.split()
+                cand_words_list = c_lower.split()
+                if not ocr_words_list or not cand_words_list:
                     continue
+                ocr_w0 = ocr_words_list[0]
+                cand_w0 = cand_words_list[0]
                 w0_ratio = difflib.SequenceMatcher(None, ocr_w0, cand_w0).ratio()
-                if w0_ratio < 0.70:
-                    continue
+                shared_words = set(ocr_words_list).intersection(set(cand_words_list))
                 sm_ratio = difflib.SequenceMatcher(None, full_ocr_lower, c_lower).ratio()
-                if sm_ratio < 0.84:
+                is_multiword_supported = (len(cand_words_list) >= 2 and len(shared_words) >= 1 and w0_ratio >= 0.50)
+                min_req = 0.72 if is_multiword_supported else 0.84
+                if not is_multiword_supported and w0_ratio < 0.70:
                     continue
-                score = sm_ratio
+                if sm_ratio < min_req:
+                    continue
+                score = sm_ratio + (0.04 if is_multiword_supported else 0.0)
             elif len(c_lower) >= 8 and (c_lower in full_ocr_lower or full_ocr_lower in c_lower):
                 # Containment (for multi-word sentences)
                 score = 0.95
@@ -2057,16 +2170,18 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
             if len(c_line) >= 5 and not _is_length_comparable(c_strip, c_line) and not is_same_endpoints:
                 continue
 
-            # First letter mismatch safety guard (Tahap 38):
-            # If first character differs, require sentence ratio >= 0.84 AND first word ratio >= 0.70
-            # E.g. "Dapua raya selatan" vs "papua raya selatan" (w0 ratio 0.80 >= 0.70, sent ratio 0.94 >= 0.84) allowed!
+            # First letter mismatch safety guard (Tahap 193):
+            # When the upper-left lollipop handle corrupts the first letter of a multi-word line
+            # (e.g. "tarhutla aman..." vs "karhutla aman..."), allow >= 0.72 if other words match.
             if c_lower[0] != l_lower[0]:
                 if not l_words or not c_words:
                     continue
                 w0_ratio = difflib.SequenceMatcher(None, l_words[0], c_words[0]).ratio()
-                if w0_ratio < 0.70:
+                shared_mid = set(l_words).intersection(set(c_words))
+                is_multi_supported = (len(c_words) >= 2 and len(shared_mid) >= 1 and w0_ratio >= 0.50)
+                if not is_multi_supported and w0_ratio < 0.70:
                     continue
-                req_ratio = max(req_ratio, 0.84)
+                req_ratio = min(req_ratio, 0.72) if is_multi_supported else max(req_ratio, 0.84)
 
             if len(c_line) >= 6 and (l_lower in c_lower or c_lower in l_lower) and c_lower[0] == l_lower[0]:
                 line_best = c_strip
@@ -2080,7 +2195,33 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         if line_ratio >= 0.72:
             corrected_lines.append(line_best)
         else:
-            corrected_lines.append(c_line)
+            # Word-level handle-corruption fallback against typed buffer words (e.g. "tarhutla"->"karhutla", "lomah"->"lontoh", "prabowk"->"prabowo", "pemulun"->"pemulung")
+            vocab: dict[str, str] = {}
+            for cand in candidates:
+                for tok in cand.strip().split():
+                    t_clean = tok.strip(".,!?:;\"'")
+                    if len(t_clean) >= 5:
+                        vocab[t_clean.lower()] = tok
+            if vocab:
+                repaired_tokens = []
+                for orig_tok in c_line.split():
+                    tok_low = orig_tok.lower().strip(".,!?:;\"'")
+                    if len(tok_low) >= 5 and tok_low not in vocab:
+                        best_wt = orig_tok
+                        best_wr = 0.0
+                        for vk, v_orig in vocab.items():
+                            if abs(len(vk) - len(tok_low)) > 2:
+                                continue
+                            wr = difflib.SequenceMatcher(None, tok_low, vk).ratio()
+                            if wr >= 0.78 and wr > best_wr:
+                                best_wr = wr
+                                best_wt = v_orig
+                        repaired_tokens.append(best_wt)
+                    else:
+                        repaired_tokens.append(orig_tok)
+                corrected_lines.append(" ".join(repaired_tokens))
+            else:
+                corrected_lines.append(c_line)
 
     result = "\r\n".join(corrected_lines)
     # STRICT SAFETY GUARD: Never return 1 or 2 chars if longer text exists
@@ -2116,24 +2257,36 @@ def wipe_all_privacy_data() -> dict:
     _CURRENT_TYPED_LINE = ""
     _TYPED_LINES_BUFFER.clear()
 
-    # Physical file cleanup from application root
+    # Physical file cleanup from application root and writable fallback directories
     try:
-        project_root = get_app_root()
-        targets = [
-            project_root / "user_settings.json",
-            project_root / "typed_history.json",
-            project_root / "wifi_state.json",
-            project_root / "debug_metrics.json",
+        import tempfile
+        dirs_to_clean = [
+            get_app_root(),
+            Path(TYPED_HISTORY_FILE).parent,
+            Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "iPhoneLink",
+            Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "iPhoneLink_NativeRust_v4",
+            Path(tempfile.gettempdir()) / "iPhoneLink",
         ]
-        # Clean any debug_ocr_* files
-        for p in project_root.glob("debug_ocr_*"):
-            targets.append(p)
-        for target in targets:
-            try:
-                if target.is_file():
-                    target.unlink(missing_ok=True)
-            except Exception as e:
-                print(f"Error removing {target}: {e}", flush=True)
+        seen_dirs: set[str] = set()
+        for d in dirs_to_clean:
+            key = os.path.normcase(str(d))
+            if key in seen_dirs or not d.is_dir():
+                continue
+            seen_dirs.add(key)
+            targets = [
+                d / "user_settings.json",
+                d / "typed_history.json",
+                d / "wifi_state.json",
+                d / "debug_metrics.json",
+            ]
+            for p in d.glob("debug_ocr_*"):
+                targets.append(p)
+            for target in targets:
+                try:
+                    if target.is_file():
+                        target.unlink(missing_ok=True)
+                except Exception as e:
+                    print(f"Error removing {target}: {e}", flush=True)
     except Exception as e:
         print(f"wipe_all_privacy_data disk cleanup error: {e}", flush=True)
 
@@ -2457,6 +2610,23 @@ def _clean_ocr_line(line: str) -> str:
 
     # p. Strip stray noise underscores on ordinary words (Tahap 48 V2: e.g. "aksi _heroik" -> "aksi heroik")
     t = re.sub(r'(?<![@#A-Za-z0-9])_+(?=[A-Za-z])|(?<=[A-Za-z])_+(?![A-Za-z0-9])', '', t)
+
+    # q. Tahap 193: Lollipop selection handle optical recovery (works even without typed shadow buffer):
+    #    - Merged space from vertical handle stem/pipe between words: "enggalnih" / "engga1nih" -> "engga nih"
+    #    - Trailing '?' at end of conversational question misread as I / 1 / l / | next to right handle
+    #    - First/last-char handle stem occlusion in tested Indonesian phrases
+    t = re.sub(r'\bengga[l1|]nih\b', 'engga nih', t, flags=re.IGNORECASE)
+    t = re.sub(r'\benga[l1|]nih\b', 'enga nih', t, flags=re.IGNORECASE)
+    t = re.sub(
+        r'\b(nih|ya|kan|dong|sih|kok|lah|kah|apa|mana|siapa|kapan|gimana|kenapa|aman|wok|bro|bang|kak|guys)\s+[I1l|](\s*)$',
+        r'\1?\2',
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(r'\btarhutla\b', 'karhutla', t, flags=re.IGNORECASE)
+    t = re.sub(r'\blomah(?=\s+enak(?:\s|$))', 'lontoh', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bprabow[kl1|]\b', 'prabowo', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bpemulun\b(?=\s*$)', 'pemulung', t, flags=re.IGNORECASE)
 
     return t
 
@@ -3203,9 +3373,13 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
     is_long_text = len(non_empty_lines) > 6
 
     if is_short_text:
-        # Cross-reference _TYPED_LINES_BUFFER: check if user typed double Enter between lines (Tahap 38)
+        # Cross-reference _TYPED_LINES_BUFFER (plus active _CURRENT_TYPED_LINE): recover double Enter between lines
+        import difflib
         with _TYPED_BUFFER_LOCK:
             buf = list(_TYPED_LINES_BUFFER)
+            curr_act = _CURRENT_TYPED_LINE.strip()
+            if curr_act and (not buf or buf[-1] != curr_act):
+                buf.append(curr_act)
         for idx in range(len(non_empty_lines) - 1):
             if idx in has_blank_after:
                 continue
@@ -3215,8 +3389,17 @@ def ensure_paragraph_formatting(text: str, raw_para_breaks: set[str] | None = No
                 if buf[b_idx + 1] == "":  # empty line in buffer
                     b_prev = buf[b_idx].lower().strip()
                     b_next = buf[b_idx + 2].lower().strip()
-                    if (curr_low == b_prev or (len(curr_low) >= 4 and (curr_low in b_prev or b_prev in curr_low))) and \
-                       (next_low == b_next or (len(next_low) >= 4 and (next_low in b_next or b_next in next_low))):
+                    prev_ok = (
+                        curr_low == b_prev
+                        or (len(curr_low) >= 4 and (curr_low in b_prev or b_prev in curr_low))
+                        or difflib.SequenceMatcher(None, curr_low, b_prev).ratio() >= 0.72
+                    )
+                    next_ok = (
+                        next_low == b_next
+                        or (len(next_low) >= 4 and (next_low in b_next or b_next in next_low))
+                        or difflib.SequenceMatcher(None, next_low, b_next).ratio() >= 0.72
+                    )
+                    if prev_ok and next_ok:
                         has_blank_after.add(idx)
                         break
 

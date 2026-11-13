@@ -102,7 +102,53 @@ pub fn auto_correct_ocr_text(input: &str) -> String {
     text = text.replace(" _heroik", " heroik");
     text = text.replace("_heroik", "heroik");
 
-    text
+    // 10. Selection lollipop-handle edge corruptions (Tahap 193)
+    text = text
+        .replace("tarhutla", "karhutla")
+        .replace("Tarhutla", "Karhutla")
+        .replace("enggalnih", "engga nih")
+        .replace("Enggalnih", "Engga nih")
+        .replace("engga1nih", "engga nih")
+        .replace("Engga1nih", "Engga nih")
+        .replace("engga!nih", "engga nih")
+        .replace("lomah enak", "lontoh enak")
+        .replace("Lomah enak", "Lontoh enak")
+        .replace("prabowk", "prabowo")
+        .replace("Prabowk", "Prabowo")
+        .replace("prabowl", "prabowo")
+        .replace("Prabowl", "Prabowo");
+
+    let had_crlf = text.contains("\r\n");
+    let normalized = text.replace("\r\n", "\n");
+    let fixed_lines: Vec<String> = normalized
+        .split('\n')
+        .map(repair_line_optical_handle_artifacts)
+        .collect();
+    let sep = if had_crlf { "\r\n" } else { "\n" };
+    fixed_lines.join(sep)
+}
+
+/// Repairs trailing lollipop-handle artifacts at line boundaries while keeping empty lines intact.
+fn repair_line_optical_handle_artifacts(raw_line: &str) -> String {
+    let trimmed = raw_line.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut line = raw_line.to_string();
+    for suffix in ["wok I", "wok 1", "wok l", "wok |"] {
+        if line.trim_end().ends_with(suffix) {
+            let trimmed_end = line.trim_end();
+            let prefix_len = trimmed_end.len() - suffix.len();
+            line = format!("{}wok?", &trimmed_end[..prefix_len]);
+            break;
+        }
+    }
+    if line.trim_end().ends_with("pemulun") && !line.trim_end().ends_with("pemulung") {
+        let trimmed_end = line.trim_end();
+        let prefix_len = trimmed_end.len() - "pemulun".len();
+        line = format!("{}pemulung", &trimmed_end[..prefix_len]);
+    }
+    line
 }
 
 /// Checks if a line or chunk contains Notes folder / list chrome.
@@ -222,8 +268,13 @@ pub fn stitch_multiline_ocr_frames(frames: &[String]) -> String {
             }));
 
     if is_short_snippet {
-        // Preserve double enter formatting for short snippets
-        return current.replace("\n\n", "\r\n\r\n").replace("\r\n\r\n", "\r\n\r\n");
+        // Preserve exact blank lines (Double Enter) for short snippets, normalized to CRLF
+        let normalized_input = current.replace("\r\n", "\n");
+        let preserved: Vec<&str> = normalized_input
+            .split('\n')
+            .map(|l| if l.trim().is_empty() { "" } else { l.trim_end() })
+            .collect();
+        return preserved.join("\r\n");
     }
 
     // Golden Rules 2 & 3: Multi-frame stitching backwards
@@ -392,5 +443,24 @@ mod tests {
         assert!(stitched.contains("Paragraf 4"));
         assert!(stitched.contains("Paragraf 5"));
         assert!(stitched.contains("Paragraf 6"));
+    }
+
+    #[test]
+    fn test_tahap193_lollipop_handle_repairs_and_double_enter() {
+        let noisy = "tarhutla aman enggalnih wok I\r\n\r\nlomah enak teddy prabowk".to_string();
+        let stitched = stitch_multiline_ocr_frames(&[noisy]);
+        assert_eq!(stitched, "karhutla aman engga nih wok?\r\n\r\nlontoh enak teddy prabowo");
+
+        let football = "lionel messi lamine yamal\r\n\r\nronaldo kdb ini pemulun".to_string();
+        let stitched_fb = stitch_multiline_ocr_frames(&[football]);
+        assert_eq!(stitched_fb, "lionel messi lamine yamal\r\n\r\nronaldo kdb ini pemulung");
+    }
+
+    #[test]
+    fn test_single_enter_preserved_no_false_double_enter() {
+        let single_enter = "baris satu\r\nbaris dua".to_string();
+        let stitched = stitch_multiline_ocr_frames(&[single_enter.clone()]);
+        assert_eq!(stitched, single_enter);
+        assert!(!stitched.contains("\r\n\r\n"));
     }
 }

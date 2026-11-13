@@ -7,9 +7,11 @@ import http.client
 import os
 import json
 import re
+import shutil
 import socket
 import sys
 import subprocess
+import tempfile
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -72,6 +74,43 @@ from handset.audio import audio_manager
 from handset import get_app_root, get_bundle_root
 
 
+def get_writable_temp_dir() -> Path:
+    """Return writable per-user temp directory (%TEMP%\\iPhoneLink) for OCR & debug artifacts."""
+    temp_dir = Path(tempfile.gettempdir()) / "iPhoneLink"
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return temp_dir
+
+
+def get_writable_appdata_dir() -> Path:
+    """Return writable per-user LocalAppData directory (%LOCALAPPDATA%\\iPhoneLink) with temp fallback."""
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    app_dir = Path(base) / "iPhoneLink"
+    try:
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir
+    except Exception:
+        return get_writable_temp_dir()
+
+
+def _is_writable_app_dir(path: Path) -> bool:
+    """Check if directory is writable and not inside a UAC-protected Program Files location."""
+    try:
+        norm = os.path.normcase(str(path.resolve()))
+        if "\\program files\\" in norm or "\\program files (x86)\\" in norm or norm.endswith("\\program files") or norm.endswith("\\program files (x86)"):
+            return False
+        if not path.is_dir():
+            return False
+        probe = path / f".writetest_{os.getpid()}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 def _resolve_web_root() -> Path:
     for cand in (
         get_app_root() / "handset" / "web",
@@ -83,23 +122,47 @@ def _resolve_web_root() -> Path:
     return Path(__file__).resolve().parent / "web"
 
 
+def _sync_temp_ocr_script(src: Path) -> Path:
+    """Mirror ocr_extractor.ps1 into %TEMP%\\iPhoneLink as an always-readable fallback."""
+    dst = get_writable_temp_dir() / "ocr_extractor.ps1"
+    try:
+        src_stat = src.stat()
+        needs_copy = (not dst.is_file()) or (dst.stat().st_size != src_stat.st_size) or (int(dst.stat().st_mtime) < int(src_stat.st_mtime))
+        if needs_copy:
+            shutil.copy2(src, dst)
+    except Exception:
+        pass
+    return dst
+
+
 def _resolve_ocr_script_path() -> str:
     for cand in (
         get_app_root() / "handset" / "ocr_extractor.ps1",
+        get_app_root() / "ocr_extractor.ps1",
+        get_app_root().parent / "ocr_extractor.ps1",
         get_bundle_root() / "handset" / "ocr_extractor.ps1",
         Path(__file__).resolve().parent / "ocr_extractor.ps1",
     ):
         if cand.is_file():
+            _sync_temp_ocr_script(cand)
             return str(cand)
+    temp_copy = get_writable_temp_dir() / "ocr_extractor.ps1"
+    if temp_copy.is_file():
+        return str(temp_copy)
     return str(Path(__file__).resolve().parent / "ocr_extractor.ps1")
 
 
 ROOT = _resolve_web_root()
-SETTINGS_FILE = get_app_root() / "user_settings.json"
 
 
 def get_settings_file_path() -> Path:
-    return get_app_root() / "user_settings.json"
+    app_root = get_app_root()
+    if _is_writable_app_dir(app_root):
+        return app_root / "user_settings.json"
+    return get_writable_appdata_dir() / "user_settings.json"
+
+
+SETTINGS_FILE = get_settings_file_path()
 
 
 def get_folder_instance_id(app_root: Path | None = None) -> str:
@@ -109,7 +172,7 @@ def get_folder_instance_id(app_root: Path | None = None) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
 
-_IS_FRESH_EXTRACTED_FOLDER: bool = not (get_app_root() / "user_settings.json").is_file()
+_IS_FRESH_EXTRACTED_FOLDER: bool = not get_settings_file_path().is_file()
 
 
 def is_fresh_extracted_folder() -> bool:
@@ -273,7 +336,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
         import base64, tempfile, subprocess, os, json
         valid_frames = []
         tmp_files = []
-        project_root = get_app_root()
+        temp_ocr_dir = get_writable_temp_dir()
 
         for idx, furl in enumerate(frame_data_urls):
             if not furl:
@@ -284,7 +347,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
                 if len(raw_bytes) < 100:
                     continue
                 suffix = ".png" if "image/png" in header else ".jpg"
-                tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                tmp = tempfile.NamedTemporaryFile(prefix="ocr_batch_", suffix=suffix, dir=str(temp_ocr_dir), delete=False)
                 tmp.write(raw_bytes)
                 tmp.close()
                 tmp_files.append(tmp.name)
@@ -304,7 +367,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
 
         if save_debug and valid_frames:
             try:
-                with open(project_root / "debug_ocr_raw.png", "wb") as f_raw:
+                with open(temp_ocr_dir / "debug_ocr_raw.png", "wb") as f_raw:
                     f_raw.write(valid_frames[-1][2])
             except Exception:
                 pass
@@ -351,7 +414,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
         if save_debug:
             try:
                 import json
-                project_root = get_app_root()
+                temp_ocr_dir = get_writable_temp_dir()
                 active_line, buffer_tail = get_debug_typed_state()
                 result_info = {
                     "raw_ocr_text": results[-1] if results else "",
@@ -360,7 +423,7 @@ def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str
                     "typed_active_line": active_line,
                     "typed_buffer_tail": buffer_tail,
                 }
-                with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                with open(temp_ocr_dir / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
                     json.dump(result_info, f_res, ensure_ascii=False, indent=2)
             except Exception as err:
                 print(f"debug_ocr_result.json save error: {err}", flush=True)
@@ -1103,10 +1166,10 @@ class Handler(BaseHTTPRequestHandler):
                         # Centralized OCR post-processing pipeline (Tahap 39/40)
                         final_text, auto_cleared = process_ocr_batch_results(batch_texts, return_meta=True)
 
-                        # Save debug info
+                        # Save debug info strictly inside writable %TEMP%\iPhoneLink
                         try:
                             import json
-                            project_root = get_app_root()
+                            temp_ocr_dir = get_writable_temp_dir()
                             active_line, buffer_tail = get_debug_typed_state()
                             result_info = {
                                 "raw_ocr_text": batch_texts[-1] if batch_texts else "",
@@ -1116,7 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "typed_active_line": active_line,
                                 "typed_buffer_tail": buffer_tail,
                             }
-                            with open(project_root / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
+                            with open(temp_ocr_dir / "debug_ocr_result.json", "w", encoding="utf-8") as f_res:
                                 json.dump(result_info, f_res, ensure_ascii=False, indent=2)
                         except Exception as err:
                             print(f"debug_ocr_result.json save error: {err}", flush=True)
@@ -1141,8 +1204,8 @@ class Handler(BaseHTTPRequestHandler):
                         err_trace = traceback.format_exc()
                         print(f"Async extract error: {err}\n{err_trace}", flush=True)
                         try:
-                            project_root = get_app_root()
-                            with open(project_root / "debug_ocr_error.log", "w", encoding="utf-8") as f_err:
+                            temp_ocr_dir = get_writable_temp_dir()
+                            with open(temp_ocr_dir / "debug_ocr_error.log", "w", encoding="utf-8") as f_err:
                                 f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
                         except Exception:
                             pass
@@ -1187,7 +1250,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/keyboard/typed":
             text_val = payload.get("text")
             key_val = payload.get("key")
-            if text_val:
+            if payload.get("commitLine"):
+                commit_and_reset_current_typed_line()
+            elif text_val:
                 record_typed_text(str(text_val))
             elif key_val:
                 record_typed_char(str(key_val))
@@ -1275,7 +1340,8 @@ class Handler(BaseHTTPRequestHandler):
         print(json.dumps(payload, indent=2), flush=True)
         print("==================================================================\n", flush=True)
         
-        log_path = get_app_root() / "debug_metrics.json"
+        log_dir = get_app_root() if _is_writable_app_dir(get_app_root()) else get_writable_temp_dir()
+        log_path = log_dir / "debug_metrics.json"
         data = {}
         if log_path.is_file():
             try:
@@ -1301,8 +1367,11 @@ class Handler(BaseHTTPRequestHandler):
         
         try:
             log_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception as e:
-            print(f"Failed to write debug_metrics.json: {e}", flush=True)
+        except Exception:
+            try:
+                (get_writable_temp_dir() / "debug_metrics.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+            except Exception as e:
+                print(f"Failed to write debug_metrics.json: {e}", flush=True)
 
     def _device(self, udid: str) -> None:
         try:

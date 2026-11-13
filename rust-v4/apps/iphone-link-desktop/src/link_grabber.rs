@@ -57,10 +57,24 @@ pub fn extract_and_normalize_links(raw_text: &str) -> Vec<String> {
                 || candidate.starts_with("youtube.com")
                 || candidate.starts_with("youtu.be")
                 || candidate.starts_with("threads.net")
+                || candidate.starts_with("threads.com")
                 || candidate.starts_with("x.com")
                 || candidate.starts_with("twitter.com")
             {
                 candidate = format!("https://{}", candidate);
+            }
+        }
+
+        // Strip Threads tracking query ?xmt=... on post links (keep clean canonical URL)
+        let lower_cand = candidate.to_ascii_lowercase();
+        if (lower_cand.contains("threads.com/") || lower_cand.contains("threads.net/"))
+            && lower_cand.contains("/post/")
+        {
+            if let Some(q_idx) = candidate.find('?') {
+                let query = &lower_cand[q_idx..];
+                if query.contains("xmt=") || query.contains("slof=") || query.contains("asc=") {
+                    candidate.truncate(q_idx);
+                }
             }
         }
 
@@ -86,6 +100,8 @@ pub fn is_valid_social_url(url: &str) -> bool {
         || lower.contains("youtu.be/")
         || lower.contains("threads.net/@")
         || lower.contains("threads.net/t/")
+        || lower.contains("threads.com/@")
+        || lower.contains("threads.com/t/")
         || lower.contains("x.com/")
         || lower.contains("twitter.com/"))
         && !url.contains(' ')
@@ -121,5 +137,16 @@ mod tests {
         assert_eq!(links.len(), 2);
         assert_eq!(links[0], "https://youtube.com/watch?v=dQw4w9WgXcQ");
         assert_eq!(links[1], "https://www.threads.net/@user/post/DA123456789");
+    }
+
+    #[test]
+    fn test_threads_com_xmt_strip() {
+        let raw = "https://www.threads.com/@lambe.turah/post/DVr46X9E_mX?xmt=AQF01m0p2k9zABC";
+        let links = extract_and_normalize_links(raw);
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0],
+            "https://www.threads.com/@lambe.turah/post/DVr46X9E_mX"
+        );
     }
 }

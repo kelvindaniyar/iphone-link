@@ -5408,11 +5408,59 @@ pub fn init_persistent_settings_from_disk(st: &mut AppState) {
     let _ = load_user_settings_from_path(&path, st);
 }
 
+pub const EMBEDDED_OCR_EXTRACTOR_PS1: &str = include_str!("../../../../handset/ocr_extractor.ps1");
+
+pub fn writable_temp_ocr_dir() -> PathBuf {
+    env::temp_dir().join("iPhoneLink")
+}
+
+pub fn ensure_temp_ocr_extractor_script() -> PathBuf {
+    let dir = writable_temp_ocr_dir();
+    let _ = fs::create_dir_all(&dir);
+    let target = dir.join("ocr_extractor.ps1");
+    let needs_write = match fs::read_to_string(&target) {
+        Ok(existing) => existing != EMBEDDED_OCR_EXTRACTOR_PS1,
+        Err(_) => true,
+    };
+    if needs_write {
+        let _ = fs::write(&target, EMBEDDED_OCR_EXTRACTOR_PS1.as_bytes());
+    }
+    target
+}
+
 pub fn wipe_privacy_files_in_dir(dir: &Path) {
-    for name in ["user_settings.json", "typed_history.json", "wifi_state.json", "debug_metrics.json"] {
+    for name in [
+        "user_settings.json",
+        "typed_history.json",
+        "wifi_state.json",
+        "debug_metrics.json",
+        "debug_ocr_raw.png",
+        "debug_ocr_cleaned.png",
+        "debug_ocr_result.json",
+        "debug_ocr_error.log",
+    ] {
         let p = dir.join(name);
         if p.is_file() {
             let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+fn wipe_temp_ocr_dir(dir: &Path) {
+    wipe_privacy_files_in_dir(dir);
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("ocr_batch_")
+                        || name.starts_with("qr_ocr_")
+                        || name.starts_with("debug_ocr_")
+                    {
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
         }
     }
 }
@@ -5432,6 +5480,11 @@ fn wipe_all_privacy_state_and_files() {
             wipe_privacy_files_in_dir(fb_dir);
         }
     }
+    if let Some(local_appdata) = env::var_os("LOCALAPPDATA") {
+        let py_dir = PathBuf::from(local_appdata).join("iPhoneLink");
+        wipe_privacy_files_in_dir(&py_dir);
+    }
+    wipe_temp_ocr_dir(&writable_temp_ocr_dir());
     if let Ok(cwd) = env::current_dir() {
         if cwd != exe_dir {
             wipe_privacy_files_in_dir(&cwd);
@@ -5760,6 +5813,27 @@ fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
         content_type: "application/json; charset=utf-8",
         body: actual_body,
     })
+}
+
+fn notify_worker_commit_typed_line_async() {
+    thread::spawn(move || {
+        use std::net::SocketAddr;
+        let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(120)) {
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+            let body = br#"{"commitLine":true}"#;
+            let header = format!(
+                "POST /api/keyboard/typed HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                WORKER_PORT,
+                body.len()
+            );
+            if stream.write_all(header.as_bytes()).is_ok() {
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            }
+        }
+    });
 }
 
 fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
@@ -7769,6 +7843,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         || path == "/mirror/gesture" || path == "/mirror/pli"
         || path == "/mirror/size" || path == "/mirror/restart"
     {
+        if path == "/mirror/touch" && req.method.eq_ignore_ascii_case("POST") {
+            let body_lower = String::from_utf8_lossy(&req.body_bytes).to_ascii_lowercase();
+            if !body_lower.contains("\"move\"") {
+                notify_worker_commit_typed_line_async();
+            }
+        }
         if let Some(resp) = forward_to_stream_server(req) {
             return resp;
         }
@@ -8516,6 +8596,7 @@ pub struct NativeServer {
 impl NativeServer {
     pub fn start(state: Arc<Mutex<AppState>>, web_dir: PathBuf, port: u16) -> Result<Self, String> {
         register_tray_app_state(state.clone());
+        let _ = ensure_temp_ocr_extractor_script();
         let mut listener_opt = None;
         for _ in 0..15 {
             if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{}", port)) {

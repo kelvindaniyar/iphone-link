@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ImagePath = "",
     [string]$ImagePaths = ""
 )
@@ -296,15 +296,15 @@ public class DualOcrPreprocessor {
             selectionColor = "none";
         }
 
-        // FULL-WIDTH HORIZONTAL STRIP: 0.03*W to 0.97*W
-        cropX = Math.Max(0, (int)(W * 0.03));
-        int cropW = Math.Min(W - cropX, (int)(W * 0.94));
+        // FULL-WIDTH HORIZONTAL STRIP: 0.022*W to 0.978*W (prevents right-edge clipping of descenders & trailing punctuation)
+        cropX = Math.Max(0, (int)(W * 0.022));
+        int cropW = Math.Min(W - cropX, (int)(W * 0.956));
 
         if (foundHighlight && !isFullViewport) {
-            // Tahap 48 V2: When selection is 1-2 lines (span < 0.07*H), use generous 0.022*H padding
+            // Tahap 193: Generous bottom padding preserves 'g'/'y'/'p'/'q' descenders and trailing '?' next to lower lollipop handle
             int selSpan = selMaxY - selMinY;
-            int padTop = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.022) : (int)(H * 0.008);
-            int padBot = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.022) : (int)(H * 0.012);
+            int padTop = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.022) : (int)(H * 0.010);
+            int padBot = (selSpan < (int)(H * 0.07)) ? (int)(H * 0.024) : (int)(H * 0.018);
             cropY = Math.Max((int)(H * 0.098), selMinY - padTop);
             int cropBottom = Math.Min(maxContentBottom, selMaxY + padBot);
             cropH = Math.Max(20, cropBottom - cropY);
@@ -342,16 +342,21 @@ public class DualOcrPreprocessor {
                 byte g = raw[sIdx + 1];
                 byte r = raw[sIdx + 2];
 
-                // Tahap 48 V2: Targeted Unwanted Objects Neutralization (TopNavButton limited to Y < 0.125*H)
+                // Tahap 193: Strict separation between Achromatic Dark Text Ink vs Saturated Selection Handle/Highlight
                 int absY = cropY + cy;
                 int absX = cropX + cx;
+                int maxRGB = Math.Max((int)r, Math.Max((int)g, (int)b));
+                int minRGB = Math.Min((int)r, Math.Min((int)g, (int)b));
+                int chroma = maxRGB - minRGB;
+                bool isDarkTextInk = (r < 145 && g < 145 && b < 145) && (chroma <= 32);
+                bool isYellowChroma = ((int)r - (int)b) >= 36 && r > 135;
+                bool isBlueChroma = ((int)b - (int)r) >= 36 && b > 135;
+                bool isHandleOrHighlight = !isDarkTextInk && (isYellowChroma || isBlueChroma);
                 bool isTopNavButton = (absY < (int)(H * 0.125)) && (absX < (int)(W * 0.18) || absX > (int)(W * 0.72));
-                bool isYellowHandle = (r > 195 && g > 125 && b < 100 && (r - b) >= 80 && !(r < 130 && g < 130 && b < 130));
-                bool isBlueHandle = (b > 155 && (b - r) >= 55 && (b - g) >= 25 && !(r < 110 && g < 110 && b < 110));
                 bool isRedSpellcheck = (r > 180 && g < 140 && b < 140 && (r - g) > 52 && (r - b) > 52);
 
-                // Kandidat 1 (Natural RGB):
-                if (isTopNavButton || isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                // Kandidat 1 (Natural RGB - preserves dark text ink, whitens handles/highlights):
+                if (isTopNavButton || isHandleOrHighlight || isRedSpellcheck) {
                     natPixels[nIdx] = 255;
                     natPixels[nIdx + 1] = 255;
                     natPixels[nIdx + 2] = 255;
@@ -363,13 +368,20 @@ public class DualOcrPreprocessor {
                     natPixels[nIdx + 3] = 255;
                 }
 
-                // Kandidat 2 (Red/Luma Contrast Enhanced):
+                // Kandidat 2 (Red/Luma Contrast Enhanced - darkens achromatic text ink, whitens ALL saturated handles):
                 if (!onlyCandidate1 && redPixels != null) {
                     int rIdx = redRow + (cx * 4);
-                    if (isTopNavButton || isYellowHandle || isBlueHandle || isRedSpellcheck) {
+                    if (isTopNavButton || isHandleOrHighlight || isRedSpellcheck) {
                         redPixels[rIdx] = 255;
                         redPixels[rIdx + 1] = 255;
                         redPixels[rIdx + 2] = 255;
+                        redPixels[rIdx + 3] = 255;
+                    } else if (isDarkTextInk) {
+                        int darkLum = (r + g + b) / 3;
+                        byte dv = (byte)(darkLum * 0.45);
+                        redPixels[rIdx] = dv;
+                        redPixels[rIdx + 1] = dv;
+                        redPixels[rIdx + 2] = dv;
                         redPixels[rIdx + 3] = 255;
                     } else {
                         int lum;
@@ -766,7 +778,7 @@ public class DualOcrPreprocessor {
                 $centerStep = $currCenterY - $prevCenterY
 
                 if ($sortedLines.Count -le 7) {
-                    if (($gap -gt ($avgH * 0.25)) -or ($centerStep -gt ($avgH * 1.52))) {
+                    if (($gap -gt ($avgH * 0.20)) -or ($centerStep -gt ($avgH * 1.42))) {
                         $lines += ""
                     }
                 } else {
@@ -791,7 +803,12 @@ public class DualOcrPreprocessor {
     }
 
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $projectRoot = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..'))
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'iPhoneLink'
+    try {
+        if (-not (Test-Path -LiteralPath $tempRoot)) {
+            New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        }
+    } catch {}
 
     if ($pathList.Count -eq 0) {
         exit 0
@@ -844,13 +861,18 @@ public class DualOcrPreprocessor {
         $hasDate = ($parsedNat -contains "<<<DOC_START>>>" -or $parsedRed -contains "<<<DOC_START>>>")
         $finalLines = @(Format-ParsedLinesToText $mergedParsed $hasDate)
 
-        # If it's the last (current) frame, save debug_ocr_cleaned.png
+        # If it's the last (current) frame, save debug_ocr_cleaned.png strictly inside writable %TEMP%\iPhoneLink
         if ($isLast) {
-            $saveBmp = if ($candRed -ne $null) { $candRed } else { $candNat }
-            if ($saveBmp -ne $null) {
-                $debugCleanedPath = [System.IO.Path]::Combine($projectRoot, 'debug_ocr_cleaned.png')
-                $saveBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
-            }
+            try {
+                $saveBmp = if ($candRed -ne $null) { $candRed } else { $candNat }
+                if ($saveBmp -ne $null -and $tempRoot) {
+                    if (-not (Test-Path -LiteralPath $tempRoot)) {
+                        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+                    }
+                    $debugCleanedPath = [System.IO.Path]::Combine($tempRoot, 'debug_ocr_cleaned.png')
+                    $saveBmp.Save($debugCleanedPath, [System.Drawing.Imaging.ImageFormat]::Png)
+                }
+            } catch {}
         }
 
         $srcH = $srcBmp.Height

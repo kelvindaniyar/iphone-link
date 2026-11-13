@@ -842,22 +842,32 @@ URL_START_RE = re.compile(
 )
 
 
+def get_writable_ocr_temp_dir() -> Path:
+    """Return writable per-user temp directory (%TEMP%\\iPhoneLink) for OCR frames."""
+    temp_dir = Path(tempfile.gettempdir()) / "iPhoneLink"
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return temp_dir
+
+
 def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...]:
-    """Triple-Zone Multi-Device Spotlight Preprocessing (Tahap 105..111).
+    """Triple-Zone Multi-Device Spotlight Preprocessing (Tahap 105..193).
 
     Zona 1 — Top Spotlight Box (iPhone 17 Pro Dynamic Island / top input box, y=0.040..0.255*H):
       1) rgb_top: Natural RGB @ 2.8x Bicubic (preserves subtle curves of Q, f, rkY)
       2) inv_top: Soft Inverted Grayscale @ 2.8x Bicubic (val = 255.0 - (luma - 55.0) * 1.45)
-      (Tahap 112: Varian 1C horizontal stretch removed - Zona 1 is strictly 1:1)
+      3) stretch_top: Anisotropic Horizontal Stretch @ 3.3x x 2.8x Soft Inverted Grayscale (separates tight 'cl', 'l'/'I', '0'/'O')
 
     Zona 2A — Pure Safari Search Card (iPhone 11 Pro Max, strictly below 'Situs Web' header at y=0.255*H):
-      3) inv_card: x = 0.192..0.960*W, y = 0.268..0.505*H, Soft Inverted Contrast @ 2.8x Bicubic
-      4) rgb_card: x = 0.192..0.960*W, y = 0.268..0.505*H, Natural RGB @ 2.8x Bicubic
+      4) inv_card: x = 0.192..0.960*W, y = 0.268..0.505*H, Soft Inverted Contrast @ 3.6x x 2.8x Bicubic
+      5) rgb_card: x = 0.192..0.960*W, y = 0.268..0.505*H, Natural RGB @ 3.6x x 2.8x Bicubic
 
     Zona 3 — Bottom Search Input Bar (iPhone 11 Pro Max, y=0.882..0.946*H, above Home Indicator):
-      5) inv_bot: x = 0.118..0.875*W, y = 0.882..0.946*H, Gentle Inverted Stretch @ 3.0x Bicubic with 36px white border
-      6) rgb_bot: x = 0.118..0.875*W, y = 0.882..0.946*H, Natural RGB @ 3.0x Bicubic with 36px border
-      7) anchored_bot: inv_bot with left-anchored "https://anchor.net/" prefix to activate WinRT OCR English dictionary (Tahap 107)
+      6) inv_bot: x = 0.118..0.875*W, y = 0.882..0.946*H, Gentle Inverted Stretch @ 3.6x x 2.8x Bicubic with 36px white border
+      7) rgb_bot: x = 0.118..0.875*W, y = 0.882..0.946*H, Natural RGB @ 3.6x x 2.8x Bicubic with 36px border
+      8) anchored_bot: inv_bot with left-anchored "https://anchor.net/" prefix to activate WinRT OCR English dictionary (Tahap 107)
     """
     W, H = img.size
 
@@ -876,8 +886,9 @@ def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...
     inv_top = gray_top.point(lut_soft)
     inv_top = ImageOps.autocontrast(inv_top, cutoff=2)
 
-    # Tahap 112: Varian 1C (Horizontal Stretch 3.4x) REMOVED from Zona 1 - it distorted letter widths
-    # (JIi -> Ji24, 37c -> 372c) and spawned fake 12-char shortcodes. Zona 1 uses strict 1:1 (2.8x x 2.8x).
+    # Varian 1C (Tahap 193): Anisotropic Horizontal Stretch 3.3x x 2.8x Soft Inverted Grayscale
+    stretch_top_gray = crop_top.resize((int(tw * 3.3), int(th * 2.8)), Image.BICUBIC).convert("L")
+    stretch_top = ImageOps.autocontrast(stretch_top_gray.point(lut_soft), cutoff=2)
 
     # --- Zona 2A: Pure Safari Search Card (iPhone 11 Pro Max, strictly y=0.268..0.505*H) ---
     box_card = (int(0.192 * W), int(0.268 * H), int(0.960 * W), int(0.505 * H))
@@ -954,7 +965,7 @@ def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...
     d_anc.text((margin_left, 18 + int((h_base - f_size) / 2)), "https://anchor.net/", fill=0, font=f_anc)
     anchored_bot.paste(crop_bot_text, (margin_left + pfx_w + gap_px, 18))
 
-    return rgb_top, inv_top, inv_card, rgb_card, inv_bot, rgb_bot, anchored_bot
+    return rgb_top, inv_top, stretch_top, inv_card, rgb_card, inv_bot, rgb_bot, anchored_bot
 
 
 def _prepare_zone1_rescue_image(img: Image.Image) -> Image.Image:
@@ -1298,6 +1309,7 @@ def _run_winrt_ocr_batch(imgs: list[Image.Image]) -> list[list[str]]:
     results: list[list[str]] = [[] for _ in imgs]
     tmp_paths: list[str] = []
     active_orig_indices: list[int] = []
+    ocr_temp_dir = get_writable_ocr_temp_dir()
     for orig_i, im in enumerate(imgs):
         g_chk = im if im.mode == "L" else im.convert("L")
         if g_chk.width > 80 and g_chk.height > 80:
@@ -1306,7 +1318,7 @@ def _run_winrt_ocr_batch(imgs: list[Image.Image]) -> list[list[str]]:
             lo_c, hi_c = g_chk.getextrema()
         if (hi_c - lo_c) < 18:
             continue
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp = tempfile.NamedTemporaryFile(prefix="qr_ocr_", suffix=".png", dir=str(ocr_temp_dir), delete=False)
         im.save(tmp.name)
         tmp.close()
         tmp_paths.append(tmp.name)
@@ -1506,12 +1518,12 @@ def clean_extracted_url(raw_url: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Threads /post/ shortcode normalizer
+    # Threads /post/ canonicalizer (Tahap 193): strip ?xmt=... tracking tokens cleanly
     u = re.sub(
-        r'(threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_-]{11})[4712Il\|\?/\s\-_]*(?:xmt=|mt=)?',
-        r'\g<1>?xmt=',
+        r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,14})(?:[4712Il\|]*[/?].*)?$',
+        r'\g<1>',
         u,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     )
 
     # Repair OCR hallucinated slash inside 11-character shortcode (e.g. DU5fAYk/pqA -> DU5fAYkkpqA)
@@ -1739,7 +1751,334 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
         if final_cand and not (".." in final_cand or "…" in final_cand):
             candidates.append(final_cand)
 
+    # Tahap 193: When multiple distinct URLs appear in one Spotlight crop (e.g. residual older URL above
+    # and newly pasted URL below), move the bottom-most distinct URL first while preserving sibling order per URL.
+    if len(candidates) >= 2:
+        seen_bases: list[str] = []
+        base_buckets: dict[str, list[str]] = {}
+        for cand in candidates:
+            m_b = re.match(r'^(https?://[^/]+/(?:p|reel|tv|@[A-Za-z0-9_.\-]+/post|share)/[A-Za-z0-9_\-]+)', cand, re.IGNORECASE)
+            b_key = m_b.group(1).lower() if m_b else cand.lower()
+            if b_key not in base_buckets:
+                seen_bases.append(b_key)
+                base_buckets[b_key] = []
+            base_buckets[b_key].append(cand)
+        if len(seen_bases) >= 2:
+            reordered: list[str] = []
+            for b_key in reversed(seen_bases):
+                reordered.extend(base_buckets[b_key])
+            return reordered
+
     return candidates
+
+
+def _segment_text_line_glyphs(gray: Image.Image) -> list[list[tuple[int, int, int, int, Image.Image]]]:
+    """Segment dark-on-light upscaled grayscale crop into horizontal text lines and glyph bounding boxes."""
+    w, h = gray.size
+    if w < 20 or h < 12:
+        return []
+    px = gray.load()
+    # Sample border brightness to auto-detect dark theme (white text on dark card) vs light theme
+    samples: list[int] = []
+    for x in range(0, w, max(1, w // 32)):
+        samples.append(px[x, 0])
+        samples.append(px[x, h - 1])
+    samples.sort()
+    bg_med = samples[len(samples) // 2] if samples else 255
+    invert_needed = bg_med < 128
+
+    vals = gray.point(lambda p: 255 - p) if invert_needed else gray
+    ipx = vals.load()
+    # Robust contrast threshold inside crop
+    lo_v, hi_v = vals.getextrema()
+    if (hi_v - lo_v) < 28:
+        return []
+    thresh = max(65, min(200, int(lo_v + (hi_v - lo_v) * 0.56)))
+
+    row_has_ink: list[bool] = []
+    for y in range(h):
+        ink_cnt = 0
+        for x in range(w):
+            if ipx[x, y] < thresh:
+                ink_cnt += 1
+        row_has_ink.append(ink_cnt >= 3)
+
+    raw_bands: list[tuple[int, int]] = []
+    in_band = False
+    b_start = 0
+    for y, active in enumerate(row_has_ink):
+        if active and not in_band:
+            b_start = y
+            in_band = True
+        elif not active and in_band:
+            raw_bands.append((b_start, y - 1))
+            in_band = False
+    if in_band:
+        raw_bands.append((b_start, h - 1))
+
+    # Merge bands separated by 1px gap
+    bands: list[tuple[int, int]] = []
+    for ry0, ry1 in raw_bands:
+        if bands and (ry0 - bands[-1][1]) <= 2:
+            bands[-1] = (bands[-1][0], ry1)
+        elif (ry1 - ry0 + 1) >= 10:
+            bands.append((ry0, ry1))
+
+    lines_glyphs: list[list[tuple[int, int, int, int, Image.Image]]] = []
+    for ry0, ry1 in bands:
+        band_h = ry1 - ry0 + 1
+        col_has_ink: list[bool] = []
+        for x in range(w):
+            col_active = False
+            for y in range(ry0, ry1 + 1):
+                if ipx[x, y] < thresh:
+                    col_active = True
+                    break
+            col_has_ink.append(col_active)
+
+        row_glyphs: list[tuple[int, int, int, int, Image.Image]] = []
+        in_g = False
+        gx0 = 0
+        for x, active in enumerate(col_has_ink):
+            if active and not in_g:
+                gx0 = x
+                in_g = True
+            elif not active and in_g:
+                gx1 = x - 1
+                in_g = False
+                ty0, ty1 = ry1, ry0
+                for yy in range(ry0, ry1 + 1):
+                    for xx in range(gx0, gx1 + 1):
+                        if ipx[xx, yy] < thresh:
+                            if yy < ty0:
+                                ty0 = yy
+                            if yy > ty1:
+                                ty1 = yy
+                if ty1 >= ty0 and (ty1 - ty0 + 1) >= max(6, int(band_h * 0.30)):
+                    patch = vals.crop((gx0, ty0, gx1 + 1, ty1 + 1)).point(lambda v: 0 if v < thresh else 255)
+                    row_glyphs.append((gx0, ty0, gx1, ty1, patch))
+        if in_g:
+            gx1 = w - 1
+            ty0, ty1 = ry1, ry0
+            for yy in range(ry0, ry1 + 1):
+                for xx in range(gx0, gx1 + 1):
+                    if ipx[xx, yy] < thresh:
+                        if yy < ty0:
+                            ty0 = yy
+                        if yy > ty1:
+                            ty1 = yy
+            if ty1 >= ty0 and (ty1 - ty0 + 1) >= max(6, int(band_h * 0.30)):
+                patch = vals.crop((gx0, ty0, gx1 + 1, ty1 + 1)).point(lambda v: 0 if v < thresh else 255)
+                row_glyphs.append((gx0, ty0, gx1, ty1, patch))
+        if len(row_glyphs) >= 8:
+            lines_glyphs.append(row_glyphs)
+    return lines_glyphs
+
+
+def _is_slash_glyph(patch: Image.Image, gw: int, gh: int, ref_cap_h: float) -> bool:
+    if gw < 2 or gh < max(8, int(ref_cap_h * 0.90)):
+        return False
+    ppx = patch.load()
+    top_xs: list[int] = []
+    bot_xs: list[int] = []
+    for y in range(min(gh, max(2, gh // 4))):
+        for x in range(gw):
+            if ppx[x, y] == 0:
+                top_xs.append(x)
+    for y in range(max(0, gh - max(2, gh // 4)), gh):
+        for x in range(gw):
+            if ppx[x, y] == 0:
+                bot_xs.append(x)
+    if not top_xs or not bot_xs:
+        return False
+    top_cx = sum(top_xs) / len(top_xs)
+    bot_cx = sum(bot_xs) / len(bot_xs)
+    return (top_cx - bot_cx) >= max(2.0, gw * 0.25)
+
+
+def _has_digit_one_beak(patch: Image.Image) -> bool:
+    """Detect top-left diagonal beak/serif of digit '1' vs straight vertical stem of 'l'/'I'."""
+    gw, gh = patch.size
+    if gw < 3 or gh < 10:
+        return False
+    ppx = patch.load()
+    top_end = max(2, int(gh * 0.36))
+    bot_start = max(top_end + 1, int(gh * 0.48))
+    bot_end = max(bot_start + 1, int(gh * 0.88))
+
+    stem_lefts: list[int] = []
+    stem_rights: list[int] = []
+    for y in range(bot_start, min(gh, bot_end)):
+        xs = [x for x in range(gw) if ppx[x, y] == 0]
+        if xs:
+            stem_lefts.append(min(xs))
+            stem_rights.append(max(xs))
+    if not stem_lefts:
+        return False
+    stem_lefts.sort()
+    stem_left = stem_lefts[len(stem_lefts) // 2]
+
+    top_left = gw
+    for y in range(0, top_end):
+        for x in range(gw):
+            if ppx[x, y] == 0 and x < top_left:
+                top_left = x
+
+    overhang = stem_left - top_left
+    return overhang >= max(2, int(round(gw * 0.22)))
+
+
+def verify_shortcode_glyph_geometry(
+    img: Optional[Image.Image],
+    url: Optional[str],
+    variant_candidates: Optional[list[str]] = None,
+) -> Optional[str]:
+    """Tahap 193: Optical Stem & Oval Glyph Geometry Verifier ('l' vs 'I' vs '1' and '0' vs 'O')."""
+    if not img or not url:
+        return url
+
+    m_url = re.match(
+        r'^(https?://(?:www\.)?(?:instagram\.com/(?:p|reel|tv)/|threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/))([A-Za-z0-9_\-]+)(.*)$',
+        url,
+        re.IGNORECASE,
+    )
+    if not m_url:
+        return url
+    url_prefix, code, url_suffix = m_url.groups()
+    if len(code) < 10 or not any(c in code for c in "lI10O"):
+        return url
+
+    W, H = img.size
+    zone_boxes = [
+        (int(0.040 * W), int(0.040 * H), int(0.960 * W), int(0.255 * H)),  # Zona 1: iPhone 17 Pro Spotlight
+        (int(0.192 * W), int(0.268 * H), int(0.960 * W), int(0.505 * H)),  # Zona 2A: iPhone 11 Pro Max Card
+    ]
+
+    L = len(code)
+    best_line_glyphs: Optional[list[tuple[int, int, int, int, Image.Image]]] = None
+    best_start = -1
+    best_align_score = -1e9
+
+    for box in zone_boxes:
+        if box[2] <= box[0] + 10 or box[3] <= box[1] + 10:
+            continue
+        crop = img.crop(box)
+        cw, ch = crop.size
+        up = crop.resize((cw * 3, ch * 3), Image.BICUBIC).convert("L")
+        lines = _segment_text_line_glyphs(up)
+        for line in lines:
+            if len(line) < L:
+                continue
+            med_h = sorted((g[3] - g[1] + 1) for g in line)[len(line) // 2]
+            for start in range(0, len(line) - L + 1):
+                win = line[start : start + L]
+                score = 0.0
+                # Boundary context: prefer preceding '/' (start > 0) or start == 0, AND trailing '/' at start + L
+                if start > 0:
+                    pg = line[start - 1]
+                    if _is_slash_glyph(pg[4], pg[2] - pg[0] + 1, pg[3] - pg[1] + 1, float(med_h)):
+                        score += 6.0
+                elif start == 0:
+                    score += 3.0
+                if start + L < len(line):
+                    ng = line[start + L]
+                    if _is_slash_glyph(ng[4], ng[2] - ng[0] + 1, ng[3] - ng[1] + 1, float(med_h)):
+                        score += 6.0
+
+                for k, g in enumerate(win):
+                    ch_k = code[k]
+                    gw = g[2] - g[0] + 1
+                    gh = g[3] - g[1] + 1
+                    ar = gw / float(max(1, gh))
+                    if ch_k in ("l", "I", "i", "1", "j"):
+                        score += 3.0 if ar <= 0.56 else -4.0
+                    elif ch_k in ("m", "w", "M", "W"):
+                        score += 2.5 if ar >= 0.65 else -2.5
+                    elif ch_k in ("0", "O"):
+                        score += 2.0 if 0.45 <= ar <= 0.96 else -3.0
+                    elif ch_k not in ("-", "_"):
+                        if _is_slash_glyph(g[4], gw, gh, float(med_h)):
+                            score -= 5.0
+                if score > best_align_score:
+                    best_align_score = score
+                    best_line_glyphs = line
+                    best_start = start
+
+    if best_line_glyphs is None or best_start < 0 or best_align_score < 6.0:
+        return url
+
+    aligned = best_line_glyphs[best_start : best_start + L]
+
+    # Calibrate cap height & top Y from unambiguous uppercase characters (never I/O)
+    cap_tops: list[int] = []
+    cap_bots: list[int] = []
+    d_widths: list[int] = []
+    for k, g in enumerate(aligned):
+        ch_k = code[k]
+        if ch_k in "ABCDEFGHJKMNPQRSTUVWXYZ" and ch_k not in ("I", "O"):
+            cap_tops.append(g[1])
+            cap_bots.append(g[3])
+            if ch_k == "D":
+                d_widths.append(g[2] - g[0] + 1)
+
+    if not cap_tops:
+        return url
+
+    cap_tops_sorted = sorted(cap_tops)
+    cap_bots_sorted = sorted(cap_bots)
+    ref_cap_top = cap_tops_sorted[len(cap_tops_sorted) // 2]
+    ref_cap_bot = cap_bots_sorted[len(cap_bots_sorted) // 2]
+    ref_cap_h = max(8, ref_cap_bot - ref_cap_top + 1)
+    ref_d_w = (sum(d_widths) / len(d_widths)) if d_widths else None
+
+    # Gather sibling candidate codes sharing exact length & non-ambiguous chars
+    sibling_codes: list[str] = []
+    if variant_candidates:
+        for vc in variant_candidates:
+            m_v = re.match(
+                r'^https?://(?:www\.)?(?:instagram\.com/(?:p|reel|tv)/|threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/)([A-Za-z0-9_\-]+)',
+                vc or "",
+                re.IGNORECASE,
+            )
+            if m_v and len(m_v.group(1)) == L:
+                sibling_codes.append(m_v.group(1))
+
+    chars_out = list(code)
+    for k, g in enumerate(aligned):
+        ch_k = chars_out[k]
+        gw = g[2] - g[0] + 1
+        gh = g[3] - g[1] + 1
+        if ch_k in ("0", "O"):
+            ar = gw / float(max(1, gh))
+            if ar <= 0.685:
+                chars_out[k] = "0"
+            elif ar >= 0.725:
+                chars_out[k] = "O"
+            elif ref_d_w is not None:
+                if gw <= ref_d_w * 0.95:
+                    chars_out[k] = "0"
+                elif gw >= ref_d_w * 1.05:
+                    chars_out[k] = "O"
+        elif ch_k in ("l", "I", "1"):
+            if _has_digit_one_beak(g[4]):
+                chars_out[k] = "1"
+            else:
+                # Ascender 'l' extends at or slightly above cap_top (gy0 < ref_cap_top or gh > ref_cap_h)
+                if g[1] <= ref_cap_top - 1 or gh >= ref_cap_h + 1:
+                    chars_out[k] = "l"
+                elif g[1] >= ref_cap_top + 1 or gh <= ref_cap_h - 1:
+                    chars_out[k] = "I"
+                else:
+                    # Tied height on compressed frame: consult variant_candidates consensus if available
+                    votes_l = sum(1 for sc in sibling_codes if sc[k] == "l")
+                    votes_I = sum(1 for sc in sibling_codes if sc[k] == "I")
+                    if votes_l > votes_I:
+                        chars_out[k] = "l"
+                    elif votes_I > votes_l:
+                        chars_out[k] = "I"
+
+    verified_code = "".join(chars_out)
+    return f"{url_prefix}{verified_code}{url_suffix}"
 
 
 def _is_complete_top_box_url(u: Optional[str]) -> bool:
@@ -1976,15 +2315,13 @@ def _extract_spotlight_zones(
 
         batch_lines = _run_winrt_ocr_batch(ocr_inputs)
 
-        # Tahap 112 Pilar 2: iPhone 17 Pro top-box isolation. If Zona 1 (y=0.040..0.255*H) already yields a
-        # complete non-elliptical URL, extract PURELY from Zona 1 - never fuse with Zona 2A / Zona 3 noise
-        # (Share Sheet buttons, Mail / Websites list) which spawned fake 12-char shortcodes.
+        # Tahap 112..193: iPhone 17 Pro top-box isolation across Variants 1A (rgb), 1B (inv), and 1C (3.3x stretch).
         zone1_offsets = list(head_offsets)
         if tail_start_idx != -1:
             zone1_offsets.append(tail_start_idx)
         zone1_candidates: list[str] = []
         for z_off in zone1_offsets:
-            for b_idx in (z_off + 0, z_off + 1):
+            for b_idx in (z_off + 0, z_off + 1, z_off + 2):
                 if b_idx < len(batch_lines):
                     z_lines = batch_lines[b_idx]
                     zone1_candidates.extend(assemble_multiline_url_from_lines(z_lines))
@@ -2014,6 +2351,7 @@ def _extract_spotlight_zones(
         if any(_is_complete_top_box_url(u) for u in zone1_candidates):
             top_best = pick_best_extracted_url(zone1_candidates)
             if top_best and _is_complete_top_box_url(top_best):
+                top_best = verify_shortcode_glyph_geometry(img, top_best, zone1_candidates) or top_best
                 out_top = (top_best, zone1_candidates, bot_fragments)
                 if cache_key is not None and img_tail is None and not extra_frames:
                     _SPOTLIGHT_FRAME_CACHE.append((cache_key, out_top))
@@ -2028,9 +2366,9 @@ def _extract_spotlight_zones(
 
         # Process head zones across all head frames:
         for h_off in head_offsets:
-            # Indices h_off + 0, h_off + 1: Zona 1 (Spotlight Top Box iPhone 17 Pro) - Tahap 112: 2 variants (1A rgb, 1B inv)
-            # Indices h_off + 2, h_off + 3: Zona 2A (Safari Search Card iPhone 11 Pro Max)
-            for b_idx in (h_off + 0, h_off + 1, h_off + 2, h_off + 3):
+            # Indices h_off + 0..2: Zona 1 (Spotlight Top Box iPhone 17 Pro) - 3 variants (1A rgb, 1B inv, 1C 3.3x)
+            # Indices h_off + 3..4: Zona 2A (Safari Search Card iPhone 11 Pro Max)
+            for b_idx in (h_off + 0, h_off + 1, h_off + 2, h_off + 3, h_off + 4):
                 if b_idx < len(batch_lines):
                     lines = batch_lines[b_idx]
                     head_card_candidates.extend(assemble_multiline_url_from_lines(lines))
@@ -2041,12 +2379,12 @@ def _extract_spotlight_zones(
                             if cl_u:
                                 head_card_candidates.append(cl_u)
 
-            # Indices h_off + 4, h_off + 5: Zona 3 inv & rgb (Bottom Search Input Bar)
-            for b_idx in (h_off + 4, h_off + 5):
+            # Indices h_off + 5, h_off + 6: Zona 3 inv & rgb (Bottom Search Input Bar)
+            for b_idx in (h_off + 5, h_off + 6):
                 if b_idx < len(batch_lines):
                     head_z3_lines.extend(batch_lines[b_idx])
-            # Index h_off + 6: Zona 3 anchored
-            b_anc = h_off + 6
+            # Index h_off + 7: Zona 3 anchored
+            b_anc = h_off + 7
             if b_anc < len(batch_lines):
                 for l in batch_lines[b_anc]:
                     stripped = re.sub(r'^.*?(?:anchor|anch0r|anehor|ancnor)[a-z0-9\.\-_]*\.(?:net|com|org)/+\s*', '', l, flags=re.IGNORECASE)
@@ -2058,7 +2396,7 @@ def _extract_spotlight_zones(
 
         # Process tail zones if img_tail was provided
         if tail_start_idx != -1:
-            for offset in (0, 1, 2, 3):
+            for offset in (0, 1, 2, 3, 4):
                 b_idx = tail_start_idx + offset
                 if b_idx < len(batch_lines):
                     lines = batch_lines[b_idx]
@@ -2070,11 +2408,11 @@ def _extract_spotlight_zones(
                             if cl_u:
                                 tail_card_candidates.append(cl_u)
 
-            for offset in (4, 5):
+            for offset in (5, 6):
                 b_idx = tail_start_idx + offset
                 if b_idx < len(batch_lines):
                     tail_z3_lines.extend(batch_lines[b_idx])
-            b_anc = tail_start_idx + 6
+            b_anc = tail_start_idx + 7
             if b_anc < len(batch_lines):
                 for l in batch_lines[b_anc]:
                     stripped = re.sub(r'^.*?(?:anchor|anch0r|anehor|ancnor)[a-z0-9\.\-_]*\.(?:net|com|org)/+\s*', '', l, flags=re.IGNORECASE)
@@ -2114,7 +2452,7 @@ def _extract_spotlight_zones(
 
         best_so_far = pick_best_extracted_url(all_candidates)
         if best_so_far and len(best_so_far) > 35 and not best_so_far.rstrip('/').endswith(("/p", "/reel", "/tv", "/post", "/share")):
-            if "igsh=" in best_so_far or "xmt=" in best_so_far or "si=" in best_so_far:
+            if "igsh=" in best_so_far or "xmt=" in best_so_far or "si=" in best_so_far or re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,}', best_so_far, re.IGNORECASE):
                 best_url = best_so_far
     except Exception as e_box:
         print(f"[Visual QR Bridge / Spotlight] Triple-zone OCR error: {e_box}", flush=True)
@@ -2130,6 +2468,9 @@ def _extract_spotlight_zones(
             except Exception as e_full:
                 print(f"[Visual QR Bridge / URL Scanner] Full viewport OCR error: {e_full}", flush=True)
         best_url = pick_best_extracted_url(all_candidates)
+
+    if best_url:
+        best_url = verify_shortcode_glyph_geometry(img, best_url, all_candidates) or best_url
 
     out = (best_url, all_candidates, bot_fragments)
     if cache_key is not None and img_tail is None and not extra_frames:
