@@ -96,8 +96,8 @@
 ## Downloads, Quick Setup &amp; Verified SHA-256 (`v4.0.0`)
 
 ### 1. Choose Your Package
-- **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`60.52 MB`)** - Official 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Includes isolated Python 3.12 runtime, automatic LAN Firewall rules, Desktop/Start Menu shortcuts, and **Microsoft HEVC Codec (`2.5.48.0`)** bundled offline.
-- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.47 MB`)** - 21 files (`3.45 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
+- **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`60.53 MB`)** - Official 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Includes isolated Python 3.12 runtime, automatic LAN Firewall rules, Desktop/Start Menu shortcuts, and **Microsoft HEVC Codec (`2.5.48.0`)** bundled offline.
+- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.47 MB`)** - 21 files (`3.48 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
 - **Optional HEVC Standalone: `Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle` (`11.2 MB`)** - Already installed automatically by `Setup.exe`; download manually only if using Portable ZIP on a fresh Windows PC without H.265 codecs.
 
 ### 2. Prerequisites on Windows &amp; iPhone (`iOS 27.2` / `27.0+`)
@@ -107,9 +107,9 @@
 
 | Artifact (`v4.0.0`) | Size | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.52 MB` (`63,460,245 B`) | `4EF53BA57599D98EFC7DA9169C3B35C0CB9F0DE964732A7BCCC0536F0939DA43` |
-| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.47 MB` (`1,543,889 B`) | `E30E7EB27554965DF2C61F6588CEFCD4BECC628B41C2D96106032EE91FC00292` |
-| **`iPhone Link.exe`** | `1.29 MiB` (`1,350,144 B`) | `D440FFF5A3E69F0984AD5064D10B58DFFD24A3FD80A7306048485BFC022E40F5` |
+| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.53 MB` (`63,465,735 B`) | `1AC11286D3BAF412540630075362E77C4B9B9CE0928EF06E11A01B547B1E332E` |
+| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.47 MB` (`1,546,062 B`) | `15F9443CC10D28B456B40409C8C0B4D5FB1D055ECB052ECFB364AE4AF2875666` |
+| **`iPhone Link.exe`** | `1.30 MiB` (`1,360,896 B`) | `33BFCC2C4ED12B204445931510DF20267B9140A238E8ED61EF4436DD7DAC92BC` |
 | **`Microsoft.HEVCVideoExtension_2.5.48.0...AppxBundle`** | `11.2 MB` (`11,222,383 B`) | `275FB4C0AE406D51892E87281EFF0BB3B9456D9A9493813CC059EEB8A83D39BA` |
 
 ---

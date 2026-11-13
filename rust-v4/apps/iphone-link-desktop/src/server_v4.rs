@@ -471,18 +471,16 @@ html[data-theme="light"] body .side-drawer .panel-audio-settings {
   box-shadow: none !important;
 }
 
-/* TIER 3: 3D SPECULAR LIQUID GLASS CARDS (.card & .launchpad-device-card) */
+/* TIER 3: 3D SPECULAR LIQUID GLASS CARDS (.card) */
 html body .card,
 html body .glass-card,
-html body .launchpad-device-card,
 html body .device-card,
 html body #control-pane .card,
 html body #control-pane .glass-card,
 html body .side-drawer .card,
 html body .side-drawer .glass-card,
 html[data-theme="dark"] body .card,
-html[data-theme="dark"] body .glass-card,
-html[data-theme="dark"] body .launchpad-device-card {
+html[data-theme="dark"] body .glass-card {
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%) !important;
   background-color: rgba(255, 255, 255, 0.03) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
@@ -497,7 +495,6 @@ html[data-theme="dark"] body .launchpad-device-card {
 
 html[data-theme="light"] body .card,
 html[data-theme="light"] body .glass-card,
-html[data-theme="light"] body .launchpad-device-card,
 html[data-theme="light"] body .device-card,
 html[data-theme="light"] body .panel-card,
 html[data-theme="light"] body .settings-card,
@@ -1293,6 +1290,257 @@ html body #app-root.app.is-fullsize.drawer-open #control-pane {
   flex: 0 0 360px !important;
   margin-left: auto !important;
   margin-right: 0 !important;
+}
+
+/* TAHAP 192: 3D TACTILE LIQUID GLASS LAUNCHPAD CAPSULES & CONNECTION SWITCHER */
+html body .launchpad-device-card,
+html body #launchpad-device-card,
+html[data-theme="dark"] body .launchpad-device-card,
+html[data-theme="dark"] body #launchpad-device-card {
+  width: 262px !important;
+  padding: 8px 10px 8px 14px !important;
+  gap: 10px !important;
+  border-radius: 999px !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.13) 0%, rgba(30, 41, 59, 0.48) 52%, rgba(14, 165, 233, 0.10) 100%) !important;
+  background-color: transparent !important;
+  backdrop-filter: blur(22px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    0 12px 28px -6px rgba(0, 0, 0, 0.52),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.35) !important;
+  transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+html body .launchpad-device-card:hover,
+html body #launchpad-device-card:hover {
+  border-color: rgba(56, 189, 248, 0.38) !important;
+  box-shadow:
+    0 14px 32px -6px rgba(0, 0, 0, 0.6),
+    0 0 18px rgba(14, 165, 233, 0.14),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.42) !important;
+  transform: translateY(-1px) !important;
+}
+
+html[data-theme="light"] body .launchpad-device-card,
+html[data-theme="light"] body #launchpad-device-card,
+body.light-mode .launchpad-device-card,
+body.light-mode #launchpad-device-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.68) 0%, rgba(241, 245, 249, 0.48) 55%, rgba(224, 242, 254, 0.56) 100%) !important;
+  background-color: transparent !important;
+  backdrop-filter: blur(22px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(185%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.88) !important;
+  box-shadow:
+    0 10px 26px -6px rgba(15, 23, 42, 0.12),
+    0 2px 6px rgba(15, 23, 42, 0.05),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 1px 0 rgba(14, 165, 233, 0.10) !important;
+}
+
+html[data-theme="light"] body .launchpad-device-card:hover,
+html[data-theme="light"] body #launchpad-device-card:hover,
+body.light-mode .launchpad-device-card:hover,
+body.light-mode #launchpad-device-card:hover {
+  border-color: rgba(14, 165, 233, 0.42) !important;
+  box-shadow:
+    0 12px 30px -6px rgba(15, 23, 42, 0.16),
+    0 0 16px rgba(14, 165, 233, 0.14),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 1px 0 rgba(14, 165, 233, 0.14) !important;
+  transform: translateY(-1px) !important;
+}
+
+html body .launchpad-status-dot,
+html body .device-dot,
+html body #launchpad-status-dot {
+  background-color: #10B981 !important;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.22), 0 0 10px rgba(16, 185, 129, 0.65) !important;
+}
+
+html[data-theme="light"] body #launchpad-device-name,
+html[data-theme="light"] body .launchpad-card-title,
+body.light-mode #launchpad-device-name,
+body.light-mode .launchpad-card-title {
+  color: #0F172A !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+}
+
+html[data-theme="light"] body #launchpad-device-sub,
+html[data-theme="light"] body .launchpad-card-sub,
+body.light-mode #launchpad-device-sub,
+body.light-mode .launchpad-card-sub {
+  color: #334155 !important;
+  font-weight: 500 !important;
+  text-shadow: none !important;
+}
+
+html body #launchpad-scan-btn,
+html body .launchpad-icon-btn {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  flex: 0 0 28px !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 2px 6px rgba(0, 0, 0, 0.20) !important;
+  color: #E2E8F0 !important;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+
+html body #launchpad-scan-btn:hover,
+html body .launchpad-icon-btn:hover {
+  border-color: rgba(56, 189, 248, 0.55) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 0 12px rgba(14, 165, 233, 0.38) !important;
+  color: #FFFFFF !important;
+  transform: rotate(30deg) !important;
+}
+
+html[data-theme="light"] body #launchpad-scan-btn,
+html[data-theme="light"] body .launchpad-icon-btn,
+body.light-mode #launchpad-scan-btn,
+body.light-mode .launchpad-icon-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.68)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 1), 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+  color: #0F172A !important;
+}
+
+html body #launchpad-transport-row,
+html body .launchpad-transport-row {
+  width: 244px !important;
+  height: 36px !important;
+  padding: 4px !important;
+  border-radius: 999px !important;
+  background: linear-gradient(180deg, rgba(8, 11, 18, 0.58) 0%, rgba(15, 23, 42, 0.44) 100%) !important;
+  background-color: transparent !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 20px -4px rgba(0, 0, 0, 0.38) !important;
+}
+
+html[data-theme="light"] body #launchpad-transport-row,
+html[data-theme="light"] body .launchpad-transport-row,
+body.light-mode #launchpad-transport-row,
+body.light-mode .launchpad-transport-row {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.09) 0%, rgba(255, 255, 255, 0.52) 100%) !important;
+  background-color: transparent !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  box-shadow:
+    inset 0 2px 4px rgba(15, 23, 42, 0.10),
+    0 8px 20px -4px rgba(15, 23, 42, 0.08) !important;
+}
+
+html body .launchpad-pill:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]),
+html body #launchpad-transport-cable:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]),
+html body #launchpad-transport-wifi:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]) {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: rgba(241, 245, 249, 0.78) !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+}
+
+html body .launchpad-pill:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #FFFFFF !important;
+}
+
+html[data-theme="light"] body .launchpad-pill:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]),
+html[data-theme="light"] body #launchpad-transport-cable:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]),
+html[data-theme="light"] body #launchpad-transport-wifi:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]),
+body.light-mode .launchpad-pill:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]) {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #1E293B !important;
+  font-weight: 600 !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="light"] body .launchpad-pill:not(.is-active):not(.active):not([aria-checked="true"]):not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: rgba(255, 255, 255, 0.62) !important;
+  color: #0F172A !important;
+}
+
+html body .launchpad-pill.is-active,
+html body .launchpad-pill.active,
+html body .launchpad-pill[aria-checked="true"],
+html body .launchpad-pill[aria-selected="true"],
+html body .launchpad-pill[data-active="true"],
+html body #launchpad-transport-cable.is-active,
+html body #launchpad-transport-cable.active,
+html body #launchpad-transport-cable[aria-checked="true"],
+html body #launchpad-transport-wifi.is-active,
+html body #launchpad-transport-wifi.active,
+html body #launchpad-transport-wifi[aria-checked="true"],
+html[data-theme="light"] body .launchpad-pill.is-active,
+html[data-theme="light"] body .launchpad-pill.active,
+html[data-theme="light"] body .launchpad-pill[aria-checked="true"],
+html[data-theme="light"] body .launchpad-pill[aria-selected="true"],
+html[data-theme="light"] body .launchpad-pill[data-active="true"],
+html[data-theme="light"] body #launchpad-transport-cable.is-active,
+html[data-theme="light"] body #launchpad-transport-cable.active,
+html[data-theme="light"] body #launchpad-transport-cable[aria-checked="true"],
+html[data-theme="light"] body #launchpad-transport-wifi.is-active,
+html[data-theme="light"] body #launchpad-transport-wifi.active,
+html[data-theme="light"] body #launchpad-transport-wifi[aria-checked="true"],
+body.light-mode .launchpad-pill.is-active,
+body.light-mode .launchpad-pill.active,
+body.light-mode .launchpad-pill[aria-checked="true"] {
+  background: linear-gradient(135deg, #2563EB 0%, #0078D4 48%, #0284C7 100%) !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  box-shadow:
+    0 6px 16px -2px rgba(0, 120, 212, 0.52),
+    0 2px 4px rgba(0, 0, 0, 0.22),
+    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.48),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.22) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+html body .launchpad-pill.is-active span,
+html body .launchpad-pill.is-active svg,
+html body .launchpad-pill[aria-checked="true"] span,
+html body .launchpad-pill[aria-checked="true"] svg,
+html[data-theme="light"] body .launchpad-pill.is-active span,
+html[data-theme="light"] body .launchpad-pill.is-active svg,
+html[data-theme="light"] body .launchpad-pill[aria-checked="true"] span,
+html[data-theme="light"] body .launchpad-pill[aria-checked="true"] svg {
+  color: #FFFFFF !important;
+}
+
+html body #launchpad-start-btn,
+html body .launchpad-start-btn {
+  min-width: 172px !important;
+  height: 38px !important;
+  padding: 0 22px !important;
+  border-radius: 999px !important;
+  background: linear-gradient(135deg, #1D4ED8 0%, #0078D4 45%, #0EA5E9 100%) !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(255, 255, 255, 0.30) !important;
+  box-shadow:
+    0 10px 24px -4px rgba(0, 120, 212, 0.55),
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.48),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.22) !important;
+}
+html body #launchpad-start-btn:hover,
+html body .launchpad-start-btn:hover {
+  filter: brightness(1.07) !important;
+  box-shadow:
+    0 12px 28px -4px rgba(0, 120, 212, 0.65),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.56),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.25) !important;
+  transform: translateY(-1px) !important;
 }
 "#;
 

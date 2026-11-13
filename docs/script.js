@@ -641,15 +641,31 @@
     var isEn = simState.lang === "en";
 
     if (simState.stopped) {
+      var devSub = simState.conn === "wifi" ? "192.168.100.38 · Wi-Fi Ready" : "192.168.100.38 · USB Connected";
       simScreenBodyEl.innerHTML =
-        '<div class="sim-subscreen" style="align-items:center;justify-content:center;text-align:center;">' +
-        '<div style="color:#2997FF;margin-bottom:4px;"><svg class="ui-icon ico-lg" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg></div>' +
-        '<strong>' + (isEn ? "Spatial Launchpad Ready" : "Launchpad Spatial Siap") + '</strong>' +
-        '<p style="margin:0;font-size:0.74rem;color:#A1A1AA;">' +
-        (isEn ? "Stream paused. Click below to start live 60fps mirroring." : "Mirroring dijeda. Klik tombol di bawah untuk mulai kembali.") +
-        '</p>' +
-        '<button type="button" class="sim-act-btn is-active" id="sim-launchpad-start" style="justify-content:center;margin-top:6px;">' +
+        '<div class="sim-launchpad-wrap">' +
+        '<img src="logo.svg" alt="iPhone Link" width="38" height="38" style="border-radius:10px;">' +
+        '<strong style="font-size:0.86rem;">' + (isEn ? "iPhone 17 Pro ready" : "iPhone 17 Pro siap") + '</strong>' +
+        '<span style="font-size:0.70rem;opacity:0.78;">' + (isEn ? "Unlock, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.") + '</span>' +
+        '<div class="sim-launchpad-device">' +
+          '<span class="sim-launchpad-dot"></span>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-size:0.72rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">iPhone</div>' +
+            '<div style="font-size:0.62rem;opacity:0.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + devSub + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="sim-launchpad-transport" role="group">' +
+          '<button type="button" class="sim-launchpad-pill' + (simState.conn === "usb" ? " is-active" : "") + '" data-sim-lp-conn="usb">' + (isEn ? "Cable (USB)" : "Kabel (USB)") + '</button>' +
+          '<button type="button" class="sim-launchpad-pill' + (simState.conn === "wifi" ? " is-active" : "") + '" data-sim-lp-conn="wifi">Wi-Fi</button>' +
+        '</div>' +
+        '<button type="button" class="sim-launchpad-start-pill" id="sim-launchpad-start">' +
         (isEn ? "Start mirroring" : "Mulai mirroring") + '</button></div>';
+      document.querySelectorAll("[data-sim-lp-conn]").forEach(function (cBtn) {
+        cBtn.addEventListener("click", function () {
+          var nextC = cBtn.getAttribute("data-sim-lp-conn");
+          if (nextC) syncSimConnection(nextC);
+        });
+      });
       var lpBtn = document.getElementById("sim-launchpad-start");
       if (lpBtn) {
         lpBtn.addEventListener("click", function () {
@@ -1178,15 +1194,15 @@
   var SHA_TABLE = {
     setup: {
       name: "iPhone-Link-v4.0.0-Setup.exe",
-      hash: "4EF53BA57599D98EFC7DA9169C3B35C0CB9F0DE964732A7BCCC0536F0939DA43"
+      hash: "1AC11286D3BAF412540630075362E77C4B9B9CE0928EF06E11A01B547B1E332E"
     },
     zip: {
       name: "iPhone-Link-Win64-Native-Rust-v4.0.0.zip",
-      hash: "E30E7EB27554965DF2C61F6588CEFCD4BECC628B41C2D96106032EE91FC00292"
+      hash: "15F9443CC10D28B456B40409C8C0B4D5FB1D055ECB052ECFB364AE4AF2875666"
     },
     exe: {
       name: "iPhone Link.exe",
-      hash: "D440FFF5A3E69F0984AD5064D10B58DFFD24A3FD80A7306048485BFC022E40F5"
+      hash: "33BFCC2C4ED12B204445931510DF20267B9140A238E8ED61EF4436DD7DAC92BC"
     }
   };
 
