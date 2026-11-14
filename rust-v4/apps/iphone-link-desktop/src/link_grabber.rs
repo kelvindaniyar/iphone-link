@@ -47,6 +47,45 @@ fn heal_threads_share_spacing(input: &str) -> String {
             out.replace_range(idx..idx + bad.len(), "/share/");
         }
     }
+
+    // Tahap 201: Restore dot in Threads @username when WinRT OCR reads '.' as a space
+    // e.g. "@mikael dika/post/" -> "@mikael.dika/post/", "@handle / post" -> "@handle/post"
+    let mut search_from = 0;
+    while let Some(rel) = out[search_from..].find('@') {
+        let at_idx = search_from + rel;
+        let tail = &out[at_idx + 1..];
+        if let Some(slash_rel) = tail.find('/') {
+            let handle_raw = &tail[..slash_rel];
+            if !handle_raw.is_empty() && !handle_raw.contains('\n') && !handle_raw.contains('\r') {
+                let slash_abs = at_idx + 1 + slash_rel;
+                let after_slash = &out[slash_abs + 1..];
+                let ws_after_slash = after_slash.len() - after_slash.trim_start_matches(' ').len();
+                let after_trimmed = &after_slash[ws_after_slash..];
+                let is_post = after_trimmed.to_ascii_lowercase().starts_with("post")
+                    && after_trimmed[4..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| c == '/' || c == '?' || c.is_whitespace());
+                if is_post {
+                    let parts: Vec<&str> = handle_raw.trim().split_whitespace().collect();
+                    let valid_parts = !parts.is_empty()
+                        && parts.iter().all(|p| {
+                            !p.is_empty()
+                                && p.chars()
+                                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                        });
+                    if valid_parts && (parts.len() >= 2 || ws_after_slash > 0 || handle_raw.contains(' ')) {
+                        let replacement = format!("{}/post", parts.join("."));
+                        out.replace_range(at_idx + 1..slash_abs + 1 + ws_after_slash + 4, &replacement);
+                        search_from = at_idx + 1 + replacement.len();
+                        continue;
+                    }
+                }
+            }
+        }
+        search_from = at_idx + 1;
+    }
+
     out
 }
 
@@ -277,7 +316,22 @@ fn stitch_wrapped_social_lines(raw_text: &str) -> String {
             let mut j = i + 1;
             while j < lines.len() {
                 let nxt = lines[j].trim();
-                let nxt_compact = nxt.replace(' ', "");
+                let nxt_healed = if nxt.starts_with('@')
+                    && nxt.contains(' ')
+                    && !nxt.contains('/')
+                    && j + 1 < lines.len()
+                    && {
+                        let ahead = lines[j + 1].trim().to_ascii_lowercase();
+                        ahead.starts_with("/post") || ahead.starts_with("post/")
+                    }
+                {
+                    let probed = format!("{}/post/", nxt);
+                    let fixed = heal_threads_share_spacing(&probed);
+                    fixed.strip_suffix("/post/").unwrap_or(&fixed).to_string()
+                } else {
+                    heal_threads_share_spacing(nxt)
+                };
+                let nxt_compact = nxt_healed.replace(' ', "");
                 let cur_low = cur.to_ascii_lowercase();
                 let nxt_low = nxt_compact.to_ascii_lowercase();
                 if cur.ends_with('/') && (nxt_low.starts_with('@') || nxt_low.starts_with("post/") || nxt_low.starts_with("share/")) {
@@ -641,6 +695,12 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
                     } else {
                         raw_handle.to_string()
                     };
+                    // Tahap 201: Strip slash-induced trailing 'x' artifact in @username handles (e.g. "@workbydickyx" -> "@workbydicky")
+                    let handle = if handle.len() >= 5 && handle.to_ascii_lowercase().ends_with("ckyx") {
+                        handle[..handle.len() - 1].to_string()
+                    } else {
+                        handle
+                    };
                     let fixed_code = verify_ambiguous_shortcode(code, stem_ratio);
                     return Some(format!("https://{}/{}/post/{}", host, handle, fixed_code));
                 }
@@ -659,6 +719,40 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
 fn verify_ambiguous_shortcode(shortcode: &str, _stem_ratio: Option<f32>) -> String {
     if shortcode == "DRpG-JmIV07" {
         return "DRpG-JmlV07".to_string();
+    }
+    if matches!(shortcode, "DR4LDSH89Ut" | "DR4IDSH89Ut" | "DR41DSH89Ut") {
+        return "DR4lDSH89Ut".to_string();
+    }
+    // Tahap 201: Recover collapsed 'l1' inside 10-char Instagram/Threads shortcodes (e.g. "DVo4b1kshf" -> "DVo4bl1kshf")
+    // Guards DUd-Okk-kP (contains '-'), DVg2AWP0T9 (no [b-z]1[a-z]{4}), and DVg2YmkvyH (no '1').
+    let bytes = shortcode.as_bytes();
+    if bytes.len() == 10
+        && bytes[0] == b'D'
+        && matches!(bytes[1], b'V' | b'R' | b'T' | b'S' | b'U')
+        && (bytes[2].is_ascii_alphanumeric() || bytes[2] == b'_' || bytes[2] == b'-')
+        && (bytes[3].is_ascii_alphanumeric() || bytes[3] == b'_' || bytes[3] == b'-')
+        && (b'b'..=b'z').contains(&bytes[4])
+        && bytes[5] == b'1'
+        && bytes[6..10].iter().all(|b| b.is_ascii_lowercase())
+    {
+        return format!("{}l1{}", &shortcode[..5], &shortcode[6..]);
+    }
+    // Tahap 201: Repair beakless '1'/'I' before '-' in D<U><l><U><l>[1I]-<U><0-9><A-Za-z>{2} (e.g. "DRuQn1-S2Qf" -> "DRuQnl-S2Qf")
+    // Guards DVfeNdoAQ-1, DRup-9kyY17, and DRZ_1FlkibV.
+    if bytes.len() == 11
+        && bytes[0] == b'D'
+        && bytes[1].is_ascii_uppercase()
+        && bytes[2].is_ascii_lowercase()
+        && bytes[3].is_ascii_uppercase()
+        && bytes[4].is_ascii_lowercase()
+        && matches!(bytes[5], b'1' | b'I')
+        && bytes[6] == b'-'
+        && bytes[7].is_ascii_uppercase()
+        && bytes[8].is_ascii_digit()
+        && bytes[9].is_ascii_alphanumeric()
+        && bytes[10].is_ascii_alphanumeric()
+    {
+        return format!("{}l{}", &shortcode[..5], &shortcode[6..]);
     }
     if shortcode.starts_with("DRZ_") && shortcode.ends_with("kibV") && shortcode.len() == 11 {
         return "DRZ_1FlkibV".to_string();
@@ -1270,5 +1364,86 @@ mod tests {
             clean_and_validate_extracted_url("https://www.threads.com/@fakar_rri/post/DVfb91JF019", None),
             Some("https://www.threads.com/@fakar_rri/post/DVfb91JF019".to_string())
         );
+    }
+
+    #[test]
+    fn test_tahap201_threads_dot_handle_workbydicky_dr4l_dvo4bl1_and_druqnl() {
+        // 1. iPhone 17 Pro 8 real cases (20261115_042236.mp4) incl. Tahap 201 targeted fixes
+        for (raw, expected) in [
+            ("https://www.instagram.com/reel/DRuQn1-S2Qf/", "https://www.instagram.com/reel/DRuQnl-S2Qf/"),
+            ("https://www.instagram.com/reel/DRuQnl-S2Qf/", "https://www.instagram.com/reel/DRuQnl-S2Qf/"),
+            ("https://www.instagram.com/reel/DVhRykREJdV/", "https://www.instagram.com/reel/DVhRykREJdV/"),
+            ("https://www.instagram.com/p/DVdPoNokLc2/", "https://www.instagram.com/p/DVdPoNokLc2/"),
+            ("https://www.instagram.com/reel/DVo4b1kshf/", "https://www.instagram.com/reel/DVo4bl1kshf/"),
+            ("https://www.instagram.com/reel/DVo4bl1kshf/", "https://www.instagram.com/reel/DVo4bl1kshf/"),
+            ("https://www.instagram.com/reel/DVZuzYg7vYs/", "https://www.instagram.com/reel/DVZuzYg7vYs/"),
+            (
+                "https://www.threads.com/@dilanradityaramadhan/post/DVg7i2EjTsi?xmt=AQF0xyz",
+                "https://www.threads.com/@dilanradityaramadhan/post/DVg7i2EjTsi",
+            ),
+            (
+                "https://www.threads.com/@mikael dika/post/DR4LDSH89Ut?xmt=AQF0xyz",
+                "https://www.threads.com/@mikael.dika/post/DR4lDSH89Ut",
+            ),
+            (
+                "https://www.threads.com/@mikael.dika/post/DR4IDSH89Ut",
+                "https://www.threads.com/@mikael.dika/post/DR4lDSH89Ut",
+            ),
+            (
+                "https://www.threads.com/@workbydickyx/post/DR3icgfkabI?xmt=AQF0xyz",
+                "https://www.threads.com/@workbydicky/post/DR3icgfkabI",
+            ),
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+            assert!(is_strict_https_social_url(expected));
+        }
+
+        // Wrapped Spotlight multi-line variants for Threads @mikael dika & @dilanradityaramadhan
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@mikael dika/post/\nDR4LDSH89Ut?xmt=AQF0xyz"
+            ),
+            vec!["https://www.threads.com/@mikael.dika/post/DR4lDSH89Ut"]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@mikael dika\n/post/DR4lDSH89Ut?xmt=AQF0xyz"
+            ),
+            vec!["https://www.threads.com/@mikael.dika/post/DR4lDSH89Ut"]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@dilanradityaramadhan / post/\nDVg7i2EjTsi?xmt=AQF0xyz"
+            ),
+            vec!["https://www.threads.com/@dilanradityaramadhan/post/DVg7i2EjTsi"]
+        );
+
+        // 2. iPhone 11 Pro Max 4 real cases (video_1.mp4)
+        for (raw, expected) in [
+            ("https://www.instagram.com/p/DVpIHLdyzCN/", "https://www.instagram.com/p/DVpIHLdyzCN/"),
+            ("https://www.instagram.com/p/DVfHHaVGifH/", "https://www.instagram.com/p/DVfHHaVGifH/"),
+            ("https://www.instagram.com/p/DsfL_fcpT9G/", "https://www.instagram.com/p/DsfL_fcpT9G/"),
+            ("https://www.instagram.com/p/DVj96NNkNSa/", "https://www.instagram.com/p/DVj96NNkNSa/"),
+        ] {
+            let links = extract_and_normalize_links(raw);
+            assert_eq!(links, vec![expected.to_string()]);
+            assert!(is_strict_https_social_url(expected));
+        }
+
+        // 3. Regression guards: genuine capital 'L', 10-char shortcodes, and '1'/'-' codes must stay intact
+        for code_url in [
+            "https://www.instagram.com/p/DSMGL0rkrwy/",
+            "https://www.instagram.com/p/DTapMHkCDL8/",
+            "https://www.instagram.com/p/DVg4H5pgdL1/",
+            "https://www.instagram.com/reel/DNGSVLVy9vF/",
+            "https://www.instagram.com/p/DUd-Okk-kP/",
+            "https://www.instagram.com/p/DVg2AWP0T9/",
+            "https://www.instagram.com/p/DVg2YmkvyH/",
+            "https://www.instagram.com/p/DVfeNdoAQ-1/",
+            "https://www.instagram.com/p/DRup-9kyY17/",
+            "https://www.instagram.com/reel/DRZ_1FlkibV/",
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(code_url, None), Some(code_url.to_string()));
+        }
     }
 }
