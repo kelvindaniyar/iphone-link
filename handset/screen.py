@@ -1563,8 +1563,8 @@ def spotlight_paste_clipboard_on_iphone() -> dict:
         send_keys_direct([0xE3])
         time.sleep(0.02)
         send_keys_direct([])
-        # 3) Wait 520ms for Spotlight animation and native auto-selection on iPhone 11 Pro Max & 17 Pro (Tahap 198 Pilar 3)
-        time.sleep(0.52)
+        # 3) Wait 580ms for Spotlight animation and native cursor readiness on iPhone 11 Pro Max & 17 Pro (Tahap 199 Pilar 3)
+        time.sleep(0.58)
         # 4) Tahap 195 Pure Backspace Clear (NO Cmd+A so iOS 27 never activates persistent lollipop handles or Show Results balloon)
         send_keys_direct([0x2A])  # Backspace
         time.sleep(0.045)

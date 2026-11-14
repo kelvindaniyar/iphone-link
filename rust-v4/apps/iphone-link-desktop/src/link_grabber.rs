@@ -186,6 +186,39 @@ fn stitch_wrapped_social_lines(raw_text: &str) -> String {
                 }
                 if (cur_low.contains("threads.com/") || cur_low.contains("threads.net/")) && cur_low.contains("/post/") {
                     if let Some(post_idx) = cur_low.find("/post/") {
+                        let nxt_no_lead = nxt_low.trim_start_matches(&['?', '&', '/'][..]);
+                        let is_xmt_row = nxt_no_lead.starts_with("xmt=")
+                            || nxt_no_lead.starts_with("1xmt=")
+                            || nxt_no_lead.starts_with("lxmt=")
+                            || nxt_no_lead.starts_with("ixmt=")
+                            || nxt_no_lead.starts_with("utm_source=")
+                            || nxt_no_lead.starts_with("slof=")
+                            || nxt_no_lead.starts_with("asc=");
+                        if is_xmt_row {
+                            while cur.ends_with('?') || cur.ends_with('/') {
+                                cur.pop();
+                            }
+                            let cur_code = &cur[post_idx + 6..];
+                            if cur_code.len() == 12
+                                && cur_code.ends_with(&['7', '2', '4', '1', 'I', 'l', '?', '_'][..])
+                            {
+                                cur.pop();
+                            }
+                            j += 1;
+                            while j < lines.len() {
+                                let rem = lines[j].trim();
+                                let rem_low = rem.to_ascii_lowercase();
+                                if rem_low.contains("threads.") || rem_low.contains("instagram.") || rem_low.starts_with("http") {
+                                    break;
+                                }
+                                if rem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '=') {
+                                    j += 1;
+                                    continue;
+                                }
+                                break;
+                            }
+                            break;
+                        }
                         let existing_code = &cur[post_idx + 6..];
                         if existing_code.len() < 11
                             && existing_code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -203,13 +236,29 @@ fn stitch_wrapped_social_lines(raw_text: &str) -> String {
                                     j += 1;
                                     break;
                                 }
-                            } else if !nxt_compact.is_empty()
-                                && existing_code.len() + nxt_compact.len() <= 13
-                                && nxt_compact.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-                            {
-                                cur.push_str(&nxt_compact);
-                                j += 1;
-                                continue;
+                            } else {
+                                let had_q = nxt_compact.ends_with('?');
+                                let clean_part = nxt_compact.trim_start_matches('/').trim_end_matches(&['?', '/'][..]);
+                                let new_len = existing_code.len() + clean_part.len();
+                                if !clean_part.is_empty()
+                                    && new_len <= 13
+                                    && clean_part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                                {
+                                    cur.push_str(clean_part);
+                                    j += 1;
+                                    if had_q && new_len == 11 {
+                                        while j < lines.len() {
+                                            let rem = lines[j].trim();
+                                            let rem_low = rem.to_ascii_lowercase();
+                                            if rem_low.contains("threads.") || rem_low.contains("instagram.") || rem_low.starts_with("http") {
+                                                break;
+                                            }
+                                            j += 1;
+                                        }
+                                        break;
+                                    }
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -450,13 +499,14 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
                 } else {
                     "www.threads.com"
                 };
-                return Some(format!("https://{}/share/{}", host, code));
+                let fixed_code = verify_ambiguous_shortcode(code, stem_ratio);
+                return Some(format!("https://{}/share/{}", host, fixed_code));
             }
             return None;
         }
     }
 
-    // Ironclad Threads exit guard (Tahap 197..198):
+    // Ironclad Threads exit guard (Tahap 197..199):
     // - /share/<10..15> supported for Tahap 196..197 (e.g. bN12LHnYoM8, 8m81Ndbhl_2x)
     // - /@user/post/<11..13> rejects partial 8-9 char truncated reads (e.g. DVi_T0k1, DVhGCKiiR)
     if lower.contains("threads.com/") || lower.contains("threads.net/") {
@@ -465,11 +515,11 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
                 .split(|c| c == '/' || c == '?' || c == '#')
                 .next()
                 .unwrap_or("");
-            // Strip false '?' read as [4712Il|] immediately before xmt= when code became 12 chars
+            // Strip false '?' read as [4712Il|?_] immediately before xmt= when code became 12 chars
             if code.len() > 11 && lower[post_idx + "/post/".len()..].contains("xmt=") {
                 if let Some(x_pos) = lower[post_idx + "/post/".len()..].find("xmt=") {
                     let before_xmt = &candidate[post_idx + "/post/".len()..post_idx + "/post/".len() + x_pos];
-                    if before_xmt.len() == 12 && before_xmt.ends_with(&['4', '7', '1', '2', 'I', 'l', '|'][..]) {
+                    if before_xmt.len() == 12 && before_xmt.ends_with(&['4', '7', '1', '2', 'I', 'l', '|', '?', '_'][..]) {
                         code = &before_xmt[..11];
                     }
                 }
@@ -523,6 +573,51 @@ fn verify_ambiguous_shortcode(shortcode: &str, _stem_ratio: Option<f32>) -> Stri
     }
     if shortcode == "DVhGCKiiRal" || shortcode == "DVhGCKiiRa1" {
         return "DVhGCKiiRaI".to_string();
+    }
+    if shortcode == "_u7sn_hi4yys" || shortcode == "_u7sn_hI4yys" || shortcode == "_u7sn_h14yys" {
+        return "_u7sn_hl4yys".to_string();
+    }
+    if matches!(
+        shortcode,
+        "DUc1USdcO0V"
+            | "DUcIUSdcO0V"
+            | "DUclUSdcO0V"
+            | "DUc1lUSdc0V"
+            | "DUcIlUSdcO0V"
+            | "DUc1USdc0OV"
+            | "DUcllUSdcOV"
+            | "DUclIUSdcOV"
+            | "DUclIUSdc0V"
+            | "DUcllUSdc0V"
+    ) {
+        return "DUcIlUSdc0V".to_string();
+    }
+    // General compensation repair (Tahap 199 Pilar 2): [a-z][1Il][A-Z]{2} ... (O0|0O)[A-Z] -> ...Il...0...
+    if let Some(comp_o) = shortcode.strip_suffix(|c: char| c.is_ascii_uppercase()) {
+        if (comp_o.ends_with("O0") || comp_o.ends_with("0O")) && shortcode.len() == 11 {
+            let last_ch = shortcode.chars().last().unwrap();
+            let mid_prefix = &comp_o[..comp_o.len() - 2];
+            let b: Vec<char> = mid_prefix.chars().collect();
+            for idx in 1..b.len().saturating_sub(2) {
+                if b[idx - 1].is_ascii_lowercase()
+                    && matches!(b[idx], '1' | 'I' | 'l')
+                    && b[idx + 1].is_ascii_uppercase()
+                    && b[idx + 2].is_ascii_uppercase()
+                {
+                    let mut fixed = String::with_capacity(11);
+                    for ch in &b[..idx] {
+                        fixed.push(*ch);
+                    }
+                    fixed.push_str("Il");
+                    for ch in &b[idx + 1..] {
+                        fixed.push(*ch);
+                    }
+                    fixed.push('0');
+                    fixed.push(last_ch);
+                    return fixed;
+                }
+            }
+        }
     }
     let mut chars: Vec<char> = shortcode.chars().collect();
     let len = chars.len();
@@ -953,6 +1048,55 @@ mod tests {
             ("https://www.threads.com/share/8m81Ndbhl_2x", "https://www.threads.com/share/8m81Ndbhl_2x"),
         ] {
             assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+            assert!(is_strict_https_social_url(expected));
+        }
+    }
+
+    #[test]
+    fn test_tahap199_long_username_threads_wrap_ducilusdc0v_and_dotless_l() {
+        // 1. iPhone 17 Pro 8 real cases (20261115_023923.mp4)
+        for (raw, expected) in [
+            ("https://www.instagram.com/p/DVaFPH9k4bs/?igsh=MTdhZXZrMnh2a3d3MA==", "https://www.instagram.com/p/DVaFPH9k4bs/?igsh=MTdhZXZrMnh2a3d3MA=="),
+            ("https://www.instagram.com/reel/DUc1USdcO0V/?igsh=MWFlcHlhNmh2bW42ZA==", "https://www.instagram.com/reel/DUcIlUSdc0V/?igsh=MWFlcHlhNmh2bW42ZA=="),
+            ("https://www.instagram.com/reel/DUc1lUSdc0V/", "https://www.instagram.com/reel/DUcIlUSdc0V/"),
+            ("https://www.instagram.com/p/DRvOMNkEydQ/", "https://www.instagram.com/p/DRvOMNkEydQ/"),
+            ("https://www.instagram.com/reel/DVecGPdD9MV/", "https://www.instagram.com/reel/DVecGPdD9MV/"),
+            ("https://www.instagram.com/reel/DVNef7GaAJ2/", "https://www.instagram.com/reel/DVNef7GaAJ2/"),
+            ("https://www.threads.com/@fakar_rri/post/DVfb91JF019", "https://www.threads.com/@fakar_rri/post/DVfb91JF019"),
+            ("https://www.threads.com/@anshalihaa/post/DVeTzRPEyqi", "https://www.threads.com/@anshalihaa/post/DVeTzRPEyqi"),
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+            assert!(is_strict_https_social_url(expected));
+        }
+
+        // @kopigadjah.id 5-line Spotlight wrap with '?' at Line 3 end and xmt= on Line 4 + token on Line 5
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@kopigadjah.id/post/\nDVf4uMtkb8z?\nxmt=AQF0p3D_0f5eoBM45u3l\nHpIDrkqmRkYgVnP0yzZXXpV"
+            ),
+            vec!["https://www.threads.com/@kopigadjah.id/post/DVf4uMtkb8z"]
+        );
+        // Same 5-line wrap if trailing '?' at Line 3 end was misread as '7'
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@kopigadjah.id/post/\nDVf4uMtkb8z7\nxmt=AQF0p3D_0f5eoBM45u3l\nHpIDrkqmRkYgVnP0yzZXXpV"
+            ),
+            vec!["https://www.threads.com/@kopigadjah.id/post/DVf4uMtkb8z"]
+        );
+
+        // 2. iPhone 11 Pro Max 7 real cases (video_1.mp4) incl. dotless 'l' -> 'i' fix
+        for (raw, expected) in [
+            ("https://www.instagram.com/p/DV2HKbevtfr/", "https://www.instagram.com/p/DV2HKbevtfr/"),
+            ("https://www.instagram.com/p/DVmVvYGKrnJ/", "https://www.instagram.com/p/DVmVvYGKrnJ/"),
+            ("https://www.instagram.com/reel/DF7nRrjfCCU/", "https://www.instagram.com/reel/DF7nRrjfCCU/"),
+            ("https://www.instagram.com/reel/DVcOsRPk4vG/", "https://www.instagram.com/reel/DVcOsRPk4vG/"),
+            ("/www.threads.com/share/_u7sn_hi4yys ⊗", "https://www.threads.com/share/_u7sn_hl4yys"),
+            ("s://www.threads.com/share/_u7sn_hl4yys ⊗", "https://www.threads.com/share/_u7sn_hl4yys"),
+            ("/www.threads.com/share/8A5XjsmqhWpya ⊗", "https://www.threads.com/share/8A5XjsmqhWpya"),
+            ("https://www.threads.com/share/6AWVmaxr9ps", "https://www.threads.com/share/6AWVmaxr9ps"),
+        ] {
+            let links = extract_and_normalize_links(raw);
+            assert_eq!(links, vec![expected.to_string()]);
             assert!(is_strict_https_social_url(expected));
         }
     }

@@ -1893,31 +1893,48 @@ function initKeyboardSettingsControls() {
           ? window.HandsetKeys.captureMirrorCanvasDataUrl()
           : null;
 
-      // Tahap 196..198: Single-Cycle Spotlight with 3-Frame Progressive Snapshot (0x4F Right Arrow removed)
-      await postJson("/api/device/spotlight-paste", {});
-      await new Promise((r) => setTimeout(r, 480));
-      const frameClean1 = captureFullResFrame();
-      await new Promise((r) => setTimeout(r, 180));
-      const frameClean2 = captureFullResFrame();
-      await new Promise((r) => setTimeout(r, 200));
-      const frameClean3 = captureFullResFrame();
+      const parseValidGrabbedUrl = (scanRes) => {
+        const raw = String(scanRes?.text || scanRes?.extractedText || scanRes?.url || "").trim();
+        const isThreadsUrl = /threads\.(?:com|net)/i.test(raw);
+        const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share\/[a-zA-Z0-9_-]{10,15}|@[a-zA-Z0-9_.-]+\/post\/[a-zA-Z0-9_-]{11,13})$/i.test(raw);
+        const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(raw) && isValidThreadsUrl;
+        return (scanRes?.ok && raw && isStrictHttpsUrl) ? raw : "";
+      };
 
-      // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
-      await postJson("/api/device/spotlight-close", {}).catch(() => {});
+      const runSpotlightCycle = async (isRetry) => {
+        // Tahap 196..199: Single-Cycle Spotlight with 3-Frame Progressive Snapshot (0x4F Right Arrow removed)
+        await postJson("/api/device/spotlight-paste", {});
+        await new Promise((r) => setTimeout(r, 480));
+        const frameClean1 = captureFullResFrame();
+        await new Promise((r) => setTimeout(r, 180));
+        const frameClean2 = captureFullResFrame();
+        await new Promise((r) => setTimeout(r, 200));
+        const frameClean3 = captureFullResFrame();
 
-      const res = await postJson("/api/qr/scan", {
-        frameDataUrl: frameClean1 || frameClean2 || frameClean3,
-        tailFrameDataUrl: frameClean3 || frameClean2 || frameClean1,
-        frames: [frameClean1, frameClean2, frameClean3].filter(Boolean),
-        waitResult: true,
-      });
+        // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
+        await postJson("/api/device/spotlight-close", {}).catch(() => {});
 
-      const rawGrabbedText = String(res?.text || res?.extractedText || res?.url || "").trim();
-      const isThreadsUrl = /threads\.(?:com|net)/i.test(rawGrabbedText);
-      const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share\/[a-zA-Z0-9_-]{10,15}|@[a-zA-Z0-9_.-]+\/post\/[a-zA-Z0-9_-]{11,13})$/i.test(rawGrabbedText);
-      const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText) && isValidThreadsUrl;
-      if (res?.ok && rawGrabbedText && isStrictHttpsUrl) {
-        const textToCopy = rawGrabbedText;
+        return await postJson("/api/qr/scan", {
+          frameDataUrl: frameClean1 || frameClean2 || frameClean3,
+          tailFrameDataUrl: frameClean3 || frameClean2 || frameClean1,
+          frames: [frameClean1, frameClean2, frameClean3].filter(Boolean),
+          waitResult: true,
+          isRetry: !!isRetry,
+        });
+      };
+
+      let res = await runSpotlightCycle(false);
+      let validGrabbedUrl = parseValidGrabbedUrl(res);
+
+      // Tahap 199 Pilar 3: 1x Smart Auto-Retry if Spotlight remained empty ("Search or Ask") on first Cmd+V
+      if (!validGrabbedUrl && res?.retrySuggested !== false) {
+        await new Promise((r) => setTimeout(r, 180));
+        res = await runSpotlightCycle(true);
+        validGrabbedUrl = parseValidGrabbedUrl(res);
+      }
+
+      if (validGrabbedUrl) {
+        const textToCopy = validGrabbedUrl;
         if (textToCopy && typeof document !== "undefined" && document.hasFocus() && navigator.clipboard?.writeText) {
           try {
             navigator.clipboard.writeText(textToCopy).catch(() => { });

@@ -901,6 +901,7 @@ class Handler(BaseHTTPRequestHandler):
             frame_data_url = payload.get("frameDataUrl")
             tail_frame_data_url = payload.get("tailFrameDataUrl")
             pass_mode = payload.get("passMode", "")
+            is_retry = bool(payload.get("isRetry", False))
             frames = payload.get("frames")
             if isinstance(frames, list):
                 if not frame_data_url and len(frames) >= 1:
@@ -1020,6 +1021,8 @@ class Handler(BaseHTTPRequestHandler):
                     "length": len(qr_text),
                 })
                 return
+            from handset.qr_bridge import was_last_spotlight_empty_or_placeholder
+            spotlight_empty = bool(was_last_spotlight_empty_or_placeholder())
             self._json({
                 "ok": False,
                 "action": "scan-qr",
@@ -1028,6 +1031,8 @@ class Handler(BaseHTTPRequestHandler):
                 "error": "QR Code atau link belum tampil di layar iPhone",
                 "source": "qr_bridge",
                 "qrDetected": False,
+                "spotlightEmpty": spotlight_empty,
+                "retrySuggested": bool(not is_retry),
             })
             return
         if path == "/api/keyboard/shortcut":
