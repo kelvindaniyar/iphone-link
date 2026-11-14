@@ -970,12 +970,12 @@ class Handler(BaseHTTPRequestHandler):
                 m_ig_seg = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', u, re.IGNORECASE)
                 if m_ig_seg:
                     code = m_ig_seg.group(1)
-                    if not re.match(r'^[A-Za-z0-9_\-]{11,15}$', code):
+                    if not re.match(r'^[A-Za-z0-9_\-]{10,15}$', code):
                         return False
                     return True
-                if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_-]{11,}', u, re.IGNORECASE):
+                if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_-]{10,15}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
-                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{11}(?:[/?#]|$)', u, re.IGNORECASE):
+                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,15}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
                 if any(k in u.lower() for k in ("tiktok.com", "youtu.be", "youtube.com", "x.com")):
                     return True

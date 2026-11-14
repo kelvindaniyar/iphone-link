@@ -1911,7 +1911,9 @@ function initKeyboardSettingsControls() {
       });
 
       const rawGrabbedText = String(res?.text || res?.extractedText || res?.url || "").trim();
-      const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText);
+      const isThreadsUrl = /threads\.(?:com|net)/i.test(rawGrabbedText);
+      const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share|@[a-zA-Z0-9_.-]+\/post)\/[a-zA-Z0-9_-]{10,15}$/i.test(rawGrabbedText);
+      const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText) && isValidThreadsUrl;
       if (res?.ok && rawGrabbedText && isStrictHttpsUrl) {
         const textToCopy = rawGrabbedText;
         if (textToCopy && typeof document !== "undefined" && document.hasFocus() && navigator.clipboard?.writeText) {
