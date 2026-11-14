@@ -1570,14 +1570,10 @@ def spotlight_paste_clipboard_on_iphone() -> dict:
         time.sleep(0.045)
         send_keys_direct([])
         time.sleep(0.05)
-        # 5) Directly paste clipboard (Cmd + V) without Cmd+A
+        # 5) Directly paste clipboard (Cmd + V) without Cmd+A or Right Arrow (0x4F)
+        # Tahap 196: Zero 0x4F after paste so iOS 27 Spotlight never activates lollipop handles or 'Show Results' balloon
         trigger_ios_shortcut("paste-ios")
-        time.sleep(0.12)
-        # 6) Collapse selection to end via Right Arrow (0x4F) cleanly
-        send_keys_direct([0x4F])
-        time.sleep(0.035)
-        send_keys_direct([])
-        time.sleep(0.42)
+        time.sleep(0.45)
         try:
             if hasattr(_ACTIVE_SERVER, "request_keyframe"):
                 _ACTIVE_SERVER.request_keyframe()

@@ -1874,6 +1874,8 @@ function initKeyboardSettingsControls() {
   });
 
   window.triggerScanQrLinkWithFeedback = async function () {
+    if (window._isGrabbingLinkBusy) return;
+    window._isGrabbingLinkBusy = true;
     const btnScanQr = document.querySelector("#btn-scan-qr-link");
     if (btnScanQr) {
       btnScanQr.disabled = true;
@@ -1891,7 +1893,7 @@ function initKeyboardSettingsControls() {
           ? window.HandsetKeys.captureMirrorCanvasDataUrl()
           : null;
 
-      // Tahap 195: 480ms initial settle (iPhone 11 Pro Max Zona 2A Safari card + iPhone 17 Pro Spotlight) without lollipop trigger
+      // Tahap 196: Single-Cycle Spotlight (0x4F Right Arrow removed, zero fallback second Spotlight cycle)
       await postJson("/api/device/spotlight-paste", {});
       await new Promise((r) => setTimeout(r, 480));
       const frameClean1 = captureFullResFrame();
@@ -1901,49 +1903,30 @@ function initKeyboardSettingsControls() {
       // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
       await postJson("/api/device/spotlight-close", {}).catch(() => {});
 
-      let res = await postJson("/api/qr/scan", {
+      const res = await postJson("/api/qr/scan", {
         frameDataUrl: frameClean1 || frameClean2,
         tailFrameDataUrl: frameClean2 || frameClean1,
         frames: [frameClean1, frameClean2].filter(Boolean),
         waitResult: true,
       });
 
-      // Fallback Retry ONLY if clean snapshot pass did not extract a valid URL
-      if (!res?.ok || !(res?.text || res?.extractedText)) {
-        await postJson("/api/device/spotlight-paste", {});
-        await new Promise((r) => setTimeout(r, 220));
-        const frameTail = captureFullResFrame();
-        await postJson("/api/device/spotlight-move-head", {});
-        await new Promise((r) => setTimeout(r, 180));
-        const frameHead = captureFullResFrame();
-        await postJson("/api/device/spotlight-close", {}).catch(() => {});
-        res = await postJson("/api/qr/scan", {
-          frameDataUrl: frameTail || frameHead,
-          tailFrameDataUrl: frameHead || frameTail,
-          frames: [frameTail, frameHead, frameClean1, frameClean2].filter(Boolean),
-          waitResult: true,
-        });
-      }
-      const rawGrabbedText = String(res?.text || res?.extractedText || "").trim();
+      const rawGrabbedText = String(res?.text || res?.extractedText || res?.url || "").trim();
       const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText);
       if (res?.ok && rawGrabbedText && isStrictHttpsUrl) {
         const textToCopy = rawGrabbedText;
-        if (btnScanQr) {
-          btnScanQr.classList.remove("is-busy-shimmer");
-          btnScanQr.classList.add("is-saved");
-          setTimeout(() => btnScanQr.classList.remove("is-saved"), 1500);
-        }
         if (textToCopy && typeof document !== "undefined" && document.hasFocus() && navigator.clipboard?.writeText) {
           try {
             navigator.clipboard.writeText(textToCopy).catch(() => { });
           } catch (_) { }
         }
         if (btnScanQr) {
-          btnScanQr.textContent = "✓ Link Copied to PC!";
+          btnScanQr.classList.remove("is-busy-shimmer");
           btnScanQr.classList.add("is-saved");
+          btnScanQr.textContent = "✓ Link Copied to PC!";
         }
       } else {
         if (btnScanQr) {
+          btnScanQr.classList.remove("is-busy-shimmer", "is-saved");
           btnScanQr.textContent = "⚠️ Link Belum Tersalin di iOS";
         }
       }
@@ -1954,6 +1937,7 @@ function initKeyboardSettingsControls() {
         btnScanQr.textContent = "Grab Failed";
       }
     } finally {
+      window._isGrabbingLinkBusy = false;
       if (btnScanQr) btnScanQr.classList.remove("is-busy-shimmer");
       setTimeout(() => {
         if (btnScanQr) {
@@ -2006,6 +1990,7 @@ function initKeyboardSettingsControls() {
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "KeyB" || e.key === "b" || e.key === "B")) {
         e.preventDefault();
         e.stopPropagation();
+        if (e.repeat) return;
         window.triggerScanQrLinkWithFeedback();
       }
     },

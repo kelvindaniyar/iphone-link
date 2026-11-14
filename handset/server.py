@@ -228,6 +228,7 @@ def get_windows_clipboard_seq() -> int:
 
 _ACTIVE_CLIPBOARD_SOURCE = "pc"  # "pc" or "iphone"
 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+_LAST_GRABBED_VALID_URL: tuple[float, str] = (0.0, "")
 
 
 def get_windows_clipboard_text() -> str | None:
@@ -789,7 +790,7 @@ class Handler(BaseHTTPRequestHandler):
         self._file(path)
 
     def do_POST(self) -> None:
-        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ
+        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ, _LAST_GRABBED_VALID_URL
         path = urlparse(self.path).path
         if path == "/debug-metrics":
             length = int(self.headers.get("Content-Length") or 0)
@@ -974,7 +975,7 @@ class Handler(BaseHTTPRequestHandler):
                     return True
                 if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_-]{11,}', u, re.IGNORECASE):
                     return True
-                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,12}', u, re.IGNORECASE):
+                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{11}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
                 if any(k in u.lower() for k in ("tiktok.com", "youtu.be", "youtube.com", "x.com")):
                     return True
@@ -1000,15 +1001,19 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"[{source_tag}] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
                 qr_text = None
             if qr_text:
-                if set_windows_clipboard_text(qr_text):
+                clip_ok = set_windows_clipboard_text(qr_text)
+                if clip_ok:
                     _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                     _ACTIVE_CLIPBOARD_SOURCE = "pc"
                     print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
                 self._json({
                     "ok": True,
                     "action": "scan-qr",
-                    "extractedText": qr_text,
                     "text": qr_text,
+                    "extractedText": qr_text,
+                    "url": qr_text,
+                    "clipboardWritten": bool(clip_ok),
                     "complete": True,
                     "source": source_tag,
                     "qrDetected": True,
@@ -1092,15 +1097,19 @@ class Handler(BaseHTTPRequestHandler):
                     print(f"[shortcut] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
                     qr_text = None
                 if qr_text:
-                    if set_windows_clipboard_text(qr_text):
+                    clip_ok = set_windows_clipboard_text(qr_text)
+                    if clip_ok:
                         _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                         _ACTIVE_CLIPBOARD_SOURCE = "pc"
                         print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                    _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
                     self._json({
                         "ok": True,
                         "action": "scan-qr",
-                        "extractedText": qr_text,
                         "text": qr_text,
+                        "extractedText": qr_text,
+                        "url": qr_text,
+                        "clipboardWritten": bool(clip_ok),
                         "source": source_tag,
                         "qrDetected": True,
                         "length": len(qr_text),

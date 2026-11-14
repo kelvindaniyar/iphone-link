@@ -5837,17 +5837,21 @@ fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
 fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
     use std::net::SocketAddr;
     let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok()?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
     let _ = stream.set_nodelay(true);
 
     let is_heavy = req.path.starts_with("/api/keyboard/shortcut")
         || req.path.starts_with("/api/social/grab-link")
+        || req.path.starts_with("/api/qr/")
+        || req.path.starts_with("/api/device/spotlight")
+        || req.path.starts_with("/api/device/wake")
+        || req.path.starts_with("/api/device/lock")
         || req.path.starts_with("/api/screen/start")
         || req.path.starts_with("/api/wifi/scan")
         || req.path.starts_with("/api/ocr/");
 
     let timeout = if is_heavy {
-        Duration::from_secs(20)
+        Duration::from_secs(25)
     } else {
         Duration::from_millis(1500)
     };
@@ -6797,7 +6801,28 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(r#"{"ok":true,"url":"https://www.instagram.com/reel/DC987654321/","text":"https://www.instagram.com/reel/DC987654321/","extractedText":"https://www.instagram.com/reel/DC987654321/"}"#);
     }
 
-    if path == "/api/qr/scan" || path.starts_with("/api/keyboard/shortcut") || path.starts_with("/api/ocr/") {
+    if path == "/api/qr/scan" {
+        if let Some(resp) = forward_to_worker(req) {
+            return resp;
+        }
+        let body_str = String::from_utf8_lossy(&req.body_bytes);
+        let links = crate::link_grabber::extract_and_normalize_links(&body_str);
+        if let Some(first) = links
+            .iter()
+            .find(|u| crate::link_grabber::is_strict_https_social_url(u))
+        {
+            let esc = escape_json_str(first);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"action":"scan-qr","url":"{}","text":"{}","extractedText":"{}","complete":true}}"#,
+                esc, esc, esc
+            ));
+        }
+        return HttpResponse::ok_json(
+            r#"{"ok":false,"action":"scan-qr","extractedText":null,"error":"No strict HTTP(S) link found"}"#,
+        );
+    }
+
+    if path.starts_with("/api/keyboard/shortcut") || path.starts_with("/api/ocr/") {
         if let Some(resp) = forward_to_worker(req) {
             return resp;
         }

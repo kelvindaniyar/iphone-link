@@ -249,6 +249,7 @@
           if (isAlt && !isCtrlOrMeta && (e.code === "KeyB" || e.key === "b" || e.key === "B")) {
             e.preventDefault();
             e.stopPropagation();
+            if (e.repeat) return;
             ignoreKeyUpUntil = Date.now() + 400;
             pressed.clear();
             flush();
