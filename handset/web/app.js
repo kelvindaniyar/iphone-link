@@ -1730,6 +1730,8 @@ function initKeyboardSettingsControls() {
     const btnCopyIphone = document.querySelector("#btn-copy-iphone-now");
     if (btnCopyIphone) {
       btnCopyIphone.disabled = true;
+      btnCopyIphone.classList.remove("is-saved");
+      btnCopyIphone.classList.add("is-busy-shimmer");
       btnCopyIphone.textContent = "⏳ Copying…";
     }
     try {
@@ -1761,15 +1763,22 @@ function initKeyboardSettingsControls() {
       } else {
         if (btnCopyIphone) btnCopyIphone.textContent = "✓ Copied (iOS)";
       }
-      if (btnCopyIphone) btnCopyIphone.classList.add("is-saved");
+      if (btnCopyIphone) {
+        btnCopyIphone.classList.remove("is-busy-shimmer");
+        btnCopyIphone.classList.add("is-saved");
+      }
       return res;
     } catch (_) {
-      if (btnCopyIphone) btnCopyIphone.textContent = "Copy Failed";
+      if (btnCopyIphone) {
+        btnCopyIphone.classList.remove("is-busy-shimmer", "is-saved");
+        btnCopyIphone.textContent = "Copy Failed";
+      }
     } finally {
+      if (btnCopyIphone) btnCopyIphone.classList.remove("is-busy-shimmer");
       setTimeout(() => {
         if (btnCopyIphone) {
           btnCopyIphone.textContent = COPY_IPHONE_LABEL;
-          btnCopyIphone.classList.remove("is-saved");
+          btnCopyIphone.classList.remove("is-saved", "is-busy-shimmer");
           btnCopyIphone.disabled = false;
         }
       }, 1500);
@@ -1780,6 +1789,8 @@ function initKeyboardSettingsControls() {
     const btnPastePcNow = document.querySelector("#btn-paste-pc-now");
     if (btnPastePcNow) {
       btnPastePcNow.disabled = true;
+      btnPastePcNow.classList.remove("is-saved");
+      btnPastePcNow.classList.add("is-busy-shimmer");
       btnPastePcNow.textContent = "⏳ Pasting…";
     }
     try {
@@ -1791,11 +1802,16 @@ function initKeyboardSettingsControls() {
         await postJson("/api/keyboard/paste", { force: true });
       }
       if (btnPastePcNow) {
+        btnPastePcNow.classList.remove("is-busy-shimmer");
         btnPastePcNow.textContent = "✓ Pasted!";
         btnPastePcNow.classList.add("is-saved");
+        setTimeout(() => btnPastePcNow.classList.remove("is-saved"), 1400);
       }
     } catch (_) {
-      if (btnPastePcNow) btnPastePcNow.textContent = "Paste Failed";
+      if (btnPastePcNow) {
+        btnPastePcNow.classList.remove("is-busy-shimmer", "is-saved");
+        btnPastePcNow.textContent = "Paste Failed";
+      }
     } finally {
       setTimeout(() => {
         if (btnPastePcNow) {
@@ -1861,6 +1877,8 @@ function initKeyboardSettingsControls() {
     const btnScanQr = document.querySelector("#btn-scan-qr-link");
     if (btnScanQr) {
       btnScanQr.disabled = true;
+      btnScanQr.classList.remove("is-saved");
+      btnScanQr.classList.add("is-busy-shimmer");
       btnScanQr.textContent = "⏳ Grabbing Copied Link…";
     }
     try {
@@ -1873,11 +1891,11 @@ function initKeyboardSettingsControls() {
           ? window.HandsetKeys.captureMirrorCanvasDataUrl()
           : null;
 
-      // Tahap 194: Clean Paste Snapshot First (NO spotlight-move-head on primary cycle to avoid iOS 18/26 lollipop handles & Show Results balloon)
+      // Tahap 195: 480ms initial settle (iPhone 11 Pro Max Zona 2A Safari card + iPhone 17 Pro Spotlight) without lollipop trigger
       await postJson("/api/device/spotlight-paste", {});
-      await new Promise((r) => setTimeout(r, 320));
+      await new Promise((r) => setTimeout(r, 480));
       const frameClean1 = captureFullResFrame();
-      await new Promise((r) => setTimeout(r, 140));
+      await new Promise((r) => setTimeout(r, 180));
       const frameClean2 = captureFullResFrame();
 
       // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
@@ -1906,8 +1924,15 @@ function initKeyboardSettingsControls() {
           waitResult: true,
         });
       }
-      if (res?.ok && (res?.text || res?.extractedText)) {
-        const textToCopy = res.text || res.extractedText;
+      const rawGrabbedText = String(res?.text || res?.extractedText || "").trim();
+      const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText);
+      if (res?.ok && rawGrabbedText && isStrictHttpsUrl) {
+        const textToCopy = rawGrabbedText;
+        if (btnScanQr) {
+          btnScanQr.classList.remove("is-busy-shimmer");
+          btnScanQr.classList.add("is-saved");
+          setTimeout(() => btnScanQr.classList.remove("is-saved"), 1500);
+        }
         if (textToCopy && typeof document !== "undefined" && document.hasFocus() && navigator.clipboard?.writeText) {
           try {
             navigator.clipboard.writeText(textToCopy).catch(() => { });
@@ -1924,8 +1949,12 @@ function initKeyboardSettingsControls() {
       }
       return res;
     } catch (_) {
-      if (btnScanQr) btnScanQr.textContent = "Grab Failed";
+      if (btnScanQr) {
+        btnScanQr.classList.remove("is-busy-shimmer", "is-saved");
+        btnScanQr.textContent = "Grab Failed";
+      }
     } finally {
+      if (btnScanQr) btnScanQr.classList.remove("is-busy-shimmer");
       setTimeout(() => {
         if (btnScanQr) {
           btnScanQr.textContent = SCAN_QR_LABEL;
@@ -3220,7 +3249,7 @@ function renderScreen(screen) {
   const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
   const appContainer = document.querySelector(".app") || document.body;
   if (mirroring) {
-    appContainer.classList.add("is-streaming");
+    appContainer.classList.add("is-streaming", "is-mirroring-active");
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
     remotePanel.hidden = false;
@@ -3284,7 +3313,7 @@ function renderScreen(screen) {
     return;
   }
 
-  appContainer.classList.remove("is-streaming");
+  appContainer.classList.remove("is-streaming", "is-mirroring-active");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
   remotePanel.hidden = true;

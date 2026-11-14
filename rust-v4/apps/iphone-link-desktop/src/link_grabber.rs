@@ -225,6 +225,41 @@ pub fn is_valid_social_url(url: &str) -> bool {
     true
 }
 
+/// Strict HTTP(S) URL guard (Tahap 195):
+/// Rejects raw Base64 tokens (e.g. `MWFlcHlhNmh2bW42ZA==`), bare paths, or strings
+/// lacking a valid scheme, domain host with >=2-char ASCII TLD, and path segment.
+pub fn is_strict_https_social_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("https://") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://") {
+        r
+    } else {
+        return false;
+    };
+    let Some(slash_idx) = rest.find('/') else {
+        return false;
+    };
+    let host = &rest[..slash_idx];
+    let path = &rest[slash_idx..];
+    if host.is_empty() || !host.contains('.') || host.contains('=') || path.len() <= 1 {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.iter().any(|lbl| lbl.is_empty()) {
+        return false;
+    }
+    let tld = labels.last().copied().unwrap_or("");
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    is_valid_social_url(trimmed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +336,36 @@ mod tests {
                 None
             ),
             Some("https://www.instagram.com/reel/DFX5WHvybP1/?igsh=MTdhZXZrMnh2a3d3MA==".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tahap195_strict_https_guard_and_dual_iphone_links() {
+        assert!(is_strict_https_social_url(
+            "https://www.instagram.com/reel/DS8B2CD2lJo/?igsh=MWFlcHlhNmh2bW42ZA=="
+        ));
+        assert!(is_strict_https_social_url(
+            "https://www.instagram.com/reel/DSMGL0rkrwy/?igsh=NnN1N3F0NXk5YWZv"
+        ));
+        assert!(!is_strict_https_social_url("MWFlcHlhNmh2bW42ZA=="));
+        assert!(!is_strict_https_social_url("https://MWFlcHlhNmh2bW42ZA=="));
+        assert!(!is_strict_https_social_url("instagram.com/reel/DS8B2CD2lJo/"));
+        assert!(!is_strict_https_social_url("https://www.instagram.com/"));
+        assert_eq!(
+            clean_and_validate_extracted_url("MWFlcHlhNmh2bW42ZA==", None),
+            None
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.instagram.com/reel/DS8B2CD2lJo/?igsh=MWFlcHlhNmh2bW42ZA=="
+            ),
+            vec!["https://www.instagram.com/reel/DS8B2CD2lJo/?igsh=MWFlcHlhNmh2bW42ZA=="]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.instagram.com/reel/DSMGL0rkrwy/?igsh=NnN1N3F0NXk5YWZv"
+            ),
+            vec!["https://www.instagram.com/reel/DSMGL0rkrwy/?igsh=NnN1N3F0NXk5YWZv"]
         );
     }
 }

@@ -995,6 +995,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
 
+            from handset.qr_bridge import is_strict_valid_grabbed_url
+            if qr_text and not is_strict_valid_grabbed_url(qr_text):
+                print(f"[{source_tag}] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
+                qr_text = None
             if qr_text:
                 if set_windows_clipboard_text(qr_text):
                     _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
@@ -1083,6 +1087,10 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as qr_err:
                         print(f"[Visual QR Bridge] Shortcut scan error: {qr_err}", flush=True)
 
+                from handset.qr_bridge import is_strict_valid_grabbed_url
+                if qr_text and not is_strict_valid_grabbed_url(qr_text):
+                    print(f"[shortcut] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
+                    qr_text = None
                 if qr_text:
                     if set_windows_clipboard_text(qr_text):
                         _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()

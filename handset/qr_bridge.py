@@ -901,7 +901,7 @@ def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...
     gray_card = scaled_card.convert("L")
     inv_card = ImageOps.invert(gray_card)
     inv_card = ImageOps.autocontrast(inv_card, cutoff=2)
-    rgb_card = scaled_card
+    rgb_card = crop_card.resize((int(cw * 2.5), int(ch * 2.5)), Image.BICUBIC)
 
     # --- Zona 3: Bottom Search Input Bar (iPhone 11 Pro Max, y=0.882..0.946*H) ---
     box_bot = (int(0.118 * W), int(0.882 * H), int(0.875 * W), int(0.946 * H))
@@ -1468,6 +1468,9 @@ def clean_extracted_url(raw_url: str) -> str:
     u = re.sub(r'^.*?(?:anchor|anch0r|anehor|ancnor)[a-z0-9\.\-_]*\.(?:net|com|org)/+\s*', '', u, flags=re.IGNORECASE)
     u = _strip_leading_cursor(u)
 
+    # Heal single-space OCR splits inside ?igsh= tokens before m_inner regex extraction
+    u = re.sub(r'(igsh=[A-Za-z0-9_\-]+)\s+([A-Za-z0-9_\-=]{2,})', r'\1\2', u, flags=re.IGNORECASE)
+
     # Double domain cleaner: extract from valid domain path onwards (Tahap 106 Pilar 2)
     m_inner = re.search(
         r"""((?:www\.)?(?:instagram\.com/(?:p|reel|tv)/|threads\.(?:com|net)/(?:share/|@))[^\s"'<>]+)""",
@@ -1642,8 +1645,8 @@ def clean_extracted_url(raw_url: str) -> str:
     if re.match(r'^https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]{11,15})$', u, re.IGNORECASE):
         u = u + "/"
 
-    # Absolute exit guard for Instagram URLs (Tahap 194): strict 11-15 char Base64URL shortcode and clean query
-    if 'instagram.com/' in u.lower() and re.search(r'instagram\.com/(?:p|reel|reels|tv)/', u, re.IGNORECASE):
+    # Absolute exit guard for Instagram URLs (Tahap 194..195): strict 11-15 char Base64URL shortcode and clean query
+    if 'instagram.com' in u.lower():
         if not re.match(
             r'^https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]{11,15})/(?:\?igsh=[A-Za-z0-9_\-]{12,}={0,2})?$',
             u,
@@ -1652,6 +1655,24 @@ def clean_extracted_url(raw_url: str) -> str:
             return ""
 
     return u
+
+
+def is_strict_valid_grabbed_url(u: Optional[str]) -> bool:
+    """Tahap 195 Strict HTTPS/HTTP URL Guard: reject any raw Base64 fragment, plain text, or domainless string."""
+    if not u or not isinstance(u, str):
+        return False
+    s = u.strip()
+    if not s or " " in s or ".." in s or "…" in s:
+        return False
+    if not re.match(r'^https?://(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}/\S+$', s, re.IGNORECASE):
+        return False
+    low = s.lower()
+    if any(bad in low for bad in ("anchor.net", "anch0r.net", "apple.com", "wikipedia.org", "google.com/search")):
+        return False
+    m_ig = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', s, re.IGNORECASE)
+    if m_ig and not re.match(r'^[A-Za-z0-9_\-]{11,15}$', m_ig.group(1)):
+        return False
+    return True
 
 
 def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
@@ -1930,9 +1951,19 @@ def _segment_text_line_glyphs(gray: Image.Image) -> list[list[tuple[int, int, in
 
 
 def _is_slash_glyph(patch: Image.Image, gw: int, gh: int, ref_cap_h: float) -> bool:
-    if gw < 2 or gh < max(8, int(ref_cap_h * 0.90)):
+    if gw < 2 or gh < max(8, int(ref_cap_h * 0.90)) or gw > max(4, int(gh * 0.72)):
         return False
     ppx = patch.load()
+    q_h = max(1, gh // 4)
+    q_w = max(1, int(gw * 0.28))
+    for y in range(q_h):
+        for x in range(q_w):
+            if ppx[x, y] == 0:
+                return False
+    for y in range(gh - q_h, gh):
+        for x in range(gw - q_w, gw):
+            if ppx[x, y] == 0:
+                return False
     top_xs: list[int] = []
     bot_xs: list[int] = []
     for y in range(min(gh, max(2, gh // 4))):
@@ -1982,12 +2013,48 @@ def _has_digit_one_beak(patch: Image.Image) -> bool:
     return overhang >= max(2, int(round(gw * 0.22)))
 
 
+def _is_capital_L_vs_J_glyph(patch: Image.Image) -> Optional[str]:
+    """Tahap 195: Distinguish capital 'L' (left vertical stem + bottom-right foot) from capital 'J' (right vertical stem + bottom-left hook)."""
+    gw, gh = patch.size
+    if gw < 3 or gh < 8:
+        return None
+    ppx = patch.load()
+
+    def _density(x0: int, y0: int, x1: int, y1: int) -> float:
+        x0c, x1c = max(0, x0), min(gw, max(x0 + 1, x1))
+        y0c, y1c = max(0, y0), min(gh, max(y0 + 1, y1))
+        total = (x1c - x0c) * (y1c - y0c)
+        if total <= 0:
+            return 0.0
+        ink = 0
+        for yy in range(y0c, y1c):
+            for xx in range(x0c, x1c):
+                if ppx[xx, yy] == 0:
+                    ink += 1
+        return ink / float(total)
+
+    left_stem_density = _density(0, int(gh * 0.05), max(1, int(round(gw * 0.38))), int(gh * 0.88))
+    right_stem_density = _density(min(gw - 1, int(gw * 0.62)), int(gh * 0.05), gw, int(gh * 0.78))
+    bottom_right_density = _density(int(gw * 0.42), int(gh * 0.72), gw, gh)
+    middle_right_density = _density(int(gw * 0.48), int(gh * 0.18), gw, int(gh * 0.65))
+    top_left_density = _density(0, 0, max(1, int(round(gw * 0.40))), int(gh * 0.45))
+
+    if (
+        (left_stem_density > 0.70 and bottom_right_density > 0.55 and middle_right_density < 0.20)
+        or (left_stem_density > right_stem_density + 0.25 and bottom_right_density > middle_right_density + 0.22)
+    ):
+        return "L"
+    if right_stem_density > 0.70 and top_left_density < 0.20:
+        return "J"
+    return None
+
+
 def verify_shortcode_glyph_geometry(
     img: Optional[Image.Image],
     url: Optional[str],
     variant_candidates: Optional[list[str]] = None,
 ) -> Optional[str]:
-    """Tahap 193: Optical Stem & Oval Glyph Geometry Verifier ('l' vs 'I' vs '1' and '0' vs 'O')."""
+    """Tahap 193..195: Optical Stem, L-Base & Oval Glyph Geometry Verifier ('l'/'I'/'1', '0'/'O', 'L'/'J') across Zona 1, 2A, & 3."""
     if not img or not url:
         return url
 
@@ -1999,14 +2066,17 @@ def verify_shortcode_glyph_geometry(
     if not m_url:
         return url
     url_prefix, code, url_suffix = m_url.groups()
-    if len(code) < 10 or not any(c in code for c in "lI10O"):
+    if len(code) < 10 or not any(c in code for c in "lI10OJL"):
         return url
 
     W, H = img.size
     zone_boxes = [
         (int(0.040 * W), int(0.040 * H), int(0.960 * W), int(0.255 * H)),  # Zona 1: iPhone 17 Pro Spotlight
         (int(0.192 * W), int(0.268 * H), int(0.960 * W), int(0.505 * H)),  # Zona 2A: iPhone 11 Pro Max Card
+        (int(0.118 * W), int(0.882 * H), int(0.875 * W), int(0.946 * H)),  # Zona 3: iPhone 11 Pro Max Bottom Bar
     ]
+    if H < 900 or W < 900:
+        zone_boxes.insert(0, (0, 0, W, H))
 
     L = len(code)
     best_line_glyphs: Optional[list[tuple[int, int, int, int, Image.Image]]] = None
@@ -2027,23 +2097,37 @@ def verify_shortcode_glyph_geometry(
             for start in range(0, len(line) - L + 1):
                 win = line[start : start + L]
                 score = 0.0
-                # Boundary context: prefer preceding '/' (start > 0) or start == 0, AND trailing '/' at start + L
+                # Boundary context: require exact preceding '/' (or start == 0 on short wrapped line) AND trailing '/' (or line end on bare shortcode line)
+                left_ok = False
+                right_ok = False
                 if start > 0:
                     pg = line[start - 1]
                     if _is_slash_glyph(pg[4], pg[2] - pg[0] + 1, pg[3] - pg[1] + 1, float(med_h)):
                         score += 6.0
-                elif start == 0:
+                        left_ok = True
+                elif start == 0 and len(line) <= L + 25:
                     score += 3.0
+                    left_ok = True
                 if start + L < len(line):
                     ng = line[start + L]
                     if _is_slash_glyph(ng[4], ng[2] - ng[0] + 1, ng[3] - ng[1] + 1, float(med_h)):
                         score += 6.0
+                        right_ok = True
+                elif start + L == len(line) and len(line) <= L + 6:
+                    score += 3.0
+                    right_ok = True
+                if not (left_ok and right_ok):
+                    continue
 
+                merged_blob = False
                 for k, g in enumerate(win):
                     ch_k = code[k]
                     gw = g[2] - g[0] + 1
                     gh = g[3] - g[1] + 1
                     ar = gw / float(max(1, gh))
+                    if ar > 1.45:
+                        merged_blob = True
+                        break
                     if ch_k in ("l", "I", "i", "1", "j"):
                         score += 3.0 if ar <= 0.56 else -4.0
                     elif ch_k in ("m", "w", "M", "W"):
@@ -2053,6 +2137,10 @@ def verify_shortcode_glyph_geometry(
                     elif ch_k not in ("-", "_"):
                         if _is_slash_glyph(g[4], gw, gh, float(med_h)):
                             score -= 5.0
+                        elif 0.32 <= ar <= 0.98:
+                            score += 0.4
+                if merged_blob:
+                    continue
                 if score > best_align_score:
                     best_align_score = score
                     best_line_glyphs = line
@@ -2063,17 +2151,23 @@ def verify_shortcode_glyph_geometry(
 
     aligned = best_line_glyphs[best_start : best_start + L]
 
-    # Calibrate cap height & top Y from unambiguous uppercase characters (never I/O)
+    # Calibrate cap height & top Y from unambiguous uppercase characters (never I/O; prefer non-J/L first)
     cap_tops: list[int] = []
     cap_bots: list[int] = []
     d_widths: list[int] = []
     for k, g in enumerate(aligned):
         ch_k = code[k]
-        if ch_k in "ABCDEFGHJKMNPQRSTUVWXYZ" and ch_k not in ("I", "O"):
+        if ch_k in "ABCDEFGHKMNPQRSTUVWXYZ":
             cap_tops.append(g[1])
             cap_bots.append(g[3])
             if ch_k == "D":
                 d_widths.append(g[2] - g[0] + 1)
+    if not cap_tops:
+        for k, g in enumerate(aligned):
+            ch_k = code[k]
+            if ch_k in "JL":
+                cap_tops.append(g[1])
+                cap_bots.append(g[3])
 
     if not cap_tops:
         return url
@@ -2106,19 +2200,28 @@ def verify_shortcode_glyph_geometry(
             ar = gw / float(max(1, gh))
             if ar <= 0.685:
                 chars_out[k] = "0"
-            elif ar >= 0.725:
+            elif ar >= (0.775 if ch_k == "0" else 0.725):
                 chars_out[k] = "O"
             elif ref_d_w is not None:
                 if gw <= ref_d_w * 0.95:
                     chars_out[k] = "0"
-                elif gw >= ref_d_w * 1.05:
+                elif gw >= ref_d_w * (1.08 if ch_k == "0" else 1.05):
                     chars_out[k] = "O"
         elif ch_k in ("l", "I", "1"):
+            neighbor_cap_top = None
+            for nk in (k - 1, k + 1):
+                if 0 <= nk < L and code[nk] in "ABCDEFGHJKMNPQRSTUVWXYZ" and code[nk] not in ("I", "O"):
+                    neighbor_cap_top = aligned[nk][1]
+                    break
             if _has_digit_one_beak(g[4]):
                 chars_out[k] = "1"
             else:
-                # Ascender 'l' extends at or slightly above cap_top (gy0 < ref_cap_top or gh > ref_cap_h)
-                if g[1] <= ref_cap_top - 1 or gh >= ref_cap_h + 1:
+                # Ascender 'l' extends at or slightly above cap_top (gy0 < ref_cap_top or neighbor_cap_top)
+                if (
+                    g[1] <= ref_cap_top - 1
+                    or gh >= ref_cap_h + 1
+                    or (neighbor_cap_top is not None and g[1] <= neighbor_cap_top - 1)
+                ):
                     chars_out[k] = "l"
                 elif g[1] >= ref_cap_top + 1 or gh <= ref_cap_h - 1:
                     chars_out[k] = "I"
@@ -2126,10 +2229,18 @@ def verify_shortcode_glyph_geometry(
                     # Tied height on compressed frame: consult variant_candidates consensus if available
                     votes_l = sum(1 for sc in sibling_codes if sc[k] == "l")
                     votes_I = sum(1 for sc in sibling_codes if sc[k] == "I")
-                    if votes_l > votes_I:
+                    if votes_l > votes_I or (votes_l >= 1 and neighbor_cap_top is not None):
                         chars_out[k] = "l"
                     elif votes_I > votes_l:
                         chars_out[k] = "I"
+        elif ch_k in ("J", "L"):
+            lj_kind = _is_capital_L_vs_J_glyph(g[4])
+            if ch_k == "J" and lj_kind == "L":
+                chars_out[k] = "L"
+            elif ch_k == "J" and lj_kind is None and any(sc[k] == "L" for sc in sibling_codes):
+                chars_out[k] = "L"
+            elif ch_k == "L" and lj_kind == "J" and not any(sc[k] == "L" for sc in sibling_codes):
+                chars_out[k] = "J"
 
     verified_code = "".join(chars_out)
     return f"{url_prefix}{verified_code}{url_suffix}"
@@ -2350,6 +2461,23 @@ def _extract_spotlight_zones(
     bot_fragments: list[str] = []
     best_url: Optional[str] = None
 
+    verify_frames = [f for f in ([img, img_tail] + (extra_frames or [])) if f is not None]
+    _geom_cache: dict[str, str] = {}
+
+    def _verify_url_across_frames(u_cand: Optional[str], cands_pool: list[str]) -> Optional[str]:
+        if not u_cand:
+            return u_cand
+        if u_cand in _geom_cache:
+            return _geom_cache[u_cand]
+        cur = u_cand
+        for vf in verify_frames:
+            v_res = verify_shortcode_glyph_geometry(vf, cur, cands_pool)
+            if v_res and v_res != cur:
+                _geom_cache[u_cand] = v_res
+                return v_res
+        _geom_cache[u_cand] = cur
+        return cur
+
     try:
         box_head = list(prepare_spotlight_top_box_images(img))
         ocr_inputs = list(box_head)
@@ -2405,7 +2533,7 @@ def _extract_spotlight_zones(
         if any(_is_complete_top_box_url(u) for u in zone1_candidates):
             top_best = pick_best_extracted_url(zone1_candidates)
             if top_best and _is_complete_top_box_url(top_best):
-                top_best = verify_shortcode_glyph_geometry(img, top_best, zone1_candidates) or top_best
+                top_best = _verify_url_across_frames(top_best, zone1_candidates) or top_best
                 out_top = (top_best, zone1_candidates, bot_fragments)
                 if cache_key is not None and img_tail is None and not extra_frames:
                     _SPOTLIGHT_FRAME_CACHE.append((cache_key, out_top))
@@ -2478,7 +2606,11 @@ def _extract_spotlight_zones(
         else:
             tail_z3_lines = list(head_z3_lines)
 
-        all_card_candidates = head_card_candidates + tail_card_candidates
+        raw_cards = head_card_candidates + tail_card_candidates
+        all_card_candidates = [
+            _verify_url_across_frames(cand, raw_cards) or cand
+            for cand in raw_cards
+        ]
         all_z3_lines = head_z3_lines + tail_z3_lines
 
         # Extract bottom bar fragments & single-line URLs
@@ -2524,7 +2656,7 @@ def _extract_spotlight_zones(
         best_url = pick_best_extracted_url(all_candidates)
 
     if best_url:
-        best_url = verify_shortcode_glyph_geometry(img, best_url, all_candidates) or best_url
+        best_url = _verify_url_across_frames(best_url, all_candidates) or best_url
 
     out = (best_url, all_candidates, bot_fragments)
     if cache_key is not None and img_tail is None and not extra_frames:

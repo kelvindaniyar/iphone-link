@@ -3843,3 +3843,68 @@ footer {
     padding: 4px 8px;
   }
 }
+
+/* =========================================================================
+   TAHAP 195: Apple-Grade Fluid Motion & Spring Physics UI (Website Docs Parity)
+   ========================================================================= */
+:root {
+  --spring-apple-fluid: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring-apple-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring-apple-bounce: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --spring-apple-snappy: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes appleShimmerSweep {
+  0% { transform: translate3d(-120%, 0, 0); }
+  100% { transform: translate3d(120%, 0, 0); }
+}
+
+@keyframes appleSuccessPop {
+  0% { transform: scale(0.96); }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+.bento-card,
+.dl-card,
+.btn-primary,
+.btn-secondary,
+.sim-pill,
+.sim-action-btn {
+  transition:
+    transform 260ms var(--spring-apple-bounce),
+    opacity 200ms var(--spring-apple-fluid),
+    box-shadow 260ms var(--spring-apple-fluid),
+    border-color 220ms var(--spring-apple-fluid);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.sim-pill:active,
+.sim-action-btn:active {
+  transform: scale(0.965);
+  transition-duration: 90ms;
+  transition-timing-function: var(--spring-apple-snappy);
+}
+
+.is-busy-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.is-busy-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.28) 50%, transparent 80%);
+  transform: translate3d(-120%, 0, 0);
+  animation: appleShimmerSweep 950ms var(--spring-apple-fluid) infinite;
+  pointer-events: none;
+}
+
+.is-saved {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.26), rgba(5, 150, 105, 0.16)) !important;
+  border-color: rgba(52, 211, 153, 0.56) !important;
+  box-shadow: 0 8px 20px -6px rgba(16, 185, 129, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.45) !important;
+  animation: appleSuccessPop 360ms var(--spring-apple-bounce) 1;
+}

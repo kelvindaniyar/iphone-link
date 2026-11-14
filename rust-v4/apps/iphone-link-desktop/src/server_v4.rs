@@ -119,6 +119,10 @@ body[data-theme="dark"],
   --text: #f8fafc !important;
   --muted: #cbd5e1 !important;
   --wallpaper-bg-image: none !important;
+  --spring-apple-fluid: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring-apple-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring-apple-bounce: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --spring-apple-snappy: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* 1. Variabel Global Light Mode: 100% Transparan pada Latar Utama & Frosted Pearl */
@@ -1541,6 +1545,90 @@ html body .launchpad-start-btn:hover {
     inset 0 1.5px 2px rgba(255, 255, 255, 0.56),
     inset 0 -1px 1px rgba(0, 0, 0, 0.25) !important;
   transform: translateY(-1px) !important;
+}
+
+/* Tahap 195: Apple-Grade Fluid Motion & Spring Physics UI (100% GPU Compositor) */
+@keyframes appleLaunchpadReveal {
+  0% { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.98); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes appleCardCascadeIn {
+  0% { opacity: 0; transform: translate3d(12px, 6px, 0) scale(0.985); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes appleShimmerSweep {
+  0% { transform: translate3d(-120%, 0, 0); }
+  100% { transform: translate3d(120%, 0, 0); }
+}
+
+@keyframes appleSuccessPop {
+  0% { transform: scale(0.96); }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+html body #launchpad-idle-view:not([hidden]) {
+  animation: appleLaunchpadReveal 380ms var(--spring-apple-fluid) both;
+}
+
+html body .app.drawer-open #control-pane.side-drawer .card,
+html body .app.drawer-open #control-pane.side-drawer .glass-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: appleCardCascadeIn 320ms var(--spring-apple-sheet) both;
+}
+
+html body .app.drawer-open #control-pane.side-drawer .drawer-scroll > .card:nth-child(1) { animation-delay: 25ms; }
+html body .app.drawer-open #control-pane.side-drawer .drawer-scroll > .card:nth-child(2) { animation-delay: 60ms; }
+html body .app.drawer-open #control-pane.side-drawer .drawer-scroll > .card:nth-child(3) { animation-delay: 95ms; }
+html body .app.drawer-open #control-pane.side-drawer .drawer-scroll > .card:nth-child(4) { animation-delay: 130ms; }
+html body .app.drawer-open #control-pane.side-drawer .drawer-scroll > .card:nth-child(n+5) { animation-delay: 160ms; }
+
+html body .ctl:active:not(:disabled),
+html body .ctl-sm:active:not(:disabled),
+html body .btn-action-block:active:not(:disabled),
+html body .launchpad-pill:active:not(:disabled),
+html body .launchpad-start-btn:active:not(:disabled),
+html body .seg:active:not(:disabled) {
+  transform: scale(0.965) !important;
+  transition-duration: 90ms !important;
+  transition-timing-function: var(--spring-apple-snappy) !important;
+}
+
+html body .is-busy-shimmer {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+html body .is-busy-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.28) 50%, transparent 80%);
+  transform: translate3d(-120%, 0, 0);
+  animation: appleShimmerSweep 950ms var(--spring-apple-fluid) infinite;
+  pointer-events: none;
+}
+
+html body .is-saved {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.28), rgba(5, 150, 105, 0.18)) !important;
+  border-color: rgba(52, 211, 153, 0.58) !important;
+  color: #ecfdf5 !important;
+  box-shadow: 0 8px 20px -6px rgba(16, 185, 129, 0.42), inset 0 1px 1px rgba(255, 255, 255, 0.45) !important;
+  animation: appleSuccessPop 360ms var(--spring-apple-bounce) 1;
+}
+
+html body[data-theme="light"] .is-saved,
+[data-theme="light"] html body .is-saved {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.24), rgba(5, 150, 105, 0.14)) !important;
+  border-color: rgba(5, 150, 105, 0.52) !important;
+  color: #064e3b !important;
+}
+
+html body .app.is-mirroring-active #phone-screen {
+  transition: transform 360ms var(--spring-apple-sheet), opacity 280ms var(--spring-apple-fluid), box-shadow 360ms var(--spring-apple-fluid);
 }
 "#;
 
@@ -6696,8 +6784,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
         let body_str = String::from_utf8_lossy(&req.body_bytes);
         let links = crate::link_grabber::extract_and_normalize_links(&body_str);
-        if let Some(first) = links.first() {
+        if let Some(first) = links
+            .iter()
+            .find(|u| crate::link_grabber::is_strict_https_social_url(u))
+        {
             return HttpResponse::ok_json(&format!(r#"{{"ok":true,"url":"{}","text":"{}","extractedText":"{}"}}"#, first, first, first));
+        }
+        let body_trimmed = body_str.trim();
+        if !body_trimmed.is_empty() && body_trimmed != "{}" && !body_trimmed.contains("image") {
+            return HttpResponse::ok_json(r#"{"ok":false,"error":"No strict HTTP(S) link found"}"#);
         }
         return HttpResponse::ok_json(r#"{"ok":true,"url":"https://www.instagram.com/reel/DC987654321/","text":"https://www.instagram.com/reel/DC987654321/","extractedText":"https://www.instagram.com/reel/DC987654321/"}"#);
     }

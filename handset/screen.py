@@ -1563,26 +1563,17 @@ def spotlight_paste_clipboard_on_iphone() -> dict:
         send_keys_direct([0xE3])
         time.sleep(0.02)
         send_keys_direct([])
-        # 3) Wait 500ms for Spotlight animation and input focus on iPhone 11 Pro Max & 17 Pro
-        time.sleep(0.50)
-        # 4) Tahap 193 Spotlight Hard-Clear BEFORE paste: Cmd+A -> Backspace ensures 0 residual characters
-        send_keys_direct([0xE3])
-        time.sleep(0.02)
-        send_keys_direct([0xE3, 0x04])
-        time.sleep(0.03)
-        send_keys_direct([0xE3])
-        time.sleep(0.015)
-        send_keys_direct([])
-        time.sleep(0.025)
+        # 3) Wait 480ms for Spotlight animation and native auto-selection on iPhone 11 Pro Max & 17 Pro
+        time.sleep(0.48)
+        # 4) Tahap 195 Pure Backspace Clear (NO Cmd+A so iOS 27 never activates persistent lollipop handles or Show Results balloon)
         send_keys_direct([0x2A])  # Backspace
         time.sleep(0.045)
         send_keys_direct([])
         time.sleep(0.05)
-        # 5) Directly paste clipboard (Cmd + V)
+        # 5) Directly paste clipboard (Cmd + V) without Cmd+A
         trigger_ios_shortcut("paste-ios")
         time.sleep(0.12)
-        # 6) Tahap 112: Right Arrow (0x4F) collapses iOS auto-selection to the end of text, instantly
-        #    removing the blue block, white lollipop handles (|• / •|) and the "Share Results" balloon.
+        # 6) Collapse selection to end via Right Arrow (0x4F) cleanly
         send_keys_direct([0x4F])
         time.sleep(0.035)
         send_keys_direct([])
