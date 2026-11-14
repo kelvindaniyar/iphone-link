@@ -490,7 +490,11 @@
         } else if (e.key === "Enter") {
           queueTypedKey("Enter");
         } else if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-          queueTypedKey(e.key);
+          let recordedChar = e.key;
+          if (/^[A-Za-z]$/.test(recordedChar)) {
+            recordedChar = e.shiftKey ? recordedChar.toUpperCase() : recordedChar.toLowerCase();
+          }
+          queueTypedKey(recordedChar);
         }
 
         // Regular keystroke

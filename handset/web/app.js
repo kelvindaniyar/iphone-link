@@ -1868,29 +1868,44 @@ function initKeyboardSettingsControls() {
         await window.HandsetKeys.flushTypedQueue();
       }
 
-      // Tahap 112: Single fast cycle (Capture -> Capture Head -> Close Spotlight IMMEDIATELY -> 1x batch OCR)
-      // Step 1: Open Spotlight, paste clipboard, collapse selection with Right Arrow (handled in screen.py)
+      const captureFullResFrame = () =>
+        window.HandsetKeys?.captureMirrorCanvasDataUrl
+          ? window.HandsetKeys.captureMirrorCanvasDataUrl()
+          : null;
+
+      // Tahap 194: Clean Paste Snapshot First (NO spotlight-move-head on primary cycle to avoid iOS 18/26 lollipop handles & Show Results balloon)
       await postJson("/api/device/spotlight-paste", {});
+      await new Promise((r) => setTimeout(r, 320));
+      const frameClean1 = captureFullResFrame();
+      await new Promise((r) => setTimeout(r, 140));
+      const frameClean2 = captureFullResFrame();
 
-      // Step 2: frameTail = full clean paste frame (iPhone 17 Pro: whole multi-line URL; iPhone 11 Pro Max: Safari card + bottom bar tail)
-      await new Promise((r) => setTimeout(r, 220));
-      const frameTail = window.HandsetKeys?.captureMirrorCanvasDataUrl ? window.HandsetKeys.captureMirrorCanvasDataUrl() : null;
+      // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
+      await postJson("/api/device/spotlight-close", {}).catch(() => {});
 
-      // Step 3: Move cursor to head (Up Arrow + Cmd+Left, NO Cmd+A) and capture frameHead
-      await postJson("/api/device/spotlight-move-head", {});
-      await new Promise((r) => setTimeout(r, 180));
-      const frameHead = window.HandsetKeys?.captureMirrorCanvasDataUrl ? window.HandsetKeys.captureMirrorCanvasDataUrl() : null;
-
-      // Step 4: Close Spotlight RIGHT NOW (before OCR) so iPhone returns to the app in ~1.3s
-      await postJson("/api/device/spotlight-close", {}).catch(() => { });
-
-      // Step 5: Single OCR call with both frames
-      const res = await postJson("/api/qr/scan", {
-        frameDataUrl: frameTail || frameHead,
-        tailFrameDataUrl: frameHead || frameTail,
-        frames: [frameTail, frameHead].filter(Boolean),
+      let res = await postJson("/api/qr/scan", {
+        frameDataUrl: frameClean1 || frameClean2,
+        tailFrameDataUrl: frameClean2 || frameClean1,
+        frames: [frameClean1, frameClean2].filter(Boolean),
         waitResult: true,
       });
+
+      // Fallback Retry ONLY if clean snapshot pass did not extract a valid URL
+      if (!res?.ok || !(res?.text || res?.extractedText)) {
+        await postJson("/api/device/spotlight-paste", {});
+        await new Promise((r) => setTimeout(r, 220));
+        const frameTail = captureFullResFrame();
+        await postJson("/api/device/spotlight-move-head", {});
+        await new Promise((r) => setTimeout(r, 180));
+        const frameHead = captureFullResFrame();
+        await postJson("/api/device/spotlight-close", {}).catch(() => {});
+        res = await postJson("/api/qr/scan", {
+          frameDataUrl: frameTail || frameHead,
+          tailFrameDataUrl: frameHead || frameTail,
+          frames: [frameTail, frameHead, frameClean1, frameClean2].filter(Boolean),
+          waitResult: true,
+        });
+      }
       if (res?.ok && (res?.text || res?.extractedText)) {
         const textToCopy = res.text || res.extractedText;
         if (textToCopy && typeof document !== "undefined" && document.hasFocus() && navigator.clipboard?.writeText) {

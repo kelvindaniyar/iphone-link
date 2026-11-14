@@ -42,6 +42,29 @@ pub fn clear_copy_cache() {
 }
 
 /// Applies optical corrections to OCR output text.
+/// Synchronizes candidate casing with iPhone screen OCR casing when Caps Lock causes
+/// an all-uppercase vs all-lowercase mismatch (Tahap 194).
+pub fn sync_candidate_case_to_ocr(ocr_text: &str, candidate_text: &str) -> String {
+    if ocr_text.is_empty() || candidate_text.is_empty() {
+        return candidate_text.to_string();
+    }
+    let alpha_ocr: String = ocr_text.chars().filter(|c| c.is_alphabetic()).collect();
+    let alpha_cand: String = candidate_text.chars().filter(|c| c.is_alphabetic()).collect();
+    if alpha_ocr.chars().count() >= 4 && alpha_cand.chars().count() >= 4 {
+        let ocr_all_lower = alpha_ocr.chars().all(|c| c.is_lowercase());
+        let ocr_all_upper = alpha_ocr.chars().all(|c| c.is_uppercase());
+        let cand_all_lower = alpha_cand.chars().all(|c| c.is_lowercase());
+        let cand_all_upper = alpha_cand.chars().all(|c| c.is_uppercase());
+        if ocr_all_lower && cand_all_upper {
+            return candidate_text.to_lowercase();
+        }
+        if ocr_all_upper && cand_all_lower {
+            return candidate_text.to_uppercase();
+        }
+    }
+    candidate_text.to_string()
+}
+
 /// Fixes known WinRT OCR character misclassifications:
 /// - "diabadil<an" -> "diabadikan"
 /// - "@eril<l<ristian" -> "@erikkristian"
@@ -462,5 +485,28 @@ mod tests {
         let stitched = stitch_multiline_ocr_frames(&[single_enter.clone()]);
         assert_eq!(stitched, single_enter);
         assert!(!stitched.contains("\r\n\r\n"));
+    }
+
+    #[test]
+    fn test_tahap194_sync_candidate_case_to_ocr() {
+        assert_eq!(
+            sync_candidate_case_to_ocr(
+                "kalo gini mah teddy juga bisa wok?",
+                "KALO GINI MAH TEDDY JUGA BISA WOK?"
+            ),
+            "kalo gini mah teddy juga bisa wok?"
+        );
+        assert_eq!(
+            sync_candidate_case_to_ocr(
+                "KALO GINI MAH TEDDY JUGA BISA WOK?",
+                "kalo gini mah teddy juga bisa wok?"
+            ),
+            "KALO GINI MAH TEDDY JUGA BISA WOK?"
+        );
+        // Mixed-case strings must preserve their exact casing
+        assert_eq!(
+            sync_candidate_case_to_ocr("iPhone Link Pro", "IPhone Link Pro"),
+            "IPhone Link Pro"
+        );
     }
 }

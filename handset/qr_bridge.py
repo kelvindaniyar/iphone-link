@@ -1573,6 +1573,21 @@ def clean_extracted_url(raw_url: str) -> str:
                 if len(cleaned_code) >= 11 and len(cleaned_code) < len(code_long):
                     u = u[:m_long.start(2)] + cleaned_code + u[m_long.end(2):]
 
+    # Normalize /reels/ to /reel/
+    u = re.sub(r'(instagram\.com)/reels/', r'\1/reel/', u, flags=re.IGNORECASE)
+
+    # Strip extra tracking query params after ?igsh=... (e.g. &ig_mid=..., &utm_source=...) (Tahap 194)
+    u = re.sub(r'(\?igsh=[^&#\s]+)&.*$', r'\1', u, flags=re.IGNORECASE)
+
+    # Strict Instagram shortcode segment validation: reject dots '.' and length < 11 or > 15 (Tahap 194)
+    m_ig_seg = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', u, re.IGNORECASE)
+    if m_ig_seg:
+        raw_seg = m_ig_seg.group(1)
+        if not re.match(r'^[A-Za-z0-9_\-]{11,15}$', raw_seg):
+            return ""
+    elif re.search(r'instagram\.com/(?:p|reel|reels|tv)/(?:$|[?#])', u, re.IGNORECASE):
+        return ""
+
     # Threads /share/<CODE> trailing '_' cleanup (Tahap 105 Pilar 4)
     m_th = re.search(r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)([A-Za-z0-9_\-]+)(.*)$', u, re.IGNORECASE)
     if m_th:
@@ -1580,13 +1595,6 @@ def clean_extracted_url(raw_url: str) -> str:
         if len(th_code) >= 12 and th_code.endswith(('_', '-')):
             th_code = th_code.rstrip('_-')
         u = f"{th_pfx}{th_code}{th_sfx}"
-
-    # Instagram shortcode minimum length validation: strictly reject < 11 characters (Tahap 111 Pilar 2)
-    m_ig = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)(?:/|\?|$)', u, re.IGNORECASE)
-    if m_ig:
-        code = m_ig.group(1)
-        if len(code) < 11 or len(code) > 15:
-            return ""
 
     # Base64 query token padding reconstruction for igsh= (Tahap 111)
     if "igsh=" in u:
@@ -1610,19 +1618,37 @@ def clean_extracted_url(raw_url: str) -> str:
                     token = token + ('=' * pad)
             u = u[:m.start(1)] + token
 
+    # Clean ?igsh= extra parameters again and validate token length/alphabet (Tahap 194)
+    u = re.sub(r'(\?igsh=[^&#\s]+)&.*$', r'\1', u, flags=re.IGNORECASE)
+    m_igsh_q = re.search(r'\?igsh=([^\s&#]+)', u, flags=re.IGNORECASE)
+    if m_igsh_q:
+        raw_token = re.sub(r'[^A-Za-z0-9_\-=]+$', '', m_igsh_q.group(1))
+        core_token = raw_token.rstrip('=')
+        if len(core_token) < 12 or not re.match(r'^[A-Za-z0-9_\-]+={0,2}$', raw_token):
+            u = re.sub(r'/?\?igsh=.*$', '/', u, flags=re.IGNORECASE)
+        else:
+            if len(core_token) % 4 == 2:
+                norm_token = core_token + '=='
+            elif len(core_token) % 4 == 3:
+                norm_token = core_token + '='
+            else:
+                norm_token = raw_token
+            u = re.sub(r'/?\?igsh=.*$', f'/?igsh={norm_token}', u, flags=re.IGNORECASE)
+
     u = _strip_safe_tail_ellipsis(u.rstrip(".,;:!?)>\"'"))
     if ".." in u or "…" in u:
         return ""
 
-    # Absolute exit guard for Instagram shortcode length: strictly 11 to 15 characters (Tahap 111 Pilar 2)
-    m_ig_final = re.match(
-        r'^https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)',
-        u,
-        flags=re.IGNORECASE,
-    )
-    if m_ig_final:
-        final_code = m_ig_final.group(1)
-        if len(final_code) < 11 or len(final_code) > 15:
+    if re.match(r'^https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]{11,15})$', u, re.IGNORECASE):
+        u = u + "/"
+
+    # Absolute exit guard for Instagram URLs (Tahap 194): strict 11-15 char Base64URL shortcode and clean query
+    if 'instagram.com/' in u.lower() and re.search(r'instagram\.com/(?:p|reel|reels|tv)/', u, re.IGNORECASE):
+        if not re.match(
+            r'^https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]{11,15})/(?:\?igsh=[A-Za-z0-9_\-]{12,}={0,2})?$',
+            u,
+            flags=re.IGNORECASE,
+        ):
             return ""
 
     return u
@@ -1659,6 +1685,7 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             raw_cand = m_start.group(1)
 
         acc_url = re.sub(r'\s+', '', raw_cand)
+        locked_ig_shortcode = None
         if has_stop_after[i]:
             final_cand = clean_extracted_url(acc_url)
             if final_cand and not (".." in final_cand or "…" in final_cand):
@@ -1691,13 +1718,24 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             part = re.sub(r'^[1li]gsh=', 'igsh=', part, flags=re.IGNORECASE)
             part = re.sub(r'^[1li]xmt=', 'xmt=', part, flags=re.IGNORECASE)
 
+            # Tahap 194: Line-2 11-char Base64URL shortcode lock when Line 1 ends with /p/, /reel/, /reels/, /tv/
+            m_sc11 = re.match(r'^([A-Za-z0-9_\-]{11})/(.*)$', part)
+            if m_sc11 and re.search(r'instagram\.com/(?:p|reel|reels|tv)/?$', acc_url, re.IGNORECASE):
+                locked_ig_shortcode = m_sc11.group(1)
+                if not acc_url.endswith('/'):
+                    acc_url += '/'
+                acc_url = acc_url + locked_ig_shortcode + '/' + m_sc11.group(2)
+                if should_stop_after_j:
+                    break
+                continue
+
             in_query_token = ("igsh=" in acc_url or "xmt=" in acc_url or "si=" in acc_url) and not acc_url.endswith("==")
 
             is_hanging = (
                 acc_url.endswith(('/', '?', '&', '=', '_', '-'))
                 or any(acc_url.endswith(sep) for sep in ('/7', '/1', '/l', '/I', '/|', '4'))
             )
-            is_prefix = any(acc_url.rstrip('/').endswith(p) for p in ("instagram.com/p", "instagram.com/reel", "instagram.com/tv", "tiktok.com", "vt.tiktok.com", "vm.tiktok.com", "threads.com", "threads.net", "/post", "/share"))
+            is_prefix = any(acc_url.rstrip('/').endswith(p) for p in ("instagram.com/p", "instagram.com/reel", "instagram.com/reels", "instagram.com/tv", "tiktok.com", "vt.tiktok.com", "vm.tiktok.com", "threads.com", "threads.net", "/post", "/share"))
             has_param_token = any(p in part.lower() for p in ("igsh=", "xmt=", "si=", "_t=", "_r=", "utm_", "=="))
             is_shortcode = bool(re.match(r'^[A-Za-z0-9_\-]{6,18}(?:/\??|/|\?|/7|/1)?$', part))
             is_threads_handle = bool(re.match(r'^@[A-Za-z0-9_\.]+(?:/post/?)?$', part))
@@ -1707,17 +1745,25 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
 
             # Tahap 107..111: Connecting Line 3 (igsh=...) on Safari Card & Spotlight Top Box without chopping valid digits
             m_igsh_line = re.search(r'^[/?\s]*(?:[1li|!I]?[gq9]sh|i9sh|igsn|sh)\s*[=:\-]\s*([A-Za-z0-9_\-=]+)', part, re.IGNORECASE)
-            if m_igsh_line and re.search(r'instagram\.com/(?:p|reel|tv)/[A-Za-z0-9_\-]+', acc_url, re.IGNORECASE):
+            if m_igsh_line and re.search(r'instagram\.com/(?:p|reel|reels|tv)/[A-Za-z0-9_\-]+', acc_url, re.IGNORECASE):
                 igsh_token = m_igsh_line.group(1).rstrip("•|")
                 # Tahap 112 Pilar 3: lollipop handle '•|' glued after '=' / '==' (e.g. '...WGo=O', '...Q3eg==I') -> drop junk
                 igsh_token = re.sub(r'(=+)[A-Za-z0-9_\-]{1,2}$', r'\1', igsh_token)
                 base = re.sub(r'[/?]+$', '', acc_url)
-                m_code = re.search(r'(instagram\.com/(?:p|reel|tv)/)([A-Za-z0-9_\-]+)$', base)
-                if m_code and len(m_code.group(2)) == 12 and m_code.group(2)[-1] in ('7', '4'):
-                    base = m_code.group(1) + m_code.group(2)[:-1]
-                elif m_code and len(m_code.group(2)) == 13 and re.search(r'(?:4p|47|17|J7|l7|I7)$', m_code.group(2)):
-                    # Tahap 112 Pilar 3: '/?' at end of line 2 misread as 2 extra chars on a 13-char read -> true 11-char code
-                    base = m_code.group(1) + m_code.group(2)[:-2]
+                if locked_ig_shortcode:
+                    base = re.sub(
+                        r'(instagram\.com/(?:p|reel|reels|tv)/)([^/?#]+)$',
+                        rf'\g<1>{locked_ig_shortcode}',
+                        base,
+                        flags=re.IGNORECASE,
+                    )
+                else:
+                    m_code = re.search(r'(instagram\.com/(?:p|reel|tv)/)([A-Za-z0-9_\-]+)$', base)
+                    if m_code and len(m_code.group(2)) == 12 and m_code.group(2)[-1] in ('7', '4'):
+                        base = m_code.group(1) + m_code.group(2)[:-1]
+                    elif m_code and len(m_code.group(2)) == 13 and re.search(r'(?:4p|47|17|J7|l7|I7)$', m_code.group(2)):
+                        # Tahap 112 Pilar 3: '/?' at end of line 2 misread as 2 extra chars on a 13-char read -> true 11-char code
+                        base = m_code.group(1) + m_code.group(2)[:-2]
                 acc_url = base + "/?igsh=" + igsh_token
                 if should_stop_after_j:
                     break
@@ -1731,7 +1777,7 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                     acc_url = base + "/?" + (part[1:] if part.startswith('?') else part)
                 elif acc_url.endswith('/') and part.startswith('/'):
                     acc_url = acc_url + part[1:]
-                elif acc_url.endswith(("/p", "/reel", "/tv", "/post", "/share")) and not part.startswith('/'):
+                elif acc_url.endswith(("/p", "/reel", "/reels", "/tv", "/post", "/share")) and not part.startswith('/'):
                     acc_url = acc_url + "/" + part
                 elif not acc_url.endswith(('/', '?', '&', '=', '_', '-')) and not part.startswith(('/', '?', '&', '=', '_', '-')):
                     if "igsh=" in part:
@@ -1747,6 +1793,14 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             else:
                 break
 
+        if locked_ig_shortcode:
+            acc_url = re.sub(
+                r'(instagram\.com/(?:p|reel|reels|tv)/)([^/?#]+)',
+                rf'\g<1>{locked_ig_shortcode}',
+                acc_url,
+                count=1,
+                flags=re.IGNORECASE,
+            )
         final_cand = clean_extracted_url(acc_url)
         if final_cand and not (".." in final_cand or "…" in final_cand):
             candidates.append(final_cand)
@@ -2112,9 +2166,9 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
             continue
         if any(d in cl_u.lower() for d in ("apple.com", "wikipedia.org", "google.com/search")):
             continue
-        # Strict validation: reject Instagram shortcode if length < 11 or > 15 (Tahap 111 Pilar 2)
-        m_ig_check = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)', cl_u, re.IGNORECASE)
-        if m_ig_check and (len(m_ig_check.group(1)) < 11 or len(m_ig_check.group(1)) > 15):
+        # Strict validation: reject Instagram shortcode with '.' or length < 11 or > 15 (Tahap 194)
+        m_ig_check = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', cl_u, re.IGNORECASE)
+        if m_ig_check and not re.match(r'^[A-Za-z0-9_\-]{11,15}$', m_ig_check.group(1)):
             continue
         valid.append(cl_u)
 

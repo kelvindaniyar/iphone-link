@@ -1986,6 +1986,20 @@ def get_typed_candidates() -> list[str]:
         return cands
 
 
+def _sync_candidate_case_to_ocr(ocr_text: str, candidate_text: str) -> str:
+    """Tahap 194: Synchronize candidate casing with iPhone screen OCR casing when Caps Lock caused an all-caps vs all-lowercase mismatch."""
+    if not ocr_text or not candidate_text:
+        return candidate_text
+    alpha_ocr = "".join(c for c in ocr_text if c.isalpha())
+    alpha_cand = "".join(c for c in candidate_text if c.isalpha())
+    if len(alpha_ocr) >= 4 and len(alpha_cand) >= 4:
+        if alpha_ocr == alpha_ocr.lower() and alpha_cand == alpha_cand.upper():
+            return candidate_text.lower()
+        if alpha_ocr == alpha_ocr.upper() and alpha_cand == alpha_cand.lower():
+            return candidate_text.upper()
+    return candidate_text
+
+
 def auto_correct_ocr_text(ocr_text: str) -> str:
     """Fuzzy auto-correct OCR text against words/lines from the typed shadow buffer with strict length safety."""
     import difflib, time
@@ -2020,12 +2034,12 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
         else:
             # If exact match or active_line is contained in OCR (e.g. multi-line OCR containing the active sentence)
             if act_lower == raw_lower or (len(act_lower) >= 6 and act_lower in raw_lower):
-                return active_line
+                return _sync_candidate_case_to_ocr(raw_ocr, active_line)
 
             # SequenceMatcher match against full raw_ocr
             ratio = difflib.SequenceMatcher(None, raw_lower, act_lower).ratio()
             if ratio >= 0.78:
-                return active_line
+                return _sync_candidate_case_to_ocr(raw_ocr, active_line)
 
     if not raw_ocr.strip():
         return active_line if has_valid_active else ""
@@ -2057,7 +2071,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
 
             # Exact match
             if c_lower == full_ocr_lower:
-                return c_strip
+                return _sync_candidate_case_to_ocr(full_ocr, c_strip)
 
             # Tahap 193: First letter handle corruption guard (multi-word lines with shared words tolerate >= 0.72)
             if c_lower[0] != full_ocr_lower[0]:
@@ -2097,7 +2111,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                 best_cand = c_strip
 
         if best_score >= 0.78 and best_cand:
-            return best_cand
+            return _sync_candidate_case_to_ocr(full_ocr, best_cand)
 
     # --- Priority 3: Line-by-line correction strictly preserving empty lines ---
     # Tahap 35 Perbaikan 4: Check if other lines in raw_lines match typed buffer
@@ -2146,7 +2160,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                     break
 
         if prefix_cand:
-            corrected_lines.append(prefix_cand)
+            corrected_lines.append(_sync_candidate_case_to_ocr(c_line, prefix_cand))
             continue
 
         line_best = c_line
@@ -2193,7 +2207,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                 line_best = c_strip
 
         if line_ratio >= 0.72:
-            corrected_lines.append(line_best)
+            corrected_lines.append(_sync_candidate_case_to_ocr(c_line, line_best))
         else:
             # Word-level handle-corruption fallback against typed buffer words (e.g. "tarhutla"->"karhutla", "lomah"->"lontoh", "prabowk"->"prabowo", "pemulun"->"pemulung")
             vocab: dict[str, str] = {}
@@ -2215,7 +2229,7 @@ def auto_correct_ocr_text(ocr_text: str) -> str:
                             wr = difflib.SequenceMatcher(None, tok_low, vk).ratio()
                             if wr >= 0.78 and wr > best_wr:
                                 best_wr = wr
-                                best_wt = v_orig
+                                best_wt = _sync_candidate_case_to_ocr(orig_tok, v_orig)
                         repaired_tokens.append(best_wt)
                     else:
                         repaired_tokens.append(orig_tok)

@@ -962,14 +962,16 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as qr_err:
                     print(f"[/api/qr/scan] Error: {qr_err}", flush=True)
 
-            # Tahap 111: Completeness verification for Pass 1 clean paste
+            # Tahap 111..194: Completeness verification for Pass 1 clean paste
             def _is_url_complete(u: Optional[str]) -> bool:
                 if not u:
                     return False
-                m_ig = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)', u, re.IGNORECASE)
-                if m_ig:
-                    code = m_ig.group(1)
-                    return 11 <= len(code) <= 14 and ("?igsh=" in u or "&igsh=" in u)
+                m_ig_seg = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', u, re.IGNORECASE)
+                if m_ig_seg:
+                    code = m_ig_seg.group(1)
+                    if not re.match(r'^[A-Za-z0-9_\-]{11,15}$', code):
+                        return False
+                    return True
                 if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_-]{11,}', u, re.IGNORECASE):
                     return True
                 if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,12}', u, re.IGNORECASE):
