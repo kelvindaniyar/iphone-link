@@ -1926,9 +1926,9 @@ function initKeyboardSettingsControls() {
       let res = await runSpotlightCycle(false);
       let validGrabbedUrl = parseValidGrabbedUrl(res);
 
-      // Tahap 199 Pilar 3: 1x Smart Auto-Retry if Spotlight remained empty ("Search or Ask") on first Cmd+V
+      // Tahap 199..200 Pilar 3: 1x Smart Auto-Retry if Spotlight remained empty ("Search or Ask") on first Cmd+V (520ms allows iOS close animation to settle)
       if (!validGrabbedUrl && res?.retrySuggested !== false) {
-        await new Promise((r) => setTimeout(r, 180));
+        await new Promise((r) => setTimeout(r, 520));
         res = await runSpotlightCycle(true);
         validGrabbedUrl = parseValidGrabbedUrl(res);
       }

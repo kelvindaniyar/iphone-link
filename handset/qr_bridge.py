@@ -1145,7 +1145,7 @@ def _split_concatenated_urls(text: str) -> list[str]:
 
 
 def _normalize_clipped_url_prefix(text: str) -> str:
-    """Normalize clipped Spotlight schemes/slashes onto https://www.<domain> and heal '/sha re/' OCR splits (Tahap 196..197)."""
+    """Normalize clipped Spotlight schemes/slashes/Zona-3 paths onto https://www.<domain> (Tahap 196..200)."""
     if not text:
         return text
     out = _heal_threads_share_ocr(_strip_anchor_net_prefix(text))
@@ -1160,6 +1160,31 @@ def _normalize_clipped_url_prefix(text: str) -> str:
             out,
             flags=re.IGNORECASE,
         )
+    # Tahap 200 Pilar 1: Normalize left-clipped Zona 3 paths (m/p/..., com/p/..., /p/..., m/reel/..., /reel/..., m/share/..., /share/...)
+    out = re.sub(
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:w{1,3}\.)?(?:[a-z]{0,9}gram\.com|[a-z]{0,4}m\.com|com|\.com|am|ram|om|m))?/(p|reel|reels|tv)/([A-Za-z0-9_\-]{10,15}(?:[/?#][^\s⊗×✕✖"\'<>]*)?)',
+        r'https://www.instagram.com/\1/\2',
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(p|reel|reels|tv)/([A-Za-z0-9_\-]{10,15}(?:[/?#][^\s⊗×✕✖"\'<>]*)?)',
+        r'https://www.instagram.com/\1/\2',
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:w{1,3}\.)?(?:[a-z]{0,6}ds\.(?:com|net)|[a-z]{0,2}s\.(?:com|net)|com|net|\.com|\.net|s|m))?/share/([A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-]).*',
+        r'https://www.threads.com/share/\1',
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*share/([A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-]).*',
+        r'https://www.threads.com/share/\1',
+        out,
+        flags=re.IGNORECASE,
+    )
     return out
 
 
@@ -1223,12 +1248,18 @@ def fuse_codes(head_code: str, tail_code: str) -> Optional[str]:
     best_candidate: Optional[str] = None
     best_score = -1
 
+    # Tahap 200 Pilar 1: Damaged/wrapped 10-char Zona 2A head (e.g. 'DVeHRe8zaf') vs intact 11-char
+    # Zona 3 code ('DVeHRO8af8z') sharing exact 4-5 char prefix -> prefer intact 11-char Zona 3 code (320 pts).
+    if len(t) == 11 and 4 <= len(h) <= 10 and (h[:4] == t[:4] or h[:5] == t[:5]):
+        best_score = 320
+        best_candidate = t
+
     # Tahap 196..199: Exact 10-15 char Zona 3 tail_code (e.g. Threads /share/_u7sn_hl4yys, 8A5XjsmqhWpya) matching a
     # shorter 4-10 char Zona 2A head_code prefix (allowing OCR homoglyph matches via _chars_match).
     if 10 <= len(t) <= 15 and 4 <= len(h) <= 10:
         pref_matches = sum(1 for k in range(min(len(h), len(t))) if h[k] == t[k] or _chars_match(h[k], t[k]))
         min_req = len(h) if len(h) < 6 else max(6, len(h) - 1)
-        if pref_matches >= min_req:
+        if pref_matches >= min_req and (240 + pref_matches * 10) > best_score:
             best_score = 240 + pref_matches * 10
             best_candidate = t
 
@@ -1499,6 +1530,14 @@ def fuse_card_and_bottom_bar_url(card_urls: list[str], bottom_fragments: list[st
 
             if card_kind == "th_share" and len(card_code) < 4:
                 fused_code = b_code if re.fullmatch(r'[A-Za-z0-9_\-]{10,15}', b_code) else None
+            elif (
+                card_kind == "ig"
+                and 4 <= len(card_code) <= 10
+                and re.fullmatch(r'[A-Za-z0-9_\-]{11}', b_code)
+                and (card_code[:4] == b_code[:4] or card_code[:5] == b_code[:5])
+            ):
+                # Tahap 200 Pilar 1: Damaged/wrapped 10-char Zona 2A head vs intact 11-char Zona 3 17pt code
+                fused_code = b_code
             else:
                 fused_code = fuse_codes(card_code, b_code)
                 if not fused_code and card_kind == "th_share" and re.fullmatch(r'[A-Za-z0-9_\-]{10,15}', b_code):
@@ -1679,7 +1718,12 @@ def clean_spotlight_text_line(line: str) -> str:
     # Strip prefix e.g. "https://anchor.net/" or "https://anchor.net / " or "Search :" (Tahap 107..197)
     l = _strip_anchor_net_prefix(l)
     l = re.sub(r'^(?:Search|Link)\s*[:;.\-]?\s*', '', l, flags=re.IGNORECASE)
-    l = re.sub(r'^[QO0o]\s+(?=(?:[\|lI1!i/\[\(]*(?:https?://|www\.|instagram\.com|tiktok\.com|threads\.(?:com|net)|vt\.tiktok\.com|youtu\.be)))', '', l, flags=re.IGNORECASE)
+    l = re.sub(
+        r'^[QO0o]\s+(?=(?:[\|lI1!i/\[\(]*(?:https?://|www\.|instagram\.com|tiktok\.com|threads\.(?:com|net)|vt\.tiktok\.com|youtu\.be|(?:[a-z]{0,9}gram\.com|[a-z]{0,4}m\.com|com|\.com|am|ram|om|m)?/(?:p|reel|reels|tv|share)/|(?:p|reel|reels|tv|share)/)))',
+        '',
+        l,
+        flags=re.IGNORECASE,
+    )
 
     # Strip banner prefix e.g. "Dari Instagram — Buka Tautan" or "Buka Tautan" or leading "Situs Web "
     l = re.sub(r'^(?:Dari\s+[A-Za-z0-9_\.]+\s*[\-–—]\s*)?(?:Buka\s*Tautan|Open\s*Link)\s*', '', l, flags=re.IGNORECASE)
@@ -1692,10 +1736,18 @@ def clean_spotlight_text_line(line: str) -> str:
     l = re.sub(r'^[\s\|Il1!•°oO0Q\(\[\{]+(?=(?:https?://|www\.))', '', l)
     l = re.sub(r'^[\s\|•°oO0Q\(\[\{]+(?=(?:[iIl1\|!]?[gq9]sh|sh)\s*[=:])', '', l)
 
-    # Normalize truncated Spotlight schemes (e.g. '/www.threads.com/share/...', 'tps://www...') (Tahap 196..197)
+    # Normalize truncated Spotlight schemes (e.g. '/www.threads.com/share/...', 'tps://www...') (Tahap 196..200)
     l = _normalize_clipped_url_prefix(l)
 
     if ".." in l or "…" in l:
+        return ""
+
+    # Tahap 200 Pilar 3: Ignore standalone iOS popup balloon labels without aborting surrounding Spotlight URL lines
+    if re.fullmatch(
+        r'\s*(?:Show\s+Results|Tampilkan\s+Hasil|Search\s+Web|Cari\s+di\s+Web)\s*',
+        l,
+        re.IGNORECASE,
+    ):
         return ""
 
     # Reject Spotlight result title headlines (e.g. "threads.com - Thread by @user") that never hold a URL path (Tahap 197)
@@ -1706,10 +1758,10 @@ def clean_spotlight_text_line(line: str) -> str:
     if SPOTLIGHT_UI_NOISE_RE.search(l) and not any(k in l.lower() for k in ("http", "www.", ".com", ".net", "igsh", "xmt")):
         return "<<<STOP_SPOTLIGHT_BOX>>>"
 
-    # Strip suffixes such as "— Ask Siri", "Situs Web", "Share Results", "Bagikan Hasil" (Tahap 111..196)
+    # Strip suffixes such as "— Ask Siri", "Show Results", "Situs Web", "Share Results", "Bagikan Hasil" (Tahap 111..200)
     # Require whitespace or em/en-dash/bullet/pipe before separator so 11th-char '_' / '-' on shortcodes is never eaten.
     l = re.sub(r'(?:(?:\s+|[\u2013\u2014~•\|]+)[\s\-–—_~•\|]*|(?<![A-Za-z0-9_\-]))(?:Ask\s*Siri|Tanya\s*Siri).*$', '', l, flags=re.IGNORECASE)
-    l = re.sub(r'(?:(?:\s+|[\u2013\u2014~•\|]+)[\s\-–—_~•\|]*|(?<![A-Za-z0-9_\-]))(?:Situs\s*Web|Websites?|Share\s*Results|Bagikan\s*Hasil).*$', '', l, flags=re.IGNORECASE)
+    l = re.sub(r'(?:(?:\s+|[\u2013\u2014~•\|]+)[\s\-–—_~•\|]*|(?<![A-Za-z0-9_\-]))(?:Show\s+Results|Tampilkan\s+Hasil|Situs\s*Web|Websites?|Share\s*Results|Bagikan\s*Hasil).*$', '', l, flags=re.IGNORECASE)
 
     # Strip trailing Spotlight clear button or symbol artifacts or lollipop handles |• or •|
     l = re.sub(r'\s*(?:[⊗✕✖⨂⨩©®]|\(x\)|\(\*\)|\[x\])\s*$', '', l, flags=re.IGNORECASE)
@@ -1739,7 +1791,7 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         return ""
 
     # Strip surrounding noise
-    u = re.sub(r"^[\(\)\[\]\{\}'\"\s]+|[\(\)\[\]\{\}'\"⊗✕✖©®\s]+$", "", u)
+    u = re.sub(r"^[\(\)\[\]\{\}'\"\s🔍]+|[\(\)\[\]\{\}'\"⊗✕✖©®\s]+$", "", u)
     u = _strip_anchor_net_prefix(u)
     u = _strip_leading_cursor(u)
     u = _normalize_clipped_url_prefix(u)
@@ -1805,10 +1857,16 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         r'\1l\2',
         u,
     )
-    # Tahap 198 Pilar 2: Contextual 'F9' + lowercase -> 'Fl' + lowercase (e.g. DRZ_1F9kibV -> DRZ_1FlkibV)
+    # Tahap 198 Pilar 2: Contextual 'F9' + >=2 lowercase -> 'Fl' + lowercase (e.g. DRZ_1F9kibV -> DRZ_1FlkibV; protects DVc7WulF9f1)
     u = re.sub(
-        r'((?:instagram\.com/(?:p|reel|reels|tv)/|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/|share/))[A-Za-z0-9_\-]*?F)9([a-z][A-Za-z0-9_\-]*)',
+        r'((?:instagram\.com/(?:p|reel|reels|tv)/|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/|share/))[A-Za-z0-9_\-]*?F)9([a-z]{2,}[A-Za-z0-9_\-]*)',
         r'\1l\2',
+        u,
+    )
+    # Tahap 200 Pilar 2: Contextual [a-z][1I]F[0-9] -> [a-z]lF[0-9] (e.g. DVc7Wu1F9f1 / DVc7WuIF9f1 -> DVc7WulF9f1)
+    u = re.sub(
+        r'((?:instagram\.com/(?:p|reel|reels|tv)/|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/|share/))[A-Za-z0-9_\-]*?[a-z])[1I]F([0-9][A-Za-z0-9_\-]*)',
+        r'\1lF\2',
         u,
     )
     # Tahap 198 Step 2.4: Optical '1'/'I'/'O' restorations on Threads & IG shortcodes
@@ -2770,6 +2828,15 @@ def verify_shortcode_glyph_geometry(
         elif ch_k in ("l", "I", "1"):
             if _has_digit_one_beak(g[4]):
                 chars_out[k] = "1"
+            elif (
+                2 <= k <= L - 4
+                and ch_k in ("1", "I", "l")
+                and chars_out[k - 1].islower()
+                and chars_out[k + 1] == "F"
+                and chars_out[k + 2].isdigit()
+            ):
+                # Tahap 200 Pilar 2: Beakless '1'/'I'/'l' between [a-z] and 'F'[0-9] -> lowercase 'l' (DVc7WulF9f1)
+                chars_out[k] = "l"
             elif ch_k == "1" and k + 1 < L and chars_out[k + 1] == "F":
                 # Preserve genuine digit '1' before 'F' (e.g. DRZ_1FlkibV) even if top beak smoothed out
                 chars_out[k] = "1"
@@ -2825,8 +2892,8 @@ def verify_shortcode_glyph_geometry(
                         chars_out[k] = "l"
                     elif votes_I > votes_l:
                         chars_out[k] = "I"
-        elif ch_k == "9" and k > 0 and chars_out[k - 1] == "F" and k + 1 < L and chars_out[k + 1].islower():
-            # Tahap 198 Pilar 2: Optical 'F9' + lowercase -> 'Fl' + lowercase (DRZ_1F9kibV -> DRZ_1FlkibV)
+        elif ch_k == "9" and k > 0 and chars_out[k - 1] == "F" and k + 2 < L and chars_out[k + 1].islower() and chars_out[k + 2].islower():
+            # Tahap 198 Pilar 2: Optical 'F9' + >=2 lowercase -> 'Fl' + lowercase (DRZ_1F9kibV -> DRZ_1FlkibV; protects DVc7WulF9f1)
             chars_out[k] = "l"
         elif ch_k == "i":
             # Tahap 199 Pilar 2: Dotless lowercase 'l' vs dotted 'i' in Zona 3 / Zona 1 (e.g. _u7sn_hi4yys -> _u7sn_hl4yys)

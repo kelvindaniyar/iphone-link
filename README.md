@@ -97,7 +97,7 @@
 
 ### 1. Choose Your Package
 - **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`60.58 MB`)** - Official 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Includes isolated Python 3.12 runtime, automatic LAN Firewall rules, Desktop/Start Menu shortcuts, and **Microsoft HEVC Codec (`2.5.48.0`)** bundled offline.
-- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.51 MB`)** - 21 files (`3.59 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
+- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.52 MB`)** - 21 files (`3.60 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
 - **Optional HEVC Standalone: `Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle` (`11.2 MB`)** - Already installed automatically by `Setup.exe`; download manually only if using Portable ZIP on a fresh Windows PC without H.265 codecs.
 
 ### 2. Prerequisites on Windows &amp; iPhone (`iOS 27.2` / `27.0+`)
@@ -107,9 +107,9 @@
 
 | Artifact (`v4.0.0`) | Size | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.58 MB` (`63,522,280 B`) | `FF8E6A1138F46F4EF14C2A8F2AA2D9C69AF8752C7A849724FE3BA3AF78F34675` |
-| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.51 MB` (`1,588,491 B`) | `D643A35E377BBAC7C93357D3B5D570C4D8D39A31B7B2764408893C8DBDB715BE` |
-| **`iPhone Link.exe`** | `1.40 MiB` (`1,467,392 B`) | `38DB1DE2F225B08BAC6BE09834048B2FFA2149E003DC574609A2E3027001ABAB` |
+| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.58 MB` (`63,525,651 B`) | `827779716D63D9470B6125D3217827F2F340BC488BF96560B69BD345FA9E3D3A` |
+| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.52 MB` (`1,592,956 B`) | `E24528184BC5680746C0A9857BE6F41EEEC1D0DCECE5BF47E4079F6A9965BD59` |
+| **`iPhone Link.exe`** | `1.41 MiB` (`1,474,560 B`) | `FED1702E511D5879EEF0729481EC61AE627B2B0DA340F27D589C03F553E4F368` |
 | **`Microsoft.HEVCVideoExtension_2.5.48.0...AppxBundle`** | `11.2 MB` (`11,222,383 B`) | `275FB4C0AE406D51892E87281EFF0BB3B9456D9A9493813CC059EEB8A83D39BA` |
 
 ---
