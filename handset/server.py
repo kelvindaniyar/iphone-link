@@ -973,7 +973,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not re.match(r'^[A-Za-z0-9_\-]{10,15}$', code):
                         return False
                     return True
-                if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_-]{10,15}(?:[/?#]|$)', u, re.IGNORECASE):
+                if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_-]{11,13}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
                 if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,15}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True

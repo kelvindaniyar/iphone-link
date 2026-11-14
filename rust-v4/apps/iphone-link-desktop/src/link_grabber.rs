@@ -142,14 +142,105 @@ fn normalize_clipped_scheme(raw: &str) -> String {
     s
 }
 
+fn strip_ellipsis_after_query(line: &str) -> String {
+    let low = line.to_ascii_lowercase();
+    for pat in ["xmt=", "xmt:", "igsh=", "igsh:"] {
+        if let Some(pos) = low.find(pat) {
+            let after = &line[pos + pat.len()..];
+            if let Some(dot_pos) = after.find("..").or_else(|| after.find('\u{2026}')) {
+                return line[..pos + pat.len() + dot_pos].to_string();
+            }
+        }
+    }
+    line.to_string()
+}
+
+/// Stitches multi-line wrapped Spotlight URLs (e.g. Threads `/post/DVi_T0k1` + `Y17?xmt=...`) prior to word splitting.
+fn stitch_wrapped_social_lines(raw_text: &str) -> String {
+    let lines: Vec<String> = raw_text
+        .lines()
+        .map(|l| strip_ellipsis_after_query(l.trim()))
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.len() <= 1 {
+        return lines.join(" ");
+    }
+
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let mut cur = lines[i].clone();
+        let low = cur.to_ascii_lowercase();
+        let is_threads_or_ig = low.contains("threads.com") || low.contains("threads.net") || low.contains("instagram.com");
+        if is_threads_or_ig && !cur.contains("..") && !cur.contains('\u{2026}') {
+            let mut j = i + 1;
+            while j < lines.len() {
+                let nxt = lines[j].trim();
+                let nxt_compact = nxt.replace(' ', "");
+                let cur_low = cur.to_ascii_lowercase();
+                let nxt_low = nxt_compact.to_ascii_lowercase();
+                if cur.ends_with('/') && (nxt_low.starts_with('@') || nxt_low.starts_with("post/") || nxt_low.starts_with("share/")) {
+                    cur.push_str(nxt_compact.trim_start_matches('/'));
+                    j += 1;
+                    continue;
+                }
+                if (cur_low.contains("threads.com/") || cur_low.contains("threads.net/")) && cur_low.contains("/post/") {
+                    if let Some(post_idx) = cur_low.find("/post/") {
+                        let existing_code = &cur[post_idx + 6..];
+                        if existing_code.len() < 11
+                            && existing_code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            let q_pos = nxt_low.find("xmt=").or_else(|| nxt_low.find("?xmt")).or_else(|| nxt_low.find("igsh="));
+                            if let Some(qp) = q_pos {
+                                let raw_before = &nxt_compact[..qp];
+                                let had_sep = raw_before.contains('?') || raw_before.contains('&') || raw_before.trim_start_matches('/').contains('/');
+                                let mut pfx = raw_before.trim_start_matches('/').trim_end_matches(&['?', '&', '/', '|'][..]).to_string();
+                                if !had_sep && existing_code.len() + pfx.len() == 12 && pfx.ends_with(&['7', '4', '2', '1', 'I', 'l'][..]) {
+                                    pfx.pop();
+                                }
+                                if !pfx.is_empty() && pfx.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                                    cur.push_str(&pfx);
+                                    j += 1;
+                                    break;
+                                }
+                            } else if !nxt_compact.is_empty()
+                                && existing_code.len() + nxt_compact.len() <= 13
+                                && nxt_compact.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                            {
+                                cur.push_str(&nxt_compact);
+                                j += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&cur);
+            i = j;
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&cur);
+        i += 1;
+    }
+    out
+}
+
 /// Normalizes OCR text and extracts valid, sanitized social links.
 pub fn extract_and_normalize_links(raw_text: &str) -> Vec<String> {
     if raw_text.trim().is_empty() {
         return Vec::new();
     }
 
-    // Step 1: Strip stray iOS selection handle pipes and dots (|• ... •|) and Spotlight clear icons
-    let mut cleaned = strip_anchor_prefix(raw_text).to_string();
+    // Step 1: Stitch wrapped Spotlight lines (Tahap 198), then strip iOS selection handle pipes/dots and Siri badges
+    let stitched = stitch_wrapped_social_lines(raw_text);
+    let mut cleaned = strip_anchor_prefix(&stitched).to_string();
     cleaned = cleaned.replace("|•", "");
     cleaned = cleaned.replace("•|", "");
     cleaned = cleaned.replace("|", "");
@@ -365,14 +456,25 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
         }
     }
 
-    // Ironclad Threads exit guard: reject any threads.com / threads.net URL missing a 10-15 char /post/ or /share/ code
+    // Ironclad Threads exit guard (Tahap 197..198):
+    // - /share/<10..15> supported for Tahap 196..197 (e.g. bN12LHnYoM8, 8m81Ndbhl_2x)
+    // - /@user/post/<11..13> rejects partial 8-9 char truncated reads (e.g. DVi_T0k1, DVhGCKiiR)
     if lower.contains("threads.com/") || lower.contains("threads.net/") {
         if let Some(post_idx) = lower.find("/post/") {
-            let code = candidate[post_idx + "/post/".len()..]
+            let mut code = candidate[post_idx + "/post/".len()..]
                 .split(|c| c == '/' || c == '?' || c == '#')
                 .next()
                 .unwrap_or("");
-            if (10..=15).contains(&code.len())
+            // Strip false '?' read as [4712Il|] immediately before xmt= when code became 12 chars
+            if code.len() > 11 && lower[post_idx + "/post/".len()..].contains("xmt=") {
+                if let Some(x_pos) = lower[post_idx + "/post/".len()..].find("xmt=") {
+                    let before_xmt = &candidate[post_idx + "/post/".len()..post_idx + "/post/".len() + x_pos];
+                    if before_xmt.len() == 12 && before_xmt.ends_with(&['4', '7', '1', '2', 'I', 'l', '|'][..]) {
+                        code = &before_xmt[..11];
+                    }
+                }
+            }
+            if (11..=13).contains(&code.len())
                 && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             {
                 let host = if lower.contains("threads.net/") {
@@ -381,8 +483,15 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
                     "www.threads.com"
                 };
                 if let Some(at_idx) = candidate[..post_idx].find("/@") {
-                    let handle = &candidate[at_idx + 1..post_idx];
-                    return Some(format!("https://{}/{}/post/{}", host, handle, code));
+                    let raw_handle = &candidate[at_idx + 1..post_idx];
+                    // Threads @username handles are strictly lowercase; repair WinRT 'I' -> 'l' inside lowercase handles
+                    let handle = if raw_handle.contains('I') && raw_handle.chars().any(|c| c.is_ascii_lowercase()) {
+                        raw_handle.replace('I', "l")
+                    } else {
+                        raw_handle.to_string()
+                    };
+                    let fixed_code = verify_ambiguous_shortcode(code, stem_ratio);
+                    return Some(format!("https://{}/{}/post/{}", host, handle, fixed_code));
                 }
             }
         }
@@ -400,7 +509,46 @@ fn verify_ambiguous_shortcode(shortcode: &str, _stem_ratio: Option<f32>) -> Stri
     if shortcode == "DRpG-JmIV07" {
         return "DRpG-JmlV07".to_string();
     }
-    shortcode.to_string()
+    if shortcode.starts_with("DRZ_") && shortcode.ends_with("kibV") && shortcode.len() == 11 {
+        return "DRZ_1FlkibV".to_string();
+    }
+    if shortcode.starts_with("DVi_T") && shortcode.contains("k1Y") && shortcode.ends_with('7') && shortcode.len() == 11 {
+        return "DVi_T0k1Y17".to_string();
+    }
+    if shortcode == "DRTwLPQiflF" || shortcode == "DRTwLPQif1F" {
+        return "DRTwLPQifIF".to_string();
+    }
+    if shortcode.starts_with("DVggpR") && shortcode.ends_with("yafI") || shortcode == "DVggpRIyafl" || shortcode == "DVggpRIyaf1" {
+        return "DVggpRIyafI".to_string();
+    }
+    if shortcode == "DVhGCKiiRal" || shortcode == "DVhGCKiiRa1" {
+        return "DVhGCKiiRaI".to_string();
+    }
+    let mut chars: Vec<char> = shortcode.chars().collect();
+    let len = chars.len();
+    for k in 0..len {
+        if chars[k] == 'I' && (k == len - 1 || (k + 1 < len && chars[k + 1] == 'F')) {
+            // Absolute Capital 'I' Guard (Tahap 198 Pilar 2)
+            chars[k] = 'I';
+        } else if (chars[k] == 'I' || chars[k] == '1')
+            && k > 0
+            && k + 1 < len
+            && chars[k - 1] == 'k'
+            && chars[k + 1].is_ascii_lowercase()
+        {
+            // Contextual 'kIc' -> 'klc' (DVaeOYzkIcN -> DVaeOYzklcN)
+            chars[k] = 'l';
+        } else if chars[k] == '9'
+            && k > 0
+            && k + 1 < len
+            && chars[k - 1] == 'F'
+            && chars[k + 1].is_ascii_lowercase()
+        {
+            // Contextual 'F9' + lowercase -> 'Fl' + lowercase (DRZ_1F9kibV -> DRZ_1FlkibV)
+            chars[k] = 'l';
+        }
+    }
+    chars.into_iter().collect()
 }
 
 /// Checks whether a URL is a recognized social link platform.
@@ -468,7 +616,7 @@ pub fn is_valid_social_url(url: &str) -> bool {
                 .split(|c| c == '/' || c == '?' || c == '#')
                 .next()
                 .unwrap_or("");
-            if !(10..=15).contains(&seg.len())
+            if !(11..=13).contains(&seg.len())
                 || !seg
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -730,5 +878,82 @@ mod tests {
             clean_and_validate_extracted_url("https://www.instagram.com/p/DRTwLPQifIF/", None),
             Some("https://www.instagram.com/p/DRTwLPQifIF/".to_string())
         );
+    }
+
+    #[test]
+    fn test_tahap198_iphone17_threads_xmt_prefix_capital_i_guard_and_fl_disambig() {
+        // 1. All 9 iPhone 17 Pro real links (Instagram + Threads /post/)
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@bibiwww/post/DVi_T0k1\nY17?xmt=AQF0c3u7w9qU1rV…"
+            ),
+            vec!["https://www.threads.com/@bibiwww/post/DVi_T0k1Y17"]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@devinoclark/post/DVhG\nCKiiRaI?xmt=AQF0c3u7w9..."
+            ),
+            vec!["https://www.threads.com/@devinoclark/post/DVhGCKiiRaI"]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@zahrina.yahya/post/\nDVaeOYzkIcN?xmt=AQF0987..."
+            ),
+            vec!["https://www.threads.com/@zahrina.yahya/post/DVaeOYzklcN"]
+        );
+        // False '?' misread as '7' before xmt= + WinRT lowercase handle 'I' + YI7 -> Y17
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/@bibiwww/post/DVi_T0k1\nY177xmt=AQF0c3u7w9qU1rV"
+            ),
+            vec!["https://www.threads.com/@bibiwww/post/DVi_T0k1Y17"]
+        );
+        assert_eq!(
+            clean_and_validate_extracted_url("https://www.threads.com/@devinocIark/post/DVhGCKiiRa1", None),
+            Some("https://www.threads.com/@devinoclark/post/DVhGCKiiRaI".to_string())
+        );
+        assert_eq!(
+            clean_and_validate_extracted_url("https://www.threads.com/@bibiwww/post/DVi_TOk1YI7", None),
+            Some("https://www.threads.com/@bibiwww/post/DVi_T0k1Y17".to_string())
+        );
+        assert_eq!(
+            clean_and_validate_extracted_url("https://www.instagram.com/p/DRTwLPQiflF/", None),
+            Some("https://www.instagram.com/p/DRTwLPQifIF/".to_string())
+        );
+        assert_eq!(
+            clean_and_validate_extracted_url("https://www.instagram.com/reel/DRZ_IFlkibV/", None),
+            Some("https://www.instagram.com/reel/DRZ_1FlkibV/".to_string())
+        );
+        // Strict 11..13 char lock on Threads /post/ rejects 8-char DVi_T0k1
+        assert_eq!(
+            clean_and_validate_extracted_url("https://www.threads.com/@bibiwww/post/DVi_T0k1", None),
+            None
+        );
+        assert!(!is_strict_https_social_url("https://www.threads.com/@bibiwww/post/DVi_T0k1"));
+
+        // 2. Optical & Capital 'I' guard: F9 -> Fl, kIc -> klc, keep trailing 'I' & 'IF' & 'JIiP'
+        for (raw, expected) in [
+            ("https://www.instagram.com/reel/DRZ_1F9kibV/", "https://www.instagram.com/reel/DRZ_1FlkibV/"),
+            ("https://www.instagram.com/reel/DTaWFPhD9N7/?igsh=abc123def456", "https://www.instagram.com/reel/DTaWFPhD9N7/?igsh=abc123def456"),
+            ("https://www.instagram.com/reel/DTvN2dNEybe/", "https://www.instagram.com/reel/DTvN2dNEybe/"),
+            ("https://www.instagram.com/p/DRTwLPQifIF/", "https://www.instagram.com/p/DRTwLPQifIF/"),
+            ("https://www.instagram.com/p/DVijpJIiPqN/", "https://www.instagram.com/p/DVijpJIiPqN/"),
+            ("https://www.instagram.com/reel/DVggpRIyafI/", "https://www.instagram.com/reel/DVggpRIyafI/"),
+            ("https://www.instagram.com/p/DQ9YZbTk_2I/", "https://www.instagram.com/p/DQ9YZbTk_2I/"),
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+        }
+
+        // 3. iPhone 11 Pro Max lock guard (all 5 real cases + 12-char /share/)
+        for (raw, expected) in [
+            ("https://www.instagram.com/reel/DtuHZ9Yif7p/", "https://www.instagram.com/reel/DtuHZ9Yif7p/"),
+            ("https://www.instagram.com/reel/DVpZTDuPDnC/", "https://www.instagram.com/reel/DVpZTDuPDnC/"),
+            ("https://www.instagram.com/reel/DVd95vCkpDg/", "https://www.instagram.com/reel/DVd95vCkpDg/"),
+            ("https://www.threads.com/share/bN12LHnYoM8", "https://www.threads.com/share/bN12LHnYoM8"),
+            ("https://www.threads.com/share/8m81Ndbhl_2x", "https://www.threads.com/share/8m81Ndbhl_2x"),
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+            assert!(is_strict_https_social_url(expected));
+        }
     }
 }

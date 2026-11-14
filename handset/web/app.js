@@ -1893,26 +1893,28 @@ function initKeyboardSettingsControls() {
           ? window.HandsetKeys.captureMirrorCanvasDataUrl()
           : null;
 
-      // Tahap 196: Single-Cycle Spotlight (0x4F Right Arrow removed, zero fallback second Spotlight cycle)
+      // Tahap 196..198: Single-Cycle Spotlight with 3-Frame Progressive Snapshot (0x4F Right Arrow removed)
       await postJson("/api/device/spotlight-paste", {});
       await new Promise((r) => setTimeout(r, 480));
       const frameClean1 = captureFullResFrame();
       await new Promise((r) => setTimeout(r, 180));
       const frameClean2 = captureFullResFrame();
+      await new Promise((r) => setTimeout(r, 200));
+      const frameClean3 = captureFullResFrame();
 
       // Immediately close Spotlight RIGHT NOW (before OCR) so iPhone returns to app cleanly
       await postJson("/api/device/spotlight-close", {}).catch(() => {});
 
       const res = await postJson("/api/qr/scan", {
-        frameDataUrl: frameClean1 || frameClean2,
-        tailFrameDataUrl: frameClean2 || frameClean1,
-        frames: [frameClean1, frameClean2].filter(Boolean),
+        frameDataUrl: frameClean1 || frameClean2 || frameClean3,
+        tailFrameDataUrl: frameClean3 || frameClean2 || frameClean1,
+        frames: [frameClean1, frameClean2, frameClean3].filter(Boolean),
         waitResult: true,
       });
 
       const rawGrabbedText = String(res?.text || res?.extractedText || res?.url || "").trim();
       const isThreadsUrl = /threads\.(?:com|net)/i.test(rawGrabbedText);
-      const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share|@[a-zA-Z0-9_.-]+\/post)\/[a-zA-Z0-9_-]{10,15}$/i.test(rawGrabbedText);
+      const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share\/[a-zA-Z0-9_-]{10,15}|@[a-zA-Z0-9_.-]+\/post\/[a-zA-Z0-9_-]{11,13})$/i.test(rawGrabbedText);
       const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(rawGrabbedText) && isValidThreadsUrl;
       if (res?.ok && rawGrabbedText && isStrictHttpsUrl) {
         const textToCopy = rawGrabbedText;

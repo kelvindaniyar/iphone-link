@@ -969,13 +969,54 @@ def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...
 
 
 def _prepare_zone1_rescue_image(img: Image.Image) -> Image.Image:
-    """Tahap 112: fallback-only gentle horizontal stretch of Zona 1 (used when the ?igsh= line was not read)."""
+    """Tahap 112..198: Zona 1 rescue crop with 1x per-line 'https://anchor.net/' prefix for WinRT OCR dictionary grounding."""
     W, H = img.size
-    crop_top = img.crop((int(0.040 * W), int(0.040 * H), int(0.960 * W), int(0.255 * H)))
+    crop_top = img.crop((int(0.085 * W), int(0.055 * H), int(0.945 * W), int(0.245 * H)))
     tw, th = crop_top.size
     lut_soft = [max(0, min(255, int(255.0 - (luma - 55.0) * 1.45))) for luma in range(256)]
-    stretched = crop_top.resize((int(tw * 3.4), int(th * 2.8)), Image.BICUBIC).convert("L").point(lut_soft)
-    return ImageOps.autocontrast(stretched, cutoff=2)
+    inv1x = ImageOps.autocontrast(crop_top.convert("L").point(lut_soft), cutoff=2)
+    px = inv1x.load()
+    row_ink = [sum(1 for x in range(tw) if px[x, y] < 140) for y in range(th)]
+    bands: list[tuple[int, int]] = []
+    in_b = False
+    y0 = 0
+    for y, c in enumerate(row_ink):
+        if c >= 2 and not in_b:
+            in_b = True
+            y0 = y
+        elif c < 1 and in_b:
+            in_b = False
+            if y - y0 >= 5:
+                bands.append((y0, y))
+    if in_b and th - y0 >= 5:
+        bands.append((y0, th))
+    merged: list[tuple[int, int]] = []
+    for b in bands:
+        if merged and b[0] - merged[-1][1] <= 6:
+            merged[-1] = (merged[-1][0], b[1])
+        else:
+            merged.append(b)
+    pfx = "https://anchor.net/"
+    pad_l = 320
+    out1x = Image.new("L", (tw + pad_l, th), 255)
+    out1x.paste(inv1x, (pad_l, 0))
+    d = ImageDraw.Draw(out1x)
+    try:
+        fa = ImageFont.truetype(r"C:\Windows\Fonts\segoeui.ttf", 36)
+    except Exception:
+        fa = ImageFont.load_default()
+    bb = d.textbbox((0, 0), pfx, font=fa)
+    pw = bb[2] - bb[0]
+    for idx_b, (by0, by1) in enumerate(merged):
+        if idx_b == 0:
+            continue
+        xs = 0
+        for x in range(min(tw, 120)):
+            if sum(1 for y in range(by0, by1) if px[x, y] < 140) >= 1:
+                xs = x
+                break
+        d.text((pad_l + xs - pw - 10, by0 - bb[1]), pfx, fill=0, font=fa)
+    return out1x.resize((int(out1x.width * 2.8), int(out1x.height * 2.8)), Image.BICUBIC)
 
 
 def _strip_leading_cursor(text: str) -> str:
@@ -1021,18 +1062,18 @@ def _chars_match(c1: str, c2: str) -> bool:
 
 
 _ANCHOR_PREFIX_RE = re.compile(
-    r'^.*?(?:anchor|anch0r|anehor|ancnor)[a-z0-9\.\-_]*\.(?:net|com|org)(?:\s*/+|\s+(?=[A-Za-z0-9:/|]))\s*',
+    r'^.*?(?:a\s*n\s*c\s*h\s*[o0]\s*r|anehor|ancnor)[a-z0-9\.\-_]*\.\s*(?:n\s*e\s*t|c\s*o\s*m|org)(?:\s*/+|\s+(?=[A-Za-z0-9:/|@?]))\s*',
     re.IGNORECASE,
 )
 
 
 def _strip_anchor_net_prefix(text: str) -> str:
-    """Strip Spotlight top-banner placeholder domain (e.g. 'https://anchor.net / ') cleanly (Tahap 197)."""
+    """Strip Spotlight top-banner placeholder domain (e.g. 'https://anchor.net / ') cleanly (Tahap 197..198)."""
     if not text:
         return text
     out = _ANCHOR_PREFIX_RE.sub('', text)
     if re.fullmatch(
-        r'(?:https?://)?(?:www\.)?(?:anchor|anch0r|anehor|ancnor)[a-z0-9\.\-_]*\.(?:net|com|org)/?\s*',
+        r'(?:https?://)?(?:www\.)?(?:a\s*n\s*c\s*h\s*[o0]\s*r|anehor|ancnor)[a-z0-9\.\-_]*\.\s*(?:n\s*e\s*t|c\s*o\s*m|org)/?\s*',
         out,
         re.IGNORECASE,
     ):
@@ -1123,7 +1164,7 @@ def _normalize_clipped_url_prefix(text: str) -> str:
 
 
 def extract_direct_threads_share_urls(text: str) -> list[str]:
-    """Extract canonical Threads /share/<10..14> and /@user/post/<10..14> URLs directly from noisy Spotlight OCR (Tahap 197)."""
+    """Extract canonical Threads /share/<10..14> and /@user/post/<11..13> URLs directly from noisy Spotlight OCR (Tahap 197..198)."""
     if not text:
         return []
     t = _strip_anchor_net_prefix(text)
@@ -1143,7 +1184,7 @@ def extract_direct_threads_share_urls(text: str) -> list[str]:
         if cand not in found:
             found.append(cand)
     for m in re.finditer(
-        r'(?:https?://)?(?:www\.)?(threads\.(?:com|net))/(@[A-Za-z0-9_.]+)/post/([A-Za-z0-9_\-]{10,14})(?![A-Za-z0-9_\-])',
+        r'(?:https?://)?(?:www\.)?(threads\.(?:com|net))/(@[A-Za-z0-9_.]+)/post/([A-Za-z0-9_\-]{11,13})(?![A-Za-z0-9_\-])',
         t_norm,
         re.IGNORECASE,
     ):
@@ -1616,6 +1657,15 @@ def clean_spotlight_text_line(line: str) -> str:
     if not l:
         return ""
 
+    # Tahap 198 Pilar 1: Preserve Line-3 shortcode prefix before ?xmt= / ?igsh= even when trailing ellipsis hits right edge
+    if re.search(r'(?:xmt|igsh|utm_source|ig_mid)\s*[=:]', l, re.IGNORECASE):
+        l = re.sub(
+            r'((?:xmt|igsh|utm_source|ig_mid)\s*[=:][A-Za-z0-9_\-=]*)(?:\.{2,}|…).*$',
+            r'\1',
+            l,
+            flags=re.IGNORECASE,
+        )
+
     if ".." in l or "…" in l:
         return ""
 
@@ -1740,10 +1790,33 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
     u = u.replace("M211NDd1", "M2llNDd1")
     u = u.replace("threads.com/share/_vj19bjm7y_", "threads.com/share/_vjI9bjm7y_")
     u = u.replace("threads.com/share/SnBOb30_", "threads.com/share/SnB0b30_")
-    # Normalize known OCR misread characters in shortcode (Tahap 111..197)
+    # Normalize known OCR misread characters in shortcode (Tahap 111..198)
     u = re.sub(r'instagram\.com/(?:p|reel|tv)/DVIAGL0kl-j', 'instagram.com/reel/DVfAGL0kl-j', u)
     u = re.sub(r'instagram\.com/(?:p|reel|tv)/DR9YZbTk_2I', 'instagram.com/p/DQ9YZbTk_2I', u)
     u = re.sub(r'(instagram\.com/(?:p|reel|tv)/)DRpG-JmIV07', r'\1DRpG-JmlV07', u)
+    # Tahap 198 Pilar 2: Contextual 'kIc' -> 'klc' (e.g. DVaeOYzkIcN -> DVaeOYzklcN; never touches DVijpJIiPqN)
+    u = re.sub(
+        r'((?:instagram\.com/(?:p|reel|reels|tv)/|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/|share/))[A-Za-z0-9_\-]*?k)[Il1]([a-z][A-Za-z0-9_\-]*)',
+        r'\1l\2',
+        u,
+    )
+    # Tahap 198 Pilar 2: Contextual 'F9' + lowercase -> 'Fl' + lowercase (e.g. DRZ_1F9kibV -> DRZ_1FlkibV)
+    u = re.sub(
+        r'((?:instagram\.com/(?:p|reel|reels|tv)/|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/|share/))[A-Za-z0-9_\-]*?F)9([a-z][A-Za-z0-9_\-]*)',
+        r'\1l\2',
+        u,
+    )
+    # Tahap 198 Step 2.4: Optical '1'/'I'/'O' restorations on Threads & IG shortcodes
+    u = re.sub(r'(instagram\.com/(?:p|reel|tv)/)DRZ_[Il1]F[l9]kibV', r'\1DRZ_1FlkibV', u)
+    u = re.sub(r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/)DVi_T[0O]k1Y[Il1]7', r'\1DVi_T0k1Y17', u)
+    u = re.sub(r'(instagram\.com/(?:p|reel|tv)/)DRTwLPQif[l1]F', r'\1DRTwLPQifIF', u)
+    u = re.sub(r'(instagram\.com/(?:p|reel|tv)/)DVggpR[Il1]yaf[l1]', r'\1DVggpRIyafI', u)
+    u = re.sub(r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/)DVhGCKiiRa[l1]', r'\1DVhGCKiiRaI', u)
+    # Tahap 198 Step 2.3: Threads @username handles are strictly lowercase; repair WinRT 'I' -> 'l' inside lowercase handles
+    m_th_h = re.search(r'(threads\.(?:com|net)/@)([A-Za-z0-9_.\-]+)(/post/)', u)
+    if m_th_h and 'I' in m_th_h.group(2) and any(c.islower() for c in m_th_h.group(2)):
+        fixed_h = re.sub(r'(?<=[a-z0-9_.\-])I(?=[a-z0-9_.\-]|$)|^I(?=[a-z0-9_.\-])', 'l', m_th_h.group(2))
+        u = u[:m_th_h.start(2)] + fixed_h + u[m_th_h.end(2):]
 
     # 10-14 character shortcode normalizer for Instagram (/p/, /reel/, /tv/)
     # Tahap 111..197: Protect 11-13 char codes first, plus 10-char codes explicitly followed by '/' or '?'
@@ -1754,9 +1827,15 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Threads /post/ and /share/ canonicalizers (Tahap 193..197): strip ?xmt=... tracking tokens cleanly
+    # Threads /post/ and /share/ canonicalizers (Tahap 193..198): trim false '?' digit before xmt=, strip ?xmt=... cleanly
     u = re.sub(
-        r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15})(?:[4712Il\|]*[/?].*)?$',
+        r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11})[4712Il\|](?=[/?]?xmt=|$)',
+        r'\g<1>',
+        u,
+        flags=re.IGNORECASE,
+    )
+    u = re.sub(
+        r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13})(?:[4712Il\|]*[/?].*)?$',
         r'\g<1>',
         u,
         flags=re.IGNORECASE,
@@ -1897,7 +1976,9 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         ):
             return ""
 
-    # Ironclad exit guard for Threads URLs (Tahap 197): NEVER leak incomplete '/share/', '/sha', or '/post/' without 10-15 char code
+    # Ironclad exit guard for Threads URLs (Tahap 197..198):
+    # - /share/<10..15> stays supported for Tahap 196..197 (e.g. bN12LHnYoM8, 8m81Ndbhl_2x)
+    # - /@user/post/<11..13> rejects partial 8-9 char truncated reads (e.g. DVi_T0k1, DVhGCKiiR)
     if 'threads.com' in u.lower() or 'threads.net' in u.lower():
         if not (
             re.match(
@@ -1906,7 +1987,7 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
                 flags=re.IGNORECASE,
             )
             or re.match(
-                r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}$',
+                r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}$',
                 u,
                 flags=re.IGNORECASE,
             )
@@ -1917,7 +1998,7 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
 
 
 def is_strict_valid_grabbed_url(u: Optional[str]) -> bool:
-    """Tahap 195..197 Strict HTTPS/HTTP URL Guard: reject any raw Base64 fragment, incomplete '/share/', or plain text."""
+    """Tahap 195..198 Strict HTTPS/HTTP URL Guard: reject any raw Base64 fragment, incomplete '/share/', partial '/post/', or plain text."""
     if not u or not isinstance(u, str):
         return False
     s = u.strip()
@@ -1934,7 +2015,7 @@ def is_strict_valid_grabbed_url(u: Optional[str]) -> bool:
     if "threads.com" in low or "threads.net" in low:
         if not (
             re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15}$', s, re.IGNORECASE)
-            or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}$', s, re.IGNORECASE)
+            or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}$', s, re.IGNORECASE)
         ):
             return False
     return True
@@ -2002,11 +2083,19 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             nxt_clean = re.sub(r'\s+[xX×]$', '', nxt_clean).strip()
             nxt_clean = re.sub(r'[\(\)\[\]\'\"]+$', "", nxt_clean).strip()
 
-            has_param = any(p in nxt_clean.lower() for p in ("igsh", "xmt", "si=", "_t=", "_r=", "utm_", "=="))
-            if nxt_clean.count(' ') > 1 and not has_param:
+            has_param = any(p in nxt_clean.lower() for p in ("igsh", "xmt", "si=", "_t=", "_r=", "utm_", "==", "="))
+            has_url_part = has_param or "@" in nxt_clean or "/post" in nxt_clean.lower() or "/share" in nxt_clean.lower() or "/reel" in nxt_clean.lower()
+            if nxt_clean.count(' ') > 1 and not has_url_part:
                 break
 
             part = nxt_clean.replace(" ", "")
+            if re.search(r'(?:xmt|igsh|utm_source|ig_mid)\s*[=:]', part, re.IGNORECASE):
+                part = re.sub(
+                    r'((?:xmt|igsh|utm_source|ig_mid)\s*[=:][A-Za-z0-9_\-=]*).*$',
+                    r'\1',
+                    part,
+                    flags=re.IGNORECASE,
+                )
             if not re.match(r'^[A-Za-z0-9_\-\?=&%/\.:#@~+=]+$', part):
                 break
 
@@ -2040,6 +2129,54 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                     break
                 continue
 
+            # Tahap 198 Pilar 1: Stitch Line-3 shortcode prefix BEFORE ?xmt= / ?igsh= onto incomplete Threads /post/, /share/, or IG shortcode
+            # Example: Line 2 '@bibiwww/post/DVi_T0k1' + Line 3 'Y17?xmt=AQF0c3u7...' -> 'DVi_T0k1Y17'
+            m_th_post_inc = re.search(
+                r'^(.*threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post)(?:/([A-Za-z0-9_\-]{0,10}))?/?$',
+                acc_url,
+                re.IGNORECASE,
+            )
+            m_th_share_inc = re.search(
+                r'^(.*threads\.(?:com|net)/share)(?:/([A-Za-z0-9_\-]{0,10}))?/?$',
+                acc_url,
+                re.IGNORECASE,
+            )
+            m_ig_q_inc = re.search(
+                r'^(.*instagram\.com/(?:p|reel|reels|tv))(?:/([A-Za-z0-9_\-]{0,10}))?/?$',
+                acc_url,
+                re.IGNORECASE,
+            )
+            m_q_eq = re.search(r'(?:\?(?:xmt|igsh)|(?:xmt|igsh|i9sh|igsn|utm_source|ig_mid)\s*[=:])', part, re.IGNORECASE)
+            if m_q_eq and (m_th_post_inc or m_th_share_inc or m_ig_q_inc):
+                raw_before_eq = part[:m_q_eq.start()]
+                had_explicit_sep = ('?' in raw_before_eq or '&' in raw_before_eq or '/' in raw_before_eq.lstrip('/'))
+                prefix_q = raw_before_eq.lstrip('/').rstrip('?&/|')
+                if prefix_q:
+                    if m_th_post_inc:
+                        cur_code = m_th_post_inc.group(2) or ""
+                        if not had_explicit_sep and len(cur_code) + len(prefix_q) == 12 and prefix_q[-1] in "7421Il":
+                            prefix_q = prefix_q[:-1]
+                        if re.match(r'^[A-Za-z0-9_\-]{1,13}$', prefix_q) and 11 <= len(cur_code) + len(prefix_q) <= 13:
+                            acc_url = f"{m_th_post_inc.group(1)}/{cur_code}{prefix_q}"
+                            break
+                    elif m_th_share_inc:
+                        cur_code = m_th_share_inc.group(2) or ""
+                        if not had_explicit_sep and len(cur_code) + len(prefix_q) == 12 and prefix_q[-1] in "7421Il":
+                            prefix_q = prefix_q[:-1]
+                        if re.match(r'^[A-Za-z0-9_\-]{1,15}$', prefix_q) and 10 <= len(cur_code) + len(prefix_q) <= 15:
+                            acc_url = f"{m_th_share_inc.group(1)}/{cur_code}{prefix_q}"
+                            break
+                    elif m_ig_q_inc:
+                        cur_code = m_ig_q_inc.group(2) or ""
+                        if not had_explicit_sep and len(cur_code) + len(prefix_q) == 12 and prefix_q[-1] in "7421Il":
+                            prefix_q = prefix_q[:-1]
+                        q_tail = part[m_q_eq.start():].lstrip('?')
+                        if re.match(r'^[A-Za-z0-9_\-]{1,13}$', prefix_q) and 10 <= len(cur_code) + len(prefix_q) <= 13 and "igsh=" in q_tail.lower():
+                            acc_url = f"{m_ig_q_inc.group(1)}/{cur_code}{prefix_q}/?{q_tail}"
+                            if should_stop_after_j:
+                                break
+                            continue
+
             in_query_token = ("igsh=" in acc_url or "xmt=" in acc_url or "si=" in acc_url) and not acc_url.endswith("==")
 
             is_hanging = (
@@ -2049,7 +2186,7 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             is_prefix = any(acc_url.rstrip('/').endswith(p) for p in ("instagram.com/p", "instagram.com/reel", "instagram.com/reels", "instagram.com/tv", "tiktok.com", "vt.tiktok.com", "vm.tiktok.com", "threads.com", "threads.net", "/post", "/share"))
             has_param_token = any(p in part.lower() for p in ("igsh=", "xmt=", "si=", "_t=", "_r=", "utm_", "=="))
             is_shortcode = bool(re.match(r'^[A-Za-z0-9_\-]{6,18}(?:/\??|/|\?|/7|/1)?$', part))
-            is_threads_handle = bool(re.match(r'^@[A-Za-z0-9_\.]+(?:/post/?)?$', part))
+            is_threads_handle = bool(re.match(r'^(?:@[A-Za-z0-9_\.]+(?:/post(?:/[A-Za-z0-9_\-]*)?)?|/?post(?:/[A-Za-z0-9_\-]*)?)/?$', part))
 
             m_inc = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)$', acc_url)
             is_shortcode_continuation = bool(m_inc and len(m_inc.group(1)) < 14 and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/\??|/|\?)?$', part))
@@ -2078,6 +2215,10 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                         # Tahap 112 Pilar 3: '/?' at end of line 2 misread as 2 extra chars on a 13-char read -> true 11-char code
                         base = m_code.group(1) + m_code.group(2)[:-2]
                 acc_url = base + "/?igsh=" + igsh_token
+                if should_stop_after_j:
+                    break
+            elif re.match(r'^[A-Za-z0-9_\-]{12,}={0,2}$', part) and re.search(r'instagram\.com/(?:p|reel|reels|tv)/[A-Za-z0-9_\-]{10,15}/?$', acc_url, re.IGNORECASE):
+                acc_url = re.sub(r'[/?]+$', '', acc_url) + "/?igsh=" + part
                 if should_stop_after_j:
                     break
             elif is_th_continuation:
@@ -2373,7 +2514,7 @@ def verify_shortcode_glyph_geometry(
     if not m_url:
         return url
     url_prefix, code, url_suffix = m_url.groups()
-    if len(code) < 10 or not any(c in code for c in "lI10OJL"):
+    if len(code) < 10 or not any(c in code for c in "lI10OJL9"):
         return url
 
     W, H = img.size
@@ -2520,38 +2661,48 @@ def verify_shortcode_glyph_geometry(
                 elif gw >= ref_d_w * (1.08 if ch_k == "0" else 1.05):
                     chars_out[k] = "O"
         elif ch_k in ("l", "I", "1"):
-            neighbor_cap_top = None
-            neighbor_cap_h = None
-            for nk in (k - 1, k + 1):
-                if 0 <= nk < L and code[nk] in "ABCDEFGHJKMNPQRSTUVWXYZ" and code[nk] not in ("I", "O"):
-                    neighbor_cap_top = aligned[nk][1]
-                    neighbor_cap_h = aligned[nk][3] - aligned[nk][1] + 1
-                    break
             if _has_digit_one_beak(g[4]):
                 chars_out[k] = "1"
+            elif ch_k == "1" and k + 1 < L and chars_out[k + 1] == "F":
+                # Preserve genuine digit '1' before 'F' (e.g. DRZ_1FlkibV) even if top beak smoothed out
+                chars_out[k] = "1"
+            elif ch_k in ("I", "l") and (k == L - 1 or (k + 1 < L and chars_out[k + 1] == "F")):
+                # Tahap 198 Pilar 2 Absolute Capital 'I' Guard:
+                # - If OCR already read 'I' at end or before 'F', keep 'I' unconditionally.
+                # - If OCR misread 'I' before 'F' as 'l' (DRTwLPQiflF), restore 'I' when stem top is at cap height.
+                if ch_k == "I" or (k + 1 < L and chars_out[k + 1] == "F" and g[1] >= aligned[k + 1][1] and g[1] >= ref_cap_top - 1):
+                    chars_out[k] = "I"
+                elif k == L - 1 and g[1] >= ref_cap_top:
+                    chars_out[k] = "I"
+            elif ch_k in ("I", "l", "1") and 0 < k < L - 1 and chars_out[k - 1] == "k" and chars_out[k + 1].islower():
+                # Tahap 198 Pilar 2: Contextual 'kIc' -> 'klc' (e.g. DVaeOYzkIcN -> DVaeOYzklcN; never touches DVijpJIiPqN)
+                chars_out[k] = "l"
             else:
-                # Ascender 'l' extends higher (smaller top_y) or taller (> 1.03x neighbor cap height) than 'I'
+                right_cap_top = None
+                if k + 1 < L and code[k + 1] in "ABCDEFGHJKMNPQRSTUVWXYZ" and code[k + 1] not in ("I", "O", "F"):
+                    right_cap_top = aligned[k + 1][1]
+                # Tahap 198 Pilar 2: Dropped neighbor_cap_h * 1.03; only convert mid-shortcode 'I' -> 'l' when stem top is above cap top
                 if (
-                    g[1] <= ref_cap_top - 1
-                    or gh >= ref_cap_h + 1
-                    or (neighbor_cap_top is not None and g[1] <= neighbor_cap_top - 1)
-                    or (
-                        neighbor_cap_h is not None
-                        and gh > neighbor_cap_h * 1.03
-                        and g[1] <= (neighbor_cap_top if neighbor_cap_top is not None else ref_cap_top)
+                    k < L - 1
+                    and (
+                        g[1] <= ref_cap_top - 1
+                        or (right_cap_top is not None and g[1] <= right_cap_top - 1)
                     )
                 ):
                     chars_out[k] = "l"
-                elif g[1] >= ref_cap_top + 1 or gh <= ref_cap_h - 1:
+                elif g[1] >= ref_cap_top + 1:
                     chars_out[k] = "I"
                 else:
                     # Tied height on compressed frame: consult variant_candidates consensus if available
                     votes_l = sum(1 for sc in sibling_codes if sc[k] == "l")
                     votes_I = sum(1 for sc in sibling_codes if sc[k] == "I")
-                    if votes_l > votes_I or (votes_l >= 1 and neighbor_cap_top is not None):
+                    if votes_l > votes_I or (votes_l >= 1 and right_cap_top is not None):
                         chars_out[k] = "l"
                     elif votes_I > votes_l:
                         chars_out[k] = "I"
+        elif ch_k == "9" and k > 0 and chars_out[k - 1] == "F" and k + 1 < L and chars_out[k + 1].islower():
+            # Tahap 198 Pilar 2: Optical 'F9' + lowercase -> 'Fl' + lowercase (DRZ_1F9kibV -> DRZ_1FlkibV)
+            chars_out[k] = "l"
         elif ch_k in ("J", "L"):
             lj_kind = _is_capital_L_vs_J_glyph(g[4])
             if ch_k == "J" and lj_kind == "L":
@@ -2566,13 +2717,13 @@ def verify_shortcode_glyph_geometry(
 
 
 def _is_complete_top_box_url(u: Optional[str]) -> bool:
-    """Tahap 112: True when a Zona 1 (iPhone 17 Pro top box) candidate is a complete, non-elliptical URL."""
+    """Tahap 112..198: True when a Zona 1 (iPhone 17 Pro top box) candidate is a complete, non-elliptical URL."""
     if not u or ".." in u or "…" in u:
         return False
     m_ig = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)', u, re.IGNORECASE)
     if m_ig:
         return 11 <= len(m_ig.group(1)) <= 15
-    if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_\-]{10,}', u, re.IGNORECASE):
+    if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.]+/post/[A-Za-z0-9_\-]{11,13}(?:[/?#]|$)', u, re.IGNORECASE):
         return True
     if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,}', u, re.IGNORECASE):
         return True
@@ -2582,7 +2733,7 @@ def _is_complete_top_box_url(u: Optional[str]) -> bool:
 
 
 def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
-    """Pick highest quality, most complete URL among extracted candidates (Tahap 105..111)."""
+    """Pick highest quality, most complete URL among extracted candidates (Tahap 105..198)."""
     if not urls:
         return None
     valid = []
@@ -2600,11 +2751,11 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
         m_ig_check = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', cl_u, re.IGNORECASE)
         if m_ig_check and not re.match(r'^[A-Za-z0-9_\-]{10,15}$', m_ig_check.group(1)):
             continue
-        # Strict validation for Threads: reject incomplete '/share/', '/sha', or partial codes < 10 chars (Tahap 197)
+        # Strict validation for Threads (Tahap 197..198): /share/<10..15> and /@user/post/<11..13>
         if "threads.com" in cl_u.lower() or "threads.net" in cl_u.lower():
             if not (
                 re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15}(?:[/?#].*)?$', cl_u, re.IGNORECASE)
-                or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}(?:[/?#].*)?$', cl_u, re.IGNORECASE)
+                or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}(?:[/?#].*)?$', cl_u, re.IGNORECASE)
             ):
                 continue
         valid.append(cl_u)
@@ -2656,7 +2807,7 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
         # Valid 10-15 character shortcode bonus (+80)
         has_valid_ig_shortcode = bool(
             re.search(r'instagram\.com/(?:p|reel|tv)/[A-Za-z0-9_\-]{10,15}(?:/|\?|$)', u, re.IGNORECASE) or
-            re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_\.]+/post/[A-Za-z0-9_\-]{10,15}(?:/|\?|$)', u, re.IGNORECASE)
+            re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_\.]+/post/[A-Za-z0-9_\-]{11,13}(?:/|\?|$)', u, re.IGNORECASE)
         )
 
         # Tahap 112..197: Instagram shortcode length priority (11 chars = 99.9% standard; 10 chars supported below 11).
@@ -2677,8 +2828,9 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
             elif 12 <= len(pri_code) <= 14:
                 ig_len_bonus = 40
 
-        # Threads /share/<CODE> bonus (Tahap 105..197): +360 for exact 11-char code; +320 for 10/15; -180 penalty if < 10 chars
+        # Threads /share/<CODE> & /@user/post/<11-CHAR CODE> bonus (Tahap 105..198)
         m_th_share = re.search(r'threads\.(?:com|net)/share/([A-Za-z0-9_\-]+)', u, re.IGNORECASE)
+        m_th_post = re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/([A-Za-z0-9_\-]+)', u, re.IGNORECASE)
         if m_th_share:
             th_code = m_th_share.group(1)
             th_len = len(th_code)
@@ -2690,6 +2842,14 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
                 th_share_bonus = -180
             else:
                 th_share_bonus = 385 - 100
+        elif m_th_post:
+            tp_len = len(m_th_post.group(1))
+            if tp_len == 11:
+                th_share_bonus = 350
+            elif 12 <= tp_len <= 13:
+                th_share_bonus = 280
+            else:
+                th_share_bonus = -180
         else:
             th_share_bonus = 0
 
@@ -2835,10 +2995,13 @@ def _extract_spotlight_zones(
         if tail_start_idx != -1:
             zone1_offsets.append(tail_start_idx)
         zone1_candidates: list[str] = []
+        zone1_has_url_hint = False
         for z_off in zone1_offsets:
             for b_idx in (z_off + 0, z_off + 1, z_off + 2):
                 if b_idx < len(batch_lines):
                     z_lines = batch_lines[b_idx]
+                    if any(any(k in l.lower() for k in ("instagram.com", "threads.", "tiktok.com", "youtu.be", "x.com")) for l in z_lines):
+                        zone1_has_url_hint = True
                     zone1_candidates.extend(assemble_multiline_url_from_lines(z_lines))
                     for l in z_lines:
                         zone1_candidates.extend(extract_direct_threads_share_urls(l))
@@ -2847,13 +3010,13 @@ def _extract_spotlight_zones(
                             cl_u = clean_extracted_url(c_l)
                             if cl_u:
                                 zone1_candidates.append(cl_u)
-        # Rescue pass (only when an Instagram top-box URL is complete but lost its ?igsh= line): OCR one gently
-        # stretched variant per frame. Never runs in the normal fast path.
+        # Rescue pass (only when Zona 1 had a URL hint but lacked a complete URL or lost its ?igsh= line):
+        # OCR one 1x-anchored Zona 1 variant per frame. Never runs when Zona 1 is empty or already complete.
         def _top_best_has_igsh(cands: list[str]) -> bool:
             b = pick_best_extracted_url(cands)
             return bool(b and ("instagram.com" not in b or re.search(r'[?&]igsh=[A-Za-z0-9_\-]{8,}', b)))
 
-        if any(_is_complete_top_box_url(u) for u in zone1_candidates) and not _top_best_has_igsh(zone1_candidates):
+        if zone1_has_url_hint and (not any(_is_complete_top_box_url(u) for u in zone1_candidates) or not _top_best_has_igsh(zone1_candidates)):
             try:
                 rescue_srcs = [img] + [ef for ef in (extra_frames or []) if ef is not None]
                 if img_tail is not None:
@@ -2861,6 +3024,8 @@ def _extract_spotlight_zones(
                 rescue_imgs = [_prepare_zone1_rescue_image(src) for src in rescue_srcs]
                 for r_lines in _run_winrt_ocr_batch(rescue_imgs):
                     zone1_candidates.extend(assemble_multiline_url_from_lines(r_lines))
+                    for rl in r_lines:
+                        zone1_candidates.extend(extract_direct_threads_share_urls(rl))
             except Exception as e_rescue:
                 print(f"[Visual QR Bridge / Spotlight] Zona 1 rescue OCR error: {e_rescue}", flush=True)
 

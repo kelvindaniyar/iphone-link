@@ -1563,16 +1563,22 @@ def spotlight_paste_clipboard_on_iphone() -> dict:
         send_keys_direct([0xE3])
         time.sleep(0.02)
         send_keys_direct([])
-        # 3) Wait 480ms for Spotlight animation and native auto-selection on iPhone 11 Pro Max & 17 Pro
-        time.sleep(0.48)
+        # 3) Wait 520ms for Spotlight animation and native auto-selection on iPhone 11 Pro Max & 17 Pro (Tahap 198 Pilar 3)
+        time.sleep(0.52)
         # 4) Tahap 195 Pure Backspace Clear (NO Cmd+A so iOS 27 never activates persistent lollipop handles or Show Results balloon)
         send_keys_direct([0x2A])  # Backspace
         time.sleep(0.045)
         send_keys_direct([])
-        time.sleep(0.05)
-        # 5) Directly paste clipboard (Cmd + V) without Cmd+A or Right Arrow (0x4F)
-        # Tahap 196: Zero 0x4F after paste so iOS 27 Spotlight never activates lollipop handles or 'Show Results' balloon
-        trigger_ios_shortcut("paste-ios")
+        time.sleep(0.065)
+        # 5) Tahap 198 Pilar 3: 4-Step Command Latching for Cmd + V without 0x4F Right Arrow or Cmd+A
+        # Prevents iOS HID simultaneous-packet Cmd+V drops (which caused partial/previous Spotlight URLs).
+        send_keys_direct([0xE3])        # Step 1: Latch Left GUI (Cmd) first
+        time.sleep(0.025)
+        send_keys_direct([0xE3, 0x19])  # Step 2: Hold Cmd + V together
+        time.sleep(0.040)
+        send_keys_direct([0xE3])        # Step 3: Release V while Cmd still latched
+        time.sleep(0.018)
+        send_keys_direct([])            # Step 4: Release all keys
         time.sleep(0.45)
         try:
             if hasattr(_ACTIVE_SERVER, "request_keyframe"):
