@@ -61,33 +61,17 @@ canvas#c:not(.has-first-frame) {
   background: transparent !important;
 }
 
-@keyframes fullscreenCanvasFadeIn {
-  0% {
-    opacity: 0;
-    filter: blur(18px);
-    transform: scale(0.985) translateZ(0);
-  }
-  100% {
-    opacity: 1;
-    filter: blur(0px);
-    transform: scale(1) translateZ(0);
-  }
-}
-
-#c.is-fullscreen-frame-entering,
-canvas#c.is-fullscreen-frame-entering {
-  animation: fullscreenCanvasFadeIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both !important;
-}
-
-/* Tahap 204: 3-Stage Progressive Optical De-Blur & Spring Scale (Zero GPU overhead once removed) */
+/* Tahap 204 & Tahap 208: 3-Stage Progressive Optical De-Blur & Spring Scale (Solid opacity: 1 di Windowed & Full Screen) */
 #c.is-sequoia-preblur,
 canvas#c.is-sequoia-preblur {
+  opacity: 1 !important;
   filter: blur(32px) saturate(135%) brightness(0.92) !important;
   transform: scale(1.038) translateZ(0) !important;
 }
 
 #c.is-sequoia-unblurring,
 canvas#c.is-sequoia-unblurring {
+  opacity: 1 !important;
   transition:
     filter 660ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 660ms cubic-bezier(0.22, 1, 0.36, 1) !important;

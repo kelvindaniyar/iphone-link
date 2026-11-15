@@ -1670,9 +1670,8 @@ html body .app.is-stopping-dissolve #screen-empty {
   background-color: transparent !important;
 }
 
-/* Tahap 207: Universal First-Frame Gate & Transparent Iframe Stage di Mode Full Screen (.app.is-fullsize) */
+/* Tahap 207 / 208: Transparent #phone-screen pra-frame-1 + Full Screen Stop Dissolve + Unified Sequoia Full Screen Column */
 html body #app-root.app.is-fullsize:not(.has-first-frame) #phone-screen,
-html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-screen,
 html body #app-root.app.is-fullsize.is-stopping-dissolve #phone-screen,
 html body .app.is-fullsize.is-stopping-dissolve #phone-screen {
   background: transparent !important;
@@ -1680,38 +1679,6 @@ html body .app.is-fullsize.is-stopping-dissolve #phone-screen {
   box-shadow: none !important;
   border-color: transparent !important;
   border: none !important;
-}
-
-html body #app-root.app.is-fullsize.is-awaiting-first-frame #screen-empty,
-html body .app.is-fullsize.is-awaiting-first-frame #screen-empty {
-  display: flex !important;
-  opacity: 1 !important;
-  visibility: visible !important;
-  z-index: 25 !important;
-  background: transparent !important;
-  background-color: transparent !important;
-}
-
-html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-shell #phone-screen > iframe#screen-view,
-html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-screen > iframe#screen-view,
-html body #app-root.app.is-fullsize.is-awaiting-first-frame iframe#screen-view,
-html body .app.is-fullsize.is-awaiting-first-frame iframe#screen-view {
-  position: absolute !important;
-  inset: 0 !important;
-  margin: auto !important;
-  opacity: 0 !important;
-  visibility: visible !important;
-  pointer-events: none !important;
-  background: transparent !important;
-  background-color: transparent !important;
-}
-
-html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) #phone-shell #phone-screen > iframe#screen-view,
-html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
-html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) iframe#screen-view {
-  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
-  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
-  height: calc(100vh - 84px) !important;
 }
 
 html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
@@ -1735,12 +1702,33 @@ html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(
   animation: sequoiaScreenViewFadeOut 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
 }
 
-html body #app-root.app.is-fullsize #sequoia-connect-overlay,
-html body .app.is-fullsize #sequoia-connect-overlay {
-  display: none !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])),
+.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])) {
+  overflow: visible !important;
+  border-radius: 18px !important;
+}
+
+html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) iframe#screen-view {
+  border-radius: 18px !important;
+  overflow: hidden !important;
+}
+
+html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-overlay,
+html body .app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-overlay,
+.app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-overlay {
+  position: absolute !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  height: calc(100vh - 84px) !important;
+  margin: auto !important;
+  border-radius: 18px !important;
+  overflow: hidden !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
 }
 "#;
 

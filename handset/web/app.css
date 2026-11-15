@@ -5409,35 +5409,10 @@ body.light-mode .launchpad-pill[data-active="true"] {
 }
 
 .app.is-fullsize.is-stopping-dissolve #phone-screen,
-.app.is-fullsize:not(.has-first-frame) #phone-screen,
-.app.is-fullsize.is-awaiting-first-frame #phone-screen {
+.app.is-fullsize:not(.has-first-frame) #phone-screen {
   background: transparent !important;
   box-shadow: none !important;
   border-color: transparent !important;
-}
-
-.app.is-fullsize.is-awaiting-first-frame #screen-empty {
-  display: flex !important;
-  opacity: 1 !important;
-  visibility: visible !important;
-  z-index: 25 !important;
-  background: transparent !important;
-}
-
-.app.is-fullsize.is-awaiting-first-frame iframe#screen-view {
-  position: absolute !important;
-  inset: 0 !important;
-  margin: auto !important;
-  opacity: 0 !important;
-  visibility: visible !important;
-  pointer-events: none !important;
-  background: transparent !important;
-}
-
-.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) iframe#screen-view {
-  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
-  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
-  height: calc(100vh - 84px) !important;
 }
 
 .app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #screen-view,
@@ -5459,10 +5434,29 @@ body.light-mode .launchpad-pill[data-active="true"] {
   animation: sequoiaScreenViewFadeOut 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
 }
 
-.app.is-fullsize #sequoia-connect-overlay {
-  display: none !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+/* Tahap 208: Restorasi #sequoia-connect-overlay Sequoia Mode Full Screen dengan Kolom Vertikal Terpusat */
+.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])) {
+  overflow: visible !important;
+  border-radius: 18px !important;
+}
+
+.app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) iframe#screen-view {
+  border-radius: 18px !important;
+  overflow: hidden !important;
+}
+
+.app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-overlay {
+  position: absolute !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  height: calc(100vh - 84px) !important;
+  margin: auto !important;
+  border-radius: 18px !important;
+  overflow: hidden !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
 }
 
