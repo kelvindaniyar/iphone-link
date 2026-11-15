@@ -1627,9 +1627,9 @@ def spotlight_move_cursor_to_start_on_iphone() -> dict:
 def spotlight_cleanup_and_close_on_iphone() -> dict:
     """Clear search query text in Spotlight and close Spotlight (Cmd + Space toggle ONLY, NO Escape) to restore clean screen.
     
-    Tahap 111 Precision:
-    - Strictly WITHOUT Cmd+A selection, preventing lollipop handles (|• / •|) and 'Share Results' balloons.
-    - Sends Backspace (0x2A) once and toggles Cmd + Space to close.
+    Tahap 202 Precision:
+    - Strictly WITHOUT Cmd+A and WITHOUT Backspace, preventing iOS 27 white lollipop handles (|• / •|) and 'Show Results' balloons.
+    - Releases modifiers and toggles Cmd + Space once to close Spotlight cleanly.
     """
     global _ACTIVE_SERVER
     record_user_input_activity()
@@ -1638,29 +1638,18 @@ def spotlight_cleanup_and_close_on_iphone() -> dict:
             if _STATE.get("phase") != "running":
                 return {"ok": False, "error": "Screen mirror is not active"}
     with _HID_ACTION_LOCK:
-        # 1) Tahap 193..197 Spotlight Double Hard-Clear (frames are already captured): Cmd+A -> Backspace x2
-        for _clear_pass in range(2):
-            send_keys_direct([0xE3])
-            time.sleep(0.018)
-            send_keys_direct([0xE3, 0x04])
-            time.sleep(0.032)
-            send_keys_direct([0xE3])
-            time.sleep(0.012)
-            send_keys_direct([])
-            time.sleep(0.022)
-            send_keys_direct([0x2A])  # Backspace
-            time.sleep(0.04)
-            send_keys_direct([])
-            time.sleep(0.025)
-        time.sleep(0.03)
+        # 1) Tahap 202: Release modifier keys only (NO Cmd+A / Backspace so iOS 27 never enters white lollipop selection or "Show Results" mode).
+        send_keys_direct([])
+        time.sleep(0.025)
         # 2) Close Spotlight Search via ONE single toggle Cmd + Space without Escape toggle
         send_keys_direct([0xE3])
-        time.sleep(0.025)
+        time.sleep(0.02)
         send_keys_direct([0xE3, 0x2C])
-        time.sleep(0.045)
+        time.sleep(0.055)
         send_keys_direct([0xE3])
         time.sleep(0.02)
         send_keys_direct([])
+        time.sleep(0.08)
         return {"ok": True, "stage": "closed"}
 
 

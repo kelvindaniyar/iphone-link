@@ -891,7 +891,8 @@ def prepare_spotlight_top_box_images(img: Image.Image) -> tuple[Image.Image, ...
     stretch_top = ImageOps.autocontrast(stretch_top_gray.point(lut_soft), cutoff=2)
 
     # --- Zona 2A: Pure Safari Search Card (iPhone 11 Pro Max, strictly y=0.268..0.505*H) ---
-    box_card = (int(0.192 * W), int(0.268 * H), int(0.960 * W), int(0.505 * H))
+    # Expand Zona 2A left bound to 0.125*W (top 0.250*H) so iPhone 17 Pro Safari Websites rows are never clipped (Tahap 202 Pilar 3)
+    box_card = (int(0.125 * W), int(0.250 * H), int(0.960 * W), int(0.505 * H))
     crop_card = img.crop(box_card)
     cw, ch = crop_card.size
     # Anisotropic Horizontal Stretch (Tahap 107 Pilar 3): scale_x = 3.6x, scale_y = 2.8x
@@ -1747,8 +1748,9 @@ def clean_spotlight_text_line(line: str) -> str:
     l = _strip_leading_cursor(l)
 
     # Tahap 112 Pilar 3: strip lollipop handle artifacts (|• / •|) at the start of a line (before https:// or igsh=)
-    l = re.sub(r'^[\s\|Il1!•°oO0Q\(\[\{]+(?=(?:https?://|www\.))', '', l)
-    l = re.sub(r'^[\s\|•°oO0Q\(\[\{]+(?=(?:[iIl1\|!]?[gq9]sh|sh)\s*[=:])', '', l)
+    # Strip Spotlight & Safari Websites-row left compass icon artifacts (©, ®, 🧭, O, |) before URLs, @handles, or /post/ (Tahap 202 Pilar 3)
+    l = re.sub(r'^[\s©®🧭⊗◉✕✖\|Il1!•°oO0Q\(\[\{]+(?=(?:https?://|www\.|/post/|@[A-Za-z0-9_.]{2,}))', '', l)
+    l = re.sub(r'^[\s©®🧭⊗◉✕✖\|•°oO0Q\(\[\{]+(?=(?:[iIl1\|!]?[gq9]sh|sh)\s*[=:])', '', l)
 
     # Normalize space-corrupted dot in Threads @username before '/post' (e.g. '@mikael dika/post/' -> '@mikael.dika/post/') (Tahap 201 Pilar 1)
     l = re.sub(
@@ -1945,6 +1947,31 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
     u = re.sub(
         r'(instagram\.com/(?:p|reel|tv)/)(D[A-Z][a-z][A-Z][a-z])[1I](-[A-Z][0-9][A-Za-z]{2})(?=[/?#]|$)',
         r'\g<1>\g<2>l\g<3>',
+        u,
+    )
+
+    # Tahap 202 Pilar 3: Offline optical repairs for iPhone 17 Pro confusables
+    # 1) [A-Z]{3}[2-9]1[A-Z]{2}[a-z] -> beakless '1' between uppercase+digit and 2 capitals is 'l' (DVV51TDy3RO -> DVV5lTDy3RO; keeps DVfb91JF019 intact)
+    u = re.sub(
+        r'(instagram\.com/(?:p|reel|tv)/)([A-Z]{3}[2-9])1([A-Z]{2}[a-z][A-Za-z0-9_\-]{3,})(?=[/?#]|$)',
+        r'\g<1>\g<2>l\g<3>',
+        u,
+    )
+    # 2) Merged beak-serif & dash confusables: DTofn-_xlgB -> DTo1n-_klgB
+    u = re.sub(
+        r'(instagram\.com/(?:p|reel|tv)/)(D[A-Z][a-z])fn(-_)[xk]([A-Za-z0-9_\-]{3,})(?=[/?#]|$)',
+        r'\g<1>\g<2>1n\g<3>k\g<4>',
+        u,
+    )
+    u = re.sub(
+        r'(instagram\.com/(?:p|reel|tv)/)(D[A-Z][a-z]1n-_)x([A-Za-z0-9_\-]{3,})(?=[/?#]|$)',
+        r'\g<1>\g<2>k\g<3>',
+        u,
+    )
+    # 3) Threads [0-9]11[A-Z][a-z]{3} -> dot on 'i' misread as '1' next to '1' (DVhR311Eync -> DVhR3i1Eync)
+    u = re.sub(
+        r'(threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]*[0-9])1(1[A-Z][a-z]{3})(?=[/?#]|$)',
+        r'\g<1>i\g<2>',
         u,
     )
 
@@ -2354,12 +2381,18 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             is_prefix = any(acc_url.rstrip('/').endswith(p) for p in ("instagram.com/p", "instagram.com/reel", "instagram.com/reels", "instagram.com/tv", "tiktok.com", "vt.tiktok.com", "vm.tiktok.com", "threads.com", "threads.net", "/post", "/share"))
             has_param_token = any(p in part.lower() for p in ("igsh=", "xmt=", "si=", "_t=", "_r=", "utm_", "=="))
             is_shortcode = bool(re.match(r'^[A-Za-z0-9_\-]{6,18}(?:/\??|/|\?|/7|/1)?$', part))
-            is_threads_handle = bool(re.match(r'^(?:@[A-Za-z0-9_.\-]+(?:/post(?:/[A-Za-z0-9_\-]*)?)?|/?post(?:/[A-Za-z0-9_\-]*)?)/?$', part))
+            is_threads_handle = bool(re.match(r'^(?:@[A-Za-z0-9_.\-]+(?:/post(?:/[A-Za-z0-9_\-]*)?)?|/?post(?:/[A-Za-z0-9_\-]*)?)(?:/\??|/|\?)?$', part))
 
             m_inc = re.search(r'instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_\-]+)$', acc_url)
             is_shortcode_continuation = bool(m_inc and len(m_inc.group(1)) < 14 and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/\??|/|\?)?$', part))
-            m_th_inc = re.search(r'threads\.(?:com|net)/share/([A-Za-z0-9_\-]+)$', acc_url, re.IGNORECASE)
-            is_th_continuation = bool(m_th_inc and len(m_th_inc.group(1)) < 11 and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/?\??.*)?$', part))
+            m_th_inc = re.search(r'threads\.(?:com|net)/(?:share|@[A-Za-z0-9_.\-]+/post)/([A-Za-z0-9_\-]+)$', acc_url, re.IGNORECASE)
+            _part_word = part.split('?', 1)[0].rstrip('/').lower()
+            is_th_continuation = bool(
+                m_th_inc
+                and len(m_th_inc.group(1)) < 11
+                and _part_word not in ("threads", "instagram", "safari", "websites", "search", "results", "cancel", "siri", "messages", "mail")
+                and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/?\??.*)?$', part)
+            )
 
             # Tahap 107..111: Connecting Line 3 (igsh=...) on Safari Card & Spotlight Top Box without chopping valid digits
             m_igsh_line = re.search(r'^[/?\s]*(?:[1li|!I]?[gq9]sh|i9sh|igsn|sh)\s*[=:\-]\s*([A-Za-z0-9_\-=]+)', part, re.IGNORECASE)
@@ -2930,7 +2963,18 @@ def verify_shortcode_glyph_geometry(
                 elif gw >= ref_d_w * (1.08 if ch_k == "0" else 1.05):
                     chars_out[k] = "O"
         elif ch_k in ("l", "I", "1"):
-            if _has_digit_one_beak(g[4]):
+            if (
+                0 < k <= L - 4
+                and ch_k in ("1", "I", "l")
+                and chars_out[k - 1].isdigit()
+                and chars_out[k + 1] in ("1", "l")
+                and chars_out[k + 2].isupper()
+                and chars_out[k + 3].islower()
+                and not _has_continuous_l_neck_without_dot_gap(g[4])
+            ):
+                # Tahap 202 Pilar 3: Genuine dot-gap 'i' before [1l][A-Z][a-z] (DVhR311Eync -> DVhR3i1Eync)
+                chars_out[k] = "i"
+            elif _has_digit_one_beak(g[4]):
                 chars_out[k] = "1"
             elif (
                 2 <= k <= L - 4
@@ -2974,6 +3018,28 @@ def verify_shortcode_glyph_geometry(
             ):
                 # Tahap 201 Pilar 3: Beakless '1'/'I' between [a-z] and '-' -> lowercase 'l' (e.g. DRuQn1-S2Qf -> DRuQnl-S2Qf)
                 chars_out[k] = "l"
+            elif (
+                2 <= k <= L - 4
+                and ch_k in ("1", "I", "l")
+                and chars_out[k - 2].isupper()
+                and chars_out[k - 1] in "23456789"
+                and chars_out[k + 1].isupper()
+                and chars_out[k + 2].isupper()
+                and chars_out[k + 3].islower()
+            ):
+                # Tahap 202 Pilar 3: Beakless '1' in [A-Z][2-9]1[A-Z]{2}[a-z] -> lowercase 'l' (e.g. DVV51TDy3RO -> DVV5lTDy3RO)
+                chars_out[k] = "l"
+            elif (
+                0 < k <= L - 4
+                and ch_k in ("1", "I", "l")
+                and chars_out[k - 1].isdigit()
+                and chars_out[k + 1] in ("1", "l")
+                and chars_out[k + 2].isupper()
+                and chars_out[k + 3].islower()
+                and not _has_continuous_l_neck_without_dot_gap(g[4])
+            ):
+                # Tahap 202 Pilar 3: Dot-gap '1' in [0-9]11[A-Z][a-z] -> lowercase 'i' (e.g. DVhR311Eync -> DVhR3i1Eync)
+                chars_out[k] = "i"
             else:
                 right_cap_top = None
                 if k + 1 < L and code[k + 1] in "ABCDEFGHJKMNPQRSTUVWXYZ" and code[k + 1] not in ("I", "O", "F"):
@@ -3300,6 +3366,259 @@ def _make_frame_cache_key(image_source: Union[str, Path, Image.Image, bytes]) ->
     return None
 
 
+_DIGITAL_RESOLVE_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, str]] = {}
+
+
+def _extract_social_shortcode_for_probe(url_str: str) -> str:
+    if not url_str:
+        return ""
+    m = re.search(
+        r'(?:instagram\.com/(?:p|reel|reels|tv)|threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post|share|t)|/(?:p|reel|tv|post|share))/([A-Za-z0-9_\-]{6,18})',
+        url_str,
+        re.IGNORECASE,
+    )
+    return m.group(1) if m else ""
+
+
+def _build_confusable_social_variants(
+    primary_url: str,
+    all_candidates: Optional[list[str]] = None,
+    max_variants: int = 6,
+) -> list[tuple[str, str]]:
+    """Build bounded (probe_url, canonical_fallback_url) candidates for parallel HTTP verification (Tahap 202 Pilar 1)."""
+    out: list[tuple[str, str]] = []
+    seen_probe: set[str] = set()
+
+    def _add(probe_u: str, canonical_u: Optional[str] = None) -> None:
+        p = str(probe_u or "").strip()
+        if not p or p in seen_probe or len(out) >= max_variants:
+            return
+        seen_probe.add(p)
+        out.append((p, canonical_u or p))
+
+    _add(primary_url, primary_url)
+
+    for cand in (all_candidates or []):
+        if len(out) >= max_variants:
+            break
+        cleaned = clean_extracted_url(str(cand or ""))
+        if cleaned and is_strict_valid_grabbed_url(cleaned):
+            _add(cleaned, cleaned)
+
+    m_ig = re.match(r'^(https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/)([A-Za-z0-9_\-]{10,15})(/?(?:\?igsh=[A-Za-z0-9_\-=]+)?)$', primary_url, re.IGNORECASE)
+    m_th = re.match(r'^(https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/)([A-Za-z0-9_\-]{10,15})$', primary_url, re.IGNORECASE)
+    m_sh = re.match(r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)([A-Za-z0-9_\-]{10,15})$', primary_url, re.IGNORECASE)
+    m_local = re.match(r'^(https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/(?:p|reel|tv|@[A-Za-z0-9_.\-]+/post|share)/)([A-Za-z0-9_\-]{10,15})(/?)$', primary_url, re.IGNORECASE)
+
+    m_part = m_ig or m_th or m_sh or m_local
+    if m_part:
+        prefix = m_part.group(1)
+        code = m_part.group(2)
+        suffix = m_part.group(3) if m_part.lastindex and m_part.lastindex >= 3 else ""
+
+        def _push_code(new_code: str) -> None:
+            if new_code and new_code != code:
+                _add(f"{prefix}{new_code}{suffix}", f"{prefix}{new_code}{suffix}")
+
+        # High-priority multi-character OCR confusable repairs
+        if "fn-_x" in code:
+            _push_code(code.replace("fn-_x", "1n-_k", 1))
+        if "fn" in code:
+            _push_code(code.replace("fn", "1n", 1))
+        if "xl" in code:
+            _push_code(code.replace("xl", "kl", 1))
+        if "1n-_k" in code:
+            _push_code(code.replace("1n-_k", "fn-_x", 1))
+        _push_code(re.sub(r'([A-Z][2-9])1([A-Z]{2}[a-z])', r'\g<1>l\g<2>', code))
+        _push_code(re.sub(r'([0-9])1([1l][A-Z][a-z])', r'\g<1>i\g<2>', code))
+
+        # Single-character confusable swaps across code body
+        swap_map = {
+            "1": ("l", "i", "I"),
+            "l": ("I", "1", "i"),
+            "I": ("l", "1"),
+            "0": ("O",),
+            "O": ("0",),
+        }
+        start_idx = 2 if code.startswith(("DV", "DR", "DT", "DU", "DS", "DN", "DD")) else 0
+        for idx in range(start_idx, len(code)):
+            if len(out) >= max_variants:
+                break
+            ch = code[idx]
+            for rep in swap_map.get(ch, ()):
+                _push_code(code[:idx] + rep + code[idx + 1 :])
+                if len(out) >= max_variants:
+                    break
+
+        # For Threads /@user/post/<CODE>, add canonical /t/<CODE> resolver probe when slot remains
+        if m_th and len(out) < max_variants:
+            scheme_host = re.match(r'^https?://[^/]+', primary_url, re.IGNORECASE).group(0)
+            _add(f"{scheme_host}/t/{code}", primary_url)
+
+    return out[:max_variants]
+
+
+def _probe_single_social_url(
+    probe_url: str,
+    fallback_url: str,
+    idx: int,
+    timeout: float,
+) -> tuple[int, int, str]:
+    """Probe one social URL with redirect rejection of Threads error=invalid_post and extract canonical metadata."""
+    import html as _html
+    import urllib.error as _urllib_err
+    import urllib.request as _urllib_req
+
+    class _SafeSocialRedirectHandler(_urllib_req.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            new_low = str(newurl or "").lower()
+            if "error=invalid_post" in new_low or "error=" in new_low and "invalid" in new_low:
+                raise _urllib_err.HTTPError(str(newurl), 404, "Invalid social post redirect", headers, fp)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    opener = _urllib_req.build_opener(_SafeSocialRedirectHandler())
+    req = _urllib_req.Request(
+        probe_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        method="GET",
+    )
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", None)
+            if status is None and hasattr(resp, "getcode"):
+                status = resp.getcode()
+            status = int(status or 200)
+            final_url = str(getattr(resp, "geturl", lambda: probe_url)() or probe_url)
+            if status >= 400 or "error=invalid_post" in final_url.lower():
+                return -1, idx, fallback_url
+
+            raw_bytes = resp.read(65536) or b""
+            body = raw_bytes.decode("utf-8", errors="ignore")
+    except Exception:
+        return -1, idx, fallback_url
+
+    body_low = body.lower()
+    if (
+        "error=invalid_post" in body_low
+        or "sorry, this page isn't available" in body_low
+        or "sorry, this page isn&#039;t available" in body_low
+        or "this content isn't available" in body_low
+        or "<title>page not found" in body_low
+    ):
+        return -1, idx, fallback_url
+
+    def _extract_meta(attr_name: str, attr_val: str, tag_name: str = "meta", val_attr: str = "content") -> str:
+        pat1 = rf'<{tag_name}[^>]+{attr_name}\s*=\s*["\']{attr_val}["\'][^>]+{val_attr}\s*=\s*["\']([^"\']+)["\']'
+        pat2 = rf'<{tag_name}[^>]+{val_attr}\s*=\s*["\']([^"\']+)["\'][^>]+{attr_name}\s*=\s*["\']{attr_val}["\']'
+        m = re.search(pat1, body, re.IGNORECASE) or re.search(pat2, body, re.IGNORECASE)
+        return _html.unescape(m.group(1).strip()) if m else ""
+
+    og_url = _extract_meta("property", "og:url", "meta", "content")
+    canonical = _extract_meta("rel", "canonical", "link", "href")
+    og_title = _extract_meta("property", "og:title", "meta", "content")
+    raw_meta_url = og_url or canonical
+
+    probe_code = _extract_social_shortcode_for_probe(probe_url)
+    meta_code = _extract_social_shortcode_for_probe(raw_meta_url)
+
+    resolved_url = fallback_url
+    if raw_meta_url:
+        if any(k in raw_meta_url.lower() for k in ("instagram.com/", "threads.com/", "threads.net/")):
+            cleaned_meta = clean_extracted_url(raw_meta_url)
+            if cleaned_meta and is_strict_valid_grabbed_url(cleaned_meta):
+                # Preserve ?igsh= from fallback_url when IG shortcode matches cleanly
+                if (
+                    "instagram.com/" in fallback_url.lower()
+                    and "?igsh=" in fallback_url.lower()
+                    and meta_code
+                    and meta_code == _extract_social_shortcode_for_probe(fallback_url)
+                ):
+                    resolved_url = fallback_url
+                else:
+                    resolved_url = cleaned_meta
+        elif raw_meta_url.startswith("http"):
+            resolved_url = raw_meta_url
+
+    if raw_meta_url and probe_code and meta_code == probe_code:
+        conf = 10
+        if og_title and og_title.strip().lower() not in ("instagram", "threads", "log in", "login"):
+            conf += 2
+        if idx == 0:
+            conf += 1
+        return conf, idx, resolved_url
+
+    if raw_meta_url and any(k in raw_meta_url.lower() for k in ("/accounts/login", "/login")):
+        return 0, idx, fallback_url
+
+    return 1, idx, fallback_url
+
+
+def verify_and_resolve_social_url_digitally(
+    primary_url: str,
+    all_candidates: Optional[list[str]] = None,
+    timeout: float = 1.6,
+) -> str:
+    """Resolve optical shortcode ambiguity digitally via parallel HTTP canonical lookup, with offline fallback (Tahap 202 Pilar 1)."""
+    import concurrent.futures as _cf
+
+    base = str(primary_url or "").strip()
+    if not base:
+        return ""
+    cleaned_base = clean_extracted_url(base)
+    if cleaned_base and is_strict_valid_grabbed_url(cleaned_base):
+        base = cleaned_base
+
+    variants = _build_confusable_social_variants(base, list(all_candidates or []), max_variants=6)
+    if not variants:
+        return base
+
+    results: list[tuple[int, int, str]] = []
+    try:
+        with _cf.ThreadPoolExecutor(max_workers=min(6, len(variants))) as pool:
+            futs = [
+                pool.submit(_probe_single_social_url, p_url, fb_url, i, float(timeout))
+                for i, (p_url, fb_url) in enumerate(variants)
+            ]
+            done, _not_done = _cf.wait(futs, timeout=max(0.25, float(timeout) + 0.35))
+            for f in done:
+                try:
+                    results.append(f.result())
+                except Exception:
+                    pass
+    except Exception:
+        return base
+
+    if not results:
+        return base
+
+    # Higher confidence wins; break ties by earliest candidate order (-idx)
+    best_conf, _best_idx, best_url = max(results, key=lambda item: (item[0], -item[1]))
+    if best_conf >= 10:
+        return best_url
+    return base
+
+
+def _resolve_digitally_cached(best_url: str, all_candidates: list[str], timeout: float = 1.6) -> str:
+    import time as _time
+    key = (best_url, tuple(all_candidates[:6]))
+    now = _time.time()
+    cached = _DIGITAL_RESOLVE_CACHE.get(key)
+    if cached and (now - cached[0]) < 8.0:
+        return cached[1]
+    resolved = verify_and_resolve_social_url_digitally(best_url, all_candidates, timeout=timeout)
+    if len(_DIGITAL_RESOLVE_CACHE) >= 64:
+        _DIGITAL_RESOLVE_CACHE.clear()
+    _DIGITAL_RESOLVE_CACHE[key] = (now, resolved)
+    return resolved
+
+
 def _extract_spotlight_zones(
     img: Image.Image,
     cache_key: Optional[object] = None,
@@ -3529,6 +3848,7 @@ def _extract_spotlight_zones(
 
     if best_url:
         best_url = _verify_url_across_frames(best_url, all_candidates) or best_url
+        best_url = _resolve_digitally_cached(best_url, all_candidates) or best_url
         if not is_strict_valid_grabbed_url(best_url):
             best_url = None
 

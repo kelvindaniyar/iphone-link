@@ -5899,10 +5899,19 @@ fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
         200
     };
 
+    let header_low = header_part.to_ascii_lowercase();
+    let content_type = if header_low.contains("content-type: text/html") {
+        "text/html; charset=utf-8"
+    } else if header_low.contains("content-type: text/plain") {
+        "text/plain; charset=utf-8"
+    } else {
+        "application/json; charset=utf-8"
+    };
+
     Some(HttpResponse {
         status_code,
         status_text: "OK",
-        content_type: "application/json; charset=utf-8",
+        content_type,
         body: actual_body,
     })
 }
@@ -6038,6 +6047,64 @@ fn stream_live_passthrough(client: &mut TcpStream) -> Result<(), std::io::Error>
 // ROUTER & DISPATCHER
 // ============================================================================
 
+pub fn percent_decode_url_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(val) = u8::from_str_radix(hex, 16) {
+                    out.push(val);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn extract_c_endpoint_url(req: &HttpRequest) -> String {
+    let mut candidate = if req.path == "/c" {
+        let mut found = String::new();
+        for pair in req.query.split('&') {
+            if let Some(v) = pair.strip_prefix("u=").or_else(|| pair.strip_prefix("url=")) {
+                found = percent_decode_url_component(v.trim());
+                break;
+            }
+        }
+        if found.is_empty() {
+            let ql = req.query.to_ascii_lowercase();
+            if ql.starts_with("http") {
+                found = percent_decode_url_component(req.query.trim());
+            }
+        }
+        found
+    } else if req.path.starts_with("/c/") {
+        let mut raw_tail = req.path[3..].to_string();
+        if !req.query.is_empty() {
+            raw_tail.push('?');
+            raw_tail.push_str(&req.query);
+        }
+        percent_decode_url_component(raw_tail.trim())
+    } else {
+        String::new()
+    };
+
+    for _ in 0..2 {
+        let cl = candidate.to_ascii_lowercase();
+        if cl.starts_with("https%3a") || cl.starts_with("http%3a") {
+            candidate = percent_decode_url_component(candidate.trim());
+        } else {
+            break;
+        }
+    }
+    candidate.replace(r"\/", "/").trim().to_string()
+}
+
 pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: &Path) -> HttpResponse {
     if req.method == "OPTIONS" {
         return HttpResponse {
@@ -6045,6 +6112,71 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             status_text: "OK",
             content_type: "text/plain",
             body: Vec::new(),
+        };
+    }
+
+    if req.method == "GET" && (req.path == "/c" || req.path.starts_with("/c/")) {
+        if let Some(resp) = forward_to_worker(req) {
+            return resp;
+        }
+        let raw_u = extract_c_endpoint_url(req);
+        if let Some(clean_url) = crate::link_grabber::clean_and_validate_extracted_url(&raw_u, None) {
+            if crate::link_grabber::is_strict_https_social_url(&clean_url) {
+                let clip_ok = crate::ocr_engine::write_win32_clipboard(&clean_url);
+                let html = format!(
+                    "<!doctype html><html><head><meta charset='utf-8'><title>iPhone Link</title></head>\
+                    <body style='font-family:-apple-system,sans-serif;text-align:center;padding:24px;'>\
+                    <script>window.close();</script>\u{2713} Link Copied to PC!\
+                    <!-- {} clip={} --></body></html>",
+                    clean_url,
+                    if clip_ok { 1 } else { 0 }
+                );
+                return HttpResponse::ok_html(&html);
+            }
+        }
+        return HttpResponse {
+            status_code: 400,
+            status_text: "Bad Request",
+            content_type: "text/html; charset=utf-8",
+            body: b"<!doctype html><html><head><meta charset='utf-8'></head><body>Invalid or missing social URL.</body></html>".to_vec(),
+        };
+    }
+
+    if req.method == "POST" && req.path == "/api/clipboard/push" {
+        if let Some(resp) = forward_to_worker(req) {
+            return resp;
+        }
+        let mut raw_u = parse_string_param(&req.body, "url")
+            .or_else(|| parse_string_param(&req.body, "u"))
+            .or_else(|| parse_string_param(&req.body, "text"))
+            .unwrap_or_default();
+        if raw_u.is_empty() && req.body.trim().to_ascii_lowercase().starts_with("http") {
+            raw_u = req.body.trim().to_string();
+        }
+        raw_u = raw_u.replace(r"\/", "/");
+        for _ in 0..2 {
+            let rl = raw_u.to_ascii_lowercase();
+            if rl.starts_with("https%3a") || rl.starts_with("http%3a") {
+                raw_u = percent_decode_url_component(raw_u.trim());
+            } else {
+                break;
+            }
+        }
+        if let Some(clean_url) = crate::link_grabber::clean_and_validate_extracted_url(&raw_u, None) {
+            if crate::link_grabber::is_strict_https_social_url(&clean_url) {
+                let clip_ok = crate::ocr_engine::write_win32_clipboard(&clean_url);
+                let escaped = clean_url.replace('\\', "\\\\").replace('"', "\\\"");
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"url":"{}","clipboardWritten":{}}}"#,
+                    escaped, clip_ok
+                ));
+            }
+        }
+        return HttpResponse {
+            status_code: 400,
+            status_text: "Bad Request",
+            content_type: "application/json; charset=utf-8",
+            body: br#"{"ok":false,"error":"Invalid or missing social URL","url":""}"#.to_vec(),
         };
     }
 
@@ -8719,7 +8851,7 @@ impl NativeServer {
         let _ = ensure_temp_ocr_extractor_script();
         let mut listener_opt = None;
         for _ in 0..15 {
-            if let Ok(l) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            if let Ok(l) = TcpListener::bind(format!("0.0.0.0:{}", port)) {
                 listener_opt = Some(l);
                 break;
             }
@@ -8727,7 +8859,7 @@ impl NativeServer {
         }
         let listener = match listener_opt {
             Some(l) => l,
-            None => TcpListener::bind("127.0.0.1:0")
+            None => TcpListener::bind("0.0.0.0:0")
                 .map_err(|e| format!("Failed to bind TCP listener: {}", e))?,
         };
 
@@ -9233,5 +9365,48 @@ mod tests {
         assert!(V4_BRIDGE_JS.contains("Cek pembaruan otomatis saat dibuka"));
         assert!(V4_BRIDGE_JS.contains("Periksa Pembaruan"));
         assert!(V4_BRIDGE_JS.contains("cardUpdaterExists"));
+    }
+
+    #[test]
+    fn test_tahap202_digital_http_loopback_c_and_clipboard_push() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_c_query = HttpRequest::parse(
+            b"GET /c?u=https%3A%2F%2Fwww.threads.com%2F%40wallstreetwatch.id%2Fpost%2FDVghAL_kW9d%3Fxmt%3DAQF0xyz HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n",
+        )
+        .unwrap();
+        let resp_c = handle_request(&req_c_query, &state, Path::new("web"));
+        assert_eq!(resp_c.status_code, 200);
+        assert_eq!(resp_c.content_type, "text/html; charset=utf-8");
+        let html_c = String::from_utf8_lossy(&resp_c.body);
+        assert!(html_c.contains("<script>window.close();</script>"));
+        assert!(html_c.contains("\u{2713} Link Copied to PC!"));
+        assert!(html_c.contains("https://www.threads.com/@wallstreetwatch.id/post/DVghAL_kW9d"));
+        assert!(!html_c.contains("xmt="));
+
+        let req_c_path = HttpRequest::parse(
+            b"GET /c/https://www.instagram.com/reel/DVV51TDy3RO/?igsh=MWJ3aXNhN2F2a2N0cg== HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n",
+        )
+        .unwrap();
+        let resp_c_path = handle_request(&req_c_path, &state, Path::new("web"));
+        assert_eq!(resp_c_path.status_code, 200);
+        let html_path = String::from_utf8_lossy(&resp_c_path.body);
+        assert!(html_path.contains("https://www.instagram.com/reel/DVV5lTDy3RO/?igsh=MWJ3aXNhN2F2a2N0cg=="));
+
+        let body_push = br#"{"url":"https://www.threads.com/@highlightbolaid/post/DVhR311Eync?xmt=AQF0abc"}"#;
+        let raw_push = format!(
+            "POST /api/clipboard/push HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body_push.len(),
+            String::from_utf8_lossy(body_push)
+        );
+        let req_push = HttpRequest::parse(raw_push.as_bytes()).unwrap();
+        let resp_push = handle_request(&req_push, &state, Path::new("web"));
+        assert_eq!(resp_push.status_code, 200);
+        let json_push = String::from_utf8_lossy(&resp_push.body);
+        assert!(json_push.contains(r#""ok":true"#));
+        assert!(json_push.contains(r#""url":"https://www.threads.com/@highlightbolaid/post/DVhR3i1Eync""#));
+
+        let req_bad = HttpRequest::parse(b"GET /c?u=not-a-valid-url HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_bad = handle_request(&req_bad, &state, Path::new("web"));
+        assert_eq!(resp_bad.status_code, 400);
     }
 }

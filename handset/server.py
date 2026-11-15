@@ -186,7 +186,7 @@ def is_fresh_extracted_folder() -> bool:
     except Exception:
         pass
     return True
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 8765
 MIRROR_PREFIX = "/mirror"
 STREAM_HOST = "127.0.0.1"
@@ -232,12 +232,31 @@ _LAST_GRABBED_VALID_URL: tuple[float, str] = (0.0, "")
 
 
 def get_windows_clipboard_text() -> str | None:
-    """Read plain/unicode text from the Windows PC clipboard."""
+    """Read plain/unicode text from the Windows PC clipboard safely in 64-bit."""
     try:
         import ctypes
+        from ctypes import wintypes
+
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
-        if not user32.OpenClipboard(0):
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+        opened = False
+        for _ in range(5):
+            if user32.OpenClipboard(0):
+                opened = True
+                break
+            time.sleep(0.015)
+        if not opened:
             return None
         try:
             CF_UNICODETEXT = 13
@@ -685,8 +704,82 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Expires", "0")
         super().end_headers()
 
+    def _html(self, html_text: str, status: int = 200) -> None:
+        data = html_text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
+    @staticmethod
+    def _extract_digital_clipboard_url(raw_req_path: str) -> str:
+        from urllib.parse import unquote
+        parsed = urlparse(raw_req_path)
+        if parsed.path == "/c":
+            q = parsed.query or ""
+            for pair in q.split("&"):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    if k in ("u", "url"):
+                        return unquote(v.strip())
+            return unquote(q.strip()) if (q.startswith("http") or q.startswith("https%3A") or q.startswith("http%3A")) else ""
+        if parsed.path.startswith("/c/") and len(raw_req_path) > 3:
+            raw_tail = raw_req_path[3:].split("#", 1)[0]
+            return unquote(raw_tail.strip())
+        return ""
+
+    @staticmethod
+    def _handle_digital_clipboard_push(raw_url: str) -> tuple[bool, str, bool]:
+        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ, _LAST_GRABBED_VALID_URL
+        from urllib.parse import unquote
+        from handset import qr_bridge as _q
+
+        candidate = str(raw_url or "").strip()
+        for _ in range(2):
+            if re.match(r'^https?%3A', candidate, re.IGNORECASE):
+                candidate = unquote(candidate).strip()
+            else:
+                break
+        if not candidate:
+            return False, "", False
+
+        clean_url = _q.clean_extracted_url(candidate)
+        if not clean_url or not _q.is_strict_valid_grabbed_url(clean_url):
+            return False, "", False
+
+        clip_ok = set_windows_clipboard_text(clean_url)
+        if clip_ok:
+            _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+        _LAST_GRABBED_VALID_URL = (time.time(), clean_url)
+        return True, clean_url, clip_ok
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/c" or path.startswith("/c/"):
+            raw_u = self._extract_digital_clipboard_url(self.path)
+            ok, clean_url, clip_ok = self._handle_digital_clipboard_push(raw_u)
+            if ok:
+                body = (
+                    "<!doctype html><html><head><meta charset='utf-8'><title>iPhone Link</title></head>"
+                    "<body style='font-family:-apple-system,sans-serif;text-align:center;padding:24px;'>"
+                    "<script>window.close();</script>&#x2713; Link Copied to PC!"
+                    "<p style='font-size:14px;margin-top:8px;'>\u2713 Link Copied to PC!</p>"
+                    f"<!-- {clean_url} clip={int(clip_ok)} -->"
+                    "</body></html>"
+                )
+                # Ensure exact ASCII/UTF-8 marker requested by Tahap 202
+                body = body.replace("&#x2713; Link Copied to PC!", "\u2713 Link Copied to PC!")
+                self._html(body, status=200)
+            else:
+                self._html(
+                    "<!doctype html><html><head><meta charset='utf-8'></head>"
+                    "<body>Invalid or missing social URL.</body></html>",
+                    status=400,
+                )
+            return
         if path == MIRROR_PREFIX or path.startswith(f"{MIRROR_PREFIX}/"):
             self._proxy_mirror("GET")
             return
@@ -813,6 +906,19 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+
+        if path == "/api/clipboard/push":
+            raw_u = payload.get("url") or payload.get("u") or payload.get("text") or ""
+            if not raw_u:
+                raw_txt = raw.decode("utf-8", errors="ignore").strip()
+                if raw_txt.startswith("http"):
+                    raw_u = raw_txt
+            ok, clean_url, clip_ok = self._handle_digital_clipboard_push(str(raw_u))
+            if ok:
+                self._json({"ok": True, "url": clean_url, "clipboardWritten": clip_ok}, status=200)
+            else:
+                self._json({"ok": False, "error": "Invalid or missing social URL", "url": ""}, status=400)
+            return
 
         if path == "/api/update/check":
             from handset.updater import check_for_updates

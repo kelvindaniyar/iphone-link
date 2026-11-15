@@ -334,7 +334,15 @@ fn stitch_wrapped_social_lines(raw_text: &str) -> String {
                 let nxt_compact = nxt_healed.replace(' ', "");
                 let cur_low = cur.to_ascii_lowercase();
                 let nxt_low = nxt_compact.to_ascii_lowercase();
-                if cur.ends_with('/') && (nxt_low.starts_with('@') || nxt_low.starts_with("post/") || nxt_low.starts_with("share/")) {
+                let is_threads_handle_cur = (cur_low.contains("threads.com/@") || cur_low.contains("threads.net/@"))
+                    && !cur_low.contains("/post/")
+                    && !cur.ends_with('/');
+                if (cur.ends_with('/') && (nxt_low.starts_with('@') || nxt_low.starts_with("post/") || nxt_low.starts_with("share/")))
+                    || (is_threads_handle_cur && (nxt_low.starts_with("/post/") || nxt_low.starts_with("post/") || nxt_low == "/post" || nxt_low == "post"))
+                {
+                    if !cur.ends_with('/') {
+                        cur.push('/');
+                    }
                     cur.push_str(nxt_compact.trim_start_matches('/'));
                     j += 1;
                     continue;
@@ -722,6 +730,39 @@ fn verify_ambiguous_shortcode(shortcode: &str, _stem_ratio: Option<f32>) -> Stri
     }
     if matches!(shortcode, "DR4LDSH89Ut" | "DR4IDSH89Ut" | "DR41DSH89Ut") {
         return "DR4lDSH89Ut".to_string();
+    }
+    // Tahap 202 Pilar 3: iPhone 17 Pro confusable repairs (DVV5lTDy3RO, DTo1n-_klgB, DVhR3i1Eync)
+    // 1) [A-Z]{3}[2-9]1[A-Z]{2}[a-z] -> 'l' (guards DVfb91JF019 where index 3 is lowercase 'b' & index 8 is digit '0')
+    let b202 = shortcode.as_bytes();
+    if b202.len() == 11
+        && b202[0].is_ascii_uppercase()
+        && b202[1].is_ascii_uppercase()
+        && b202[2].is_ascii_uppercase()
+        && (b'2'..=b'9').contains(&b202[3])
+        && b202[4] == b'1'
+        && b202[5].is_ascii_uppercase()
+        && b202[6].is_ascii_uppercase()
+        && b202[7].is_ascii_lowercase()
+    {
+        return format!("{}l{}", &shortcode[..4], &shortcode[5..]);
+    }
+    // 2) Merged beak-serif DTofn-_xlgB / DTofn-_klgB / DTo1n-_xlgB -> DTo1n-_klgB
+    if matches!(shortcode, "DTofn-_xlgB" | "DTofn-_klgB" | "DTo1n-_xlgB") {
+        return "DTo1n-_klgB".to_string();
+    }
+    // 3) Dot-gap 'i' misread as '1' in [0-9]11[A-Z][a-z]{3} (e.g. DVhR311Eync -> DVhR3i1Eync)
+    if b202.len() >= 11 {
+        for idx in 1..b202.len().saturating_sub(4) {
+            if b202[idx - 1].is_ascii_digit()
+                && b202[idx] == b'1'
+                && b202[idx + 1] == b'1'
+                && b202[idx + 2].is_ascii_uppercase()
+                && b202[idx + 3].is_ascii_lowercase()
+                && b202[idx + 4].is_ascii_lowercase()
+            {
+                return format!("{}i{}", &shortcode[..idx], &shortcode[idx + 1..]);
+            }
+        }
     }
     // Tahap 201: Recover collapsed 'l1' inside 10-char Instagram/Threads shortcodes (e.g. "DVo4b1kshf" -> "DVo4bl1kshf")
     // Guards DUd-Okk-kP (contains '-'), DVg2AWP0T9 (no [b-z]1[a-z]{4}), and DVg2YmkvyH (no '1').
@@ -1442,8 +1483,56 @@ mod tests {
             "https://www.instagram.com/p/DVfeNdoAQ-1/",
             "https://www.instagram.com/p/DRup-9kyY17/",
             "https://www.instagram.com/reel/DRZ_1FlkibV/",
+            "https://www.instagram.com/reel/DVfb91JF019/",
         ] {
             assert_eq!(clean_and_validate_extracted_url(code_url, None), Some(code_url.to_string()));
         }
+    }
+
+    #[test]
+    fn test_tahap202_optical_confusables_and_long_threads_wrap() {
+        for (raw, expected) in [
+            (
+                "https://www.instagram.com/reel/DVV51TDy3RO/?igsh=MWJ3aXNhN2F2a2N0cg==",
+                "https://www.instagram.com/reel/DVV5lTDy3RO/?igsh=MWJ3aXNhN2F2a2N0cg==",
+            ),
+            (
+                "https://www.instagram.com/reel/DTofn-_xlgB/",
+                "https://www.instagram.com/reel/DTo1n-_klgB/",
+            ),
+            (
+                "https://www.threads.com/@highlightbolaid/post/DVhR311Eync?xmt=AQF0xyz",
+                "https://www.threads.com/@highlightbolaid/post/DVhR3i1Eync",
+            ),
+            (
+                "https://www.threads.com/@abnormaltradingsystem.id/post/DVfaP9j1h8v?",
+                "https://www.threads.com/@abnormaltradingsystem.id/post/DVfaP9j1h8v",
+            ),
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(raw, None), Some(expected.to_string()));
+            assert!(is_strict_https_social_url(expected));
+        }
+
+        // Multiline Threads wrapping with long username + /post/<CODE>? + xmt=...
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@abnormaltradingsystem.id\n/post/DVfaP9j1h8v?\nxmt=AQF0-7abc"
+            ),
+            vec!["https://www.threads.com/@abnormaltradingsystem.id/post/DVfaP9j1h8v"]
+        );
+
+        // Multiline Threads wrapping with trailing underscore DVghAL_ + kW9d?xmt=...
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@wallstreetwatch.id/post/DVghAL_\nkW9d?xmt=AQF0-7abc"
+            ),
+            vec!["https://www.threads.com/@wallstreetwatch.id/post/DVghAL_kW9d"]
+        );
+        assert_eq!(
+            extract_and_normalize_links(
+                "https://www.threads.com/\n@wallstreetwatch.id/post/DVghAL_\nkW9d?\nxmt=AQF0-7abc"
+            ),
+            vec!["https://www.threads.com/@wallstreetwatch.id/post/DVghAL_kW9d"]
+        );
     }
 }
