@@ -1670,14 +1670,69 @@ html body .app.is-stopping-dissolve #screen-empty {
   background-color: transparent !important;
 }
 
-html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
-html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) iframe#screen-view {
+/* Tahap 207: Universal First-Frame Gate & Transparent Iframe Stage di Mode Full Screen (.app.is-fullsize) */
+html body #app-root.app.is-fullsize:not(.has-first-frame) #phone-screen,
+html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-screen,
+html body #app-root.app.is-fullsize.is-stopping-dissolve #phone-screen,
+html body .app.is-fullsize.is-stopping-dissolve #phone-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+  border: none !important;
+}
+
+html body #app-root.app.is-fullsize.is-awaiting-first-frame #screen-empty,
+html body .app.is-fullsize.is-awaiting-first-frame #screen-empty {
+  display: flex !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 25 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-shell #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-awaiting-first-frame #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-awaiting-first-frame iframe#screen-view,
+html body .app.is-fullsize.is-awaiting-first-frame iframe#screen-view {
+  position: absolute !important;
+  inset: 0 !important;
+  margin: auto !important;
+  opacity: 0 !important;
+  visibility: visible !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) #phone-shell #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-awaiting-first-frame:not(.is-landscape):not(.is-ipad) iframe#screen-view {
   width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   height: calc(100vh - 84px) !important;
-  margin: 0 auto !important;
+}
+
+html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) iframe#screen-view,
+.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) iframe#screen-view {
+  position: absolute !important;
+  top: 0 !important;
+  bottom: 0 !important;
   left: 0 !important;
   right: 0 !important;
+  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  height: calc(100vh - 84px) !important;
+  margin: auto !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  z-index: 12 !important;
+  pointer-events: none !important;
+  visibility: visible !important;
+  animation: sequoiaScreenViewFadeOut 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
 }
 
 html body #app-root.app.is-fullsize #sequoia-connect-overlay,

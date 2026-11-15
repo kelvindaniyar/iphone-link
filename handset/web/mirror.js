@@ -2751,6 +2751,7 @@ window._isDeviceLocked = false;
 let _sequoiaThumbCanvas = null;
 let _sequoiaThumbCtx = null;
 let _sequoiaDeBlurTimer = 0;
+let _fullscreenEnterTimer = 0;
 
 function _isSuppressedStreamMessage(msg) {
   if (!msg) return true;
@@ -2785,8 +2786,12 @@ function _armSequoiaPreblur() {
     clearTimeout(_sequoiaDeBlurTimer);
     _sequoiaDeBlurTimer = 0;
   }
+  if (_fullscreenEnterTimer) {
+    clearTimeout(_fullscreenEnterTimer);
+    _fullscreenEnterTimer = 0;
+  }
   if (canvas) {
-    canvas.classList.remove("is-sequoia-unblurring", "is-sequoia-stopping");
+    canvas.classList.remove("has-first-frame", "is-fullscreen-frame-entering", "is-sequoia-unblurring", "is-sequoia-stopping");
     if (_isParentFullsize()) {
       canvas.classList.remove("is-sequoia-preblur");
     } else {
@@ -2796,6 +2801,9 @@ function _armSequoiaPreblur() {
 }
 
 function _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH) {
+  if (canvas) {
+    canvas.classList.add("has-first-frame");
+  }
   let thumbDataUrl = null;
   try {
     const tw = rawW > rawH ? 78 : 36;
@@ -2828,6 +2836,18 @@ function _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH) {
   if (canvas) {
     if (_isParentFullsize()) {
       canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+      canvas.classList.remove("is-fullscreen-frame-entering");
+      void canvas.offsetWidth;
+      canvas.classList.add("is-fullscreen-frame-entering");
+      if (_fullscreenEnterTimer) {
+        clearTimeout(_fullscreenEnterTimer);
+      }
+      _fullscreenEnterTimer = setTimeout(() => {
+        _fullscreenEnterTimer = 0;
+        if (canvas) {
+          canvas.classList.remove("is-fullscreen-frame-entering");
+        }
+      }, 280);
     } else {
       requestAnimationFrame(() => {
         if (!canvas) return;

@@ -3256,8 +3256,10 @@ function sendAppMetrics() {
 // ======================================================================
 const SEQUOIA_LAST_WALLPAPER_KEY = "iphone_link_last_wallpaper_thumb";
 const SEQUOIA_SAFETY_FALLBACK_MS = 1600;
+const FULLSCREEN_FIRST_FRAME_FALLBACK_MS = 1500;
 let sequoiaMirrorSessionActive = false;
 let sequoiaFirstFrameReceived = false;
+let hasFirstFrameReady = false;
 let sequoiaIntentionalStopUntil = 0;
 let sequoiaSafetyFallbackTimer = 0;
 let sequoiaDissolveTimers = [];
@@ -3277,6 +3279,22 @@ function isAppFullsize() {
   } catch (_) {
     return false;
   }
+}
+
+function setLaunchpadStartConnecting(connecting) {
+  if (!launchpadStartBtn) return;
+  try {
+    const lbl = launchpadStartBtn.querySelector(".btn-label");
+    const lang = (document.documentElement.getAttribute("lang") || localStorage.getItem("iphone_link_lang") || "id").toLowerCase();
+    const connectingText = lang.startsWith("en") ? "Connecting…" : "Menyambungkan…";
+    const labelText = connecting ? connectingText : t("launchpad.start_mirror");
+    launchpadStartBtn.disabled = Boolean(connecting);
+    if (lbl) {
+      lbl.textContent = labelText;
+    } else {
+      launchpadStartBtn.textContent = labelText;
+    }
+  } catch (_) {}
 }
 
 function clearSequoiaDissolveTimers() {
@@ -3381,6 +3399,33 @@ function completeSequoiaHandshake(thumbDataUrl) {
       localStorage.setItem(SEQUOIA_LAST_WALLPAPER_KEY, thumbDataUrl);
     } catch (_) {}
   }
+  hasFirstFrameReady = true;
+  const appEl = appRoot || document.querySelector(".app") || document.body;
+  if (appEl) {
+    appEl.classList.remove("is-awaiting-first-frame");
+    if (sequoiaMirrorSessionActive) {
+      appEl.classList.add("has-first-frame");
+    }
+  }
+  if (isAppFullsize()) {
+    sequoiaFirstFrameReceived = true;
+    closeSequoiaConnectOverlay(true);
+    setLaunchpadStartConnecting(false);
+    if (sequoiaMirrorSessionActive) {
+      if (screenEmpty) {
+        screenEmpty.hidden = true;
+        screenEmpty.style.display = "none";
+        screenEmpty.classList.remove("is-sequoia-fading", "is-spring-entering");
+      }
+      if (screenView) {
+        screenView.hidden = false;
+        screenView.style.display = "block";
+      }
+      syncSettingsToIframe();
+      screenView?.contentWindow?.postMessage({ type: "resize" }, "*");
+    }
+    return;
+  }
   if (sequoiaFirstFrameReceived && (!sequoiaConnectOverlay || sequoiaConnectOverlay.hidden)) {
     return;
   }
@@ -3474,23 +3519,37 @@ function renderScreen(screen) {
       sequoiaStopCleanupTimer = 0;
     }
     sequoiaDissolveActiveUntil = 0;
+    const fullsize = isAppFullsize();
     if (!sequoiaMirrorSessionActive) {
       sequoiaMirrorSessionActive = true;
       sequoiaFirstFrameReceived = false;
-      if (isAppFullsize()) {
+      hasFirstFrameReady = false;
+      appContainer.classList.remove("has-first-frame");
+      if (fullsize) {
         closeSequoiaConnectOverlay(true);
       } else {
         openSequoiaConnectOverlay();
       }
     }
     if (screen.phase === "running" && !sequoiaFirstFrameReceived && !sequoiaSafetyFallbackTimer) {
+      const fallbackMs = fullsize ? FULLSCREEN_FIRST_FRAME_FALLBACK_MS : SEQUOIA_SAFETY_FALLBACK_MS;
       sequoiaSafetyFallbackTimer = window.setTimeout(() => {
         sequoiaSafetyFallbackTimer = 0;
         completeSequoiaHandshake(null);
-      }, SEQUOIA_SAFETY_FALLBACK_MS);
+      }, fallbackMs);
     }
+    const awaitingFullsizeFirstFrame = Boolean(fullsize && !hasFirstFrameReady);
     appContainer.classList.remove("is-stopping-dissolve");
     appContainer.classList.add("is-streaming", "is-mirroring-active");
+    if (awaitingFullsizeFirstFrame) {
+      appContainer.classList.add("is-awaiting-first-frame");
+      appContainer.classList.remove("has-first-frame");
+    } else {
+      appContainer.classList.remove("is-awaiting-first-frame");
+      if (hasFirstFrameReady) {
+        appContainer.classList.add("has-first-frame");
+      }
+    }
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
     remotePanel.hidden = false;
@@ -3520,11 +3579,18 @@ function renderScreen(screen) {
       stopScreen.disabled = false;
     }
 
-    // Sembunyikan placeholder secara mutlak (di balik #sequoia-connect-overlay hingga frame 1 siap)
+    // Tahap 207: Di Mode Full Screen tahan #screen-empty sampai mirror-first-frame-ready tiba; di Windowed langsung sembunyikan di balik #sequoia-connect-overlay
     if (screenEmpty) {
-      screenEmpty.hidden = true;
-      screenEmpty.style.display = "none";
-      screenEmpty.classList.remove("is-sequoia-fading", "is-spring-entering");
+      if (awaitingFullsizeFirstFrame) {
+        closeSequoiaConnectOverlay(true);
+        showScreenEmptyWithSpring(false);
+        setLaunchpadStartConnecting(true);
+      } else {
+        screenEmpty.hidden = true;
+        screenEmpty.style.display = "none";
+        screenEmpty.classList.remove("is-sequoia-fading", "is-spring-entering");
+        setLaunchpadStartConnecting(false);
+      }
     }
 
     // Tampilkan screen-view (iframe) agar segera decode HEVC di belakang overlay
@@ -3561,7 +3627,7 @@ function renderScreen(screen) {
     || (sequoiaConnectOverlay && !sequoiaConnectOverlay.hidden)
   );
 
-  appContainer.classList.remove("is-streaming", "is-mirroring-active");
+  appContainer.classList.remove("is-streaming", "is-mirroring-active", "is-awaiting-first-frame", "has-first-frame");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
   remotePanel.hidden = true;
@@ -3592,13 +3658,16 @@ function renderScreen(screen) {
   showScreen.classList.remove("is-disconnect");
   showScreen.disabled = false;
 
-  // Tahap 204 / 206: Full Screen mempertahankan standby card vertikal; mode jendela pakai #sequoia-connect-overlay
+  // Tahap 204 / 206 / 207: Full Screen mempertahankan standby card vertikal; mode jendela pakai #sequoia-connect-overlay
   if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
+    hasFirstFrameReady = false;
     if (isAppFullsize()) {
       closeSequoiaConnectOverlay(true);
       showScreenEmptyWithSpring(false);
+      setLaunchpadStartConnecting(true);
     } else {
       openSequoiaConnectOverlay();
+      setLaunchpadStartConnecting(false);
     }
     if (screenNote) {
       screenNote.textContent = "";
@@ -3619,6 +3688,8 @@ function renderScreen(screen) {
 
     sequoiaMirrorSessionActive = false;
     sequoiaFirstFrameReceived = false;
+    hasFirstFrameReady = false;
+    setLaunchpadStartConnecting(false);
     closeSequoiaConnectOverlay(Boolean(effectiveError));
     showScreenEmptyWithSpring(wasSessionOrOverlay);
 
@@ -3670,7 +3741,8 @@ async function showPhone() {
   }
   sequoiaDissolveActiveUntil = 0;
   sequoiaIntentionalStopUntil = 0;
-  appRoot?.classList.remove("is-stopping-dissolve");
+  hasFirstFrameReady = false;
+  appRoot?.classList.remove("is-stopping-dissolve", "is-awaiting-first-frame", "has-first-frame");
   showScreen.disabled = true;
   showScreen.textContent = "Connecting…";
   if (screenErrorBanner) screenErrorBanner.style.display = "none";
@@ -3709,8 +3781,10 @@ async function showPhone() {
 
   sequoiaMirrorSessionActive = false;
   sequoiaFirstFrameReceived = false;
+  hasFirstFrameReady = false;
   if (isAppFullsize()) {
     closeSequoiaConnectOverlay(true);
+    setLaunchpadStartConnecting(true);
   } else {
     openSequoiaConnectOverlay();
   }
@@ -3722,6 +3796,9 @@ async function showPhone() {
   } catch (error) {
     sequoiaMirrorSessionActive = false;
     sequoiaFirstFrameReceived = false;
+    hasFirstFrameReady = false;
+    appRoot?.classList.remove("is-awaiting-first-frame", "has-first-frame");
+    setLaunchpadStartConnecting(false);
     closeSequoiaConnectOverlay(true);
     showScreenEmptyWithSpring(true);
     screenNote.textContent = error.message;
@@ -3752,12 +3829,14 @@ async function stopMirror() {
   }
   sequoiaIntentionalStopUntil = Date.now() + 2500;
   const wasActiveOrOverlay = sequoiaMirrorSessionActive || isSequoiaOverlayOpen();
+  const wasFirstFrameReady = hasFirstFrameReady || sequoiaFirstFrameReceived;
   const curSrc = screenView ? (screenView.getAttribute("src") || "") : "";
   const hasLiveIframe = Boolean(
     screenView
     && !screenView.hidden
     && screenView.style.display !== "none"
     && curSrc.startsWith("/mirror.html")
+    && (!isAppFullsize() || wasFirstFrameReady)
   );
 
   // Tahap 205/206: Kirim sinyal intentional-stop ke mirror iframe SEBELUM memutus socket server
@@ -3777,9 +3856,12 @@ async function stopMirror() {
     launchpadError.textContent = "";
   }
 
-  // Tahap 206: True Cross-Dissolve seketika pada t=0ms tanpa menunggu /api/screen/stop atau timer 150ms (0ms layar hitam)
+  // Tahap 206 / 207: True Cross-Dissolve seketika pada t=0ms tanpa menunggu /api/screen/stop atau timer 150ms (0ms layar hitam)
   sequoiaMirrorSessionActive = false;
   sequoiaFirstFrameReceived = false;
+  hasFirstFrameReady = false;
+  appRoot?.classList.remove("is-awaiting-first-frame", "has-first-frame");
+  setLaunchpadStartConnecting(false);
   closeSequoiaConnectOverlay(hasLiveIframe || isAppFullsize());
 
   const dissolveMs = 240;
@@ -3906,13 +3988,17 @@ async function restartMirror() {
   }
   sequoiaDissolveActiveUntil = 0;
   sequoiaIntentionalStopUntil = 0;
-  appRoot?.classList.remove("is-stopping-dissolve");
+  hasFirstFrameReady = false;
+  appRoot?.classList.remove("is-stopping-dissolve", "is-awaiting-first-frame", "has-first-frame");
   restartScreen.disabled = true;
   screenNote.textContent = "Restarting screen… keep the iPhone unlocked.";
   screenNote.className = "";
   sequoiaFirstFrameReceived = false;
   if (isAppFullsize()) {
     closeSequoiaConnectOverlay(true);
+    appRoot?.classList.add("is-awaiting-first-frame");
+    showScreenEmptyWithSpring(false);
+    setLaunchpadStartConnecting(true);
   } else {
     openSequoiaConnectOverlay();
   }
@@ -3926,10 +4012,11 @@ async function restartMirror() {
     await new Promise((r) => setTimeout(r, 1500));
     reloadMirrorIframe();
     clearSequoiaSafetyTimer();
+    const fallbackMs = isAppFullsize() ? FULLSCREEN_FIRST_FRAME_FALLBACK_MS : SEQUOIA_SAFETY_FALLBACK_MS;
     sequoiaSafetyFallbackTimer = window.setTimeout(() => {
       sequoiaSafetyFallbackTimer = 0;
       completeSequoiaHandshake(null);
-    }, SEQUOIA_SAFETY_FALLBACK_MS);
+    }, fallbackMs);
     screenNote.textContent = "Restart sent - waiting for picture...";
     window.setTimeout(() => {
       if (workspace.classList.contains("is-live")) {
@@ -3937,6 +4024,9 @@ async function restartMirror() {
       }
     }, 4000);
   } catch (error) {
+    hasFirstFrameReady = false;
+    appRoot?.classList.remove("is-awaiting-first-frame", "has-first-frame");
+    setLaunchpadStartConnecting(false);
     closeSequoiaConnectOverlay(true);
     screenNote.textContent = error.message;
     screenNote.className = "warn";
