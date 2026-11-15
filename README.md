@@ -97,7 +97,7 @@
 
 ### 1. Choose Your Package
 - **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`60.61 MB`)** - Official 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Includes isolated Python 3.12 runtime, automatic LAN Firewall rules, Desktop/Start Menu shortcuts, and **Microsoft HEVC Codec (`2.5.48.0`)** bundled offline.
-- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.53 MB`)** - 21 files (`3.63 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
+- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.53 MB`)** - 21 files (`3.64 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
 - **Optional HEVC Standalone: `Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle` (`11.2 MB`)** - Already installed automatically by `Setup.exe`; download manually only if using Portable ZIP on a fresh Windows PC without H.265 codecs.
 
 ### 2. Prerequisites on Windows &amp; iPhone (`iOS 27.2` / `27.0+`)
@@ -107,8 +107,8 @@
 
 | Artifact (`v4.0.0`) | Size | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.61 MB` (`63,549,809 B`) | `6D81B88E09A781DF5DD6AAC2738FD3FE71D08BDA80F836806094C51A9AB4ADCA` |
-| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.53 MB` (`1,605,005 B`) | `70FF08B40B58BD62CCB504A2F10A21C4659B455234BDC479E6F065A9B4060162` |
+| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.61 MB` (`63,554,754 B`) | `546AF2EEDB789D0A8D66C925B237E088374796E831EBB61C02D2425B67F640C5` |
+| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.53 MB` (`1,607,781 B`) | `54D07D379BFB9764D179275A646359C5E8D3D39340214E8CB0A0324914E14654` |
 | **`iPhone Link.exe`** | `1.43 MiB` (`1,500,160 B`) | `51E1847CD2F89EE77B2BFBF7C65B091AC76D0E3421E0A7839083222C43124A6B` |
 | **`Microsoft.HEVCVideoExtension_2.5.48.0...AppxBundle`** | `11.2 MB` (`11,222,383 B`) | `275FB4C0AE406D51892E87281EFF0BB3B9456D9A9493813CC059EEB8A83D39BA` |
 

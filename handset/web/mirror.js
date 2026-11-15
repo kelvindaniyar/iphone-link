@@ -2744,12 +2744,77 @@ let frameCount = 0;
 let runGeneration = 0;
 let abortStream = null;
 let hasRenderedFirstFrame = false;
+let hasSentFirstFrameReady = false;
 let streamActive = false;
 window._isDeviceLocked = false;
+let _sequoiaThumbCanvas = null;
+let _sequoiaThumbCtx = null;
+let _sequoiaDeBlurTimer = 0;
+
+function _armSequoiaPreblur() {
+  hasSentFirstFrameReady = false;
+  if (_sequoiaDeBlurTimer) {
+    clearTimeout(_sequoiaDeBlurTimer);
+    _sequoiaDeBlurTimer = 0;
+  }
+  if (canvas) {
+    canvas.classList.remove("is-sequoia-unblurring");
+    canvas.classList.add("is-sequoia-preblur");
+  }
+}
+
+function _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH) {
+  let thumbDataUrl = null;
+  try {
+    const tw = rawW > rawH ? 78 : 36;
+    const th = rawW > rawH ? 36 : 78;
+    if (!_sequoiaThumbCanvas) {
+      _sequoiaThumbCanvas = document.createElement("canvas");
+    }
+    if (_sequoiaThumbCanvas.width !== tw) _sequoiaThumbCanvas.width = tw;
+    if (_sequoiaThumbCanvas.height !== th) _sequoiaThumbCanvas.height = th;
+    if (!_sequoiaThumbCtx) {
+      _sequoiaThumbCtx = _sequoiaThumbCanvas.getContext("2d", { alpha: false });
+    }
+    if (_sequoiaThumbCtx && sourceFrame && rawW > 0 && rawH > 0) {
+      _sequoiaThumbCtx.drawImage(sourceFrame, 0, 0, rawW, rawH, 0, 0, tw, th);
+      thumbDataUrl = _sequoiaThumbCanvas.toDataURL("image/jpeg", 0.62);
+    }
+  } catch (_) {}
+
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: "mirror-first-frame-ready",
+        width: rawW,
+        height: rawH,
+        thumbDataUrl: thumbDataUrl || null,
+      }, "*");
+    }
+  } catch (_) {}
+
+  if (canvas) {
+    requestAnimationFrame(() => {
+      if (!canvas) return;
+      canvas.classList.add("is-sequoia-unblurring");
+      canvas.classList.remove("is-sequoia-preblur");
+    });
+    if (_sequoiaDeBlurTimer) {
+      clearTimeout(_sequoiaDeBlurTimer);
+    }
+    _sequoiaDeBlurTimer = setTimeout(() => {
+      _sequoiaDeBlurTimer = 0;
+      if (canvas) {
+        canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+      }
+    }, 700);
+  }
+}
 
 function setStatus(text, tone) {
   if (!statusEl) return;
-  if (!text) {
+  // Tahap 204: Selama startup normal (bukan error/warn), serahkan tampilan connecting ke #sequoia-connect-overlay
+  if (!text || tone !== "warn") {
     statusEl.textContent = "";
     statusEl.style.display = "none";
     statusEl.hidden = true;
@@ -3763,6 +3828,11 @@ function drawFrame(f) {
     ctx.drawImage(sourceFrame, -cleanCenterX, -cleanCenterY, rawW, rawH);
     ctx.restore();
 
+    if (!hasSentFirstFrameReady) {
+      hasSentFirstFrameReady = true;
+      _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH);
+    }
+
     if (autoRotateGameEnabled) {
       checkAutoRotateOrientation(sourceFrame, rawW, rawH);
     }
@@ -4082,7 +4152,7 @@ function drawPending() {
 window.drawPending = drawPending;
 
 async function runImageStream(generation, codecInfo) {
-  setStatus("Connecting to image stream…");
+  setStatus("");
   let resp = null;
   const streamDelays = [200, 400, 800, 1500, 2500, 4000];
   for (let a = 0; a <= streamDelays.length; a++) {
@@ -4158,11 +4228,7 @@ async function runImageStream(generation, codecInfo) {
 }
 
 async function run(generation) {
-  if (!hasRenderedFirstFrame) {
-    setStatus("Connecting to stream…");
-  } else {
-    setStatus("");
-  }
+  setStatus("");
   frameCount = 0;
   const startedAt = performance.now();
   const watchdog = window.setInterval(() => {
@@ -4284,18 +4350,14 @@ async function run(generation) {
   let decoder = buildDecoder();
   decoder.configure(decoderConfig);
   postDebugLog("decoder_configured", { codec, state: decoder.state });
-  if (!hasRenderedFirstFrame) {
-    setStatus("Waiting for video…");
-  } else {
-    setStatus("");
-  }
+  setStatus("");
 
   let resp = null;
   const streamDelays = [300, 600, 1200, 2000, 3000, 5000, 8000];
   for (let a = 0; a <= streamDelays.length; a++) {
     if (generation !== runGeneration) return;
     if (a > 0) {
-      setStatus(`Waiting for video stream (retry ${a})…`);
+      setStatus("");
       await new Promise((r) => setTimeout(r, streamDelays[a - 1]));
       if (a === 2) {
         await fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
@@ -4308,7 +4370,7 @@ async function run(generation) {
         break;
       }
       if (r.status === 503) {
-        setStatus("Stream starting on the iPhone…");
+        setStatus("");
         continue;
       }
       setStatus(`Stream error (HTTP ${r.status})`, "warn");
@@ -4438,6 +4500,7 @@ async function run(generation) {
 function beginRun() {
   runGeneration += 1;
   const generation = runGeneration;
+  _armSequoiaPreblur();
   if (abortStream) {
     abortStream();
     abortStream = null;

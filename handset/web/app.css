@@ -5240,8 +5240,144 @@ body.light-mode .launchpad-pill[data-active="true"] {
   .app.drawer-open #control-pane.side-drawer .card,
   .app.drawer-open #control-pane.side-drawer .glass-card,
   .is-busy-shimmer::after,
-  .is-saved {
+  .is-saved,
+  .sequoia-connect-backdrop,
+  #screen-empty.is-spring-entering {
     animation: none !important;
   }
+}
+
+/* =========================================================================
+   TAHAP 204: macOS Sequoia Seamless Start & Stop Mirroring Overlay & Dissolve
+   Full-Viewport Ambient Aurora + Dynamic Last Wallpaper Blur
+   ========================================================================= */
+@keyframes sequoiaAuroraBreath {
+  0% {
+    transform: scale(1.12) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: scale(1.17) translate3d(0, -6px, 0);
+  }
+}
+
+@keyframes sequoiaStandbySpringIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.96) translateZ(0);
+    filter: blur(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateZ(0);
+    filter: blur(0px);
+  }
+}
+
+.sequoia-connect-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 28 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  border-radius: inherit !important;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 440ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sequoia-connect-overlay[hidden] {
+  display: none !important;
+}
+
+.sequoia-connect-overlay.is-visible {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto;
+}
+
+.sequoia-connect-backdrop {
+  position: absolute;
+  inset: -12%;
+  background-color: #071923;
+  background-image:
+    var(--sequoia-last-wallpaper, none),
+    radial-gradient(circle at 18% 20%, rgba(218, 72, 42, 0.88) 0%, rgba(196, 88, 54, 0.42) 38%, transparent 68%),
+    radial-gradient(circle at 82% 22%, rgba(208, 226, 238, 0.78) 0%, rgba(148, 188, 212, 0.36) 42%, transparent 72%),
+    radial-gradient(circle at 50% 52%, rgba(56, 124, 148, 0.55) 0%, transparent 65%),
+    radial-gradient(circle at 50% 88%, rgba(6, 28, 38, 0.96) 0%, rgba(4, 18, 26, 1) 75%);
+  background-size: cover;
+  background-position: center;
+  filter: blur(38px) saturate(155%) brightness(0.92);
+  transform: scale(1.12) translateZ(0);
+  animation: sequoiaAuroraBreath 4.2s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.sequoia-connect-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(4, 14, 22, 0.14) 0%, rgba(4, 14, 22, 0.38) 100%);
+  pointer-events: none;
+}
+
+.sequoia-connect-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  padding: 0 24px;
+  transition:
+    opacity 210ms cubic-bezier(0.32, 0, 0.67, 0),
+    transform 240ms cubic-bezier(0.32, 0, 0.67, 0),
+    filter 210ms ease;
+}
+
+.sequoia-connect-overlay.is-dissolving .sequoia-connect-content {
+  opacity: 0 !important;
+  transform: scale(0.94) translateY(-4px) !important;
+  filter: blur(6px) !important;
+}
+
+.sequoia-connect-kicker {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.28);
+}
+
+.sequoia-connect-device {
+  font-size: 21px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+}
+
+#screen-empty.is-sequoia-fading {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+#screen-empty.is-spring-entering {
+  animation: sequoiaStandbySpringIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both !important;
+}
+
+.app.is-stopping-dissolve #screen-view {
+  opacity: 0 !important;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
 

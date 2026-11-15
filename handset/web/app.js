@@ -79,6 +79,10 @@ const remotePanel = document.querySelector("#remote-panel");
 const restartScreen = document.querySelector("#restart-screen");
 const stopScreen = document.querySelector("#stop-screen");
 const screenErrorBanner = document.querySelector("#screen-error-banner");
+const sequoiaConnectOverlay = document.querySelector("#sequoia-connect-overlay");
+const sequoiaConnectBackdrop = document.querySelector("#sequoia-connect-backdrop");
+const sequoiaConnectKicker = document.querySelector("#sequoia-connect-kicker");
+const sequoiaConnectDevice = document.querySelector("#sequoia-connect-device");
 
 // Tahap 148: Bilingual Language Dictionary (ID / EN)
 let currentLang = "id";
@@ -100,6 +104,7 @@ const I18N_DICT = {
     "launchpad.setup_wifi": "Atur Wi-Fi Sekarang",
     "launchpad.start_mirror": "Mulai mirroring",
     "launchpad.stop_mirror": "Hentikan mirroring",
+    "connectingTo": "Menyambungkan ke",
     "launchpad.activity_title": "Menyambungkan ke iPhone...",
     "launchpad.cancel": "Batal",
     "launchpad.step1_title": "1. Deteksi perangkat",
@@ -247,6 +252,7 @@ const I18N_DICT = {
     "launchpad.setup_wifi": "Set up Wi-Fi Now",
     "launchpad.start_mirror": "Start mirroring",
     "launchpad.stop_mirror": "Stop mirroring",
+    "connectingTo": "Connecting to",
     "launchpad.activity_title": "Connecting to iPhone...",
     "launchpad.cancel": "Cancel",
     "launchpad.step1_title": "1. Device detection",
@@ -3245,6 +3251,194 @@ function sendAppMetrics() {
   }
 }
 
+// ======================================================================
+// Tahap 204: macOS Sequoia Seamless Start & Stop Mirroring Choreography
+// ======================================================================
+const SEQUOIA_LAST_WALLPAPER_KEY = "iphone_link_last_wallpaper_thumb";
+const SEQUOIA_SAFETY_FALLBACK_MS = 1600;
+let sequoiaMirrorSessionActive = false;
+let sequoiaFirstFrameReceived = false;
+let sequoiaSafetyFallbackTimer = 0;
+let sequoiaDissolveTimers = [];
+let sequoiaEmptyFadeTimer = 0;
+let sequoiaEmptySpringTimer = 0;
+
+function clearSequoiaDissolveTimers() {
+  while (sequoiaDissolveTimers.length > 0) {
+    clearTimeout(sequoiaDissolveTimers.pop());
+  }
+}
+
+function clearSequoiaSafetyTimer() {
+  if (sequoiaSafetyFallbackTimer) {
+    clearTimeout(sequoiaSafetyFallbackTimer);
+    sequoiaSafetyFallbackTimer = 0;
+  }
+}
+
+function isSequoiaOverlayOpen() {
+  return Boolean(
+    sequoiaConnectOverlay
+    && !sequoiaConnectOverlay.hidden
+    && sequoiaConnectOverlay.classList.contains("is-visible")
+  );
+}
+
+function getSequoiaDeviceLabel() {
+  try {
+    const targetUdid = selectedUdid || lastServerState?.udid || (lastServerState?.devices || [])[0]?.udid || "";
+    const activeDev = (targetUdid && (lastServerState?.devices || []).find((d) => d.udid === targetUdid))
+      || (lastServerState?.devices || [])[0];
+    const resolved = resolveFriendlyDeviceModel(activeDev || targetUdid);
+    if (resolved && resolved !== "iPhone") {
+      return resolved;
+    }
+    const badgeTxt = launchpadDeviceName?.textContent?.trim();
+    if (badgeTxt && !/^memindai/i.test(badgeTxt) && !/^scanning/i.test(badgeTxt)) {
+      return badgeTxt;
+    }
+  } catch (_) {}
+  return "iPhone";
+}
+
+function openSequoiaConnectOverlay() {
+  if (!sequoiaConnectOverlay) return;
+  clearSequoiaDissolveTimers();
+  if (sequoiaEmptyFadeTimer) {
+    clearTimeout(sequoiaEmptyFadeTimer);
+    sequoiaEmptyFadeTimer = 0;
+  }
+  if (sequoiaEmptySpringTimer) {
+    clearTimeout(sequoiaEmptySpringTimer);
+    sequoiaEmptySpringTimer = 0;
+  }
+  if (sequoiaConnectKicker) {
+    sequoiaConnectKicker.textContent = t("connectingTo");
+  }
+  if (sequoiaConnectDevice) {
+    sequoiaConnectDevice.textContent = getSequoiaDeviceLabel();
+  }
+  if (sequoiaConnectBackdrop) {
+    try {
+      const savedThumb = localStorage.getItem(SEQUOIA_LAST_WALLPAPER_KEY);
+      if (savedThumb && savedThumb.startsWith("data:image/")) {
+        sequoiaConnectBackdrop.style.setProperty("--sequoia-last-wallpaper", `url("${savedThumb}")`);
+      } else {
+        sequoiaConnectBackdrop.style.removeProperty("--sequoia-last-wallpaper");
+      }
+    } catch (_) {
+      sequoiaConnectBackdrop.style.removeProperty("--sequoia-last-wallpaper");
+    }
+  }
+  const wasHidden = sequoiaConnectOverlay.hidden;
+  sequoiaConnectOverlay.hidden = false;
+  sequoiaConnectOverlay.removeAttribute("hidden");
+  sequoiaConnectOverlay.setAttribute("aria-hidden", "false");
+  sequoiaConnectOverlay.classList.remove("is-dissolving");
+  if (wasHidden) {
+    void sequoiaConnectOverlay.offsetWidth;
+  }
+  sequoiaConnectOverlay.classList.add("is-visible");
+
+  if (screenEmpty && !screenEmpty.hidden) {
+    screenEmpty.classList.remove("is-spring-entering");
+    screenEmpty.classList.add("is-sequoia-fading");
+    sequoiaEmptyFadeTimer = window.setTimeout(() => {
+      sequoiaEmptyFadeTimer = 0;
+      if (screenEmpty && isSequoiaOverlayOpen()) {
+        screenEmpty.hidden = true;
+        screenEmpty.style.display = "none";
+        screenEmpty.classList.remove("is-sequoia-fading");
+      }
+    }, 220);
+  }
+}
+
+function completeSequoiaHandshake(thumbDataUrl) {
+  clearSequoiaSafetyTimer();
+  if (thumbDataUrl && typeof thumbDataUrl === "string" && thumbDataUrl.startsWith("data:image/")) {
+    try {
+      localStorage.setItem(SEQUOIA_LAST_WALLPAPER_KEY, thumbDataUrl);
+    } catch (_) {}
+  }
+  if (sequoiaFirstFrameReceived && (!sequoiaConnectOverlay || sequoiaConnectOverlay.hidden)) {
+    return;
+  }
+  sequoiaFirstFrameReceived = true;
+  if (!sequoiaConnectOverlay || sequoiaConnectOverlay.hidden) {
+    return;
+  }
+  clearSequoiaDissolveTimers();
+  // Tahap A (t = 0ms): Pudarkan konten teks "Menyambungkan ke / iPhone"
+  sequoiaConnectOverlay.classList.add("is-dissolving");
+  // Tahap B (t = 90ms): Cross-dissolve latar Aurora/Blur ke kanvas yang melakukan optical de-blur
+  sequoiaDissolveTimers.push(window.setTimeout(() => {
+    if (sequoiaConnectOverlay) {
+      sequoiaConnectOverlay.classList.remove("is-visible");
+    }
+  }, 90));
+  // Tahap C (t = 560ms): Tutup bersih overlay dari layout
+  sequoiaDissolveTimers.push(window.setTimeout(() => {
+    if (sequoiaConnectOverlay) {
+      sequoiaConnectOverlay.hidden = true;
+      sequoiaConnectOverlay.setAttribute("aria-hidden", "true");
+      sequoiaConnectOverlay.classList.remove("is-dissolving", "is-visible");
+    }
+  }, 560));
+}
+
+function closeSequoiaConnectOverlay(immediate = false) {
+  clearSequoiaSafetyTimer();
+  clearSequoiaDissolveTimers();
+  if (sequoiaEmptyFadeTimer) {
+    clearTimeout(sequoiaEmptyFadeTimer);
+    sequoiaEmptyFadeTimer = 0;
+  }
+  if (!sequoiaConnectOverlay) return;
+  if (immediate || sequoiaConnectOverlay.hidden) {
+    sequoiaConnectOverlay.hidden = true;
+    sequoiaConnectOverlay.setAttribute("aria-hidden", "true");
+    sequoiaConnectOverlay.classList.remove("is-dissolving", "is-visible");
+    return;
+  }
+  sequoiaConnectOverlay.classList.add("is-dissolving");
+  sequoiaConnectOverlay.classList.remove("is-visible");
+  sequoiaDissolveTimers.push(window.setTimeout(() => {
+    if (sequoiaConnectOverlay) {
+      sequoiaConnectOverlay.hidden = true;
+      sequoiaConnectOverlay.setAttribute("aria-hidden", "true");
+      sequoiaConnectOverlay.classList.remove("is-dissolving", "is-visible");
+    }
+  }, 460));
+}
+
+function showScreenEmptyWithSpring(animateSpring) {
+  if (!screenEmpty) return;
+  if (sequoiaEmptyFadeTimer) {
+    clearTimeout(sequoiaEmptyFadeTimer);
+    sequoiaEmptyFadeTimer = 0;
+  }
+  screenEmpty.classList.remove("is-sequoia-fading");
+  screenEmpty.style.removeProperty("opacity");
+  screenEmpty.hidden = false;
+  screenEmpty.removeAttribute("hidden");
+  screenEmpty.style.display = "flex";
+  if (animateSpring) {
+    if (sequoiaEmptySpringTimer) {
+      clearTimeout(sequoiaEmptySpringTimer);
+    }
+    screenEmpty.classList.remove("is-spring-entering");
+    void screenEmpty.offsetWidth;
+    screenEmpty.classList.add("is-spring-entering");
+    sequoiaEmptySpringTimer = window.setTimeout(() => {
+      sequoiaEmptySpringTimer = 0;
+      screenEmpty?.classList.remove("is-spring-entering");
+    }, 360);
+  } else {
+    screenEmpty.classList.remove("is-spring-entering");
+  }
+}
+
 function renderScreen(screen) {
   if (!screen) return;
   const isLockedScreen = Boolean(screen.intentionally_locked || screen.intentionallyLocked);
@@ -3255,6 +3449,18 @@ function renderScreen(screen) {
   const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
   const appContainer = document.querySelector(".app") || document.body;
   if (mirroring) {
+    if (!sequoiaMirrorSessionActive) {
+      sequoiaMirrorSessionActive = true;
+      sequoiaFirstFrameReceived = false;
+      openSequoiaConnectOverlay();
+    }
+    if (screen.phase === "running" && !sequoiaFirstFrameReceived && !sequoiaSafetyFallbackTimer) {
+      sequoiaSafetyFallbackTimer = window.setTimeout(() => {
+        sequoiaSafetyFallbackTimer = 0;
+        completeSequoiaHandshake(null);
+      }, SEQUOIA_SAFETY_FALLBACK_MS);
+    }
+    appContainer.classList.remove("is-stopping-dissolve");
     appContainer.classList.add("is-streaming", "is-mirroring-active");
     workspace.classList.add("is-live");
     phoneShell.classList.add("live");
@@ -3285,13 +3491,14 @@ function renderScreen(screen) {
       stopScreen.disabled = false;
     }
 
-    // Sembunyikan placeholder secara mutlak
+    // Sembunyikan placeholder secara mutlak (di balik #sequoia-connect-overlay hingga frame 1 siap)
     if (screenEmpty) {
       screenEmpty.hidden = true;
       screenEmpty.style.display = "none";
+      screenEmpty.classList.remove("is-sequoia-fading", "is-spring-entering");
     }
 
-    // Tampilkan screen-view (iframe)
+    // Tampilkan screen-view (iframe) agar segera decode HEVC di belakang overlay
     screenView.hidden = false;
     screenView.style.display = "block";
 
@@ -3319,6 +3526,12 @@ function renderScreen(screen) {
     return;
   }
 
+  const wasSessionOrOverlay = Boolean(
+    screen._sequoiaSpringEnter
+    || sequoiaMirrorSessionActive
+    || (sequoiaConnectOverlay && !sequoiaConnectOverlay.hidden)
+  );
+
   appContainer.classList.remove("is-streaming", "is-mirroring-active");
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
@@ -3333,12 +3546,6 @@ function renderScreen(screen) {
   }
   kbToggle.hidden = true;
 
-  // Tampilkan kembali placeholder
-  if (screenEmpty) {
-    screenEmpty.hidden = false;
-    screenEmpty.style.display = "flex";
-  }
-
   // Sembunyikan iframe
   screenView.hidden = true;
   screenView.style.display = "none";
@@ -3350,57 +3557,9 @@ function renderScreen(screen) {
   showScreen.classList.remove("is-disconnect");
   showScreen.disabled = false;
 
-  // Tahap 135: Handle Launchpad Idle vs Live 4-Stage Activity
+  // Tahap 204: Saat phase === "starting", pertahankan #sequoia-connect-overlay (jangan tampilkan kotak kaku)
   if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
-    if (launchpadIdleView) {
-      launchpadIdleView.hidden = true;
-      launchpadIdleView.classList.add("is-hidden");
-      launchpadIdleView.style.display = "none";
-    }
-    if (launchpadLiveActivity) {
-      launchpadLiveActivity.hidden = false;
-      launchpadLiveActivity.classList.remove("is-hidden");
-      launchpadLiveActivity.style.display = "flex";
-    }
-    if (launchpadActivityBadge) {
-      launchpadActivityBadge.textContent = (transport === "wifi") ? "Wi-Fi" : "USB";
-    }
-    if (launchpadActivityTitle) {
-      const activeDevName = (launchpadDeviceName && launchpadDeviceName.textContent && launchpadDeviceName.textContent.trim()) || "iPhone";
-      const targetUdid = selectedUdid || lastServerState?.udid || (lastServerState?.devices || [])[0]?.udid || "";
-      const activeDev = (targetUdid && (lastServerState?.devices || []).find(d => d.udid === targetUdid)) || (lastServerState?.devices || [])[0];
-      const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
-      const isEnAct = (currentLang === "en");
-      launchpadActivityTitle.textContent = isEnAct ? `Connecting to ${modelName}...` : `Menyambungkan ke ${modelName}...`;
-    }
-    const currentStep = screen.stage_step || 1;
-    const isEnStage = (currentLang === "en");
-    const stageDescriptions = isEnStage ? {
-      1: "Stage 1/4 · Detecting device...",
-      2: "Stage 2/4 · Opening secure CoreDevice tunnel...",
-      3: "Stage 3/4 · Preparing screen & audio pipeline...",
-      4: "Stage 4/4 · Starting H.265 video stream..."
-    } : {
-      1: "Tahap 1/4 · Mendeteksi perangkat...",
-      2: "Tahap 2/4 · Membuka jalur aman CoreDevice...",
-      3: "Tahap 3/4 · Menyiapkan layar & kanal audio...",
-      4: "Tahap 4/4 · Memulai streaming video H.265..."
-    };
-    if (launchpadStageText) {
-      launchpadStageText.textContent = stageDescriptions[currentStep] || (isEnStage ? `Stage ${currentStep}/4 · Connecting...` : `Tahap ${currentStep}/4 · Menyambungkan...`);
-    }
-    document.querySelectorAll(".activity-step").forEach((stepEl) => {
-      const stepNum = parseInt(stepEl.dataset.step, 10);
-      stepEl.classList.remove("is-done", "is-active", "is-pending");
-      if (stepNum < currentStep) {
-        stepEl.classList.add("is-done");
-      } else if (stepNum === currentStep) {
-        stepEl.classList.add("is-active");
-      } else {
-        stepEl.classList.add("is-pending");
-      }
-    });
-
+    openSequoiaConnectOverlay();
     if (screenNote) {
       screenNote.textContent = "";
       screenNote.hidden = true;
@@ -3411,6 +3570,11 @@ function renderScreen(screen) {
     if (screenErrorBanner) screenErrorBanner.style.display = "none";
     return;
   } else {
+    sequoiaMirrorSessionActive = false;
+    sequoiaFirstFrameReceived = false;
+    closeSequoiaConnectOverlay(Boolean(screen.error));
+    showScreenEmptyWithSpring(wasSessionOrOverlay);
+
     // Mode A: Standby Idle View
     if (launchpadLiveActivity) {
       launchpadLiveActivity.hidden = true;
@@ -3487,11 +3651,19 @@ async function showPhone() {
     } catch (_) { }
   }
 
+  sequoiaMirrorSessionActive = false;
+  sequoiaFirstFrameReceived = false;
+  openSequoiaConnectOverlay();
+
   try {
     renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport }));
     watchScreen();
     load();
   } catch (error) {
+    sequoiaMirrorSessionActive = false;
+    sequoiaFirstFrameReceived = false;
+    closeSequoiaConnectOverlay(true);
+    showScreenEmptyWithSpring(true);
     screenNote.textContent = error.message;
     screenNote.className = "warn";
     if (screenErrorBanner) {
@@ -3513,13 +3685,21 @@ async function stopMirror() {
   if (stopScreen) stopScreen.disabled = true;
   showScreen.disabled = true;
   showScreen.textContent = "Disconnecting…";
+  const wasActiveOrOverlay = sequoiaMirrorSessionActive || isSequoiaOverlayOpen();
+  if (appRoot) {
+    appRoot.classList.add("is-stopping-dissolve");
+  }
+  closeSequoiaConnectOverlay(false);
   try {
     await postJson("/api/screen/stop", {});
   } catch (err) {
     console.warn("stopMirror error:", err);
   }
   window.clearInterval(screenTimer);
-  renderScreen({ phase: "idle" });
+  renderScreen({ phase: "idle", _sequoiaSpringEnter: wasActiveOrOverlay || true });
+  window.setTimeout(() => {
+    appRoot?.classList.remove("is-stopping-dissolve");
+  }, 240);
   load();
 }
 
@@ -3602,10 +3782,17 @@ async function restartMirror() {
   restartScreen.disabled = true;
   screenNote.textContent = "Restarting screen… keep the iPhone unlocked.";
   screenNote.className = "";
+  sequoiaFirstFrameReceived = false;
+  openSequoiaConnectOverlay();
   try {
     await postJson("/api/screen/restart", { udid: selectedUdid });
     await new Promise((r) => setTimeout(r, 1500));
     reloadMirrorIframe();
+    clearSequoiaSafetyTimer();
+    sequoiaSafetyFallbackTimer = window.setTimeout(() => {
+      sequoiaSafetyFallbackTimer = 0;
+      completeSequoiaHandshake(null);
+    }, SEQUOIA_SAFETY_FALLBACK_MS);
     screenNote.textContent = "Restart sent - waiting for picture...";
     window.setTimeout(() => {
       if (workspace.classList.contains("is-live")) {
@@ -3613,6 +3800,7 @@ async function restartMirror() {
       }
     }, 4000);
   } catch (error) {
+    closeSequoiaConnectOverlay(true);
     screenNote.textContent = error.message;
     screenNote.className = "warn";
   } finally {
@@ -3968,6 +4156,9 @@ function handleDeviceDimensions(width, height, meta) {
 }
 
 window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "mirror-first-frame-ready") {
+    completeSequoiaHandshake(e.data.thumbDataUrl || null);
+  }
   if (e.data && e.data.type === "video-dimensions") {
     handleDeviceDimensions(e.data.width, e.data.height, e.data);
   }
