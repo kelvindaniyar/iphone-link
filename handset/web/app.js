@@ -3263,6 +3263,21 @@ let sequoiaSafetyFallbackTimer = 0;
 let sequoiaDissolveTimers = [];
 let sequoiaEmptyFadeTimer = 0;
 let sequoiaEmptySpringTimer = 0;
+let sequoiaDissolveActiveUntil = 0;
+let sequoiaStopCleanupTimer = 0;
+
+function isAppFullsize() {
+  try {
+    return Boolean(
+      (typeof isFullSize !== "undefined" && isFullSize)
+      || window.isFullSize
+      || document.querySelector(".app.is-fullsize")
+      || (typeof appRoot !== "undefined" && appRoot && appRoot.classList.contains("is-fullsize"))
+    );
+  } catch (_) {
+    return false;
+  }
+}
 
 function clearSequoiaDissolveTimers() {
   while (sequoiaDissolveTimers.length > 0) {
@@ -3304,6 +3319,10 @@ function getSequoiaDeviceLabel() {
 
 function openSequoiaConnectOverlay() {
   if (!sequoiaConnectOverlay) return;
+  if (isAppFullsize()) {
+    closeSequoiaConnectOverlay(true);
+    return;
+  }
   clearSequoiaDissolveTimers();
   if (sequoiaEmptyFadeTimer) {
     clearTimeout(sequoiaEmptyFadeTimer);
@@ -3450,10 +3469,19 @@ function renderScreen(screen) {
   const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
   const appContainer = document.querySelector(".app") || document.body;
   if (mirroring) {
+    if (sequoiaStopCleanupTimer) {
+      clearTimeout(sequoiaStopCleanupTimer);
+      sequoiaStopCleanupTimer = 0;
+    }
+    sequoiaDissolveActiveUntil = 0;
     if (!sequoiaMirrorSessionActive) {
       sequoiaMirrorSessionActive = true;
       sequoiaFirstFrameReceived = false;
-      openSequoiaConnectOverlay();
+      if (isAppFullsize()) {
+        closeSequoiaConnectOverlay(true);
+      } else {
+        openSequoiaConnectOverlay();
+      }
     }
     if (screen.phase === "running" && !sequoiaFirstFrameReceived && !sequoiaSafetyFallbackTimer) {
       sequoiaSafetyFallbackTimer = window.setTimeout(() => {
@@ -3547,20 +3575,31 @@ function renderScreen(screen) {
   }
   kbToggle.hidden = true;
 
-  // Sembunyikan iframe
-  screenView.hidden = true;
-  screenView.style.display = "none";
-  if (screenView.getAttribute("src") !== "about:blank") {
-    screenView.src = "about:blank";
+  const hasActiveDissolve = Boolean(
+    (appContainer.classList.contains("is-stopping-dissolve") || appRoot?.classList.contains("is-stopping-dissolve"))
+    && Date.now() < sequoiaDissolveActiveUntil
+  );
+  if (!hasActiveDissolve) {
+    // Sembunyikan iframe
+    screenView.hidden = true;
+    screenView.style.display = "none";
+    if (screenView.getAttribute("src") !== "about:blank") {
+      screenView.src = "about:blank";
+    }
   }
 
   showScreen.textContent = "Start mirroring";
   showScreen.classList.remove("is-disconnect");
   showScreen.disabled = false;
 
-  // Tahap 204: Saat phase === "starting", pertahankan #sequoia-connect-overlay (jangan tampilkan kotak kaku)
+  // Tahap 204 / 206: Full Screen mempertahankan standby card vertikal; mode jendela pakai #sequoia-connect-overlay
   if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
-    openSequoiaConnectOverlay();
+    if (isAppFullsize()) {
+      closeSequoiaConnectOverlay(true);
+      showScreenEmptyWithSpring(false);
+    } else {
+      openSequoiaConnectOverlay();
+    }
     if (screenNote) {
       screenNote.textContent = "";
       screenNote.hidden = true;
@@ -3625,6 +3664,11 @@ function renderScreen(screen) {
 }
 
 async function showPhone() {
+  if (sequoiaStopCleanupTimer) {
+    clearTimeout(sequoiaStopCleanupTimer);
+    sequoiaStopCleanupTimer = 0;
+  }
+  sequoiaDissolveActiveUntil = 0;
   sequoiaIntentionalStopUntil = 0;
   appRoot?.classList.remove("is-stopping-dissolve");
   showScreen.disabled = true;
@@ -3665,7 +3709,11 @@ async function showPhone() {
 
   sequoiaMirrorSessionActive = false;
   sequoiaFirstFrameReceived = false;
-  openSequoiaConnectOverlay();
+  if (isAppFullsize()) {
+    closeSequoiaConnectOverlay(true);
+  } else {
+    openSequoiaConnectOverlay();
+  }
 
   try {
     renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport }));
@@ -3697,10 +3745,22 @@ async function stopMirror() {
   if (stopScreen) stopScreen.disabled = true;
   showScreen.disabled = true;
   showScreen.textContent = "Disconnecting…";
+  window.clearInterval(screenTimer);
+  if (sequoiaStopCleanupTimer) {
+    clearTimeout(sequoiaStopCleanupTimer);
+    sequoiaStopCleanupTimer = 0;
+  }
   sequoiaIntentionalStopUntil = Date.now() + 2500;
   const wasActiveOrOverlay = sequoiaMirrorSessionActive || isSequoiaOverlayOpen();
+  const curSrc = screenView ? (screenView.getAttribute("src") || "") : "";
+  const hasLiveIframe = Boolean(
+    screenView
+    && !screenView.hidden
+    && screenView.style.display !== "none"
+    && curSrc.startsWith("/mirror.html")
+  );
 
-  // Tahap 205: Kirim sinyal intentional-stop ke mirror iframe SEBELUM memutus socket server
+  // Tahap 205/206: Kirim sinyal intentional-stop ke mirror iframe SEBELUM memutus socket server
   try {
     if (screenView && screenView.contentWindow) {
       screenView.contentWindow.postMessage({ type: "intentional-stop" }, "*");
@@ -3716,25 +3776,52 @@ async function stopMirror() {
     launchpadError.classList.add("is-hidden");
     launchpadError.textContent = "";
   }
-  if (appRoot) {
-    appRoot.classList.add("is-stopping-dissolve");
-  }
-  closeSequoiaConnectOverlay(false);
 
-  const stopPromise = postJson("/api/screen/stop", {}).catch((err) => {
-    console.warn("stopMirror error:", err);
-  });
-  const dissolveDelay = wasActiveOrOverlay
-    ? new Promise((r) => setTimeout(r, 150))
-    : Promise.resolve();
-  await Promise.all([stopPromise, dissolveDelay]);
+  // Tahap 206: True Cross-Dissolve seketika pada t=0ms tanpa menunggu /api/screen/stop atau timer 150ms (0ms layar hitam)
+  sequoiaMirrorSessionActive = false;
+  sequoiaFirstFrameReceived = false;
+  closeSequoiaConnectOverlay(hasLiveIframe || isAppFullsize());
 
-  window.clearInterval(screenTimer);
-  renderScreen({ phase: "stopped", _sequoiaSpringEnter: wasActiveOrOverlay || true });
-  window.setTimeout(() => {
+  const dissolveMs = 240;
+  if (hasLiveIframe) {
+    sequoiaDissolveActiveUntil = Date.now() + dissolveMs;
+    if (appRoot) {
+      appRoot.classList.add("is-stopping-dissolve");
+    }
+    screenView.hidden = false;
+    screenView.style.display = "block";
+  } else {
+    sequoiaDissolveActiveUntil = 0;
     appRoot?.classList.remove("is-stopping-dissolve");
-  }, 240);
-  load();
+  }
+
+  renderScreen({ phase: "stopped", _sequoiaSpringEnter: wasActiveOrOverlay || true });
+
+  postJson("/api/screen/stop", {})
+    .catch((err) => {
+      console.warn("stopMirror error:", err);
+    })
+    .finally(() => {
+      if (!hasLiveIframe) {
+        load();
+      }
+    });
+
+  if (hasLiveIframe) {
+    sequoiaStopCleanupTimer = window.setTimeout(() => {
+      sequoiaStopCleanupTimer = 0;
+      sequoiaDissolveActiveUntil = 0;
+      appRoot?.classList.remove("is-stopping-dissolve");
+      if (!sequoiaMirrorSessionActive && screenView) {
+        screenView.hidden = true;
+        screenView.style.display = "none";
+        if (screenView.getAttribute("src") !== "about:blank") {
+          screenView.src = "about:blank";
+        }
+      }
+      load();
+    }, dissolveMs);
+  }
 }
 
 function watchScreen() {
@@ -3813,12 +3900,22 @@ function reloadMirrorIframe() {
 }
 
 async function restartMirror() {
+  if (sequoiaStopCleanupTimer) {
+    clearTimeout(sequoiaStopCleanupTimer);
+    sequoiaStopCleanupTimer = 0;
+  }
+  sequoiaDissolveActiveUntil = 0;
   sequoiaIntentionalStopUntil = 0;
+  appRoot?.classList.remove("is-stopping-dissolve");
   restartScreen.disabled = true;
   screenNote.textContent = "Restarting screen… keep the iPhone unlocked.";
   screenNote.className = "";
   sequoiaFirstFrameReceived = false;
-  openSequoiaConnectOverlay();
+  if (isAppFullsize()) {
+    closeSequoiaConnectOverlay(true);
+  } else {
+    openSequoiaConnectOverlay();
+  }
   try {
     if (screenView && screenView.contentWindow) {
       screenView.contentWindow.postMessage({ type: "intentional-stop" }, "*");

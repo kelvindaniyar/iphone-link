@@ -5376,8 +5376,51 @@ body.light-mode .launchpad-pill[data-active="true"] {
   animation: sequoiaStandbySpringIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both !important;
 }
 
+/* Tahap 206: True Cross-Dissolve Stop Mirroring (0ms black flash) + Restorasi Full Screen Vertikal */
+@keyframes sequoiaScreenViewFadeOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.app.is-stopping-dissolve #phone-screen {
+  background: transparent !important;
+}
+
 .app.is-stopping-dissolve #screen-view {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 12 !important;
+  display: block !important;
+  visibility: visible !important;
+  pointer-events: none !important;
+  background: transparent !important;
   opacity: 0 !important;
-  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+  animation: sequoiaScreenViewFadeOut 230ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+  transition: opacity 230ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+.app.is-stopping-dissolve #screen-empty {
+  z-index: 20 !important;
+  background: transparent !important;
+}
+
+.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #screen-view {
+  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  height: calc(100vh - 84px) !important;
+  margin: 0 auto !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+.app.is-fullsize #sequoia-connect-overlay {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 

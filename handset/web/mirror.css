@@ -72,16 +72,15 @@ canvas#c.is-sequoia-unblurring {
   transform: scale(1) translateZ(0) !important;
 }
 
-/* Tahap 205: Seamless Optical Blur-Out Dissolve saat Intentional Stop Mirroring */
+/* Tahap 206: Optical Blur tanpa opacity:0 pada canvas (hindari #000000 body tembus); parent #screen-view melakukan cross-dissolve 1->0 */
 #c.is-sequoia-stopping,
 canvas#c.is-sequoia-stopping {
   transition:
     filter 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 220ms ease !important;
-  filter: blur(24px) brightness(0.82) !important;
-  transform: scale(0.985) translateZ(0) !important;
-  opacity: 0 !important;
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+  filter: blur(20px) saturate(125%) brightness(0.95) !important;
+  transform: scale(0.99) translateZ(0) !important;
+  opacity: 1 !important;
 }
 
 /* Tahap 67: Display Fit Modes - Auto-Fit, Edge-to-Edge (Fill), & Original Ratio (Contain) */

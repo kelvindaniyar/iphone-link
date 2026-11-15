@@ -1013,9 +1013,9 @@ html body .app.is-streaming iframe#screen-view {
   pointer-events: auto !important;
   color-scheme: dark !important;
 }
-html body #app-root.app:not(.is-mirroring):not(.is-streaming) #phone-screen #screen-view,
-html body #app-root.app:not(.is-mirroring):not(.is-streaming) iframe#screen-view,
-html body #app-root.app:has(#screen-empty:not([hidden])) iframe#screen-view {
+html body #app-root.app:not(.is-mirroring):not(.is-streaming):not(.is-stopping-dissolve) #phone-screen #screen-view,
+html body #app-root.app:not(.is-mirroring):not(.is-streaming):not(.is-stopping-dissolve) iframe#screen-view,
+html body #app-root.app:not(.is-stopping-dissolve):has(#screen-empty:not([hidden])) iframe#screen-view {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -1629,6 +1629,63 @@ html body[data-theme="light"] .is-saved,
 
 html body .app.is-mirroring-active #phone-screen {
   transition: transform 360ms var(--spring-apple-sheet), opacity 280ms var(--spring-apple-fluid), box-shadow 360ms var(--spring-apple-fluid);
+}
+
+/* Tahap 206: True Cross-Dissolve Stop Mirroring (0ms black flash) + Restorasi Full Screen Vertikal */
+@keyframes sequoiaScreenViewFadeOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+html body #app-root.app.is-stopping-dissolve #phone-screen,
+html body .app.is-stopping-dissolve #phone-screen {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html body #app-root.app.is-stopping-dissolve #phone-screen > iframe#screen-view,
+html body #app-root.app.is-stopping-dissolve iframe#screen-view,
+html body .app.is-stopping-dissolve #screen-view {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 12 !important;
+  display: block !important;
+  visibility: visible !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  opacity: 0 !important;
+  animation: sequoiaScreenViewFadeOut 230ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+  transition: opacity 230ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+html body #app-root.app.is-stopping-dissolve #screen-empty,
+html body .app.is-stopping-dissolve #screen-empty {
+  z-index: 20 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) iframe#screen-view {
+  width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
+  height: calc(100vh - 84px) !important;
+  margin: 0 auto !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+html body #app-root.app.is-fullsize #sequoia-connect-overlay,
+html body .app.is-fullsize #sequoia-connect-overlay {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 "#;
 

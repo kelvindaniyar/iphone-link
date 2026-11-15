@@ -2766,6 +2766,19 @@ function _isSuppressedStreamMessage(msg) {
   );
 }
 
+function _isParentFullsize() {
+  try {
+    return Boolean(
+      window.parent
+      && window.parent !== window
+      && window.parent.document
+      && window.parent.document.querySelector(".app.is-fullsize")
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
 function _armSequoiaPreblur() {
   hasSentFirstFrameReady = false;
   if (_sequoiaDeBlurTimer) {
@@ -2774,7 +2787,11 @@ function _armSequoiaPreblur() {
   }
   if (canvas) {
     canvas.classList.remove("is-sequoia-unblurring", "is-sequoia-stopping");
-    canvas.classList.add("is-sequoia-preblur");
+    if (_isParentFullsize()) {
+      canvas.classList.remove("is-sequoia-preblur");
+    } else {
+      canvas.classList.add("is-sequoia-preblur");
+    }
   }
 }
 
@@ -2809,20 +2826,24 @@ function _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH) {
   } catch (_) {}
 
   if (canvas) {
-    requestAnimationFrame(() => {
-      if (!canvas) return;
-      canvas.classList.add("is-sequoia-unblurring");
-      canvas.classList.remove("is-sequoia-preblur");
-    });
-    if (_sequoiaDeBlurTimer) {
-      clearTimeout(_sequoiaDeBlurTimer);
-    }
-    _sequoiaDeBlurTimer = setTimeout(() => {
-      _sequoiaDeBlurTimer = 0;
-      if (canvas) {
-        canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+    if (_isParentFullsize()) {
+      canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+    } else {
+      requestAnimationFrame(() => {
+        if (!canvas) return;
+        canvas.classList.add("is-sequoia-unblurring");
+        canvas.classList.remove("is-sequoia-preblur");
+      });
+      if (_sequoiaDeBlurTimer) {
+        clearTimeout(_sequoiaDeBlurTimer);
       }
-    }, 700);
+      _sequoiaDeBlurTimer = setTimeout(() => {
+        _sequoiaDeBlurTimer = 0;
+        if (canvas) {
+          canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+        }
+      }, 700);
+    }
   }
 }
 
