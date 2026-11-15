@@ -1247,6 +1247,7 @@ html body #app-root.app.is-fullsize.is-streaming:not(.is-landscape):not(.is-ipad
   min-width: 280px !important;
   flex: 0 0 auto !important;
   margin: auto !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
   background: transparent !important;
   background-color: transparent !important;
@@ -1670,7 +1671,7 @@ html body .app.is-stopping-dissolve #screen-empty {
   background-color: transparent !important;
 }
 
-/* Tahap 207 / 208: Transparent #phone-screen pra-frame-1 + Full Screen Stop Dissolve + Unified Sequoia Full Screen Column */
+/* Tahap 207 / 208 / 209: Transparent #phone-screen pra-frame-1 + Full Screen Stop Dissolve + Unified Sequoia Full Screen Flush 0px Corners */
 html body #app-root.app.is-fullsize:not(.has-first-frame) #phone-screen,
 html body #app-root.app.is-fullsize.is-stopping-dissolve #phone-screen,
 html body .app.is-fullsize.is-stopping-dissolve #phone-screen {
@@ -1679,6 +1680,18 @@ html body .app.is-fullsize.is-stopping-dissolve #phone-screen {
   box-shadow: none !important;
   border-color: transparent !important;
   border: none !important;
+  border-radius: 0px !important;
+}
+
+html body #app-root.app.is-fullsize #phone-screen,
+html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen,
+html body #app-root.app.is-fullsize #phone-screen > #screen-view,
+html body #app-root.app.is-fullsize #phone-screen > iframe#screen-view,
+html body #app-root.app.is-fullsize #sequoia-connect-overlay,
+html body #app-root.app.is-fullsize #sequoia-connect-backdrop,
+.app.is-fullsize #sequoia-connect-overlay,
+.app.is-fullsize #sequoia-connect-backdrop {
+  border-radius: 0px !important;
 }
 
 html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #phone-screen > iframe#screen-view,
@@ -1693,7 +1706,7 @@ html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(
   max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   height: calc(100vh - 84px) !important;
   margin: auto !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   background: transparent !important;
   background-color: transparent !important;
   z-index: 12 !important;
@@ -1705,12 +1718,12 @@ html body #app-root.app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(
 html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])),
 .app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])) {
   overflow: visible !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
 }
 
 html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) #phone-screen > iframe#screen-view,
 html body #app-root.app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) iframe#screen-view {
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
 }
 
@@ -1726,7 +1739,7 @@ html body .app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-ove
   max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   height: calc(100vh - 84px) !important;
   margin: auto !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
 }

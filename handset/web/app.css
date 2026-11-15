@@ -1689,7 +1689,7 @@ iframe[hidden],
   flex: 0 0 auto !important;
   margin: 0 auto !important;
   position: relative !important;
-  border-radius: 14px !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
   background: #000 !important;
@@ -5413,6 +5413,7 @@ body.light-mode .launchpad-pill[data-active="true"] {
   background: transparent !important;
   box-shadow: none !important;
   border-color: transparent !important;
+  border-radius: 0px !important;
 }
 
 .app.is-fullsize.is-stopping-dissolve:not(.is-landscape):not(.is-ipad) #screen-view,
@@ -5426,7 +5427,7 @@ body.light-mode .launchpad-pill[data-active="true"] {
   max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   height: calc(100vh - 84px) !important;
   margin: auto !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   background: transparent !important;
   z-index: 12 !important;
   pointer-events: none !important;
@@ -5434,14 +5435,23 @@ body.light-mode .launchpad-pill[data-active="true"] {
   animation: sequoiaScreenViewFadeOut 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
 }
 
-/* Tahap 208: Restorasi #sequoia-connect-overlay Sequoia Mode Full Screen dengan Kolom Vertikal Terpusat */
+/* Tahap 208 & 209: #sequoia-connect-overlay Sequoia Mode Full Screen Kolom Vertikal Terpusat + Sudut Siku 0px Seragam */
+.app.is-fullsize #phone-screen,
+.app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen,
+.app.is-fullsize #phone-screen #screen-view,
+.app.is-fullsize #phone-screen iframe#screen-view,
+.app.is-fullsize #sequoia-connect-overlay,
+.app.is-fullsize #sequoia-connect-backdrop {
+  border-radius: 0px !important;
+}
+
 .app.is-fullsize:not(.is-landscape):not(.is-ipad) #phone-screen:has(#sequoia-connect-overlay:not([hidden])) {
   overflow: visible !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
 }
 
 .app.is-fullsize:not(.is-landscape):not(.is-ipad):has(#sequoia-connect-overlay:not([hidden])) iframe#screen-view {
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
 }
 
@@ -5455,7 +5465,7 @@ body.light-mode .launchpad-pill[data-active="true"] {
   max-width: calc((100vh - 84px) * var(--v4-clean-aspect, 0.453425)) !important;
   height: calc(100vh - 84px) !important;
   margin: auto !important;
-  border-radius: 18px !important;
+  border-radius: 0px !important;
   overflow: hidden !important;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
 }
