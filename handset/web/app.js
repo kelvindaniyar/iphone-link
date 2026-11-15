@@ -1896,7 +1896,7 @@ function initKeyboardSettingsControls() {
       const parseValidGrabbedUrl = (scanRes) => {
         const raw = String(scanRes?.text || scanRes?.extractedText || scanRes?.url || "").trim();
         const isThreadsUrl = /threads\.(?:com|net)/i.test(raw);
-        const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share\/[a-zA-Z0-9_-]{10,15}|@[a-zA-Z0-9_.-]+\/post\/[a-zA-Z0-9_-]{11,13})$/i.test(raw);
+        const isValidThreadsUrl = !isThreadsUrl || /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:share\/(?!(?:share|search|threads|thread|websites|situsweb|openlink|instagram)$)[a-zA-Z0-9_-]{8,15}|@[a-zA-Z0-9_.-]+\/post\/[a-zA-Z0-9_-]{11,13})$/i.test(raw);
         const isStrictHttpsUrl = /^https?:\/\/(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\/\S+$/.test(raw) && isValidThreadsUrl;
         return (scanRes?.ok && raw && isStrictHttpsUrl) ? raw : "";
       };

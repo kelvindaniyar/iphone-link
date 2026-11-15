@@ -1082,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
                     return True
                 if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_-]{11,13}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
-                if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_-]{10,15}(?:[/?#]|$)', u, re.IGNORECASE):
+                if re.search(r'threads\.(?:com|net)/share/(?!share\b|search\b|threads\b|thread\b|websites\b|situsweb\b|openlink\b|instagram\b)[A-Za-z0-9_-]{8,15}(?:[/?#]|$)', u, re.IGNORECASE):
                     return True
                 if any(k in u.lower() for k in ("tiktok.com", "youtu.be", "youtube.com", "x.com")):
                     return True

@@ -150,7 +150,35 @@ fn split_concatenated_url_tokens(token: &str) -> Vec<&str> {
     out
 }
 
-/// Normalizes clipped Spotlight schemes, Zona 3 paths (`m/p/...`, `/reel/...`, `m/share/...`), and leading slash/pipe noise.
+fn is_share_stopword(seg: &str) -> bool {
+    matches!(
+        seg.to_ascii_lowercase().as_str(),
+        "share" | "search" | "threads" | "thread" | "websites" | "situsweb" | "openlink" | "instagram"
+    )
+}
+
+fn lcs_similarity(a: &str, b: &str) -> f32 {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let n = ab.len();
+    let m = bb.len();
+    if n == 0 || m == 0 {
+        return 0.0;
+    }
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            dp[i + 1][j + 1] = if ab[i] == bb[j] {
+                dp[i][j] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    (2.0 * dp[n][m] as f32) / ((n + m) as f32)
+}
+
+/// Normalizes clipped Spotlight schemes, Zona 3 paths (`m/p/...`, `/reel/...`, `m/share/...`), `[wv].instagram.com`, and leading slash/pipe noise.
 fn normalize_clipped_scheme(raw: &str) -> String {
     let mut s = strip_anchor_prefix(raw)
         .trim_start_matches(&['|', '•', '(', '[', '\\', ' ', '\u{1F50D}', '⊗', '×', '✕', '✖'][..])
@@ -163,10 +191,28 @@ fn normalize_clipped_scheme(raw: &str) -> String {
         }
     }
     let s_low2 = s.to_ascii_lowercase();
+    let stripped_sl = s.trim_start_matches('/');
+    let stripped_sl_low = stripped_sl.to_ascii_lowercase();
     if s_low2.starts_with("//www.") {
         s = format!("https://{}", &s[2..]);
     } else if s_low2.starts_with("/www.") {
         s = format!("https://{}", &s[1..]);
+    } else if matches!(
+        (),
+        _ if ["https://w.instagram.", "http://w.instagram.", "https://v.instagram.", "http://v.instagram.", "https://ww.instagram.", "http://ww.instagram.", "https://wv.instagram.", "http://wv.instagram."]
+            .iter()
+            .any(|p| s_low2.starts_with(p))
+    ) {
+        if let Some(ig_pos) = s_low2.find("instagram.") {
+            s = format!("https://www.{}", &s[ig_pos..]);
+        }
+    } else if ["w.instagram.", "v.instagram.", "ww.instagram.", "wv.instagram."]
+        .iter()
+        .any(|p| stripped_sl_low.starts_with(p))
+    {
+        if let Some(ig_pos) = stripped_sl_low.find("instagram.") {
+            s = format!("https://www.{}", &stripped_sl[ig_pos..]);
+        }
     } else if s_low2.starts_with("//threads.")
         || s_low2.starts_with("//instagram.")
         || s_low2.starts_with("//tiktok.")
@@ -178,15 +224,16 @@ fn normalize_clipped_scheme(raw: &str) -> String {
     {
         s = format!("https://www.{}", &s[1..]);
     } else if !s_low2.starts_with("http://") && !s_low2.starts_with("https://") {
-        // Tahap 200 Pilar 1: Clipped Zona 3 paths such as `m/p/...`, `com/p/...`, `.com/p/...`, `/p/...`, `/reel/...`, `m/share/...`, `/share/...`
+        // Tahap 200 & 203 Pilar 1: Clipped Zona 3 paths such as `m/p/...`, `com/p/...`, `.com/p/...`, `/p/...`, `/reel/...`, `m/share/...`, `/share/<8..15>`
         let s_low_trimmed = s_low2.as_str();
-        let valid_code = |rest: &str, min_l: usize, max_l: usize| -> Option<usize> {
+        let valid_code = |rest: &str, min_l: usize, max_l: usize, check_stop: bool| -> Option<usize> {
             let seg = rest
                 .split(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace())
                 .next()
                 .unwrap_or("");
             if (min_l..=max_l).contains(&seg.len())
                 && !seg.is_empty()
+                && (!check_stop || !is_share_stopword(seg))
                 && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             {
                 Some(seg.len())
@@ -212,7 +259,7 @@ fn normalize_clipped_scheme(raw: &str) -> String {
             if let Some(pos) = s_low_trimmed.find(marker) {
                 let tail = &s_low_trimmed[..pos];
                 let rest = &s[pos + marker.len()..];
-                if is_ig_tail(tail) && valid_code(rest, 10, 15).is_some() {
+                if is_ig_tail(tail) && valid_code(rest, 10, 15, false).is_some() {
                     let kind = if marker == "/reels/" { "/reel/" } else { marker };
                     rewritten = Some(format!("https://www.instagram.com{}{}", kind, rest));
                     break;
@@ -221,7 +268,7 @@ fn normalize_clipped_scheme(raw: &str) -> String {
         }
         if rewritten.is_none() {
             for bare in ["p/", "reel/", "reels/", "tv/"] {
-                if s_low_trimmed.starts_with(bare) && valid_code(&s[bare.len()..], 10, 15).is_some() {
+                if s_low_trimmed.starts_with(bare) && valid_code(&s[bare.len()..], 10, 15, false).is_some() {
                     let kind = if bare == "reels/" { "reel/" } else { bare };
                     rewritten = Some(format!("https://www.instagram.com/{}{}", kind, &s[bare.len()..]));
                     break;
@@ -233,14 +280,14 @@ fn normalize_clipped_scheme(raw: &str) -> String {
                 let tail = &s_low_trimmed[..pos];
                 let rest = &s[pos + "/share/".len()..];
                 if is_th_tail(tail) {
-                    if let Some(clen) = valid_code(rest, 10, 15) {
+                    if let Some(clen) = valid_code(rest, 8, 15, true) {
                         let dom = if tail.ends_with("net") { "www.threads.net" } else { "www.threads.com" };
                         rewritten = Some(format!("https://{}/share/{}", dom, &rest[..clen]));
                     }
                 }
             } else if s_low_trimmed.starts_with("share/") {
                 let rest = &s["share/".len()..];
-                if let Some(clen) = valid_code(rest, 10, 15) {
+                if let Some(clen) = valid_code(rest, 8, 15, true) {
                     rewritten = Some(format!("https://www.threads.com/share/{}", &rest[..clen]));
                 }
             }
@@ -346,6 +393,46 @@ fn stitch_wrapped_social_lines(raw_text: &str) -> String {
                     cur.push_str(nxt_compact.trim_start_matches('/'));
                     j += 1;
                     continue;
+                }
+                // Tahap 203 Pilar 1: Stitch Line-1 `.../share/` + Line-2 `<8..15-char CODE>` (e.g. `_0BDuRK8`, `_mCGZNSBF`)
+                if cur_low.ends_with("/share/") {
+                    let share_seg = nxt_compact
+                        .trim_start_matches('/')
+                        .split(|c: char| c == '/' || c == '?' || c == '#')
+                        .next()
+                        .unwrap_or("");
+                    if (8..=15).contains(&share_seg.len())
+                        && !nxt_compact.contains('.')
+                        && !is_share_stopword(share_seg)
+                        && share_seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    {
+                        cur.push_str(share_seg);
+                        j += 1;
+                        break;
+                    }
+                }
+                if (cur_low.contains("threads.com/") || cur_low.contains("threads.net/")) && cur_low.contains("/share/") {
+                    if let Some(sh_idx) = cur_low.find("/share/") {
+                        let existing_code = &cur[sh_idx + "/share/".len()..];
+                        let clean_part = nxt_compact
+                            .trim_start_matches('/')
+                            .split(|c: char| c == '/' || c == '?' || c == '#')
+                            .next()
+                            .unwrap_or("");
+                        let total_len = existing_code.len() + clean_part.len();
+                        if !existing_code.is_empty()
+                            && existing_code.len() < 8
+                            && !clean_part.is_empty()
+                            && !nxt_compact.contains('.')
+                            && !is_share_stopword(clean_part)
+                            && (8..=15).contains(&total_len)
+                            && clean_part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        {
+                            cur.push_str(clean_part);
+                            j += 1;
+                            break;
+                        }
+                    }
                 }
                 if (cur_low.contains("threads.com/") || cur_low.contains("threads.net/")) && cur_low.contains("/post/") {
                     if let Some(post_idx) = cur_low.find("/post/") {
@@ -533,18 +620,56 @@ pub fn extract_and_normalize_links(raw_text: &str) -> Vec<String> {
         }
     }
 
+    // Tahap 203 Pilar 1: Suppress Zona-3 '⊗'-polluted /share/ sibling (len L+1 ending in [780OQXY])
+    // when a clean 8..12 char /share/ sibling already exists with similarity >= 0.75.
+    let clean_shares: Vec<String> = results
+        .iter()
+        .filter_map(|u| {
+            let low = u.to_ascii_lowercase();
+            let pos = low.find("/share/")?;
+            let code = &u[pos + "/share/".len()..];
+            if (8..=12).contains(&code.len()) {
+                Some(code.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if !clean_shares.is_empty() && results.len() > 1 {
+        results.retain(|u| {
+            let low = u.to_ascii_lowercase();
+            let Some(pos) = low.find("/share/") else {
+                return true;
+            };
+            let code = &u[pos + "/share/".len()..];
+            let Some(last_ch) = code.chars().last() else {
+                return true;
+            };
+            if !"780OQXY".contains(last_ch) {
+                return true;
+            }
+            let trimmed_code = &code[..code.len() - last_ch.len_utf8()];
+            !clean_shares.iter().any(|clean| {
+                code.len() == clean.len() + 1
+                    && ((8..=9).contains(&clean.len()) || clean != trimmed_code)
+                    && lcs_similarity(clean, trimmed_code) >= 0.75
+            })
+        });
+    }
+
     results
 }
 
-/// Validates and canonicalizes an extracted social media URL (Tahap 194..197).
+/// Validates and canonicalizes an extracted social media URL (Tahap 194..203).
 /// - Strictly rejects Instagram shortcodes containing '.' or having length < 10 or > 15.
-/// - Strictly rejects incomplete Threads `/share/` or `/sha` URLs lacking a 10-15 char code.
+/// - Strictly rejects incomplete Threads `/share/` or `/sha` URLs lacking an 8-15 char code.
 /// - Preserves 11th-char `_` and `-` on Instagram and Threads `/share/` shortcodes.
 /// - Splits concatenated duplicate URLs (`...DVO6D0PFoOQhttps://...`).
 /// - Normalizes '/reels/' to '/reel/'.
 /// - Strips extra query parameters (&ig_mid=..., &utm_source=...) and invalid/short ?igsh= tokens.
 pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) -> Option<String> {
     let trimmed = strip_anchor_prefix(raw_url)
+        .trim_start_matches(&['|', '•', '(', '[', '\\', ' ', '\u{1F50D}', '⊗', '×', '✕', '✖'][..])
         .trim_end_matches(&['.', ',', ';', '!', ']', ')', '}', '>', ' ', '⊗', '✕', '✖', '©', '®']);
     let healed = heal_threads_share_spacing(trimmed);
     let trimmed = healed.as_str();
@@ -652,7 +777,8 @@ pub fn clean_and_validate_extracted_url(raw_url: &str, stem_ratio: Option<f32>) 
                 .next()
                 .unwrap_or("")
                 .trim_end_matches(&['⊗', '✕', '✖', '©', '®'][..]);
-            if (10..=15).contains(&code.len())
+            if (8..=15).contains(&code.len())
+                && !is_share_stopword(code)
                 && code
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -937,7 +1063,8 @@ pub fn is_valid_social_url(url: &str) -> bool {
                 .split(|c| c == '/' || c == '?' || c == '#')
                 .next()
                 .unwrap_or("");
-            if !(10..=15).contains(&seg.len())
+            if !(8..=15).contains(&seg.len())
+                || is_share_stopword(seg)
                 || !seg
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -1534,5 +1661,57 @@ mod tests {
             ),
             vec!["https://www.threads.com/@wallstreetwatch.id/post/DVghAL_kW9d"]
         );
+    }
+
+    #[test]
+    fn test_tahap203_threads_share_8_to_15_and_w_v_instagram() {
+        // 1. 8-char and 9-char Threads /share/ codes (iPhone 11 Pro Max video_1.mp4)
+        for (raw, expected) in [
+            ("https://www.threads.com/share/_0BDuRK8", "https://www.threads.com/share/_0BDuRK8"),
+            ("https://www.threads.com/share/_mCGZNSBF", "https://www.threads.com/share/_mCGZNSBF"),
+            ("s://www.threads.com/share/_0BDuRK8 ⊗", "https://www.threads.com/share/_0BDuRK8"),
+            ("m/share/_mCGZNSBF ⊗", "https://www.threads.com/share/_mCGZNSBF"),
+            ("share/_0BDuRK8?xmt=AQF01abc", "https://www.threads.com/share/_0BDuRK8"),
+            // 2. w.instagram.com / v.instagram.com clipped left-edge normalization
+            ("w.instagram.com/p/DV6lVNVkmiU/", "https://www.instagram.com/p/DV6lVNVkmiU/"),
+            ("v.instagram.com/reel/DVfHaP5P9nJ/?igsh=MTdhZXZrMnh2a3d3MA==", "https://www.instagram.com/reel/DVfHaP5P9nJ/?igsh=MTdhZXZrMnh2a3d3MA=="),
+            ("| w.instagram.com/p/DVcCSdqEbr7/", "https://www.instagram.com/p/DVcCSdqEbr7/"),
+            // 3. Regression guards from Tahap 202 iPhone 17 Pro + iPhone 11 Pro Max
+            ("https://www.instagram.com/p/DVf4uLAxgCV/", "https://www.instagram.com/p/DVf4uLAxgCV/"),
+            ("https://www.instagram.com/p/DVk1NjpwiCj/", "https://www.instagram.com/p/DVk1NjpwiCj/"),
+            ("https://www.instagram.com/p/DVhBA-kp79b/", "https://www.instagram.com/p/DVhBA-kp79b/"),
+            ("https://www.threads.com/@alfan_zafiri09/post/DVafpXpkvJi?xmt=AQF0xyz", "https://www.threads.com/@alfan_zafiri09/post/DVafpXpkvJi"),
+            ("https://www.threads.com/share/_afGRy6y4T", "https://www.threads.com/share/_afGRy6y4T"),
+        ] {
+            let got = clean_and_validate_extracted_url(raw, None);
+            assert_eq!(got, Some(expected.to_string()), "Failed on raw={:?}", raw);
+            assert!(is_strict_https_social_url(expected));
+        }
+
+        // 4. Multiline Safari Card Baris-1 /share/ + Baris-2 <_0BDuRK8> + Baris-3 threads.com
+        assert_eq!(
+            extract_and_normalize_links("https://www.threads.com/share/\n_0BDuRK8\nthreads.com"),
+            vec!["https://www.threads.com/share/_0BDuRK8"]
+        );
+        // Deduplicate Zona-3 ⊗ artifact (_1BDuRK87) when clean Zona-2A (_0BDuRK8) is present
+        assert_eq!(
+            extract_and_normalize_links("https://www.threads.com/share/\n_0BDuRK8\nthreads.com\ns://www.threads.com/share/_1BDuRK87 ⊗"),
+            vec!["https://www.threads.com/share/_0BDuRK8"]
+        );
+
+        // 5. Reject UI words and < 8 char /share/ fragments
+        for bad in [
+            "https://www.threads.com/share/websites",
+            "https://www.threads.com/share/openlink",
+            "https://www.threads.com/share/situsweb",
+            "https://www.threads.com/share/threads",
+            "https://www.threads.com/share/search",
+            "https://www.threads.com/share/share",
+            "https://www.threads.com/share/abc1234",
+            "https://www.threads.com/sha",
+        ] {
+            assert_eq!(clean_and_validate_extracted_url(bad, None), None, "Should reject {:?}", bad);
+            assert!(!is_strict_https_social_url(bad));
+        }
     }
 }

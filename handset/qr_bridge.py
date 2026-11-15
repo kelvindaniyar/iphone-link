@@ -9,6 +9,7 @@ from iPhone screen frames into Windows PC Clipboard.
 from __future__ import annotations
 
 import base64
+from difflib import SequenceMatcher
 import io
 import itertools
 import math
@@ -1160,7 +1161,7 @@ def _split_concatenated_urls(text: str) -> list[str]:
 
 
 def _normalize_clipped_url_prefix(text: str) -> str:
-    """Normalize clipped Spotlight schemes/slashes/Zona-3 paths onto https://www.<domain> (Tahap 196..200)."""
+    """Normalize clipped Spotlight schemes/slashes/Zona-3 paths and [wv]. prefixes onto https://www.<domain> (Tahap 196..203)."""
     if not text:
         return text
     out = _heal_threads_share_ocr(_strip_anchor_net_prefix(text))
@@ -1170,14 +1171,21 @@ def _normalize_clipped_url_prefix(text: str) -> str:
         r'(instagram\.com/(?:p|reel|reels|tv)(?:/[^\s"\'<>⊗•]+)?)',
     ):
         out = re.sub(
-            rf'(?<![A-Za-z0-9.]){scheme_junk}?(?:w{{1,3}}\.)?{dom_pat}',
+            rf'(?<![A-Za-z0-9.]){scheme_junk}?(?:[wv]{{1,3}}\.)?{dom_pat}',
             r'https://www.\1',
             out,
             flags=re.IGNORECASE,
         )
-    # Tahap 200 Pilar 1: Normalize left-clipped Zona 3 paths (m/p/..., com/p/..., /p/..., m/reel/..., /reel/..., m/share/..., /share/...)
+    # Tahap 203 Pilar 3: Explicit [|/\s\\🔍⊗×]*(?:[wv]{1,3}\.)?instagram.com/(p|reel|reels|tv)/ normalization
     out = re.sub(
-        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:w{1,3}\.)?(?:[a-z]{0,9}gram\.com|[a-z]{0,4}m\.com|com|\.com|am|ram|om|m))?/(p|reel|reels|tv)/([A-Za-z0-9_\-]{10,15}(?:[/?#][^\s⊗×✕✖"\'<>]*)?)',
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:https?://)?(?:[wv]{1,3}\.)?instagram\.com/(p|reel|reels|tv)/',
+        r'https://www.instagram.com/\1/',
+        out,
+        flags=re.IGNORECASE,
+    )
+    # Tahap 200 & 203: Normalize left-clipped Zona 3 paths (m/p/..., com/p/..., /p/..., m/reel/..., /reel/..., m/share/..., /share/<8..15>)
+    out = re.sub(
+        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:[wv]{1,3}\.)?(?:[a-z]{0,9}gram\.com|[a-z]{0,4}m\.com|com|\.com|am|ram|om|m))?/(p|reel|reels|tv)/([A-Za-z0-9_\-]{10,15}(?:[/?#][^\s⊗×✕✖"\'<>]*)?)',
         r'https://www.instagram.com/\1/\2',
         out,
         flags=re.IGNORECASE,
@@ -1188,14 +1196,15 @@ def _normalize_clipped_url_prefix(text: str) -> str:
         out,
         flags=re.IGNORECASE,
     )
+    _th_share_stop_la = r'(?!share\b|search\b|threads\b|thread\b|websites\b|situsweb\b|openlink\b|instagram\b)'
     out = re.sub(
-        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:w{1,3}\.)?(?:[a-z]{0,6}ds\.(?:com|net)|[a-z]{0,2}s\.(?:com|net)|com|net|\.com|\.net|s|m))?/share/([A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-]).*',
+        rf'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*(?:(?:h?t?t?p?s?:?/+)?(?:[wv]{{1,3}}\.)?(?:[a-z]{{0,6}}ds\.(?:com|net)|[a-z]{{0,2}}s\.(?:com|net)|com|net|\.com|\.net|s|m))?/share/{_th_share_stop_la}([A-Za-z0-9_\-]{{8,15}})(?![A-Za-z0-9_\-]).*',
         r'https://www.threads.com/share/\1',
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
-        r'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*share/([A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-]).*',
+        rf'^[|/\s\\🔍􀊫􀊬􀘌⊗×✕✖•○●◦]*share/{_th_share_stop_la}([A-Za-z0-9_\-]{{8,15}})(?![A-Za-z0-9_\-]).*',
         r'https://www.threads.com/share/\1',
         out,
         flags=re.IGNORECASE,
@@ -1204,7 +1213,7 @@ def _normalize_clipped_url_prefix(text: str) -> str:
 
 
 def extract_direct_threads_share_urls(text: str) -> list[str]:
-    """Extract canonical Threads /share/<10..15> and /@user/post/<11..13> URLs directly from noisy Spotlight OCR (Tahap 197..199)."""
+    """Extract canonical Threads /share/<8..15> and /@user/post/<11..13> URLs directly from noisy Spotlight OCR (Tahap 197..203)."""
     if not text:
         return []
     t = _strip_anchor_net_prefix(text)
@@ -1215,11 +1224,14 @@ def extract_direct_threads_share_urls(text: str) -> list[str]:
         return []
     t_norm = _heal_threads_share_ocr(_normalize_clipped_url_prefix(_strip_leading_cursor(t)))
     found: list[str] = []
+    _stop_share_codes = {"share", "search", "threads", "thread", "websites", "situsweb", "openlink", "instagram"}
     for m in re.finditer(
-        r'(?:https?://)?(?:www\.)?(threads\.(?:com|net))/share/([A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-])',
+        r'(?:https?://)?(?:www\.)?(threads\.(?:com|net))/share/([A-Za-z0-9_\-]{8,15})(?![A-Za-z0-9_\-])',
         t_norm,
         re.IGNORECASE,
     ):
+        if m.group(2).lower() in _stop_share_codes:
+            continue
         cand_raw = f"https://www.{m.group(1).lower()}/share/{m.group(2)}"
         cand = clean_extracted_url(cand_raw, _allow_split=False) or cand_raw
         if cand not in found:
@@ -1254,10 +1266,20 @@ def fuse_codes(head_code: str, tail_code: str) -> Optional[str]:
         if len(h_trimmed) >= 10:
             h = h_trimmed
 
-    # Direct substring inclusion if lengths are compatible
-    if t in h and 10 <= len(h) <= 15:
+    # Tahap 203 Pilar 1: Strip Zona-3 '⊗' clear-button glyph hallucination (extra trailing [780OQXY⊗×])
+    # when Zona 2A already yields an intact 8..9 char Threads /share/ code without '⊗'.
+    if (
+        8 <= len(h) <= 9
+        and len(t) == len(h) + 1
+        and t[-1] in "780OQXY⊗×"
+        and SequenceMatcher(None, h, t[:-1]).ratio() >= 0.75
+    ):
         return h
-    if h in t and 10 <= len(t) <= 15:
+
+    # Direct substring inclusion if lengths are compatible
+    if t in h and 8 <= len(h) <= 15:
+        return h
+    if h in t and 8 <= len(t) <= 15:
         return t
 
     best_candidate: Optional[str] = None
@@ -1269,9 +1291,9 @@ def fuse_codes(head_code: str, tail_code: str) -> Optional[str]:
         best_score = 320
         best_candidate = t
 
-    # Tahap 196..199: Exact 10-15 char Zona 3 tail_code (e.g. Threads /share/_u7sn_hl4yys, 8A5XjsmqhWpya) matching a
+    # Tahap 196..203: Exact 8-15 char Zona 3 tail_code (e.g. Threads /share/_u7sn_hl4yys, _0BDuRK8, _mCGZNSBF) matching a
     # shorter 4-10 char Zona 2A head_code prefix (allowing OCR homoglyph matches via _chars_match).
-    if 10 <= len(t) <= 15 and 4 <= len(h) <= 10:
+    if 8 <= len(t) <= 15 and 4 <= len(h) <= 10:
         pref_matches = sum(1 for k in range(min(len(h), len(t))) if h[k] == t[k] or _chars_match(h[k], t[k]))
         min_req = len(h) if len(h) < 6 else max(6, len(h) - 1)
         if pref_matches >= min_req and (240 + pref_matches * 10) > best_score:
@@ -1373,7 +1395,11 @@ def extract_bottom_bar_fragment(z3_text: str) -> Optional[str]:
         return None
 
     # Threads /share/<CODE> fragment (handles full URL or Zona 3 /www.threads.com/share/<CODE>)
-    m_th = re.search(r'(?:https?://)?(?:www\.)?(threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15})(?![A-Za-z0-9_\-])', t, re.IGNORECASE)
+    m_th = re.search(
+        r'(?:https?://)?(?:www\.)?(threads\.(?:com|net)/share/(?!share\b|search\b|threads\b|thread\b|websites\b|situsweb\b|openlink\b|instagram\b)[A-Za-z0-9_\-]{8,15})(?![A-Za-z0-9_\-])',
+        t,
+        re.IGNORECASE,
+    )
     if m_th:
         c_th = clean_extracted_url(f"https://www.{m_th.group(1)}")
         if c_th:
@@ -1543,8 +1569,13 @@ def fuse_card_and_bottom_bar_url(card_urls: list[str], bottom_fragments: list[st
                 b_code = m_bf.group(1)
                 query = m_bf.group(2) or ""
 
+            _stop_th_words = {"share", "search", "threads", "thread", "websites", "situsweb", "openlink", "instagram"}
             if card_kind == "th_share" and len(card_code) < 4:
-                fused_code = b_code if re.fullmatch(r'[A-Za-z0-9_\-]{10,15}', b_code) else None
+                fused_code = (
+                    b_code
+                    if re.fullmatch(r'[A-Za-z0-9_\-]{8,15}', b_code) and b_code.lower() not in _stop_th_words
+                    else None
+                )
             elif (
                 card_kind == "ig"
                 and 4 <= len(card_code) <= 10
@@ -1553,9 +1584,23 @@ def fuse_card_and_bottom_bar_url(card_urls: list[str], bottom_fragments: list[st
             ):
                 # Tahap 200 Pilar 1: Damaged/wrapped 10-char Zona 2A head vs intact 11-char Zona 3 17pt code
                 fused_code = b_code
+            elif (
+                card_kind == "th_share"
+                and 8 <= len(card_code) <= 12
+                and len(b_code) == len(card_code) + 1
+                and b_code[-1] in "780OQXY⊗×"
+                and SequenceMatcher(None, card_code, b_code[:-1]).ratio() >= 0.75
+            ):
+                # Tahap 203 Pilar 1: Clean 8..12 char Zona 2A Threads /share/ code beats Zona 3 polluted by trailing ⊗ glyph
+                fused_code = card_code
             else:
                 fused_code = fuse_codes(card_code, b_code)
-                if not fused_code and card_kind == "th_share" and re.fullmatch(r'[A-Za-z0-9_\-]{10,15}', b_code):
+                if (
+                    not fused_code
+                    and card_kind == "th_share"
+                    and re.fullmatch(r'[A-Za-z0-9_\-]{8,15}', b_code)
+                    and b_code.lower() not in _stop_th_words
+                ):
                     if b_code.startswith(card_code):
                         fused_code = b_code
             if fused_code:
@@ -1998,7 +2043,7 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         flags=re.IGNORECASE,
     )
     u = re.sub(
-        r'(threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15})(?:[4712Il\|]*[/?].*|(?:xmt|slof|asc)=.*)$',
+        r'(threads\.(?:com|net)/share/[A-Za-z0-9_\-]{8,15})(?:[4712Il\|]*[/?].*|(?:xmt|slof|asc)=.*)$',
         r'\g<1>',
         u,
         flags=re.IGNORECASE,
@@ -2135,13 +2180,13 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
         ):
             return ""
 
-    # Ironclad exit guard for Threads URLs (Tahap 197..198):
-    # - /share/<10..15> stays supported for Tahap 196..197 (e.g. bN12LHnYoM8, 8m81Ndbhl_2x)
+    # Ironclad exit guard for Threads URLs (Tahap 197..203):
+    # - /share/<8..15> supports 8-9 char iPhone 11 Pro Max codes (_0BDuRK8, _mCGZNSBF) + 10-15 char codes
     # - /@user/post/<11..13> rejects partial 8-9 char truncated reads (e.g. DVi_T0k1, DVhGCKiiR)
     if 'threads.com' in u.lower() or 'threads.net' in u.lower():
         if not (
             re.match(
-                r'^https?://(?:www\.)?threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15}$',
+                r'^https?://(?:www\.)?threads\.(?:com|net)/share/(?!share$|search$|threads$|thread$|websites$|situsweb$|openlink$|instagram$)[A-Za-z0-9_\-]{8,15}$',
                 u,
                 flags=re.IGNORECASE,
             )
@@ -2157,7 +2202,7 @@ def clean_extracted_url(raw_url: str, _allow_split: bool = True) -> str:
 
 
 def is_strict_valid_grabbed_url(u: Optional[str]) -> bool:
-    """Tahap 195..198 Strict HTTPS/HTTP URL Guard: reject any raw Base64 fragment, incomplete '/share/', partial '/post/', or plain text."""
+    """Tahap 195..203 Strict HTTPS/HTTP URL Guard: reject any raw Base64 fragment, incomplete '/share/', partial '/post/', or plain text."""
     if not u or not isinstance(u, str):
         return False
     s = u.strip()
@@ -2173,7 +2218,11 @@ def is_strict_valid_grabbed_url(u: Optional[str]) -> bool:
         return False
     if "threads.com" in low or "threads.net" in low:
         if not (
-            re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15}$', s, re.IGNORECASE)
+            re.match(
+                r'^https?://(?:www\.)?threads\.(?:com|net)/share/(?!share$|search$|threads$|thread$|websites$|situsweb$|openlink$|instagram$)[A-Za-z0-9_\-]{8,15}$',
+                s,
+                re.IGNORECASE,
+            )
             or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}$', s, re.IGNORECASE)
         ):
             return False
@@ -2248,8 +2297,8 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                 acc_url.lower().endswith(("/p/", "/reel/", "/reels/", "/tv/", "/post/", "/share/"))
                 and nxt_clean.count(" ") <= 3
                 and len(nxt_compact) <= 22
-                and bool(re.match(r'^[A-Za-z0-9_\-]{9,15}(?:/+\??|\?.*)?$', nxt_compact))
-                and not re.search(r'(?:Show\s+Results|Ask\s+Siri|Search|Results|Safari|Instagram|Threads)', nxt_clean, re.IGNORECASE)
+                and bool(re.match(r'^[A-Za-z0-9_\-]{8,15}(?:/+\??|\?.*)?$', nxt_compact))
+                and not re.search(r'(?:Show\s+Results|Ask\s+Siri|Search|Results|Safari|Instagram|Threads|Websites|Open\s*Link)', nxt_clean, re.IGNORECASE)
             )
             has_url_part = has_param or is_compact_shortcode_split or "@" in nxt_clean or "/post" in nxt_clean.lower() or "/share" in nxt_clean.lower() or "/reel" in nxt_clean.lower()
             if nxt_clean.count(' ') > 1 and not has_url_part:
@@ -2289,7 +2338,7 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                     acc_url = f"{th_p}{th_c}"
                     break
                 m_ths = re.match(
-                    r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)([A-Za-z0-9_\-]{10,15})$',
+                    r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)((?!share$|search$|threads$|thread$|websites$|situsweb$|openlink$|instagram$)[A-Za-z0-9_\-]{8,15})$',
                     acc_trim,
                     re.IGNORECASE,
                 )
@@ -2306,9 +2355,13 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                     break
                 continue
 
-            # Tahap 197: Stitch Line-1 '...threads.com/share/' + Line-2 '<10..15-char CODE>'
+            # Tahap 197..203: Stitch Line-1 '...threads.com/share/' + Line-2 '<8..15-char CODE>'
             if re.search(r'threads\.(?:com|net)/share/?$', acc_url, re.IGNORECASE):
-                m_th_c = re.match(r'^/?([A-Za-z0-9_\-]{10,15})(?:/?\??.*)?$', part)
+                m_th_c = re.match(
+                    r'^/?(?!share\b|search\b|threads\b|thread\b|websites\b|situsweb\b|openlink\b|instagram\b)([A-Za-z0-9_\-]{8,15})(?:/?\??.*)?$',
+                    part,
+                    re.IGNORECASE,
+                )
                 if m_th_c:
                     acc_url = acc_url.rstrip('/') + '/' + m_th_c.group(1)
                     break
@@ -2358,8 +2411,13 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
                         cur_code = m_th_share_inc.group(2) or ""
                         if not had_explicit_sep and len(cur_code) + len(prefix_q) == 12 and prefix_q[-1] in "7421Il":
                             prefix_q = prefix_q[:-1]
-                        if re.match(r'^[A-Za-z0-9_\-]{1,15}$', prefix_q) and 10 <= len(cur_code) + len(prefix_q) <= 15:
-                            acc_url = f"{m_th_share_inc.group(1)}/{cur_code}{prefix_q}"
+                        _comb_sh = f"{cur_code}{prefix_q}"
+                        if (
+                            re.match(r'^[A-Za-z0-9_\-]{1,15}$', prefix_q)
+                            and 8 <= len(_comb_sh) <= 15
+                            and _comb_sh.lower() not in ("share", "search", "threads", "thread", "websites", "situsweb", "openlink", "instagram")
+                        ):
+                            acc_url = f"{m_th_share_inc.group(1)}/{_comb_sh}"
                             break
                     elif m_ig_q_inc:
                         cur_code = m_ig_q_inc.group(2) or ""
@@ -2387,10 +2445,11 @@ def assemble_multiline_url_from_lines(lines: list[str]) -> list[str]:
             is_shortcode_continuation = bool(m_inc and len(m_inc.group(1)) < 14 and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/\??|/|\?)?$', part))
             m_th_inc = re.search(r'threads\.(?:com|net)/(?:share|@[A-Za-z0-9_.\-]+/post)/([A-Za-z0-9_\-]+)$', acc_url, re.IGNORECASE)
             _part_word = part.split('?', 1)[0].rstrip('/').lower()
+            _min_th_inc_len = 8 if "/share/" in acc_url.lower() else 11
             is_th_continuation = bool(
                 m_th_inc
-                and len(m_th_inc.group(1)) < 11
-                and _part_word not in ("threads", "instagram", "safari", "websites", "search", "results", "cancel", "siri", "messages", "mail")
+                and len(m_th_inc.group(1)) < _min_th_inc_len
+                and _part_word not in ("threads", "thread", "instagram", "safari", "websites", "situsweb", "openlink", "search", "results", "cancel", "siri", "messages", "mail")
                 and re.match(r'^[A-Za-z0-9_\-]{1,10}(?:/?\??.*)?$', part)
             )
 
@@ -3108,7 +3167,7 @@ def _is_complete_top_box_url(u: Optional[str]) -> bool:
         return 11 <= len(m_ig.group(1)) <= 15
     if re.search(r'threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}(?:[/?#]|$)', u, re.IGNORECASE):
         return True
-    if re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,}', u, re.IGNORECASE):
+    if re.search(r'threads\.(?:com|net)/share/(?!share\b|search\b|threads\b|thread\b|websites\b|situsweb\b|openlink\b|instagram\b)[A-Za-z0-9_\-]{8,}', u, re.IGNORECASE):
         return True
     if re.search(r'(?:tiktok\.com|youtu\.be|youtube\.com|x\.com)/[^\s/]+/?[^\s]{5,}', u, re.IGNORECASE):
         return True
@@ -3116,7 +3175,7 @@ def _is_complete_top_box_url(u: Optional[str]) -> bool:
 
 
 def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
-    """Pick highest quality, most complete URL among extracted candidates (Tahap 105..198)."""
+    """Pick highest quality, most complete URL among extracted candidates (Tahap 105..203)."""
     if not urls:
         return None
     valid = []
@@ -3134,10 +3193,14 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
         m_ig_check = re.search(r'instagram\.com/(?:p|reel|reels|tv)/([^/?#\s]+)', cl_u, re.IGNORECASE)
         if m_ig_check and not re.match(r'^[A-Za-z0-9_\-]{10,15}$', m_ig_check.group(1)):
             continue
-        # Strict validation for Threads (Tahap 197..198): /share/<10..15> and /@user/post/<11..13>
+        # Strict validation for Threads (Tahap 197..203): /share/<8..15> and /@user/post/<11..13>
         if "threads.com" in cl_u.lower() or "threads.net" in cl_u.lower():
             if not (
-                re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/share/[A-Za-z0-9_\-]{10,15}(?:[/?#].*)?$', cl_u, re.IGNORECASE)
+                re.match(
+                    r'^https?://(?:www\.)?threads\.(?:com|net)/share/(?!share$|search$|threads$|thread$|websites$|situsweb$|openlink$|instagram$)[A-Za-z0-9_\-]{8,15}(?:[/?#].*)?$',
+                    cl_u,
+                    re.IGNORECASE,
+                )
                 or re.match(r'^https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{11,13}(?:[/?#].*)?$', cl_u, re.IGNORECASE)
             ):
                 continue
@@ -3211,6 +3274,29 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
             ):
                 _th_handle_adj[valid[_ia]] = min(_th_handle_adj.get(valid[_ia], 0), -250)
 
+    # Tahap 203 Pilar 1: Penalize Zona-3 '⊗' clear-button trailing hallucination [780OQXY] on Threads /share/
+    # when a clean 8..12 char sibling (e.g. _0BDuRK8 vs _1BDuRK87) exists in Zona 2A.
+    _th_share_re = re.compile(r'^https?://(?:www\.)?(threads\.(?:com|net))/share/([A-Za-z0-9_\-]+)$', re.IGNORECASE)
+    _th_share_entries: list[tuple[int, str, str]] = []
+    for _idx, _u in enumerate(valid):
+        _ms = _th_share_re.match(_u)
+        if _ms:
+            _th_share_entries.append((_idx, _ms.group(1).lower(), _ms.group(2)))
+    _th_share_adj: dict[str, int] = {}
+    for _ia, _ha, _ca in _th_share_entries:
+        for _ib, _hb, _cb in _th_share_entries:
+            if _ia == _ib or _ha != _hb:
+                continue
+            if (
+                8 <= len(_ca) <= 12
+                and len(_cb) == len(_ca) + 1
+                and _cb[-1] in "780OQXY"
+                and (8 <= len(_ca) <= 9 or _ca != _cb[:-1])
+                and SequenceMatcher(None, _ca, _cb[:-1]).ratio() >= 0.75
+            ):
+                _th_share_adj[valid[_ib]] = min(_th_share_adj.get(valid[_ib], 0), -240)
+                _th_share_adj[valid[_ia]] = max(_th_share_adj.get(valid[_ia], 0), 60)
+
     def _score(u: str) -> tuple:
         has_domain = any(d in u.lower() for d in ("instagram.com", "tiktok.com", "youtu.be", "youtube.com", "x.com", "threads.net", "threads.com"))
         is_truncated = u.rstrip('/').endswith(("/p", "/reel", "/tv", "/post", "/share"))
@@ -3245,14 +3331,12 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
         if m_th_share:
             th_code = m_th_share.group(1)
             th_len = len(th_code)
-            if th_len == 11:
+            if 8 <= th_len <= 13:
                 th_share_bonus = 360
-            elif th_len == 10 or (th_len == 15 and th_code.isalnum()):
+            elif 14 <= th_len <= 15 and th_code.isalnum():
                 th_share_bonus = 320
-            elif th_len < 10:
-                th_share_bonus = -180
             else:
-                th_share_bonus = 385 - 100
+                th_share_bonus = -180
         elif m_th_post:
             tp_len = len(m_th_post.group(1))
             if tp_len == 11:
@@ -3332,6 +3416,7 @@ def pick_best_extracted_url(urls: list[str]) -> Optional[str]:
             ig_len_bonus +
             th_share_bonus +
             _th_handle_adj.get(u, 0) +
+            _th_share_adj.get(u, 0) +
             stitched_bonus +
             missing_igsh_penalty +
             j7_penalty +
@@ -3407,8 +3492,8 @@ def _build_confusable_social_variants(
 
     m_ig = re.match(r'^(https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/)([A-Za-z0-9_\-]{10,15})(/?(?:\?igsh=[A-Za-z0-9_\-=]+)?)$', primary_url, re.IGNORECASE)
     m_th = re.match(r'^(https?://(?:www\.)?threads\.(?:com|net)/@[A-Za-z0-9_.\-]+/post/)([A-Za-z0-9_\-]{10,15})$', primary_url, re.IGNORECASE)
-    m_sh = re.match(r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)([A-Za-z0-9_\-]{10,15})$', primary_url, re.IGNORECASE)
-    m_local = re.match(r'^(https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/(?:p|reel|tv|@[A-Za-z0-9_.\-]+/post|share)/)([A-Za-z0-9_\-]{10,15})(/?)$', primary_url, re.IGNORECASE)
+    m_sh = re.match(r'^(https?://(?:www\.)?threads\.(?:com|net)/share/)([A-Za-z0-9_\-]{8,15})$', primary_url, re.IGNORECASE)
+    m_local = re.match(r'^(https?://(?:127\.0\.0\.1|localhost)(?::\d+)?/(?:p|reel|tv|@[A-Za-z0-9_.\-]+/post|share)/)([A-Za-z0-9_\-]{8,15})(/?)$', primary_url, re.IGNORECASE)
 
     m_part = m_ig or m_th or m_sh or m_local
     if m_part:
@@ -3419,6 +3504,20 @@ def _build_confusable_social_variants(
         def _push_code(new_code: str) -> None:
             if new_code and new_code != code:
                 _add(f"{prefix}{new_code}{suffix}", f"{prefix}{new_code}{suffix}")
+
+        # Tahap 203 Pilar 2: High-priority Threads /share/ ⊗-artifact & _1<->_0 prefix recovery (e.g. _1BDuRK87 -> _0BDuRK8)
+        if m_sh or (m_local and "/share/" in prefix.lower()):
+            if code.startswith("_1"):
+                _push_code("_0" + code[2:])
+            elif code.startswith("_0"):
+                _push_code("_1" + code[2:])
+            if len(code) >= 9 and code[-1] in "780OQXY":
+                trimmed_tail = code[:-1]
+                _push_code(trimmed_tail)
+                if trimmed_tail.startswith("_1"):
+                    _push_code("_0" + trimmed_tail[2:])
+                elif trimmed_tail.startswith("_0"):
+                    _push_code("_1" + trimmed_tail[2:])
 
         # High-priority multi-character OCR confusable repairs
         if "fn-_x" in code:
@@ -3507,6 +3606,11 @@ def _probe_single_social_url(
     body_low = body.lower()
     if (
         "error=invalid_post" in body_low
+        or "not all who wander are lost" in body_low
+        or "the link's not working or the page is gone" in body_low
+        or "the link&#039;s not working or the page is gone" in body_low
+        or "the link&#39;s not working or the page is gone" in body_low
+        or "the link\u2019s not working or the page is gone" in body_low
         or "sorry, this page isn't available" in body_low
         or "sorry, this page isn&#039;t available" in body_low
         or "this content isn't available" in body_low
@@ -3527,6 +3631,25 @@ def _probe_single_social_url(
 
     probe_code = _extract_social_shortcode_for_probe(probe_url)
     meta_code = _extract_social_shortcode_for_probe(raw_meta_url)
+
+    # Tahap 203 Pilar 2: Verify Threads /share/<CODE> via HTTP 301/302 final_url OR og:url/canonical containing /@user/post/<ID>
+    is_threads_share_probe = bool(
+        re.search(r'(?:threads\.(?:com|net)/share/|/share/)[A-Za-z0-9_\-]{8,15}', probe_url, re.IGNORECASE)
+    )
+    final_path_only = final_url.lower().split("?", 1)[0]
+    meta_path_only = raw_meta_url.lower().split("?", 1)[0]
+    _is_login_wall = any(k in final_path_only for k in ("/accounts/login", "/login")) or any(
+        k in meta_path_only for k in ("/accounts/login", "/login")
+    )
+    if is_threads_share_probe and not _is_login_wall:
+        _post_re = re.compile(r'/@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}', re.IGNORECASE)
+        if _post_re.search(final_url) or (raw_meta_url and _post_re.search(raw_meta_url)):
+            conf = 10
+            if og_title and og_title.strip().lower() not in ("instagram", "threads", "log in", "login"):
+                conf += 2
+            if idx == 0:
+                conf += 1
+            return conf, idx, fallback_url
 
     resolved_url = fallback_url
     if raw_meta_url:
@@ -3741,7 +3864,7 @@ def _extract_spotlight_zones(
                             cl_u = clean_extracted_url(c_l)
                             if cl_u:
                                 head_card_candidates.append(cl_u)
-                            elif re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{0,9}$', c_l, re.IGNORECASE):
+                            elif re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{0,7}$', c_l, re.IGNORECASE):
                                 partial_card_heads.append(c_l)
 
             # Indices h_off + 5, h_off + 6: Zona 3 inv & rgb (Bottom Search Input Bar)
@@ -3773,7 +3896,7 @@ def _extract_spotlight_zones(
                             cl_u = clean_extracted_url(c_l)
                             if cl_u:
                                 tail_card_candidates.append(cl_u)
-                            elif re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{0,9}$', c_l, re.IGNORECASE):
+                            elif re.search(r'threads\.(?:com|net)/share/[A-Za-z0-9_\-]{0,7}$', c_l, re.IGNORECASE):
                                 partial_card_heads.append(c_l)
 
             for offset in (5, 6):
@@ -3829,7 +3952,7 @@ def _extract_spotlight_zones(
 
         best_so_far = pick_best_extracted_url(all_candidates)
         if best_so_far and len(best_so_far) > 35 and is_strict_valid_grabbed_url(best_so_far):
-            if "igsh=" in best_so_far or "xmt=" in best_so_far or "si=" in best_so_far or re.search(r'threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}|share/[A-Za-z0-9_\-]{10,15})(?:[/?#]|$)', best_so_far, re.IGNORECASE):
+            if "igsh=" in best_so_far or "xmt=" in best_so_far or "si=" in best_so_far or re.search(r'threads\.(?:com|net)/(?:@[A-Za-z0-9_.\-]+/post/[A-Za-z0-9_\-]{10,15}|share/[A-Za-z0-9_\-]{8,15})(?:[/?#]|$)', best_so_far, re.IGNORECASE):
                 best_url = best_so_far
     except Exception as e_box:
         print(f"[Visual QR Bridge / Spotlight] Triple-zone OCR error: {e_box}", flush=True)
