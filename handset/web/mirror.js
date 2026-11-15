@@ -2745,11 +2745,26 @@ let runGeneration = 0;
 let abortStream = null;
 let hasRenderedFirstFrame = false;
 let hasSentFirstFrameReady = false;
+let isIntentionalStop = false;
 let streamActive = false;
 window._isDeviceLocked = false;
 let _sequoiaThumbCanvas = null;
 let _sequoiaThumbCtx = null;
 let _sequoiaDeBlurTimer = 0;
+
+function _isSuppressedStreamMessage(msg) {
+  if (!msg) return true;
+  const s = String(msg).toLowerCase();
+  return (
+    s.includes("stream dropped")
+    || s.includes("network error")
+    || s.includes("failed to fetch")
+    || s.includes("load failed")
+    || s.includes("abort")
+    || s.includes("connecting")
+    || s.includes("waiting")
+  );
+}
 
 function _armSequoiaPreblur() {
   hasSentFirstFrameReady = false;
@@ -2758,7 +2773,7 @@ function _armSequoiaPreblur() {
     _sequoiaDeBlurTimer = 0;
   }
   if (canvas) {
-    canvas.classList.remove("is-sequoia-unblurring");
+    canvas.classList.remove("is-sequoia-unblurring", "is-sequoia-stopping");
     canvas.classList.add("is-sequoia-preblur");
   }
 }
@@ -2813,11 +2828,12 @@ function _triggerSequoiaFirstFrameHandshake(sourceFrame, rawW, rawH) {
 
 function setStatus(text, tone) {
   if (!statusEl) return;
-  // Tahap 204: Selama startup normal (bukan error/warn), serahkan tampilan connecting ke #sequoia-connect-overlay
-  if (!text || tone !== "warn") {
+  // Tahap 204/205: Selama intentional stop / pesan transient jaringan / non-warn, bungkam mutlak pill status
+  if (isIntentionalStop || !text || tone !== "warn" || _isSuppressedStreamMessage(text)) {
     statusEl.textContent = "";
-    statusEl.style.display = "none";
     statusEl.hidden = true;
+    statusEl.className = "mirror-status";
+    statusEl.style.display = "none";
     return;
   }
   // Sembunyikan pill jika device dalam mode Standby / Locked
@@ -4156,9 +4172,10 @@ async function runImageStream(generation, codecInfo) {
   let resp = null;
   const streamDelays = [200, 400, 800, 1500, 2500, 4000];
   for (let a = 0; a <= streamDelays.length; a++) {
-    if (generation !== runGeneration) return;
+    if (isIntentionalStop || generation !== runGeneration) return;
     if (a > 0) {
       await new Promise((r) => setTimeout(r, streamDelays[a - 1]));
+      if (isIntentionalStop || generation !== runGeneration) return;
     }
     try {
       const r = await fetch(`${MIRROR}/live`, { cache: "no-store" });
@@ -4168,8 +4185,12 @@ async function runImageStream(generation, codecInfo) {
       }
     } catch (_) {}
   }
-  if (!resp || generation !== runGeneration) {
-    setStatus("Cannot reach the image stream. Press Restart screen.", "warn");
+  if (!resp || isIntentionalStop || generation !== runGeneration) {
+    if (!isIntentionalStop && generation === runGeneration) {
+      setStatus("Cannot reach the image stream. Press Restart screen.", "warn");
+    } else {
+      setStatus("");
+    }
     return;
   }
 
@@ -4178,7 +4199,7 @@ async function runImageStream(generation, codecInfo) {
   let buf = new Uint8Array(0);
 
   try {
-    while (generation === runGeneration) {
+    while (generation === runGeneration && !isIntentionalStop) {
       const { value, done } = await reader.read();
       if (done) break;
       const merged = new Uint8Array(buf.length + value.length);
@@ -4218,12 +4239,16 @@ async function runImageStream(generation, codecInfo) {
       }
     }
   } catch (err) {
-    console.warn("runImageStream loop ended:", err);
+    if (!isIntentionalStop && !_isSuppressedStreamMessage(err?.message)) {
+      console.warn("runImageStream loop ended:", err);
+    }
   } finally {
     try { reader.cancel(); } catch (_) {}
   }
-  if (generation === runGeneration) {
+  if (!isIntentionalStop && generation === runGeneration) {
     setStatus("Stream ended — press Restart screen", "warn");
+  } else {
+    setStatus("");
   }
 }
 
@@ -4232,7 +4257,7 @@ async function run(generation) {
   frameCount = 0;
   const startedAt = performance.now();
   const watchdog = window.setInterval(() => {
-    if (generation !== runGeneration) {
+    if (isIntentionalStop || generation !== runGeneration) {
       window.clearInterval(watchdog);
       return;
     }
@@ -4242,14 +4267,14 @@ async function run(generation) {
     }
     if (performance.now() - startedAt > 12000) {
       window.clearInterval(watchdog);
-      if (!hasRenderedFirstFrame) {
+      if (!hasRenderedFirstFrame && !isIntentionalStop) {
         setStatus("No picture yet — press Restart screen on the right", "warn");
       }
     }
   }, 1000);
 
   const codecInfo = await fetchCodecWithRetry();
-  if (generation !== runGeneration) return;
+  if (isIntentionalStop || generation !== runGeneration) return;
 
   if (codecInfo.isImageStream) {
     window.clearInterval(watchdog);
@@ -4355,10 +4380,11 @@ async function run(generation) {
   let resp = null;
   const streamDelays = [300, 600, 1200, 2000, 3000, 5000, 8000];
   for (let a = 0; a <= streamDelays.length; a++) {
-    if (generation !== runGeneration) return;
+    if (isIntentionalStop || generation !== runGeneration) return;
     if (a > 0) {
       setStatus("");
       await new Promise((r) => setTimeout(r, streamDelays[a - 1]));
+      if (isIntentionalStop || generation !== runGeneration) return;
       if (a === 2) {
         await fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
       }
@@ -4373,13 +4399,24 @@ async function run(generation) {
         setStatus("");
         continue;
       }
-      setStatus(`Stream error (HTTP ${r.status})`, "warn");
+      if (!isIntentionalStop && generation === runGeneration) {
+        setStatus(`Stream error (HTTP ${r.status})`, "warn");
+      }
     } catch (err) {
-      setStatus(err.message || "Stream unreachable", "warn");
+      if (isIntentionalStop || generation !== runGeneration || _isSuppressedStreamMessage(err?.message)) {
+        setStatus("");
+        if (isIntentionalStop || generation !== runGeneration) return;
+      } else {
+        setStatus(err.message || "Stream unreachable", "warn");
+      }
     }
   }
-  if (!resp || generation !== runGeneration) {
-    setStatus("Cannot reach the video stream. Press Restart screen.", "warn");
+  if (!resp || isIntentionalStop || generation !== runGeneration) {
+    if (!isIntentionalStop && generation === runGeneration) {
+      setStatus("Cannot reach the video stream. Press Restart screen.", "warn");
+    } else {
+      setStatus("");
+    }
     return;
   }
 
@@ -4391,7 +4428,7 @@ async function run(generation) {
   let gotKey = false;
 
   try {
-    while (generation === runGeneration) {
+    while (generation === runGeneration && !isIntentionalStop) {
       const { value, done } = await reader.read();
       if (done) break;
       const merged = new Uint8Array(buf.length + value.length);
@@ -4488,16 +4525,23 @@ async function run(generation) {
         }
       }
     }
+  } catch (err) {
+    if (!isIntentionalStop && generation === runGeneration && !_isSuppressedStreamMessage(err?.message)) {
+      console.warn("HEVC/H264 stream reader loop ended:", err);
+    }
   } finally {
     streamActive = false;
     try { reader.cancel(); } catch (_) {}
   }
-  if (generation === runGeneration) {
+  if (!isIntentionalStop && generation === runGeneration) {
     setStatus("Stream ended — press Restart screen", "warn");
+  } else {
+    setStatus("");
   }
 }
 
 function beginRun() {
+  isIntentionalStop = false;
   runGeneration += 1;
   const generation = runGeneration;
   _armSequoiaPreblur();
@@ -4519,7 +4563,11 @@ function beginRun() {
   }
   frameCount = 0;
   run(generation).catch((err) => {
-    setStatus(err.message || "Mirror failed", "warn");
+    if (isIntentionalStop || generation !== runGeneration || _isSuppressedStreamMessage(err?.message)) {
+      setStatus("");
+      return;
+    }
+    setStatus(err?.message || "Mirror failed", "warn");
   });
 }
 
@@ -4527,10 +4575,31 @@ beginRun();
 
 window.addEventListener("message", (e) => {
   if (!e.data || typeof e.data !== "object") return;
-  if (e.data.type === "device-locked") {
+  if (e.data.type === "intentional-stop") {
+    isIntentionalStop = true;
+    runGeneration += 1;
+    streamActive = false;
+    setStatus("");
+    if (statusEl) {
+      statusEl.textContent = "";
+      statusEl.hidden = true;
+      statusEl.className = "mirror-status";
+      statusEl.style.display = "none";
+    }
+    if (canvas) {
+      canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+      canvas.classList.add("is-sequoia-stopping");
+    }
+    if (abortStream) {
+      try { abortStream(); } catch (_) {}
+      abortStream = null;
+    }
+  } else if (e.data.type === "device-locked") {
+    isIntentionalStop = true;
     window._isDeviceLocked = true;
     setStatus("");
   } else if (e.data.type === "wake-stream-pli") {
+    isIntentionalStop = false;
     window._isDeviceLocked = false;
     setStatus("");
     // Request instant keyframe from iOS encoder without breaking stream
@@ -4560,6 +4629,7 @@ window.addEventListener("message", (e) => {
       _flushAllLipSyncFramesNow();
     }
   } else if (e.data.type === "refresh-stream") {
+    isIntentionalStop = false;
     if (streamActive && hasRenderedFirstFrame) {
       setStatus("");
       fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});

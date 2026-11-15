@@ -3258,6 +3258,7 @@ const SEQUOIA_LAST_WALLPAPER_KEY = "iphone_link_last_wallpaper_thumb";
 const SEQUOIA_SAFETY_FALLBACK_MS = 1600;
 let sequoiaMirrorSessionActive = false;
 let sequoiaFirstFrameReceived = false;
+let sequoiaIntentionalStopUntil = 0;
 let sequoiaSafetyFallbackTimer = 0;
 let sequoiaDissolveTimers = [];
 let sequoiaEmptyFadeTimer = 0;
@@ -3570,9 +3571,16 @@ function renderScreen(screen) {
     if (screenErrorBanner) screenErrorBanner.style.display = "none";
     return;
   } else {
+    const isStoppedOrIdle = !screen.phase || screen.phase === "idle" || screen.phase === "stopped";
+    const isSuppressedStopError = isStoppedOrIdle && (
+      Date.now() < sequoiaIntentionalStopUntil
+      || /network\s*error|stream\s*dropped|abort/i.test(String(screen.error || ""))
+    );
+    const effectiveError = isSuppressedStopError ? "" : (screen.error || "");
+
     sequoiaMirrorSessionActive = false;
     sequoiaFirstFrameReceived = false;
-    closeSequoiaConnectOverlay(Boolean(screen.error));
+    closeSequoiaConnectOverlay(Boolean(effectiveError));
     showScreenEmptyWithSpring(wasSessionOrOverlay);
 
     // Mode A: Standby Idle View
@@ -3587,34 +3595,38 @@ function renderScreen(screen) {
       launchpadIdleView.style.display = "flex";
     }
     if (launchpadError) {
-      if (screen.error) {
+      if (effectiveError) {
         launchpadError.hidden = false;
-        launchpadError.textContent = screen.error;
+        launchpadError.textContent = effectiveError;
       } else {
         launchpadError.hidden = true;
+        launchpadError.textContent = "";
       }
     }
-  }
 
-  if (screen.error) {
-    if (screenNote) {
-      screenNote.textContent = "";
-      screenNote.hidden = true;
+    if (effectiveError) {
+      if (screenNote) {
+        screenNote.textContent = "";
+        screenNote.hidden = true;
+      }
+      if (screenErrorBanner) {
+        screenErrorBanner.textContent = effectiveError;
+        screenErrorBanner.style.display = "block";
+      }
+      return;
     }
+    screenNote.textContent = "";
+    screenNote.className = "";
     if (screenErrorBanner) {
-      screenErrorBanner.textContent = screen.error;
-      screenErrorBanner.style.display = "block";
+      screenErrorBanner.style.display = "none";
     }
     return;
-  }
-  screenNote.textContent = "";
-  screenNote.className = "";
-  if (screenErrorBanner) {
-    screenErrorBanner.style.display = "none";
   }
 }
 
 async function showPhone() {
+  sequoiaIntentionalStopUntil = 0;
+  appRoot?.classList.remove("is-stopping-dissolve");
   showScreen.disabled = true;
   showScreen.textContent = "Connecting…";
   if (screenErrorBanner) screenErrorBanner.style.display = "none";
@@ -3685,18 +3697,40 @@ async function stopMirror() {
   if (stopScreen) stopScreen.disabled = true;
   showScreen.disabled = true;
   showScreen.textContent = "Disconnecting…";
+  sequoiaIntentionalStopUntil = Date.now() + 2500;
   const wasActiveOrOverlay = sequoiaMirrorSessionActive || isSequoiaOverlayOpen();
+
+  // Tahap 205: Kirim sinyal intentional-stop ke mirror iframe SEBELUM memutus socket server
+  try {
+    if (screenView && screenView.contentWindow) {
+      screenView.contentWindow.postMessage({ type: "intentional-stop" }, "*");
+    }
+  } catch (_) {}
+
+  if (screenErrorBanner) {
+    screenErrorBanner.style.display = "none";
+    screenErrorBanner.textContent = "";
+  }
+  if (launchpadError) {
+    launchpadError.hidden = true;
+    launchpadError.classList.add("is-hidden");
+    launchpadError.textContent = "";
+  }
   if (appRoot) {
     appRoot.classList.add("is-stopping-dissolve");
   }
   closeSequoiaConnectOverlay(false);
-  try {
-    await postJson("/api/screen/stop", {});
-  } catch (err) {
+
+  const stopPromise = postJson("/api/screen/stop", {}).catch((err) => {
     console.warn("stopMirror error:", err);
-  }
+  });
+  const dissolveDelay = wasActiveOrOverlay
+    ? new Promise((r) => setTimeout(r, 150))
+    : Promise.resolve();
+  await Promise.all([stopPromise, dissolveDelay]);
+
   window.clearInterval(screenTimer);
-  renderScreen({ phase: "idle", _sequoiaSpringEnter: wasActiveOrOverlay || true });
+  renderScreen({ phase: "stopped", _sequoiaSpringEnter: wasActiveOrOverlay || true });
   window.setTimeout(() => {
     appRoot?.classList.remove("is-stopping-dissolve");
   }, 240);
@@ -3779,11 +3813,17 @@ function reloadMirrorIframe() {
 }
 
 async function restartMirror() {
+  sequoiaIntentionalStopUntil = 0;
   restartScreen.disabled = true;
   screenNote.textContent = "Restarting screen… keep the iPhone unlocked.";
   screenNote.className = "";
   sequoiaFirstFrameReceived = false;
   openSequoiaConnectOverlay();
+  try {
+    if (screenView && screenView.contentWindow) {
+      screenView.contentWindow.postMessage({ type: "intentional-stop" }, "*");
+    }
+  } catch (_) {}
   try {
     await postJson("/api/screen/restart", { udid: selectedUdid });
     await new Promise((r) => setTimeout(r, 1500));
