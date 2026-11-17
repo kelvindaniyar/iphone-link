@@ -6,6 +6,11 @@
 //! - Zero-dependency SHA-256 verification
 //! - Protected config files whitelist (user_settings.json, wifi_state.json, typed_history.json)
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Current desktop application semantic version synchronized with iPhone Link v4.0.0.
+pub const CURRENT_VERSION: &str = "4.0.0";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateChannel {
     Stable,
@@ -194,9 +199,298 @@ pub fn verify_sha256(data: &[u8], expected_hex: &str) -> bool {
     hash.eq_ignore_ascii_case(expected_hex.trim())
 }
 
+fn extract_beta_ordinal(version_str: &str) -> u32 {
+    let lower = version_str.to_ascii_lowercase();
+    if let Some((_, pre)) = lower.split_once('-') {
+        let digits: String = pre.chars().filter(|c| c.is_ascii_digit()).collect();
+        return digits.parse::<u32>().unwrap_or(0);
+    }
+    0
+}
+
+/// Strictly checks whether `latest` is a newer semantic version than `current`.
+pub fn is_newer_version(current: &str, latest: &str) -> bool {
+    let (Some(curr), Some(cand)) = (Semver::parse(current), Semver::parse(latest)) else {
+        return false;
+    };
+    if cand.is_newer_than(&curr) {
+        return true;
+    }
+    if cand.major == curr.major
+        && cand.minor == curr.minor
+        && cand.patch == curr.patch
+        && cand.is_beta
+        && curr.is_beta
+    {
+        return extract_beta_ordinal(latest) > extract_beta_ordinal(current);
+    }
+    false
+}
+
+fn escape_json_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn extract_json_string(body: &str, key: &str) -> Option<String> {
+    let p1 = format!(r#""{}":""#, key);
+    let p2 = format!(r#""{}": ""#, key);
+    let rest = if let Some(idx) = body.find(&p1) {
+        &body[idx + p1.len()..]
+    } else if let Some(idx) = body.find(&p2) {
+        &body[idx + p2.len()..]
+    } else {
+        return None;
+    };
+    let mut out = String::new();
+    let mut escaped = false;
+    for ch in rest.chars() {
+        if escaped {
+            match ch {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                _ => out.push(ch),
+            }
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return Some(out);
+        } else {
+            out.push(ch);
+        }
+    }
+    None
+}
+
+fn extract_json_bool(body: &str, key: &str) -> Option<bool> {
+    let p1 = format!(r#""{}":"#, key);
+    let p2 = format!(r#""{}": "#, key);
+    let rest = if let Some(idx) = body.find(&p1) {
+        body[idx + p1.len()..].trim_start()
+    } else if let Some(idx) = body.find(&p2) {
+        body[idx + p2.len()..].trim_start()
+    } else {
+        return None;
+    };
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn extract_json_u8(body: &str, key: &str) -> Option<u8> {
+    let p1 = format!(r#""{}":"#, key);
+    let p2 = format!(r#""{}": "#, key);
+    let rest = if let Some(idx) = body.find(&p1) {
+        body[idx + p1.len()..].trim_start()
+    } else if let Some(idx) = body.find(&p2) {
+        body[idx + p2.len()..].trim_start()
+    } else {
+        return None;
+    };
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u16>().ok().map(|v| v.min(100) as u8)
+}
+
+/// Cached non-blocking OTA updater state held by NativeServer so `/api/update/status` responds < 1ms.
+#[derive(Debug, Clone)]
+pub struct UpdateStateCache {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub status: String,
+    pub channel: String,
+    pub download_url: String,
+    pub release_url: String,
+    pub release_notes: String,
+    pub message: String,
+    pub progress: u8,
+    pub offline_fallback: bool,
+    pub last_checked_ms: u64,
+}
+
+impl Default for UpdateStateCache {
+    fn default() -> Self {
+        Self {
+            current_version: CURRENT_VERSION.to_string(),
+            latest_version: CURRENT_VERSION.to_string(),
+            update_available: false,
+            status: "up_to_date".to_string(),
+            channel: "stable".to_string(),
+            download_url: String::new(),
+            release_url: String::new(),
+            release_notes: String::new(),
+            message: "iPhone Link sudah versi terbaru.".to_string(),
+            progress: 0,
+            offline_fallback: false,
+            last_checked_ms: 0,
+        }
+    }
+}
+
+impl UpdateStateCache {
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    pub fn is_active_transfer(&self) -> bool {
+        matches!(self.status.as_str(), "downloading" | "extracting")
+    }
+
+    pub fn set_offline_fallback(&mut self, channel: &str) {
+        self.current_version = CURRENT_VERSION.to_string();
+        self.latest_version = CURRENT_VERSION.to_string();
+        self.update_available = false;
+        self.status = "up_to_date".to_string();
+        self.channel = if channel.trim().is_empty() {
+            "stable".to_string()
+        } else {
+            channel.trim().to_string()
+        };
+        self.download_url.clear();
+        self.release_url.clear();
+        self.release_notes.clear();
+        self.message = "iPhone Link sudah versi terbaru.".to_string();
+        self.progress = 0;
+        self.offline_fallback = true;
+        self.last_checked_ms = Self::now_ms();
+    }
+
+    /// Normalize & validate Python worker JSON against strict `CURRENT_VERSION` Semver policy.
+    pub fn apply_worker_payload(&mut self, body: &str, channel_fallback: &str) {
+        let ch = extract_json_string(body, "channel")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| channel_fallback.to_string());
+        let raw_latest = extract_json_string(body, "latestVersion")
+            .or_else(|| extract_json_string(body, "latest_version"))
+            .unwrap_or_else(|| CURRENT_VERSION.to_string());
+        let raw_status = extract_json_string(body, "status").unwrap_or_else(|| "up_to_date".to_string());
+        let progress = extract_json_u8(body, "progress").unwrap_or(self.progress);
+        let offline = extract_json_bool(body, "offlineFallback").unwrap_or(false);
+
+        self.current_version = CURRENT_VERSION.to_string();
+        self.channel = ch;
+        self.progress = progress;
+        self.offline_fallback = offline;
+        self.last_checked_ms = Self::now_ms();
+
+        // Active transfer / ready / failed statuses preserve progress, otherwise enforce Semver gate
+        if matches!(raw_status.as_str(), "downloading" | "extracting" | "ready_to_restart" | "failed") {
+            self.status = raw_status;
+            if let Some(m) = extract_json_string(body, "message") {
+                self.message = m;
+            }
+            if !raw_latest.is_empty() {
+                self.latest_version = raw_latest;
+            }
+            return;
+        }
+
+        if is_newer_version(CURRENT_VERSION, &raw_latest) {
+            self.latest_version = raw_latest.trim().trim_start_matches(['v', 'V']).to_string();
+            self.update_available = true;
+            self.status = "update_available".to_string();
+            self.download_url = extract_json_string(body, "downloadUrl").unwrap_or_default();
+            self.release_url = extract_json_string(body, "releaseUrl").unwrap_or_default();
+            self.release_notes = extract_json_string(body, "releaseNotes").unwrap_or_default();
+            self.message = extract_json_string(body, "message")
+                .unwrap_or_else(|| format!("Tersedia pembaruan: iPhone Link v{}", self.latest_version));
+        } else {
+            self.latest_version = CURRENT_VERSION.to_string();
+            self.update_available = false;
+            self.status = "up_to_date".to_string();
+            self.download_url.clear();
+            self.release_url.clear();
+            self.release_notes.clear();
+            self.message = "iPhone Link sudah versi terbaru.".to_string();
+        }
+    }
+
+    pub fn to_json(&self, auto_check_update: bool) -> String {
+        let protected_json: Vec<String> = PROTECTED_CONFIG_FILES
+            .iter()
+            .map(|f| format!(r#""{}""#, escape_json_value(f)))
+            .collect();
+        format!(
+            concat!(
+                r#"{{"ok":true,"status":"{}","currentVersion":"{}","current_version":"{}","#,
+                r#""latestVersion":"{}","latest_version":"{}","updateAvailable":{},"update_available":{},"#,
+                r#""channel":"{}","autoCheckUpdate":{},"downloadUrl":"{}","releaseUrl":"{}","releaseNotes":"{}","#,
+                r#""message":"{}","progress":{},"offlineFallback":{},"protectedFiles":[{}]}}"#
+            ),
+            escape_json_value(&self.status),
+            escape_json_value(&self.current_version),
+            escape_json_value(&self.current_version),
+            escape_json_value(&self.latest_version),
+            escape_json_value(&self.latest_version),
+            self.update_available,
+            self.update_available,
+            escape_json_value(&self.channel),
+            auto_check_update,
+            escape_json_value(&self.download_url),
+            escape_json_value(&self.release_url),
+            escape_json_value(&self.release_notes),
+            escape_json_value(&self.message),
+            self.progress,
+            self.offline_fallback,
+            protected_json.join(","),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_semver_version_comparison_v4() {
+        assert!(!is_newer_version("4.0.0", "2.0.0"));
+        assert!(!is_newer_version("4.0.0", "3.0.0"));
+        assert!(!is_newer_version("4.0.0", "v3.0.0"));
+        assert!(!is_newer_version("4.0.0", "4.0.0"));
+        assert!(!is_newer_version("4.0.0", "v4.0.0"));
+        assert!(!is_newer_version("4.0.0", "4.0.0-beta.1"));
+        assert!(is_newer_version("4.0.0", "4.0.1"));
+        assert!(is_newer_version("4.0.0", "v4.1.0-beta.1"));
+        assert!(is_newer_version("4.1.0-beta.1", "4.1.0-beta.2"));
+        assert!(is_newer_version("4.1.0-beta.2", "4.1.0"));
+    }
+
+    #[test]
+    fn test_update_state_cache_rejects_downgrade_or_stale_v3() {
+        let mut cache = UpdateStateCache::default();
+        let stale_payload = r#"{"ok":true,"status":"update_available","latestVersion":"3.0.0","updateAvailable":true,"channel":"stable"}"#;
+        cache.apply_worker_payload(stale_payload, "stable");
+        assert!(!cache.update_available);
+        assert_eq!(cache.current_version, "4.0.0");
+        assert_eq!(cache.latest_version, "4.0.0");
+        assert_eq!(cache.status, "up_to_date");
+
+        let newer_payload = r#"{"ok":true,"status":"update_available","latestVersion":"4.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v4.0.1.zip","channel":"stable"}"#;
+        cache.apply_worker_payload(newer_payload, "stable");
+        assert!(cache.update_available);
+        assert_eq!(cache.latest_version, "4.0.1");
+        assert_eq!(cache.status, "update_available");
+    }
 
     #[test]
     fn test_semver_parsing_and_comparison() {

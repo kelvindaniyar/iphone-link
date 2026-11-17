@@ -28,8 +28,8 @@ use iphone_link_apple::wifi_discovery::{
     REMOTEPAIRING_SERVICE,
 };
 use iphone_link_audio::jitter_buffer::AdaptiveAudioBuffer;
-use iphone_link_audio::wasapi_output::probe_wasapi_and_mmcss;
-use iphone_link_audio::{probe_zlaac_dll, AudioBufferPreset};
+use iphone_link_audio::wasapi_output::{probe_wasapi_and_mmcss, probe_wasapi_shared_engine};
+use iphone_link_audio::{probe_zlaac_dll, AudioBufferPreset, NativeRustAudioPipeline};
 use iphone_link_video::autorotate::{
     evaluate_auto_rotate, run_32_autorotate_scenarios_self_test, AppProfile, OrientationMode,
 };
@@ -210,7 +210,23 @@ fn run_self_test() -> i32 {
 
     let underrun_pulled = jbuf.pull_samples(8);
     let underrun_verified = underrun_pulled.len() == 8 && jbuf.underrun_count() == 1 && underrun_pulled[7] == 0;
-    let wasapi_audio_passed = mmcss_passed && limiter_verified && underrun_verified;
+
+    let com_wasapi_res = probe_wasapi_shared_engine();
+    let com_wasapi_ok = com_wasapi_res.mmdevice_enumerator_ok
+        && com_wasapi_res.audio_client_ok
+        && com_wasapi_res.audio_render_client_ok;
+    let com_wasapi_backend = com_wasapi_res.backend.clone();
+    let com_buffer_frames = com_wasapi_res.buffer_frames;
+    let native_pipeline_frames = NativeRustAudioPipeline::new(
+        Some(Path::new(&zlaac_resolved_path)),
+        AudioBufferPreset::Low,
+        48000,
+        2,
+    )
+    .and_then(|mut p| p.render_pcm_through_jitter(&vec![0i16; 960]))
+    .unwrap_or(0);
+    let native_pipeline_ok = native_pipeline_frames > 0;
+    let wasapi_audio_passed = mmcss_passed && limiter_verified && underrun_verified && com_wasapi_ok && native_pipeline_ok;
 
     // 8. Auto-Rotate 32 Scenarios Self-Test (Tahap 154 Pilar 1)
     let (scenarios_passed, scenarios_total) = run_32_autorotate_scenarios_self_test();
@@ -273,7 +289,7 @@ fn run_self_test() -> i32 {
         && folder_rejection_passed;
 
     // 10. Social Link Grabber & Normalizer (Tahap 154 Pilar 2)
-    let dirty_link_text = "Lihat |•https://www.instagram.com/p/DVijpJIiPqN/?igsh=Mm53anAveGk3azdoWGo= •| - Ask Siri dan tonton http5://vt.tiktok.com/ZSjX9k2Lm/ serta https://youtubc.com/watch?v=dQw4w9WgXcQ atau https://www.threads.net/@user/post/DA123456789";
+    let dirty_link_text = "Lihat |•https://www.instagram.com/p/DVijpJIiPqN/?igsh=Mm53anAveGk3azdoWGo= •| - Ask Siri\ndan tonton http5://vt.tiktok.com/ZSjX9k2Lm/ serta https://youtubc.com/watch?v=dQw4w9WgXcQ atau https://www.threads.net/@user/post/DA123456789";
     let extracted_links = extract_and_normalize_links(dirty_link_text);
     let link_grabber_passed = extracted_links.len() == 4
         && extracted_links[0] == "https://www.instagram.com/p/DVijpJIiPqN/?igsh=Mm53anAveGk3azdoWGo="
@@ -414,7 +430,12 @@ fn run_self_test() -> i32 {
       "bypass_ecoqos": {},
       "wasapi_format": "{}",
       "volume_limiter_verified": {},
-      "comfort_silence_underrun_verified": {}
+      "comfort_silence_underrun_verified": {},
+      "com_wasapi_shared_ok": {},
+      "com_wasapi_backend": "{}",
+      "com_wasapi_buffer_frames": {},
+      "native_rust_audio_pipeline_ok": {},
+      "native_pipeline_frames_rendered": {}
     }},
     "autorotate_32_scenarios": {{
       "passed": {},
@@ -499,6 +520,11 @@ fn run_self_test() -> i32 {
         mmcss_info.wasapi_format,
         limiter_verified,
         underrun_verified,
+        com_wasapi_ok,
+        com_wasapi_backend.replace('"', "'"),
+        com_buffer_frames,
+        native_pipeline_ok,
+        native_pipeline_frames,
         autorotate_suite_passed,
         scenarios_passed,
         scenarios_total,
@@ -688,6 +714,7 @@ fn spawn_coredevice_worker() {
 
     let mut cmd = std::process::Command::new(&target_py);
     cmd.args(&[
+        "-B",
         "-u",
         "-m",
         "handset.gui",
@@ -718,7 +745,10 @@ fn spawn_coredevice_worker() {
             .and_then(|n| n.to_str())
             .map(|n| n.eq_ignore_ascii_case("runtime"))
             .unwrap_or(false);
+        cmd.env("PYTHONDONTWRITEBYTECODE", "1");
+        cmd.env("PYTHONNOUSERSITE", "1");
         if is_embedded_runtime {
+            // Keep explicit block marker for legacy runtime checks while always isolating user-site
             cmd.env("PYTHONNOUSERSITE", "1");
         }
         let mut path_parts = vec![py_dir.to_string_lossy().to_string()];

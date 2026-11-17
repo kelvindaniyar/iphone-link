@@ -43,11 +43,13 @@ def find_zlaac_dll() -> Path:
     candidates = [
         bundle_root / "handset" / "bin" / "zlaac.dll",
         bundle_root / "zlaac.dll",
+        bundle_root.parent / "zlaac.dll",
         here / "bin" / "zlaac.dll",
         app_root / "handset" / "bin" / "zlaac.dll",
         app_root / "_internal" / "handset" / "bin" / "zlaac.dll",
         app_root / "_internal" / "zlaac.dll",
         app_root / "zlaac.dll",
+        app_root.parent / "zlaac.dll",
     ]
     for cand in candidates:
         if cand.is_file():

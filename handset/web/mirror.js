@@ -4582,6 +4582,7 @@ window.addEventListener("message", (e) => {
     isIntentionalStop = true;
     runGeneration += 1;
     streamActive = false;
+    hasSentFirstFrameReady = false;
     setStatus("");
     if (statusEl) {
       statusEl.textContent = "";
@@ -4596,6 +4597,44 @@ window.addEventListener("message", (e) => {
     if (abortStream) {
       try { abortStream(); } catch (_) {}
       abortStream = null;
+    }
+  } else if (e.data.type === "force-stop-stream") {
+    isIntentionalStop = true;
+    runGeneration += 1;
+    streamActive = false;
+    hasSentFirstFrameReady = false;
+    setStatus("");
+    if (statusEl) {
+      statusEl.textContent = "";
+      statusEl.hidden = true;
+      statusEl.className = "mirror-status";
+      statusEl.style.display = "none";
+    }
+    if (canvas) {
+      canvas.classList.remove("is-sequoia-preblur", "is-sequoia-unblurring");
+      canvas.classList.add("is-sequoia-stopping");
+    }
+    if (abortStream) {
+      try { abortStream(); } catch (_) {}
+      abortStream = null;
+    }
+    if (pendingFrame) {
+      try { pendingFrame.close(); } catch (_) {}
+      pendingFrame = null;
+    }
+    if (lastFrame) {
+      try { lastFrame.close(); } catch (_) {}
+      lastFrame = null;
+    }
+    const clearFn = () => {
+      if (!streamActive && isIntentionalStop && ctx && canvas && canvas.width > 0 && canvas.height > 0) {
+        try { ctx.clearRect(0, 0, canvas.width, canvas.height); } catch (_) {}
+      }
+    };
+    if (e.data.immediate) {
+      clearFn();
+    } else {
+      window.setTimeout(clearFn, 240);
     }
   } else if (e.data.type === "device-locked") {
     isIntentionalStop = true;

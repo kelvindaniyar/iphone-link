@@ -341,9 +341,21 @@ extern "system" {
 }
 
 /// Reads the current text from the Win32 clipboard.
+/// Retries OpenClipboard briefly to absorb transient Win32 clipboard contention
+/// (e.g., Windows Clipboard History / rapid consecutive updates).
+unsafe fn open_clipboard_with_retry() -> bool {
+    for attempt in 0..10u64 {
+        if OpenClipboard(ptr::null_mut()) != 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2 + attempt));
+    }
+    false
+}
+
 pub fn read_win32_clipboard() -> Option<String> {
     unsafe {
-        if OpenClipboard(ptr::null_mut()) == 0 {
+        if !open_clipboard_with_retry() {
             return None;
         }
         let handle = GetClipboardData(CF_UNICODETEXT);
@@ -377,7 +389,7 @@ pub fn write_win32_clipboard(text: &str) -> bool {
     let bytes_len = wide.len() * std::mem::size_of::<u16>();
 
     unsafe {
-        if OpenClipboard(ptr::null_mut()) == 0 {
+        if !open_clipboard_with_retry() {
             return false;
         }
         EmptyClipboard();
@@ -407,6 +419,48 @@ pub fn write_win32_clipboard(text: &str) -> bool {
 /// Retrieves the current system clipboard sequence number.
 pub fn get_clipboard_sequence_number() -> u32 {
     unsafe { GetClipboardSequenceNumber() }
+}
+
+/// Telemetry & batch-output verifier for the Persistent Hot WinRT OCR Engine (Tahap 212).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HotOcrTelemetry {
+    pub hot_ocr_engine_ready: bool,
+    pub driver_mode: &'static str,
+    pub warm_latency_ms: f64,
+    pub batches_served: u64,
+    pub fallbacks_triggered: u64,
+}
+
+impl HotOcrTelemetry {
+    pub fn new_warm(warm_latency_ms: f64) -> Self {
+        Self {
+            hot_ocr_engine_ready: true,
+            driver_mode: "persistent_winrt_hot_worker",
+            warm_latency_ms,
+            batches_served: 0,
+            fallbacks_triggered: 0,
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        format!(
+            r#"{{"ok":true,"hot_ocr_engine_ready":{},"driver_mode":"{}","warm_latency_ms":{:.2},"batches_served":{},"fallbacks_triggered":{}}}"#,
+            self.hot_ocr_engine_ready,
+            self.driver_mode,
+            self.warm_latency_ms,
+            self.batches_served,
+            self.fallbacks_triggered
+        )
+    }
+}
+
+/// Parses `---FRAME_SPLIT---` output emitted by either `_PersistentHotOcrWorker` or `ocr_extractor.ps1`.
+pub fn normalize_and_verify_ocr_batch_output(raw_stdout: &str) -> Vec<String> {
+    raw_stdout
+        .split("---FRAME_SPLIT---")
+        .map(|chunk| chunk.replace("\r\n", "\n").trim().to_string())
+        .filter(|chunk| !chunk.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -507,6 +561,26 @@ mod tests {
         assert_eq!(
             sync_candidate_case_to_ocr("iPhone Link Pro", "IPhone Link Pro"),
             "IPhone Link Pro"
+        );
+    }
+
+    #[test]
+    fn test_hot_ocr_telemetry_and_batch_normalization() {
+        let tele = HotOcrTelemetry::new_warm(48.5);
+        assert!(tele.hot_ocr_engine_ready);
+        let json = tele.to_json();
+        assert!(json.contains(r#""hot_ocr_engine_ready":true"#));
+        assert!(json.contains("persistent_winrt_hot_worker"));
+
+        let parsed = normalize_and_verify_ocr_batch_output(
+            "<<<SEL_COLOR:yellow>>>\r\nkelvin tahap 212\r\n---FRAME_SPLIT---\r\n   \r\n---FRAME_SPLIT---\r\nsecond frame\r\n",
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                "<<<SEL_COLOR:yellow>>>\nkelvin tahap 212".to_string(),
+                "second frame".to_string()
+            ]
         );
     }
 }

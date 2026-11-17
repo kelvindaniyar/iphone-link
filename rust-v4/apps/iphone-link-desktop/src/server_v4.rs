@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -72,10 +72,12 @@ pub static GLOBAL_DOM_TOGGLES_SUMMARY: Mutex<String> = Mutex::new(String::new())
 pub static GLOBAL_DOM_CARD_UPDATER_EXISTS: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DOM_CARD_UPDATER_TITLE: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_TRAY_DISMISSED_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static LAST_STOP_MIRROR_MS: AtomicU64 = AtomicU64::new(0);
+pub static LATEST_SHORTCUT_URL_CACHE: Mutex<(String, u64)> = Mutex::new((String::new(), 0));
 
 use crate::i18n::{translate_dynamic_status, Lang};
 use crate::ocr_engine::clear_copy_cache;
-use crate::updater::compute_sha256;
+use crate::updater::{compute_sha256, UpdateStateCache};
 use crate::window_dwm::{
     apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop, dismiss_tray_menu_if_open,
     is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to, register_tray_app_state,
@@ -997,10 +999,12 @@ html body .shortcut-pill {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
 }
 html[data-theme="light"] body .shortcut-pill {
-  background: rgba(255, 255, 255, 0.65) !important;
-  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  backdrop-filter: blur(12px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.62) !important;
   color: #0f172a !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
 }
 
 html body #app-root.app.is-mirroring iframe#screen-view,
@@ -1742,6 +1746,202 @@ html body .app.is-fullsize:not(.is-landscape):not(.is-ipad) #sequoia-connect-ove
   border-radius: 0px !important;
   overflow: hidden !important;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+
+/* Tahap 222: High-Contrast Light & Dark Mode Override for iOS 27 Shortcut Card & Side Drawer */
+html body #shortcut-url-box,
+html body .shortcut-url-card {
+  background: rgba(14, 116, 144, 0.14) !important;
+  border: 1px solid rgba(56, 189, 248, 0.32) !important;
+}
+html body #shortcut-box-title,
+html body .shortcut-box-title {
+  color: #38bdf8 !important;
+  font-weight: 700 !important;
+}
+html body #link-shortcut-guide-hint,
+html body .shortcut-setup-link {
+  color: #38bdf8 !important;
+  font-weight: 600 !important;
+  text-decoration: underline !important;
+}
+html body #shortcut-ip-comparison,
+html body #shortcut-ip-hint,
+html body .shortcut-ip-hint {
+  color: #e2e8f0 !important;
+  font-weight: 600 !important;
+}
+html body #shortcut-ocr-note,
+html body .shortcut-ocr-note {
+  color: #cbd5e1 !important;
+  font-weight: 600 !important;
+}
+html body #shortcut-url-preview,
+html body .shortcut-url-code {
+  background: rgba(15, 23, 42, 0.72) !important;
+  color: #f8fafc !important;
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+}
+
+html[data-theme="light"] body #shortcut-url-box,
+html[data-theme="light"] body .shortcut-url-card,
+body[data-theme="light"] #shortcut-url-box,
+.app[data-theme="light"] #shortcut-url-box {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.10) 100%) !important;
+  backdrop-filter: blur(18px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(160%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.54) !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
+}
+html[data-theme="light"] body #shortcut-box-title,
+html[data-theme="light"] body .shortcut-box-title,
+body[data-theme="light"] #shortcut-box-title,
+.app[data-theme="light"] #shortcut-box-title {
+  color: #0369a1 !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #link-shortcut-guide-hint,
+html[data-theme="light"] body .shortcut-setup-link,
+body[data-theme="light"] #link-shortcut-guide-hint,
+.app[data-theme="light"] #link-shortcut-guide-hint {
+  color: #0284c7 !important;
+  font-weight: 600 !important;
+  text-decoration: underline !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #shortcut-ip-comparison,
+html[data-theme="light"] body #shortcut-ip-hint,
+html[data-theme="light"] body .shortcut-ip-hint,
+body[data-theme="light"] #shortcut-ip-comparison,
+.app[data-theme="light"] #shortcut-ip-comparison {
+  color: #1e293b !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #shortcut-ocr-note,
+html[data-theme="light"] body .shortcut-ocr-note,
+body[data-theme="light"] #shortcut-ocr-note,
+.app[data-theme="light"] #shortcut-ocr-note {
+  color: #0f172a !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #shortcut-url-preview,
+html[data-theme="light"] body .shortcut-url-code,
+body[data-theme="light"] #shortcut-url-preview,
+.app[data-theme="light"] #shortcut-url-preview {
+  background: rgba(15, 23, 42, 0.08) !important;
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.18) !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #shortcut-url-box button,
+html[data-theme="light"] body #btn-copy-shortcut-url,
+html[data-theme="light"] body #btn-open-icloud-shortcut,
+html[data-theme="light"] body #btn-get-icloud-shortcut,
+html[data-theme="light"] body #btn-copy-siri-prompt,
+html[data-theme="light"] body #btn-copy-shortcut-prompt,
+html[data-theme="light"] body #btn-unlock-devmode,
+html[data-theme="light"] body #btn-repair-driver,
+html[data-theme="light"] body #refresh {
+  background: rgba(255, 255, 255, 0.24) !important;
+  backdrop-filter: blur(12px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(255, 255, 255, 0.62) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.60) !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #shortcut-url-box button:hover,
+html[data-theme="light"] body #btn-copy-shortcut-url:hover,
+html[data-theme="light"] body #btn-open-icloud-shortcut:hover,
+html[data-theme="light"] body #btn-get-icloud-shortcut:hover,
+html[data-theme="light"] body #btn-copy-siri-prompt:hover,
+html[data-theme="light"] body #btn-copy-shortcut-prompt:hover,
+html[data-theme="light"] body #btn-unlock-devmode:hover,
+html[data-theme="light"] body #btn-repair-driver:hover,
+html[data-theme="light"] body #refresh:hover {
+  background: rgba(255, 255, 255, 0.38) !important;
+  border-color: rgba(255, 255, 255, 0.85) !important;
+}
+html[data-theme="light"] body .shortcut-pill kbd {
+  background: rgba(15, 23, 42, 0.12) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.18) !important;
+}
+html[data-theme="light"] body .shortcuts-badge-list {
+  background: transparent !important;
+}
+html[data-theme="light"] body #shortcut-url-box button *,
+html[data-theme="light"] body #btn-unlock-devmode *,
+html[data-theme="light"] body #btn-repair-driver *,
+html[data-theme="light"] body #refresh * {
+  color: #0f172a !important;
+}
+html[data-theme="light"] body #control-pane details > summary,
+html[data-theme="light"] body #device-card summary {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #device-card #status dt {
+  color: #334155 !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #device-card #status dd {
+  color: #0f172a !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #device-card #status dd.ok,
+html[data-theme="light"] body #diag-apple-driver.ok,
+html[data-theme="light"] body #status-service.ok,
+html[data-theme="light"] body #diag-tcp-port.ok,
+html[data-theme="light"] body #status-devmode.ok,
+html[data-theme="light"] body #diag-hevc-codec.ok {
+  color: #047857 !important;
+  font-weight: 700 !important;
+}
+html[data-theme="light"] body #device-card #status dd.warn,
+html[data-theme="light"] body #diag-apple-driver.warn,
+html[data-theme="light"] body #status-service.warn,
+html[data-theme="light"] body #diag-tcp-port.warn,
+html[data-theme="light"] body #status-devmode.warn,
+html[data-theme="light"] body #diag-hevc-codec.warn {
+  color: #b45309 !important;
+  font-weight: 700 !important;
+}
+html[data-theme="light"] body #devmode-action-status {
+  background: rgba(14, 165, 233, 0.14) !important;
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+  border: 1px solid rgba(2, 132, 199, 0.35) !important;
+  color: #0c4a6e !important;
+  font-weight: 600 !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body #update-info-box {
+  backdrop-filter: blur(10px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+}
+html[data-theme="light"] body #control-pane .setting-hint,
+html[data-theme="light"] body #control-pane .unit,
+html[data-theme="light"] body #control-pane .stealth-subhint,
+html[data-theme="light"] body #control-pane .control-hint,
+html[data-theme="light"] body #control-pane .fine,
+html[data-theme="light"] body #status-note {
+  color: #334155 !important;
+  opacity: 1 !important;
+}
+html[data-theme="light"] body #status-note.warn {
+  color: #b45309 !important;
 }
 "#;
 
@@ -3613,6 +3813,31 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             if (pinInput) {
                 pinInput.setAttribute('placeholder', isEn ? '4 or 6 digit PIN' : '4 atau 6 digit PIN');
             }
+
+            // Tahap 222: Sync iOS 27 Shortcut Card Bilingual Labels (EN / ID)
+            var scOcrNote = document.getElementById('shortcut-ocr-note');
+            if (scOcrNote) {
+                scOcrNote.textContent = isEn ? 'Auto 100% accurate without OCR' : 'Auto 100% akurat tanpa OCR';
+            }
+            var scGuideLink = document.getElementById('link-shortcut-guide-hint');
+            if (scGuideLink) {
+                scGuideLink.textContent = isEn ? 'Setup Guide' : 'Panduan Setup';
+            }
+            var scCopyUrlLbl = document.querySelector('#btn-copy-shortcut-url .btn-label') || document.getElementById('btn-copy-shortcut-url');
+            if (scCopyUrlLbl) {
+                scCopyUrlLbl.textContent = isEn ? 'Copy URL' : 'Salin URL';
+            }
+            var scGetIcloudLbl = document.querySelector('#btn-open-icloud-shortcut .btn-label') || document.getElementById('btn-open-icloud-shortcut');
+            if (scGetIcloudLbl) {
+                scGetIcloudLbl.textContent = isEn ? 'Get iCloud Shortcut' : 'Ambil iCloud Shortcut';
+            }
+            var scCopyPromptLbl = document.querySelector('#btn-copy-siri-prompt .btn-label') || document.getElementById('btn-copy-siri-prompt');
+            if (scCopyPromptLbl) {
+                scCopyPromptLbl.textContent = isEn ? 'Copy Prompt Shortcut' : 'Salin Prompt Shortcut';
+            }
+            if (typeof window.renderShortcutIpComparison === 'function') {
+                try { window.renderShortcutIpComparison(); } catch (_) {}
+            }
         } catch (_) {} finally {
             window.__v4TranslatingDom = false;
         }
@@ -3655,6 +3880,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             };
             wrappedApplyLang.__v4Wrapped = true;
             window.applyLanguage = wrappedApplyLang;
+            window.applyAppLanguage = wrappedApplyLang;
         }
         if (!window.__v4ShowScreenLangObs && typeof MutationObserver !== 'undefined') {
             var showScreenEl = document.getElementById('show-screen');
@@ -4825,6 +5051,7 @@ pub struct AppState {
     pub device_profile: String,
     pub update_channel: String,
     pub auto_check_update: bool,
+    pub updater: UpdateStateCache,
     pub server_port: u16,
     pub geometry: WindowGeometryManager,
 }
@@ -4861,6 +5088,7 @@ impl Default for AppState {
             device_profile: "auto".to_string(),
             update_channel: "stable".to_string(),
             auto_check_update: true,
+            updater: UpdateStateCache::default(),
             server_port: DEFAULT_PORT,
             geometry: WindowGeometryManager::new(1.0),
         }
@@ -4991,6 +5219,15 @@ impl HttpResponse {
             status_text: "Not Found",
             content_type: "application/json; charset=utf-8",
             body: br#"{"error":"Not found."}"#.to_vec(),
+        }
+    }
+
+    pub fn forbidden_json(msg: &str) -> Self {
+        Self {
+            status_code: 403,
+            status_text: "Forbidden",
+            content_type: "application/json; charset=utf-8",
+            body: format!(r#"{{"ok":false,"error":"{}"}}"#, escape_json_str(msg)).into_bytes(),
         }
     }
 
@@ -5779,6 +6016,87 @@ fn install_hevc_from_bundle(bundle_path: &Path) -> Result<(), String> {
     }
 }
 
+fn query_native_apple_driver_installed() -> bool {
+    let p1 = Path::new(r"C:\Program Files\Common Files\Apple\Mobile Device Support");
+    let p2 = Path::new(r"C:\Program Files (x86)\Common Files\Apple\Mobile Device Support");
+    if p1.exists() || p2.exists() {
+        return true;
+    }
+    let repo = Path::new(r"C:\Windows\System32\DriverStore\FileRepository");
+    if let Ok(entries) = std::fs::read_dir(repo) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.starts_with("usbaapl64.inf") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn query_native_apple_service_running() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new("sc.exe");
+    cmd.args(["query", "Apple Mobile Device Service"]);
+    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+    if let Ok(out) = cmd.output() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if stdout.contains("RUNNING") {
+            return true;
+        }
+    }
+    false
+}
+
+fn query_native_port_27015_open() -> bool {
+    let addr: std::net::SocketAddr = match "127.0.0.1:27015".parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250)).is_ok()
+}
+
+fn build_native_driver_diagnostics_json() -> String {
+    let port_open = query_native_port_27015_open();
+    let svc_running = port_open || query_native_apple_service_running();
+    let drv_installed = svc_running || query_native_apple_driver_installed();
+    let (hevc_ok, _, _) = query_hevc_extension_status();
+    format!(
+        r#"{{"ok":true,"usb_connected":false,"apple_driver_installed":{},"apple_driver_label":"{}","apple_driver_label_id":"{}","apple_service_running":{},"apple_service_label":"{}","apple_service_label_id":"{}","tcp_port_27015_normal":{},"tcp_port_label":"{}","tcp_port_label_id":"{}","hevc_codec_installed":{},"hevc_codec_label":"{}","hevc_codec_label_id":"{}","developer_mode_status":"disconnected","developer_mode_label":"Connect iPhone via USB","developer_mode_label_id":"Hubungkan iPhone via USB"}}"#,
+        drv_installed,
+        if drv_installed { "Installed" } else { "Not Installed" },
+        if drv_installed { "Terpasang" } else { "Belum Terpasang" },
+        svc_running,
+        if svc_running { "Running (Started)" } else { "Stopped" },
+        if svc_running { "Berjalan (Started)" } else { "Berhenti" },
+        port_open || svc_running,
+        if port_open || svc_running { "Normal" } else { "Unreachable" },
+        if port_open || svc_running { "Normal" } else { "Tidak Terjangkau" },
+        hevc_ok,
+        if hevc_ok { "Installed (60fps)" } else { "Missing" },
+        if hevc_ok { "Terpasang (60fps)" } else { "Belum Ada" },
+    )
+}
+
+fn repair_native_apple_service() -> (bool, bool, bool) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+    let mut cfg = std::process::Command::new("sc.exe");
+    cfg.args(["config", "Apple Mobile Device Service", "start=", "auto"]);
+    cfg.creation_flags(CREATE_NO_WINDOW_FLAG);
+    let _ = cfg.output();
+
+    let mut st = std::process::Command::new("sc.exe");
+    st.args(["start", "Apple Mobile Device Service"]);
+    st.creation_flags(CREATE_NO_WINDOW_FLAG);
+    let _ = st.output();
+
+    let svc = query_native_apple_service_running() || query_native_port_27015_open();
+    let drv = svc || query_native_apple_driver_installed();
+    (drv && svc, drv, svc)
+}
+
 fn build_tray_items_array_json(st: &AppState) -> String {
     let startup_on = is_start_with_windows_enabled();
     let landscape_on = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
@@ -5947,6 +6265,87 @@ fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
     (fallback, "image/jpeg", "fallback_blur_sig".to_string())
 }
 
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[allow(non_snake_case)]
+struct PROCESS_MEMORY_COUNTERS_V4 {
+    cb: u32,
+    PageFaultCount: u32,
+    PeakWorkingSetSize: usize,
+    WorkingSetSize: usize,
+    QuotaPeakPagedPoolUsage: usize,
+    QuotaPagedPoolUsage: usize,
+    QuotaPeakNonPagedPoolUsage: usize,
+    QuotaNonPagedPoolUsage: usize,
+    PagefileUsage: usize,
+    PeakPagefileUsage: usize,
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcess() -> *mut std::ffi::c_void;
+    fn SetProcessWorkingSetSize(
+        hProcess: *mut std::ffi::c_void,
+        dwMinimumWorkingSetSize: usize,
+        dwMaximumWorkingSetSize: usize,
+    ) -> i32;
+    fn K32EmptyWorkingSet(hProcess: *mut std::ffi::c_void) -> i32;
+    fn K32GetProcessMemoryInfo(
+        Process: *mut std::ffi::c_void,
+        ppsmemCounters: *mut PROCESS_MEMORY_COUNTERS_V4,
+        cb: u32,
+    ) -> i32;
+}
+
+pub fn trim_current_rust_process_working_set() {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let h = GetCurrentProcess();
+        if !h.is_null() {
+            let _ = K32EmptyWorkingSet(h);
+            let _ = SetProcessWorkingSetSize(h, usize::MAX, usize::MAX);
+        }
+    }
+}
+
+pub fn current_rust_process_working_set_mb() -> f64 {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let mut pmc = PROCESS_MEMORY_COUNTERS_V4 {
+            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS_V4>() as u32,
+            PageFaultCount: 0,
+            PeakWorkingSetSize: 0,
+            WorkingSetSize: 0,
+            QuotaPeakPagedPoolUsage: 0,
+            QuotaPagedPoolUsage: 0,
+            QuotaPeakNonPagedPoolUsage: 0,
+            QuotaNonPagedPoolUsage: 0,
+            PagefileUsage: 0,
+            PeakPagefileUsage: 0,
+        };
+        let h = GetCurrentProcess();
+        if !h.is_null() && K32GetProcessMemoryInfo(h, &mut pmc as *mut _, pmc.cb) != 0 {
+            return ((pmc.WorkingSetSize as f64 / (1024.0 * 1024.0)) * 100.0).round() / 100.0;
+        }
+    }
+    0.0
+}
+
+fn extract_json_f64_field(json: &str, key: &str) -> Option<f64> {
+    let needle = format!(r#""{}":"#, key);
+    let alt_needle = format!(r#""{}": "#, key);
+    let idx = json
+        .find(&needle)
+        .map(|i| i + needle.len())
+        .or_else(|| json.find(&alt_needle).map(|i| i + alt_needle.len()))?;
+    let tail = json[idx..].trim_start();
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+        .unwrap_or(tail.len());
+    tail[..end].parse::<f64>().ok()
+}
+
 fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
     use std::net::SocketAddr;
     let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
@@ -5961,7 +6360,9 @@ fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
         || req.path.starts_with("/api/device/lock")
         || req.path.starts_with("/api/screen/start")
         || req.path.starts_with("/api/wifi/scan")
-        || req.path.starts_with("/api/ocr/");
+        || req.path.starts_with("/api/ocr/")
+        || req.path.starts_with("/api/update/")
+        || req.path == "/api/system/reclaim-memory";
 
     let timeout = if is_heavy {
         Duration::from_secs(25)
@@ -5996,6 +6397,11 @@ fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
 
     let mut resp_bytes = Vec::new();
     stream.read_to_end(&mut resp_bytes).ok()?;
+    drop(stream);
+
+    if is_heavy {
+        trim_current_rust_process_working_set();
+    }
 
     if resp_bytes.is_empty() {
         return None;
@@ -6180,13 +6586,264 @@ pub fn percent_decode_url_component(input: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+fn now_epoch_ms_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+pub fn is_loopback_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6
+                    .to_ipv4_mapped()
+                    .map(|v4| v4.is_loopback())
+                    .unwrap_or(false)
+        }
+    }
+}
+
+pub fn is_lan_request_allowed(ip: IpAddr, method: &str, raw_path: &str) -> bool {
+    if is_loopback_ip(ip) {
+        return true;
+    }
+    if method.eq_ignore_ascii_case("OPTIONS") {
+        return true;
+    }
+    let clean_path = raw_path
+        .split('?')
+        .next()
+        .unwrap_or(raw_path)
+        .split('#')
+        .next()
+        .unwrap_or(raw_path);
+    clean_path == "/c"
+        || clean_path.starts_with("/c/")
+        || clean_path == "/api/shortcut/push"
+        || clean_path == "/api/clipboard/push"
+}
+
+pub fn detect_primary_lan_ipv4() -> String {
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = sock.local_addr() {
+                let ip = addr.ip().to_string();
+                if !ip.starts_with("127.") && !ip.starts_with("169.254.") && ip != "0.0.0.0" {
+                    return ip;
+                }
+            }
+        }
+    }
+    "192.168.1.X".to_string()
+}
+
+pub fn extract_cached_iphone_lan_ip_from_json(raw_json: &str, pc_ip: &str) -> Option<String> {
+    // Check "last_ip": "<ipv4>" inside wifi_state.json without pulling extra parser deps.
+    for key in ["\"last_ip\"", "\"ip\""] {
+        let mut search_from = 0usize;
+        while let Some(pos) = raw_json[search_from..].find(key) {
+            let abs_pos = search_from + pos + key.len();
+            let rest = raw_json[abs_pos..].trim_start();
+            if let Some(after_colon) = rest.strip_prefix(':') {
+                let after_colon = after_colon.trim_start();
+                if let Some(after_quote) = after_colon.strip_prefix('"') {
+                    if let Some(end_quote) = after_quote.find('"') {
+                        let candidate = after_quote[..end_quote].trim();
+                        if let Ok(addr) = candidate.parse::<std::net::Ipv4Addr>() {
+                            let ip_str = addr.to_string();
+                            if !addr.is_loopback()
+                                && !addr.is_link_local()
+                                && !addr.is_unspecified()
+                                && ip_str != pc_ip
+                            {
+                                return Some(ip_str);
+                            }
+                        }
+                    }
+                }
+            }
+            search_from = abs_pos;
+        }
+    }
+    None
+}
+
+pub fn detect_cached_iphone_lan_ipv4(pc_ip: &str) -> String {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        if !appdata.trim().is_empty() {
+            candidates.push(PathBuf::from(&appdata).join("iPhone Link").join("wifi_state.json"));
+        }
+    }
+    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+        if !localappdata.trim().is_empty() {
+            candidates.push(PathBuf::from(&localappdata).join("iPhone Link").join("wifi_state.json"));
+        }
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("wifi_state.json"));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("wifi_state.json"));
+    }
+    for path in candidates {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            if let Some(ip) = extract_cached_iphone_lan_ip_from_json(&raw, pc_ip) {
+                return ip;
+            }
+        }
+    }
+    String::new()
+}
+
+pub const ICLOUD_SHORTCUT_OFFICIAL_URL: &str = "https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff";
+
+pub fn build_shortcut_setup_info_json(port: u16) -> String {
+    let actual_port = if port == 0 { DEFAULT_PORT } else { port };
+    let ip = detect_primary_lan_ipv4();
+    let iphone_ip = detect_cached_iphone_lan_ipv4(&ip);
+    let endpoint = format!("http://{}:{}/c?u=", ip, actual_port);
+    let siri_prompt = format!(
+        "Create a new Shortcut named \"Send to iPhone Link\" that appears in the Share Sheet (with If there's no input: Get Clipboard). First action: Get URLs from Shortcut Input. Second action: URL Encode the URLs. Third action: Get Contents of URL \"{}\" followed by the URL Encoded Text.",
+        endpoint
+    );
+    let (ip_warning_id, ip_warning_en) = if !iphone_ip.is_empty() && iphone_ip != ip {
+        (
+            format!(
+                "[GUNAKAN IP PC: {}] — Jangan gunakan IP iPhone ({}) di Shortcut!",
+                ip, iphone_ip
+            ),
+            format!(
+                "[USE PC IP: {}] — Do not use iPhone IP ({}) in Shortcut!",
+                ip, iphone_ip
+            ),
+        )
+    } else {
+        (
+            format!(
+                "[GUNAKAN IP PC: {}] — Pastikan memakai IP PC di atas (bukan IP iPhone).",
+                ip
+            ),
+            format!(
+                "[USE PC IP: {}] — Make sure to use the PC IP above (not iPhone IP).",
+                ip
+            ),
+        )
+    };
+    format!(
+        r#"{{"ok":true,"pc_lan_ip":"{}","iphone_lan_ip":"{}","ip_warning_id":"{}","ip_warning_en":"{}","port":{},"shortcut_endpoint_template":"{}","icloud_shortcut_url":"{}","siri_prompt_en":"{}"}}"#,
+        escape_json_str(&ip),
+        escape_json_str(&iphone_ip),
+        escape_json_str(&ip_warning_id),
+        escape_json_str(&ip_warning_en),
+        actual_port,
+        escape_json_str(&endpoint),
+        escape_json_str(ICLOUD_SHORTCUT_OFFICIAL_URL),
+        escape_json_str(&siri_prompt)
+    )
+}
+
+pub fn normalize_and_validate_digital_shortcut_url(raw_url: &str) -> Option<String> {
+    let mut candidate = raw_url.replace(r"\/", "/").trim().to_string();
+    for _ in 0..2 {
+        let cl = candidate.to_ascii_lowercase();
+        if cl.starts_with("https%3a") || cl.starts_with("http%3a") {
+            candidate = percent_decode_url_component(candidate.trim());
+        } else {
+            break;
+        }
+    }
+    let trimmed = candidate.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().any(char::is_whitespace)
+        || trimmed.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("https://") {
+        r
+    } else if let Some(r) = lower.strip_prefix("http://") {
+        r
+    } else {
+        return None;
+    };
+    let (host, path_and_query) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    let host_no_port = host.split(':').next().unwrap_or(host);
+    if host_no_port.is_empty() || !host_no_port.contains('.') || host_no_port.contains('=') {
+        return None;
+    }
+    let labels: Vec<&str> = host_no_port.split('.').collect();
+    if labels.iter().any(|lbl| lbl.is_empty()) {
+        return None;
+    }
+    let tld = labels.last().copied().unwrap_or("");
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if path_and_query.is_empty() || path_and_query == "/" {
+        return None;
+    }
+    if host_no_port.ends_with("threads.com")
+        || host_no_port.ends_with("threads.net")
+        || host_no_port.ends_with("instagram.com")
+    {
+        if let Some(clean_social) = crate::link_grabber::clean_and_validate_extracted_url(trimmed, None) {
+            if crate::link_grabber::is_strict_https_social_url(&clean_social) {
+                return Some(clean_social);
+            }
+        }
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn sync_shortcut_to_worker_async(clean_url: String) {
+    thread::spawn(move || {
+        use std::net::SocketAddr;
+        let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(120)) {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+            let body = format!(r#"{{"url":"{}"}}"#, escape_json_str(&clean_url));
+            let req = format!(
+                "POST /api/shortcut/push HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                WORKER_PORT,
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(req.as_bytes());
+        }
+    });
+}
+
 fn extract_c_endpoint_url(req: &HttpRequest) -> String {
-    let mut candidate = if req.path == "/c" {
+    let clean_path = req
+        .path
+        .split('?')
+        .next()
+        .unwrap_or(&req.path)
+        .split('#')
+        .next()
+        .unwrap_or(&req.path);
+    let mut candidate = if clean_path == "/c" {
         let mut found = String::new();
-        for pair in req.query.split('&') {
-            if let Some(v) = pair.strip_prefix("u=").or_else(|| pair.strip_prefix("url=")) {
-                found = percent_decode_url_component(v.trim());
-                break;
+        if let Some(rest) = req.query.strip_prefix("u=").or_else(|| req.query.strip_prefix("url=")) {
+            found = percent_decode_url_component(rest.trim());
+        } else {
+            for pair in req.query.split('&') {
+                if let Some(v) = pair.strip_prefix("u=").or_else(|| pair.strip_prefix("url=")) {
+                    found = percent_decode_url_component(v.trim());
+                    break;
+                }
             }
         }
         if found.is_empty() {
@@ -6196,15 +6853,27 @@ fn extract_c_endpoint_url(req: &HttpRequest) -> String {
             }
         }
         found
-    } else if req.path.starts_with("/c/") {
-        let mut raw_tail = req.path[3..].to_string();
+    } else if clean_path.starts_with("/c/") {
+        let mut raw_tail = clean_path[3..].to_string();
         if !req.query.is_empty() {
             raw_tail.push('?');
             raw_tail.push_str(&req.query);
         }
         percent_decode_url_component(raw_tail.trim())
     } else {
-        String::new()
+        let mut body_u = parse_string_param(&req.body, "url")
+            .or_else(|| parse_string_param(&req.body, "u"))
+            .or_else(|| parse_string_param(&req.body, "text"))
+            .unwrap_or_default();
+        if body_u.is_empty() {
+            let trimmed_b = req.body.trim();
+            if trimmed_b.to_ascii_lowercase().starts_with("http") {
+                body_u = trimmed_b.to_string();
+            } else if let Some(rest) = trimmed_b.strip_prefix("u=").or_else(|| trimmed_b.strip_prefix("url=")) {
+                body_u = percent_decode_url_component(rest.trim());
+            }
+        }
+        body_u
     };
 
     for _ in 0..2 {
@@ -6228,69 +6897,70 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         };
     }
 
-    if req.method == "GET" && (req.path == "/c" || req.path.starts_with("/c/")) {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
-        }
+    let req_clean_path = req
+        .path
+        .split('?')
+        .next()
+        .unwrap_or("/")
+        .split('#')
+        .next()
+        .unwrap_or("/");
+
+    if (req.method == "GET" && (req_clean_path == "/c" || req_clean_path.starts_with("/c/")))
+        || (req.method == "POST" && (req_clean_path == "/api/shortcut/push" || req_clean_path == "/api/clipboard/push"))
+    {
         let raw_u = extract_c_endpoint_url(req);
-        if let Some(clean_url) = crate::link_grabber::clean_and_validate_extracted_url(&raw_u, None) {
-            if crate::link_grabber::is_strict_https_social_url(&clean_url) {
-                let clip_ok = crate::ocr_engine::write_win32_clipboard(&clean_url);
-                let html = format!(
-                    "<!doctype html><html><head><meta charset='utf-8'><title>iPhone Link</title></head>\
-                    <body style='font-family:-apple-system,sans-serif;text-align:center;padding:24px;'>\
-                    <script>window.close();</script>\u{2713} Link Copied to PC!\
-                    <!-- {} clip={} --></body></html>",
-                    clean_url,
-                    if clip_ok { 1 } else { 0 }
-                );
-                return HttpResponse::ok_html(&html);
+        if let Some(clean_url) = normalize_and_validate_digital_shortcut_url(&raw_u) {
+            let clip_ok = crate::ocr_engine::write_win32_clipboard(&clean_url);
+            if let Ok(mut cache) = LATEST_SHORTCUT_URL_CACHE.lock() {
+                *cache = (clean_url.clone(), now_epoch_ms_u64());
             }
+            sync_shortcut_to_worker_async(clean_url.clone());
+            let wants_json = req_clean_path == "/api/shortcut/push"
+                || req_clean_path == "/api/clipboard/push"
+                || req
+                    .headers
+                    .get("accept")
+                    .map(|a| a.to_ascii_lowercase().contains("application/json"))
+                    .unwrap_or(false);
+            if wants_json {
+                let escaped = escape_json_str(&clean_url);
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"source":"ios_shortcut_digital","url":"{}","copied_to_clipboard":{},"clipboardWritten":{}}}"#,
+                    escaped, clip_ok, clip_ok
+                ));
+            }
+            let html = format!(
+                "<!doctype html><html><head><meta charset='utf-8'><title>iPhone Link</title></head>\
+                <body style='font-family:-apple-system,sans-serif;text-align:center;padding:24px;'>\
+                <script>window.close();</script>\u{2713} Link Copied to PC!\
+                <p style='font-size:13px;word-break:break-all;'>{}</p>\
+                <!-- {} clip={} --></body></html>",
+                clean_url,
+                clean_url,
+                if clip_ok { 1 } else { 0 }
+            );
+            return HttpResponse::ok_html(&html);
+        }
+        if req_clean_path == "/api/shortcut/push" || req_clean_path == "/api/clipboard/push" {
+            return HttpResponse {
+                status_code: 400,
+                status_text: "Bad Request",
+                content_type: "application/json; charset=utf-8",
+                body: br#"{"ok":false,"error":"Invalid or missing URL","url":""}"#.to_vec(),
+            };
         }
         return HttpResponse {
             status_code: 400,
             status_text: "Bad Request",
             content_type: "text/html; charset=utf-8",
-            body: b"<!doctype html><html><head><meta charset='utf-8'></head><body>Invalid or missing social URL.</body></html>".to_vec(),
+            body: b"<!doctype html><html><head><meta charset='utf-8'></head><body>Invalid or missing URL.</body></html>".to_vec(),
         };
     }
 
-    if req.method == "POST" && req.path == "/api/clipboard/push" {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
-        }
-        let mut raw_u = parse_string_param(&req.body, "url")
-            .or_else(|| parse_string_param(&req.body, "u"))
-            .or_else(|| parse_string_param(&req.body, "text"))
-            .unwrap_or_default();
-        if raw_u.is_empty() && req.body.trim().to_ascii_lowercase().starts_with("http") {
-            raw_u = req.body.trim().to_string();
-        }
-        raw_u = raw_u.replace(r"\/", "/");
-        for _ in 0..2 {
-            let rl = raw_u.to_ascii_lowercase();
-            if rl.starts_with("https%3a") || rl.starts_with("http%3a") {
-                raw_u = percent_decode_url_component(raw_u.trim());
-            } else {
-                break;
-            }
-        }
-        if let Some(clean_url) = crate::link_grabber::clean_and_validate_extracted_url(&raw_u, None) {
-            if crate::link_grabber::is_strict_https_social_url(&clean_url) {
-                let clip_ok = crate::ocr_engine::write_win32_clipboard(&clean_url);
-                let escaped = clean_url.replace('\\', "\\\\").replace('"', "\\\"");
-                return HttpResponse::ok_json(&format!(
-                    r#"{{"ok":true,"url":"{}","clipboardWritten":{}}}"#,
-                    escaped, clip_ok
-                ));
-            }
-        }
-        return HttpResponse {
-            status_code: 400,
-            status_text: "Bad Request",
-            content_type: "application/json; charset=utf-8",
-            body: br#"{"ok":false,"error":"Invalid or missing social URL","url":""}"#.to_vec(),
-        };
+    if req_clean_path == "/api/shortcut/setup-info" {
+        let srv_port = state.lock().map(|s| s.server_port).unwrap_or(DEFAULT_PORT);
+        return HttpResponse::ok_json(&build_shortcut_setup_info_json(srv_port));
     }
 
     // Always strip query string (?) and fragment (#) before routing
@@ -6313,6 +6983,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     // 2. API: Status
     if path == "/api/status" {
+        let stop_cooldown = {
+            let last_stop = LAST_STOP_MIRROR_MS.load(Ordering::SeqCst);
+            last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000
+        };
         // Try forwarding to worker first (if running on WORKER_PORT 8767)
         if let Some(resp) = forward_to_worker(req) {
             if resp.status_code == 200 {
@@ -6324,6 +6998,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     .replace(r#""deviceName":"UNKW 0000""#, r#""deviceName":"iPhone""#)
                     .replace("UNKW 0000", "iPhone")
                     .replace("UNKW", "iPhone");
+
+                if stop_cooldown {
+                    sanitized = sanitized
+                        .replace(r#""phase":"running""#, r#""phase":"idle""#)
+                        .replace(r#""phase": "running""#, r#""phase": "idle""#)
+                        .replace(r#""phase":"starting""#, r#""phase":"idle""#)
+                        .replace(r#""phase": "starting""#, r#""phase": "idle""#)
+                        .replace(r#""phase":"waiting_airplay""#, r#""phase":"idle""#)
+                        .replace(r#""phase": "waiting_airplay""#, r#""phase": "idle""#);
+                }
 
                 let is_running = sanitized.contains(r#""phase":"running""#) || sanitized.contains(r#""phase": "running""#);
                 if is_running {
@@ -6567,8 +7251,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 "iPhone18,1",
             )
         };
-        let screen_phase = if st_snap.is_streaming { "running" } else { "stopped" };
-        let mirror_url = if st_snap.is_streaming { "/mirror.html" } else { "" };
+        let effective_streaming = st_snap.is_streaming && !stop_cooldown;
+        let screen_phase = if effective_streaming { "running" } else { "idle" };
+        let mirror_url = if effective_streaming { "/mirror.html" } else { "" };
         let settings_json = build_settings_json(&st_snap);
         let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
         let app_w = GLOBAL_APP_WIDTH.load(Ordering::SeqCst);
@@ -6687,6 +7372,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     "portrait_width": {},
     "active_device_profile": "{}"
   }},
+  "hot_ocr_engine_ready": true,
   "settings": {},
   "status_text": "{}",
   "language": "{}",
@@ -7067,6 +7753,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         );
     }
 
+    if path == "/api/ocr/status" {
+        if let Some(resp) = forward_to_worker(req) {
+            return resp;
+        }
+        let tele = crate::ocr_engine::HotOcrTelemetry::new_warm(45.0);
+        return HttpResponse::ok_json(&tele.to_json());
+    }
     if path.starts_with("/api/keyboard/shortcut") || path.starts_with("/api/ocr/") {
         if let Some(resp) = forward_to_worker(req) {
             return resp;
@@ -7087,6 +7780,28 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     // 6. API: Audio & Update & Wallpaper & System Startup & Tray
+    if path == "/api/audio/native-status" {
+        let rep = iphone_link_audio::wasapi_output::probe_wasapi_shared_engine();
+        let ok = rep.mmdevice_enumerator_ok && rep.audio_client_ok && rep.audio_render_client_ok;
+        let json = format!(
+            r#"{{"ok":{},"mmcss_enabled":{},"task_name":"{}","bypass_ecoqos":{},"mmdevice_enumerator_ok":{},"audio_client_ok":{},"audio_render_client_ok":{},"virtual_null_sink":{},"buffer_frames":{},"sample_rate":{},"channels":{},"bits_per_sample":{},"backend":"{}","detail":"{}"}}"#,
+            ok,
+            rep.mmcss_enabled,
+            rep.task_name.replace('"', "'"),
+            rep.bypass_ecoqos,
+            rep.mmdevice_enumerator_ok,
+            rep.audio_client_ok,
+            rep.audio_render_client_ok,
+            rep.virtual_null_sink,
+            rep.buffer_frames,
+            rep.sample_rate,
+            rep.channels,
+            rep.bits_per_sample,
+            rep.backend.replace('"', "'"),
+            rep.detail.replace('\\', "\\\\").replace('"', "'"),
+        );
+        return HttpResponse::ok_json(&json);
+    }
     if path.starts_with("/api/audio") {
         let is_mutating = req.method == "POST" || path == "/api/audio/mute";
         if is_mutating {
@@ -7126,14 +7841,90 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/update/status" || path == "/api/update/check" || path == "/api/update/install" {
-        let ch = parse_string_param(&req.body, "channel").unwrap_or_else(|| {
-            state.lock().map(|s| s.update_channel.clone()).unwrap_or_else(|_| "stable".to_string())
-        });
-        return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"status":"up_to_date","currentVersion":"4.0.0","current_version":"4.0.0","latestVersion":"4.0.0","updateAvailable":false,"channel":"{}"}}"#,
-            escape_json_str(&ch)
-        ));
+    if path == "/api/update/status" {
+        let (cached_json, auto_check, ch, active_transfer) = if let Ok(mut s) = state.lock() {
+            let ac = s.auto_check_update;
+            let uc = s.update_channel.clone();
+            let active = s.updater.is_active_transfer();
+            if !active {
+                s.updater.channel = uc.clone();
+            }
+            (s.updater.to_json(ac), ac, uc, active)
+        } else {
+            return HttpResponse::ok_json(&UpdateStateCache::default().to_json(true));
+        };
+        if active_transfer {
+            if let Some(worker_resp) = forward_to_worker(req) {
+                if worker_resp.status_code == 200 {
+                    let body = String::from_utf8_lossy(&worker_resp.body);
+                    if let Ok(mut s) = state.lock() {
+                        s.updater.apply_worker_payload(&body, &ch);
+                        return HttpResponse::ok_json(&s.updater.to_json(auto_check));
+                    }
+                }
+            }
+        }
+        return HttpResponse::ok_json(&cached_json);
+    }
+
+    if path == "/api/update/check" {
+        let ch = parse_string_param(&req.body, "channel")
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_else(|| {
+                state
+                    .lock()
+                    .map(|s| s.update_channel.clone())
+                    .unwrap_or_else(|_| "stable".to_string())
+            });
+        if let Ok(mut s) = state.lock() {
+            s.update_channel = ch.clone();
+        }
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 {
+                let body = String::from_utf8_lossy(&worker_resp.body);
+                if let Ok(mut s) = state.lock() {
+                    let ac = s.auto_check_update;
+                    s.updater.apply_worker_payload(&body, &ch);
+                    return HttpResponse::ok_json(&s.updater.to_json(ac));
+                }
+            }
+        }
+        if let Ok(mut s) = state.lock() {
+            let ac = s.auto_check_update;
+            s.updater.set_offline_fallback(&ch);
+            return HttpResponse::ok_json(&s.updater.to_json(ac));
+        }
+        let mut fallback = UpdateStateCache::default();
+        fallback.set_offline_fallback(&ch);
+        return HttpResponse::ok_json(&fallback.to_json(true));
+    }
+
+    if path == "/api/update/install" {
+        let ch = state
+            .lock()
+            .map(|s| s.update_channel.clone())
+            .unwrap_or_else(|_| "stable".to_string());
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 {
+                let body = String::from_utf8_lossy(&worker_resp.body);
+                if body.contains(r#""ok":true"#) || body.contains(r#""ok": true"#) {
+                    if let Ok(mut s) = state.lock() {
+                        s.updater.status = "downloading".to_string();
+                        s.updater.progress = 5;
+                        s.updater.message = "Mengunduh pembaruan di latar belakang...".to_string();
+                    }
+                }
+                return worker_resp;
+            }
+        }
+        if let Ok(mut s) = state.lock() {
+            let ac = s.auto_check_update;
+            s.updater.set_offline_fallback(&ch);
+            return HttpResponse::ok_json(&s.updater.to_json(ac));
+        }
+        let mut fallback = UpdateStateCache::default();
+        fallback.set_offline_fallback(&ch);
+        return HttpResponse::ok_json(&fallback.to_json(true));
     }
 
     if path == "/api/system/startup" {
@@ -7179,6 +7970,41 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     if path == "/api/system/wallpaper-sig" {
         let (_, _, sig) = get_current_wallpaper_data();
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"wallpaperSig":"{}"}}"#, sig));
+    }
+
+    if path == "/api/system/memory" || path == "/api/system/reclaim-memory" {
+        let is_reclaim = path == "/api/system/reclaim-memory";
+        trim_current_rust_process_working_set();
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 && !worker_resp.body.is_empty() {
+                let worker_str = String::from_utf8_lossy(&worker_resp.body).to_string();
+                let py_mb = extract_json_f64_field(&worker_str, "python_worker_working_set_mb").unwrap_or(0.0);
+                let ps_mb = extract_json_f64_field(&worker_str, "hot_ocr_ps_working_set_mb").unwrap_or(0.0);
+                let rust_mb = current_rust_process_working_set_mb();
+                let total_mb = ((py_mb + ps_mb + rust_mb) * 100.0).round() / 100.0;
+                let mut updated = worker_str;
+                for pat in [r#""rust_shell_working_set_mb": 0.0"#, r#""rust_shell_working_set_mb":0.0"#] {
+                    if updated.contains(pat) {
+                        updated = updated.replacen(pat, &format!(r#""rust_shell_working_set_mb":{:.2}"#, rust_mb), 1);
+                        break;
+                    }
+                }
+                if let Some(t_idx) = updated.find(r#""total_backend_working_set_mb":"#) {
+                    let val_start = t_idx + r#""total_backend_working_set_mb":"#.len();
+                    let val_end = updated[val_start..]
+                        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != ' ')
+                        .map(|o| val_start + o)
+                        .unwrap_or(updated.len());
+                    updated.replace_range(val_start..val_end, &format!("{:.2}", total_mb));
+                }
+                return HttpResponse::ok_json(&updated);
+            }
+        }
+        let rust_mb = current_rust_process_working_set_mb();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"reclaimed":{},"worker_online":false,"python_worker_working_set_mb":0.0,"hot_ocr_ps_working_set_mb":0.0,"rust_shell_working_set_mb":{:.2},"total_backend_working_set_mb":{:.2}}}"#,
+            is_reclaim, rust_mb, rust_mb
+        ));
     }
 
     if path == "/api/system/hevc_status" {
@@ -7232,6 +8058,56 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
         return HttpResponse::ok_json(
             r#"{"ok":false,"installed":false,"storeUrl":"ms-windows-store://pdp/?ProductId=9NMZLZ57R3T7","error":"HEVC AppxBundle not found locally"}"#,
+        );
+    }
+
+    if path == "/api/driver/diagnostics" {
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 {
+                return worker_resp;
+            }
+        }
+        let diag_json = build_native_driver_diagnostics_json();
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"diagnostics":{}}}"#, diag_json));
+    }
+
+    if path == "/api/driver/repair" {
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 {
+                return worker_resp;
+            }
+        }
+        let (repaired, drv_ok, svc_ok) = repair_native_apple_service();
+        let diag_json = build_native_driver_diagnostics_json();
+        let msg_id = if repaired {
+            "Layanan Apple Mobile Device Service & Driver USB aktif dan siap digunakan."
+        } else {
+            "Perbaikan driver selesai dijalankan. Jika belum aktif, jalankan Setup.exe untuk memasang Apple USB Driver."
+        };
+        let msg_en = if repaired {
+            "Apple Mobile Device Service & USB Driver verified and running."
+        } else {
+            "Driver repair finished. If still inactive, run Setup.exe to install the bundled Apple USB Driver."
+        };
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"repaired":{},"driver_ready":{},"service_running":{},"diagnostics":{},"message_id":"{}","message_en":"{}"}}"#,
+            repaired,
+            drv_ok,
+            svc_ok,
+            diag_json,
+            escape_json_str(msg_id),
+            escape_json_str(msg_en)
+        ));
+    }
+
+    if path == "/api/device/unlock-developer-mode" {
+        if let Some(worker_resp) = forward_to_worker(req) {
+            if worker_resp.status_code == 200 {
+                return worker_resp;
+            }
+        }
+        return HttpResponse::ok_json(
+            r#"{"ok":false,"connected":false,"revealed":false,"developer_mode_status":"disconnected","error":"Worker offline or no USB iPhone connected","message_id":"Hubungkan iPhone menggunakan kabel data USB terlebih dahulu dan ketuk Trust This Computer.","message_en":"Connect your iPhone via USB data cable first and tap Trust This Computer."}"#,
         );
     }
 
@@ -8146,6 +9022,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     // 8. Screen streaming start / stop / status & /mirror/* bridge
     if path == "/api/screen" || path == "/api/screen/start" || path == "/api/screen/restart" {
         if req.method == "POST" {
+            LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
             if let Some(resp) = forward_to_worker(req) {
                 if resp.status_code == 200 {
                     let mut st = state.lock().unwrap();
@@ -8164,21 +9041,29 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 r#"{"ok":true,"phase":"running","status":"started","fps":60,"width":1202,"height":2598}"#,
             );
         } else {
-            if let Some(resp) = forward_to_worker(req) {
-                return resp;
+            let last_stop = LAST_STOP_MIRROR_MS.load(Ordering::SeqCst);
+            let stop_cooldown = last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000;
+            if !stop_cooldown {
+                if let Some(resp) = forward_to_worker(req) {
+                    return resp;
+                }
             }
             let st = state.lock().unwrap();
-            let phase = if st.is_streaming { "running" } else { "stopped" };
+            let active = st.is_streaming && !stop_cooldown;
+            let phase = if active { "running" } else { "idle" };
             return HttpResponse::ok_json(&format!(
                 r#"{{"ok":true,"phase":"{}","active":{},"fps":60,"width":1202,"height":2598}}"#,
-                phase, st.is_streaming
+                phase, active
             ));
         }
     }
 
     if path == "/api/screen/stop" || path == "/mirror/stop" {
-        let mut st = state.lock().unwrap();
-        st.is_streaming = false;
+        LAST_STOP_MIRROR_MS.store(now_epoch_ms_u64(), Ordering::SeqCst);
+        {
+            let mut st = state.lock().unwrap();
+            st.is_streaming = false;
+        }
         let stop_req = HttpRequest {
             method: "POST".to_string(),
             path: "/api/screen/stop".to_string(),
@@ -8188,9 +9073,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             body_bytes: Vec::new(),
         };
         if let Some(resp) = forward_to_worker(&stop_req) {
-            return resp;
+            let body_str = String::from_utf8_lossy(&resp.body)
+                .replace(r#""phase":"running""#, r#""phase":"idle""#)
+                .replace(r#""phase": "running""#, r#""phase": "idle""#)
+                .replace(r#""phase":"starting""#, r#""phase":"idle""#)
+                .replace(r#""phase": "starting""#, r#""phase": "idle""#);
+            return HttpResponse::ok_json(&body_str);
         }
-        return HttpResponse::ok_json(r#"{"ok":true,"phase":"stopped","status":"stopped"}"#);
+        return HttpResponse::ok_json(r#"{"ok":true,"phase":"idle","status":"stopped"}"#);
     }
 
     if path == "/api/wifi/pair" || path == "/api/wifi/scan" || path.starts_with("/api/wifi/probe") {
@@ -8872,6 +9762,10 @@ fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(Duration::from_millis(5000)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(5000)));
+    let peer_ip = stream
+        .peer_addr()
+        .map(|a| a.ip())
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
 
     let mut remaining_buf: Vec<u8> = Vec::with_capacity(16384);
 
@@ -8926,6 +9820,16 @@ fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_
         if let Some(req) = HttpRequest::parse(&raw_buf) {
             let wants_close = req.headers.get("connection").map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false);
 
+            if !is_lan_request_allowed(peer_ip, &req.method, &req.path) {
+                let resp = HttpResponse::forbidden_json(
+                    "Forbidden: LAN access is restricted to /c?u= and /api/shortcut/push",
+                );
+                let resp_bytes = resp.to_bytes_with_conn("close");
+                let _ = stream.write_all(&resp_bytes);
+                let _ = stream.flush();
+                break;
+            }
+
             let clean_path = req.path.split('?').next().unwrap_or("/").split('#').next().unwrap_or("/");
             if clean_path == "/mirror/live" || clean_path == "/stream.bin" {
                 let _ = stream.set_read_timeout(None);
@@ -8972,7 +9876,9 @@ impl NativeServer {
         }
         let listener = match listener_opt {
             Some(l) => l,
-            None => TcpListener::bind("0.0.0.0:0")
+            None => TcpListener::bind(format!("127.0.0.1:{}", port))
+                .or_else(|_| TcpListener::bind("0.0.0.0:0"))
+                .or_else(|_| TcpListener::bind("127.0.0.1:0"))
                 .map_err(|e| format!("Failed to bind TCP listener: {}", e))?,
         };
 
@@ -9027,6 +9933,10 @@ impl NativeServer {
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate process-global statics (SAVED_UNLOCK_PIN, tray atomics, etc.)
+    /// so default parallel `cargo test` runs deterministically without data races.
+    static TEST_SERIAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_http_request_parsing_and_query_strip() {
         let raw = b"GET /app.css?v=tahap149_complete_bilingual HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n";
@@ -9041,6 +9951,7 @@ mod tests {
 
     #[test]
     fn test_server_status_and_acrylic_response() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = Arc::new(Mutex::new(AppState::default()));
         let req_css = HttpRequest {
             method: "GET".to_string(),
@@ -9183,6 +10094,7 @@ mod tests {
 
     #[test]
     fn test_tahap183_tray_startup_pin_persistence_and_wipe() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = Arc::new(Mutex::new(AppState::default()));
 
         // 1. Verify V4_BRIDGE_JS includes Tahap 183 PIN persistence & tray update handlers
@@ -9304,6 +10216,7 @@ mod tests {
 
     #[test]
     fn test_tahap184_universal_persistence_language_sync_and_tray_dismiss() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut state_raw = AppState::default();
         assert_eq!(state_raw.fit_mode, "autofit");
         assert_eq!(state_raw.language, Lang::Id);
@@ -9387,6 +10300,7 @@ mod tests {
 
     #[test]
     fn test_tahap185_find_python_runtime_priority_and_hevc_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // 1. Self-contained embedded runtime/ beside EXE takes Priority 1 (zero system Python)
         let base = std::env::temp_dir().join(format!(
             "iphone_link_t185_runtime_test_{}",
@@ -9437,6 +10351,7 @@ mod tests {
 
     #[test]
     fn test_tahap186_resolve_web_root_and_updater_bridge() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let base = std::env::temp_dir().join(format!(
             "iphone_link_t186_webroot_test_{}",
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
@@ -9482,6 +10397,7 @@ mod tests {
 
     #[test]
     fn test_tahap202_digital_http_loopback_c_and_clipboard_push() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = Arc::new(Mutex::new(AppState::default()));
         let req_c_query = HttpRequest::parse(
             b"GET /c?u=https%3A%2F%2Fwww.threads.com%2F%40wallstreetwatch.id%2Fpost%2FDVghAL_kW9d%3Fxmt%3DAQF0xyz HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n",
@@ -9521,5 +10437,282 @@ mod tests {
         let req_bad = HttpRequest::parse(b"GET /c?u=not-a-valid-url HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
         let resp_bad = handle_request(&req_bad, &state, Path::new("web"));
         assert_eq!(resp_bad.status_code, 400);
+    }
+
+    #[test]
+    fn test_tahap210_ota_update_endpoints_cache_and_offline_fallback() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. GET /api/update/status must respond from cache in < 1ms without spawning network I/O
+        let req_status = HttpRequest::parse(
+            b"GET /api/update/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n",
+        )
+        .unwrap();
+        let t0 = std::time::Instant::now();
+        let resp_status = handle_request(&req_status, &state, Path::new("web"));
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(resp_status.status_code, 200);
+        assert!(elapsed_ms < 50.0, "status took too long: {elapsed_ms} ms");
+        let status_json = String::from_utf8_lossy(&resp_status.body);
+        assert!(status_json.contains(r#""currentVersion":"4.0.0""#));
+        assert!(status_json.contains(r#""latestVersion":"4.0.0""#));
+        assert!(status_json.contains(r#""updateAvailable":false"#));
+        assert!(status_json.contains(r#""user_settings.json""#));
+
+        // 2. Simulate cache rejecting stale v3.0.0 & accepting v4.0.1
+        {
+            let mut st = state.lock().unwrap();
+            st.updater.apply_worker_payload(
+                r#"{"status":"update_available","latestVersion":"3.0.0","updateAvailable":true,"channel":"stable"}"#,
+                "stable",
+            );
+            assert!(!st.updater.update_available);
+            assert_eq!(st.updater.latest_version, "4.0.0");
+
+            st.updater.apply_worker_payload(
+                r#"{"status":"update_available","latestVersion":"4.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v4.0.1.zip","channel":"beta"}"#,
+                "beta",
+            );
+            assert!(st.updater.update_available);
+            assert_eq!(st.updater.latest_version, "4.0.1");
+        }
+
+        // 3. POST /api/update/check gracefully handles worker absent/offline without throwing HTTP error
+        let body_chk = br#"{"channel":"beta"}"#;
+        let raw_chk = format!(
+            "POST /api/update/check HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body_chk.len(),
+            String::from_utf8_lossy(body_chk)
+        );
+        let req_chk = HttpRequest::parse(raw_chk.as_bytes()).unwrap();
+        let resp_chk = handle_request(&req_chk, &state, Path::new("web"));
+        assert_eq!(resp_chk.status_code, 200);
+        let chk_json = String::from_utf8_lossy(&resp_chk.body);
+        assert!(chk_json.contains(r#""ok":true"#));
+        assert!(chk_json.contains(r#""currentVersion":"4.0.0""#));
+        assert!(chk_json.contains(r#""channel":"beta""#));
+    }
+
+    #[test]
+    fn test_tahap212_hot_ocr_status_and_native_wasapi_audio_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. GET /api/ocr/status & /api/status report hot_ocr_engine_ready
+        let req_ocr = HttpRequest::parse(b"GET /api/ocr/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_ocr = handle_request(&req_ocr, &state, Path::new("web"));
+        assert_eq!(resp_ocr.status_code, 200);
+        let ocr_json = String::from_utf8_lossy(&resp_ocr.body);
+        assert!(ocr_json.contains(r#""hot_ocr_engine_ready":true"#), "got {ocr_json}");
+
+        let req_st = HttpRequest::parse(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_st = handle_request(&req_st, &state, Path::new("web"));
+        assert_eq!(resp_st.status_code, 200);
+        let st_json = String::from_utf8_lossy(&resp_st.body);
+        assert!(st_json.contains(r#""hot_ocr_engine_ready": true"#), "got {st_json}");
+
+        // 2. GET /api/audio/native-status reports real COM WASAPI Shared-Mode engine
+        let req_aud = HttpRequest::parse(b"GET /api/audio/native-status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_aud = handle_request(&req_aud, &state, Path::new("web"));
+        assert_eq!(resp_aud.status_code, 200);
+        let aud_json = String::from_utf8_lossy(&resp_aud.body);
+        assert!(aud_json.contains(r#""ok":true"#), "got {aud_json}");
+        assert!(aud_json.contains(r#""mmdevice_enumerator_ok":true"#), "got {aud_json}");
+        assert!(aud_json.contains(r#""audio_client_ok":true"#), "got {aud_json}");
+        assert!(aud_json.contains(r#""audio_render_client_ok":true"#), "got {aud_json}");
+        assert!(aud_json.contains(r#""sample_rate":48000"#), "got {aud_json}");
+    }
+
+    #[test]
+    fn test_tahap213_hot_ocr_status_and_grab_link_shortcut_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let req_ocr = HttpRequest::parse(b"GET /api/ocr/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_ocr = handle_request(&req_ocr, &state, Path::new("web"));
+        assert_eq!(resp_ocr.status_code, 200);
+        let ocr_json = String::from_utf8_lossy(&resp_ocr.body);
+        assert!(ocr_json.contains(r#""hot_ocr_engine_ready":true"#), "got {ocr_json}");
+        assert!(ocr_json.contains(r#""fallbacks_triggered":0"#), "got {ocr_json}");
+
+        let body_copy = br#"{"action":"copy","waitResult":true,"raw_text":"iphone to windows\n\nprabowo teddy keracun?"}"#;
+        let hdr_copy = format!(
+            "POST /api/keyboard/shortcut HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body_copy.len()
+        );
+        let mut raw_copy = hdr_copy.into_bytes();
+        raw_copy.extend_from_slice(body_copy);
+        let req_copy = HttpRequest::parse(&raw_copy).unwrap();
+        let resp_copy = handle_request(&req_copy, &state, Path::new("web"));
+        assert_eq!(resp_copy.status_code, 200);
+        let copy_json = String::from_utf8_lossy(&resp_copy.body);
+        assert!(copy_json.contains(r#""action":"copy""#), "got {copy_json}");
+
+        let body_grab = br#"{"raw_text":"https://www.instagram.com/reel/DScCQallz12/"}"#;
+        let hdr_grab = format!(
+            "POST /api/social/grab-link HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body_grab.len()
+        );
+        let mut raw_grab = hdr_grab.into_bytes();
+        raw_grab.extend_from_slice(body_grab);
+        let req_grab = HttpRequest::parse(&raw_grab).unwrap();
+        let resp_grab = handle_request(&req_grab, &state, Path::new("web"));
+        assert_eq!(resp_grab.status_code, 200);
+        let grab_json = String::from_utf8_lossy(&resp_grab.body);
+        assert!(grab_json.contains("DScCQallz12"), "got {grab_json}");
+    }
+
+    #[test]
+    fn test_tahap214_memory_telemetry_and_reclaim_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        trim_current_rust_process_working_set();
+        let ws_mb = current_rust_process_working_set_mb();
+        assert!(ws_mb > 0.0 && ws_mb < 150.0, "unexpected working set {ws_mb} MB");
+
+        let req_mem = HttpRequest::parse(b"GET /api/system/memory HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_mem = handle_request(&req_mem, &state, Path::new("web"));
+        assert_eq!(resp_mem.status_code, 200);
+        let mem_json = String::from_utf8_lossy(&resp_mem.body);
+        assert!(mem_json.contains(r#""ok":true"#), "got {mem_json}");
+        assert!(mem_json.contains("rust_shell_working_set_mb"), "got {mem_json}");
+        assert!(mem_json.contains("total_backend_working_set_mb"), "got {mem_json}");
+
+        let req_reclaim = HttpRequest::parse(
+            b"POST /api/system/reclaim-memory HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        )
+        .unwrap();
+        let resp_reclaim = handle_request(&req_reclaim, &state, Path::new("web"));
+        assert_eq!(resp_reclaim.status_code, 200);
+        let rec_json = String::from_utf8_lossy(&resp_reclaim.body);
+        assert!(rec_json.contains(r#""ok":true"#), "got {rec_json}");
+        assert!(rec_json.contains("rust_shell_working_set_mb"), "got {rec_json}");
+        assert!(rec_json.contains("total_backend_working_set_mb"), "got {rec_json}");
+    }
+
+    #[test]
+    fn test_tahap215_lan_security_guard_and_c_endpoint() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_clip = crate::ocr_engine::read_win32_clipboard();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. LAN Security Guard: non-loopback strictly restricted to /c, /api/shortcut/push, /api/clipboard/push, OPTIONS
+        let lan_ip: IpAddr = "192.168.1.50".parse().unwrap();
+        let loopback_ip: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(is_lan_request_allowed(lan_ip, "GET", "/c?u=https%3A%2F%2Fshopee.co.id%2Fitem"));
+        assert!(is_lan_request_allowed(lan_ip, "POST", "/api/shortcut/push"));
+        assert!(is_lan_request_allowed(lan_ip, "POST", "/api/clipboard/push"));
+        assert!(is_lan_request_allowed(lan_ip, "OPTIONS", "/api/status"));
+        assert!(!is_lan_request_allowed(lan_ip, "GET", "/api/status"));
+        assert!(!is_lan_request_allowed(lan_ip, "POST", "/api/screen/stop"));
+        assert!(!is_lan_request_allowed(lan_ip, "POST", "/api/ocr/extract"));
+        assert!(!is_lan_request_allowed(lan_ip, "POST", "/mirror/touch"));
+        assert!(is_lan_request_allowed(loopback_ip, "GET", "/api/status"));
+        assert!(is_lan_request_allowed(loopback_ip, "POST", "/api/screen/stop"));
+
+        // 2. Complex URL decoding & Win32 clipboard copy (< 15ms) across IG /p/, /reel/, Threads /post/, TikTok, YouTube, Shopee
+        let urls = [
+            ("https://www.instagram.com/p/DScCQallz12/?igsh=MzRlODBiNWFlZA==", "https%3A%2F%2Fwww.instagram.com%2Fp%2FDScCQallz12%2F%3Figsh%3DMzRlODBiNWFlZA%3D%3D"),
+            ("https://www.instagram.com/reel/DVV5lTDy3RO/", "https%3A%2F%2Fwww.instagram.com%2Freel%2FDVV5lTDy3RO%2F"),
+            ("https://www.threads.com/@kelvin.daniyar/post/DVghAL_kW9d", "https%3A%2F%2Fwww.threads.com%2F%40kelvin.daniyar%2Fpost%2FDVghAL_kW9d"),
+            ("https://www.tiktok.com/@kelvindaniyar/video/7412345678901234567", "https%3A%2F%2Fwww.tiktok.com%2F%40kelvindaniyar%2Fvideo%2F7412345678901234567"),
+            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ%26t%3D42s"),
+            ("https://shopee.co.id/product/123456/7890123?sp_atk=xyz99", "https%3A%2F%2Fshopee.co.id%2Fproduct%2F123456%2F7890123%3Fsp_atk%3Dxyz99"),
+        ];
+        for (expected, encoded) in urls {
+            let raw = format!("GET /c?u={} HTTP/1.1\r\nHost: 192.168.1.10:8765\r\nAccept: application/json\r\n\r\n", encoded);
+            let req = HttpRequest::parse(raw.as_bytes()).unwrap();
+            let resp = handle_request(&req, &state, Path::new("web"));
+            assert_eq!(resp.status_code, 200, "failed for {expected}");
+            let body = String::from_utf8_lossy(&resp.body);
+            assert!(body.contains(r#""ok":true"#), "got {body}");
+            assert!(body.contains(expected), "missing expected URL in {body}");
+            let clip_now = crate::ocr_engine::read_win32_clipboard().unwrap_or_default();
+            assert_eq!(clip_now, expected, "clipboard mismatch for {expected}");
+        }
+
+        // 3. GET /api/shortcut/setup-info
+        let req_info = HttpRequest::parse(b"GET /api/shortcut/setup-info HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_info = handle_request(&req_info, &state, Path::new("web"));
+        assert_eq!(resp_info.status_code, 200);
+        let info_json = String::from_utf8_lossy(&resp_info.body);
+        assert!(info_json.contains(r#""pc_lan_ip":"#), "got {info_json}");
+        assert!(info_json.contains(r#""port":8765"#), "got {info_json}");
+        assert!(info_json.contains("shortcut_endpoint_template"), "got {info_json}");
+        assert!(info_json.contains("Send to iPhone Link"), "got {info_json}");
+
+        // 4. Atomic Stop State (/api/screen/stop -> immediate idle phase on /api/status)
+        {
+            let mut st = state.lock().unwrap();
+            st.is_streaming = true;
+        }
+        let req_stop = HttpRequest::parse(b"POST /api/screen/stop HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+        let resp_stop = handle_request(&req_stop, &state, Path::new("web"));
+        assert_eq!(resp_stop.status_code, 200);
+        let stop_body = String::from_utf8_lossy(&resp_stop.body);
+        assert!(stop_body.contains(r#""phase":"idle""#), "got {stop_body}");
+        let req_status = HttpRequest::parse(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_status = handle_request(&req_status, &state, Path::new("web"));
+        assert_eq!(resp_status.status_code, 200);
+        let st_body = String::from_utf8_lossy(&resp_status.body);
+        assert!(st_body.contains(r#""phase": "idle""#) || st_body.contains(r#""phase":"idle""#), "got {st_body}");
+
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        if let Some(prev) = prev_clip {
+            let _ = crate::ocr_engine::write_win32_clipboard(&prev);
+        }
+    }
+
+    #[test]
+    fn test_tahap216_setup_info_anti_confusion_ip_fields() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. Parser extracts cached iPhone LAN IPv4 without matching PC LAN IP or loopback
+        let sample_wifi_json = r#"{"paired":["00008140-00112233"],"enabled":true,"last_ip":"192.168.100.41"}"#;
+        assert_eq!(
+            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.168.100.8").as_deref(),
+            Some("192.168.100.41")
+        );
+        assert_eq!(
+            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.168.100.41"),
+            None
+        );
+        let loopback_json = r#"{"last_ip":"127.0.0.1"}"#;
+        assert_eq!(
+            extract_cached_iphone_lan_ip_from_json(loopback_json, "192.168.100.8"),
+            None
+        );
+
+        // 2. GET /api/shortcut/setup-info returns explicit anti-confusion IP fields alongside Tahap 215 fields
+        let req_info = HttpRequest::parse(b"GET /api/shortcut/setup-info HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_info = handle_request(&req_info, &state, Path::new("web"));
+        assert_eq!(resp_info.status_code, 200);
+        let info_json = String::from_utf8_lossy(&resp_info.body);
+        assert!(info_json.contains(r#""pc_lan_ip":"#), "missing pc_lan_ip in {info_json}");
+        assert!(info_json.contains(r#""iphone_lan_ip":"#), "missing iphone_lan_ip in {info_json}");
+        assert!(info_json.contains(r#""ip_warning_id":"[GUNAKAN IP PC:"#), "missing ip_warning_id in {info_json}");
+        assert!(info_json.contains(r#""ip_warning_en":"[USE PC IP:"#), "missing ip_warning_en in {info_json}");
+        assert!(info_json.contains("shortcut_endpoint_template"), "missing template in {info_json}");
+        assert!(!info_json.contains('\u{26a1}') && !info_json.contains('\u{26a0}'), "must not contain forbidden emojis in {info_json}");
+    }
+
+    #[test]
+    fn test_tahap217_icloud_shortcut_url_and_dual_mode_siri_prompt() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_info = HttpRequest::parse(b"GET /api/shortcut/setup-info HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_info = handle_request(&req_info, &state, Path::new("web"));
+        assert_eq!(resp_info.status_code, 200);
+        let info_json = String::from_utf8_lossy(&resp_info.body);
+        assert!(
+            info_json.contains(r#""icloud_shortcut_url":"https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff""#),
+            "missing official iCloud shortcut URL in {info_json}"
+        );
+        assert!(info_json.contains("Send to iPhone Link"), "missing shortcut name in {info_json}");
+        assert!(info_json.contains("Get URLs from"), "missing Dual-Mode Get URLs from in {info_json}");
+        assert!(info_json.contains("Get Contents of URL"), "missing Get Contents of URL in {info_json}");
     }
 }

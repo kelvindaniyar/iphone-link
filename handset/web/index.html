@@ -7,6 +7,299 @@
   <title>iPhone Link - iPhone Mirroring &amp; Control for Windows</title>
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <link rel="stylesheet" href="/app.css?v=tahap149_complete_bilingual_and_light_contrast">
+  <style id="tahap222-theme-contrast">
+    /* Tahap 222: High-Contrast Light & Dark Theme Rules for Shortcut Card & Side Drawer */
+    #shortcut-url-box,
+    .shortcut-url-card {
+      background: rgba(14, 116, 144, 0.14) !important;
+      border: 1px solid rgba(56, 189, 248, 0.32) !important;
+    }
+    #shortcut-box-title,
+    .shortcut-box-title {
+      color: #38bdf8 !important;
+      font-weight: 700 !important;
+    }
+    #link-shortcut-guide-hint,
+    .shortcut-setup-link {
+      color: #38bdf8 !important;
+      font-weight: 600 !important;
+      text-decoration: underline !important;
+    }
+    #shortcut-ip-comparison,
+    #shortcut-ip-hint,
+    .shortcut-ip-hint {
+      color: #e2e8f0 !important;
+      font-weight: 600 !important;
+    }
+    #shortcut-ocr-note,
+    .shortcut-ocr-note {
+      color: #cbd5e1 !important;
+      font-weight: 600 !important;
+    }
+    #shortcut-url-preview,
+    .shortcut-url-code {
+      background: rgba(15, 23, 42, 0.72) !important;
+      color: #f8fafc !important;
+      border: 1px solid rgba(148, 163, 184, 0.28) !important;
+    }
+
+    html[data-theme="light"] #shortcut-url-box,
+    html[data-theme="light"] .shortcut-url-card,
+    body[data-theme="light"] #shortcut-url-box,
+    body[data-theme="light"] .shortcut-url-card,
+    .app[data-theme="light"] #shortcut-url-box,
+    [data-theme="light"] #shortcut-url-box,
+    [data-theme="light"] .shortcut-url-card {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.10) 100%) !important;
+      backdrop-filter: blur(18px) saturate(160%) !important;
+      -webkit-backdrop-filter: blur(18px) saturate(160%) !important;
+      border: 1px solid rgba(255, 255, 255, 0.54) !important;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
+    }
+    html[data-theme="light"] #shortcut-box-title,
+    html[data-theme="light"] .shortcut-box-title,
+    body[data-theme="light"] #shortcut-box-title,
+    .app[data-theme="light"] #shortcut-box-title,
+    [data-theme="light"] #shortcut-box-title,
+    [data-theme="light"] .shortcut-box-title {
+      color: #0369a1 !important;
+      font-weight: 700 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #link-shortcut-guide-hint,
+    html[data-theme="light"] .shortcut-setup-link,
+    body[data-theme="light"] #link-shortcut-guide-hint,
+    .app[data-theme="light"] #link-shortcut-guide-hint,
+    [data-theme="light"] #link-shortcut-guide-hint,
+    [data-theme="light"] .shortcut-setup-link {
+      color: #0284c7 !important;
+      font-weight: 600 !important;
+      text-decoration: underline !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #shortcut-ip-comparison,
+    html[data-theme="light"] #shortcut-ip-hint,
+    html[data-theme="light"] .shortcut-ip-hint,
+    body[data-theme="light"] #shortcut-ip-comparison,
+    .app[data-theme="light"] #shortcut-ip-comparison,
+    [data-theme="light"] #shortcut-ip-comparison,
+    [data-theme="light"] #shortcut-ip-hint,
+    [data-theme="light"] .shortcut-ip-hint {
+      color: #1e293b !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #shortcut-ocr-note,
+    html[data-theme="light"] .shortcut-ocr-note,
+    body[data-theme="light"] #shortcut-ocr-note,
+    .app[data-theme="light"] #shortcut-ocr-note,
+    [data-theme="light"] #shortcut-ocr-note,
+    [data-theme="light"] .shortcut-ocr-note {
+      color: #0f172a !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #shortcut-url-preview,
+    html[data-theme="light"] .shortcut-url-code,
+    body[data-theme="light"] #shortcut-url-preview,
+    .app[data-theme="light"] #shortcut-url-preview,
+    [data-theme="light"] #shortcut-url-preview,
+    [data-theme="light"] .shortcut-url-code {
+      background: rgba(15, 23, 42, 0.08) !important;
+      backdrop-filter: blur(10px) saturate(140%) !important;
+      -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+      color: #0f172a !important;
+      border: 1px solid rgba(15, 23, 42, 0.18) !important;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #shortcut-url-box button,
+    html[data-theme="light"] #btn-copy-shortcut-url,
+    html[data-theme="light"] #btn-open-icloud-shortcut,
+    html[data-theme="light"] #btn-get-icloud-shortcut,
+    html[data-theme="light"] #btn-copy-siri-prompt,
+    html[data-theme="light"] #btn-copy-shortcut-prompt,
+    [data-theme="light"] #shortcut-url-box button,
+    [data-theme="light"] #btn-copy-shortcut-url,
+    [data-theme="light"] #btn-open-icloud-shortcut,
+    [data-theme="light"] #btn-get-icloud-shortcut,
+    [data-theme="light"] #btn-copy-siri-prompt,
+    [data-theme="light"] #btn-copy-shortcut-prompt {
+      background: rgba(255, 255, 255, 0.24) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
+      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+      color: #0f172a !important;
+      border: 1px solid rgba(255, 255, 255, 0.62) !important;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.60) !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #shortcut-url-box button:hover,
+    html[data-theme="light"] #btn-copy-shortcut-url:hover,
+    html[data-theme="light"] #btn-open-icloud-shortcut:hover,
+    html[data-theme="light"] #btn-get-icloud-shortcut:hover,
+    html[data-theme="light"] #btn-copy-siri-prompt:hover,
+    html[data-theme="light"] #btn-copy-shortcut-prompt:hover,
+    [data-theme="light"] #shortcut-url-box button:hover {
+      background: rgba(255, 255, 255, 0.38) !important;
+      border-color: rgba(255, 255, 255, 0.85) !important;
+    }
+    html[data-theme="light"] .shortcut-pill,
+    body[data-theme="light"] .shortcut-pill,
+    .app[data-theme="light"] .shortcut-pill,
+    [data-theme="light"] .shortcut-pill {
+      background: rgba(255, 255, 255, 0.22) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
+      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+      border: 1px solid rgba(255, 255, 255, 0.62) !important;
+      color: #0f172a !important;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] .shortcut-pill kbd,
+    [data-theme="light"] .shortcut-pill kbd {
+      background: rgba(15, 23, 42, 0.12) !important;
+      color: #0f172a !important;
+      border: 1px solid rgba(15, 23, 42, 0.18) !important;
+    }
+    html[data-theme="light"] .shortcuts-badge-list,
+    [data-theme="light"] .shortcuts-badge-list {
+      background: transparent !important;
+    }
+    html[data-theme="light"] #shortcut-url-box button *,
+    [data-theme="light"] #shortcut-url-box button * {
+      color: #0f172a !important;
+    }
+
+    /* Light Mode High Contrast Audit Across #device-card, #card-updater & Drawer Text */
+    html[data-theme="light"] #control-pane details > summary,
+    [data-theme="light"] #control-pane details > summary {
+      color: #0f172a !important;
+      font-weight: 700 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #device-card #status dt,
+    [data-theme="light"] #device-card #status dt {
+      color: #334155 !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #device-card #status dd,
+    [data-theme="light"] #device-card #status dd {
+      color: #0f172a !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #device-card #status dd.ok,
+    [data-theme="light"] #device-card #status dd.ok,
+    html[data-theme="light"] #diag-apple-driver.ok,
+    html[data-theme="light"] #status-service.ok,
+    html[data-theme="light"] #diag-tcp-port.ok,
+    html[data-theme="light"] #status-devmode.ok,
+    html[data-theme="light"] #diag-hevc-codec.ok {
+      color: #047857 !important;
+      font-weight: 700 !important;
+    }
+    html[data-theme="light"] #device-card #status dd.warn,
+    [data-theme="light"] #device-card #status dd.warn,
+    html[data-theme="light"] #diag-apple-driver.warn,
+    html[data-theme="light"] #status-service.warn,
+    html[data-theme="light"] #diag-tcp-port.warn,
+    html[data-theme="light"] #status-devmode.warn,
+    html[data-theme="light"] #diag-hevc-codec.warn {
+      color: #b45309 !important;
+      font-weight: 700 !important;
+    }
+    html[data-theme="light"] #devmode-action-status,
+    [data-theme="light"] #devmode-action-status {
+      background: rgba(14, 165, 233, 0.14) !important;
+      backdrop-filter: blur(10px) saturate(140%) !important;
+      -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+      border: 1px solid rgba(2, 132, 199, 0.35) !important;
+      color: #0c4a6e !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #btn-unlock-devmode,
+    html[data-theme="light"] #btn-repair-driver,
+    html[data-theme="light"] #refresh,
+    [data-theme="light"] #btn-unlock-devmode,
+    [data-theme="light"] #btn-repair-driver,
+    [data-theme="light"] #refresh {
+      background: rgba(255, 255, 255, 0.24) !important;
+      backdrop-filter: blur(12px) saturate(150%) !important;
+      -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+      color: #0f172a !important;
+      border: 1px solid rgba(255, 255, 255, 0.62) !important;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.60) !important;
+      font-weight: 600 !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #btn-unlock-devmode:hover,
+    html[data-theme="light"] #btn-repair-driver:hover,
+    html[data-theme="light"] #refresh:hover,
+    [data-theme="light"] #btn-unlock-devmode:hover,
+    [data-theme="light"] #btn-repair-driver:hover,
+    [data-theme="light"] #refresh:hover {
+      background: rgba(255, 255, 255, 0.38) !important;
+      border-color: rgba(255, 255, 255, 0.85) !important;
+    }
+    html[data-theme="light"] #btn-unlock-devmode *,
+    html[data-theme="light"] #btn-repair-driver *,
+    html[data-theme="light"] #refresh *,
+    [data-theme="light"] #btn-unlock-devmode *,
+    [data-theme="light"] #btn-repair-driver *,
+    [data-theme="light"] #refresh * {
+      color: #0f172a !important;
+    }
+    html[data-theme="light"] #status-note,
+    [data-theme="light"] #status-note {
+      color: #1e293b !important;
+      font-weight: 500 !important;
+    }
+    html[data-theme="light"] #status-note.warn,
+    [data-theme="light"] #status-note.warn {
+      color: #b45309 !important;
+      font-weight: 600 !important;
+    }
+    html[data-theme="light"] #update-info-box,
+    [data-theme="light"] #update-info-box {
+      backdrop-filter: blur(10px) saturate(140%) !important;
+      -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+    }
+    html[data-theme="light"] #card-updater .update-card-title,
+    html[data-theme="light"] #card-updater .update-version-label,
+    html[data-theme="light"] #card-updater .update-row-label,
+    html[data-theme="light"] #card-updater .update-status-text,
+    html[data-theme="light"] #update-info-box p,
+    [data-theme="light"] #card-updater .update-card-title,
+    [data-theme="light"] #card-updater .update-row-label,
+    [data-theme="light"] #card-updater .update-status-text {
+      color: #0f172a !important;
+      text-shadow: none !important;
+    }
+    html[data-theme="light"] #control-pane .setting-label,
+    html[data-theme="light"] #control-pane .setting-label .btn-label,
+    html[data-theme="light"] #control-pane .crop-label-row span,
+    [data-theme="light"] #control-pane .setting-label,
+    [data-theme="light"] #control-pane .setting-label .btn-label,
+    [data-theme="light"] #control-pane .crop-label-row span {
+      color: #0f172a !important;
+    }
+    html[data-theme="light"] #control-pane .setting-hint,
+    html[data-theme="light"] #control-pane .unit,
+    html[data-theme="light"] #control-pane .stealth-subhint,
+    html[data-theme="light"] #control-pane .control-hint,
+    html[data-theme="light"] #control-pane .fine,
+    [data-theme="light"] #control-pane .setting-hint,
+    [data-theme="light"] #control-pane .stealth-subhint,
+    [data-theme="light"] #control-pane .control-hint,
+    [data-theme="light"] #control-pane .fine {
+      color: #334155 !important;
+      opacity: 1 !important;
+    }
+  </style>
 </head>
 <body>
   <div class="app" id="app-root">
@@ -458,7 +751,7 @@
                 <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
-                <span class="btn-label">Zero-Bluetooth USB Audio (48 kHz WASAPI · ~40 ms)</span>
+                <span class="btn-label" data-i18n="audio.badge_usb">Audio USB Tanpa Bluetooth (48 kHz WASAPI · ~40 ms)</span>
               </span>
             </div>
 
@@ -528,7 +821,7 @@
                     <rect x="2" y="4" width="20" height="16" rx="2"></rect>
                     <path d="M7 4v16M17 4v16M2 12h20"></path>
                   </svg>
-                  <span class="btn-label">Lip Sync</span>
+                  <span class="btn-label" data-i18n="audio.lipsync">Sinkron Bibir (Lip Sync)</span>
                 </span>
                 <span class="setting-hint" id="lip-sync-hint">ON</span>
               </div>
@@ -539,20 +832,20 @@
             </div>
 
             <details class="audio-bt-fallback" style="margin-top: 8px;">
-              <summary style="font-size: 11px; color: var(--muted); cursor: pointer; user-select: none;">Opsi Fallback Bluetooth A2DP</summary>
+              <summary data-i18n="audio.bt_fallback_summary" style="font-size: 11px; color: var(--muted); cursor: pointer; user-select: none;">Opsi Fallback Bluetooth A2DP</summary>
               <div style="display: flex; gap: 6px; margin-top: 6px;">
                 <button type="button" class="ctl ctl-sm" id="btn-audio-out-bt" data-audio-out="bluetooth" style="flex: 1;">
                   <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"></polyline>
                   </svg>
-                  <span class="btn-label">Gunakan Bluetooth</span>
+                  <span class="btn-label" data-i18n="audio.use_bt">Gunakan Bluetooth</span>
                 </button>
                 <button type="button" class="ctl ctl-sm audio-pair-btn" id="btn-audio-pair" style="flex: 1;">
                   <svg class="fluent-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                   </svg>
-                  <span class="btn-label">Pair BT</span>
+                  <span class="btn-label" data-i18n="audio.pair_bt">Pasangkan BT</span>
                 </button>
               </div>
             </details>
@@ -660,6 +953,24 @@
                   <span class="btn-label" data-i18n="kb.btn_grab_link">Grab Link (Alt+B)</span>
                 </button>
               </div>
+              <div id="shortcut-url-box" class="shortcut-url-card" style="margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 11px; line-height: 1.45;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+                  <strong id="shortcut-box-title" class="shortcut-box-title" data-i18n="kb.shortcut_box_title" style="font-size: 11px;">iOS 27 Shortcut — URL Server PC (100% Akurat, &lt;5ms)</strong>
+                  <a href="https://kelvindaniyar.github.io/iphone-link/#ios-shortcut-guide" target="_blank" rel="noopener noreferrer" id="link-shortcut-guide-hint" class="shortcut-setup-link" data-i18n="kb.shortcut_setup_guide" style="font-size: 10px; text-decoration: underline;" title="Lihat panduan instalasi iOS 27 Shortcut di website">Panduan Setup</a>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <code id="shortcut-url-preview" class="shortcut-url-code" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 10px; padding: 3px 6px; border-radius: 6px;">http://&lt;PC-IP&gt;:8765/c?u=</code>
+                  <button type="button" class="ctl ctl-sm shortcut-action-btn" id="btn-copy-shortcut-url" style="padding: 3px 8px; font-size: 10px; white-space: nowrap;"><span class="btn-label" data-i18n="kb.btn_copy_url">Salin URL</span></button>
+                </div>
+                <div id="shortcut-ip-comparison" class="shortcut-ip-hint" data-alias="shortcut-ip-hint" style="margin-top: 4px; font-size: 10px; line-height: 1.35;">[GUNAKAN IP PC] — Pastikan memakai IP PC di atas (bukan IP iPhone).</div>
+                <div style="margin-top: 5px; display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;">
+                  <span id="shortcut-ocr-note" class="shortcut-ocr-note" data-i18n="kb.shortcut_ocr_note" style="font-size: 10px;">Auto 100% akurat tanpa OCR</span>
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <button type="button" class="ctl ctl-sm shortcut-action-btn" id="btn-open-icloud-shortcut" data-alias="btn-get-icloud-shortcut" style="padding: 3px 8px; font-size: 10px; white-space: nowrap;" title="Buka link resmi 1-Klik iCloud Shortcut (Dual-Mode)"><span class="btn-label" data-i18n="kb.btn_get_icloud_shortcut">Ambil iCloud Shortcut</span></button>
+                    <button type="button" class="ctl ctl-sm shortcut-action-btn" id="btn-copy-siri-prompt" data-alias="btn-copy-shortcut-prompt" style="padding: 3px 8px; font-size: 10px; white-space: nowrap;"><span class="btn-label" data-i18n="kb.btn_copy_siri_prompt">Salin Prompt Shortcut</span></button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Action Button: Toggle iPhone On-Screen Keyboard -->
@@ -719,7 +1030,7 @@
                     <circle cx="12" cy="12" r="9"></circle>
                     <path d="M12 3v18"></path>
                   </svg>
-                  <span class="btn-label">Stealth Dim Mode (Alt+D)</span>
+                  <span class="btn-label" data-i18n="stealth.header_label">Mode Redup Siluman (Alt+D)</span>
                 </span>
                 <span class="setting-hint" id="stealth-mode-hint">OFF</span>
               </div>
@@ -965,7 +1276,34 @@
               </button>
               <ul class="device-list" id="devices"></ul>
               <div class="device-detail" id="detail" hidden></div>
-              <dl class="kv" id="status" style="margin-top: 10px;"></dl>
+              <dl class="kv" id="status" style="margin-top: 10px;">
+                <dt data-i18n="device.diag_driver">Apple USB Driver</dt>
+                <dd id="diag-apple-driver" class="ok">Checking...</dd>
+                <dt data-i18n="device.diag_service">Apple Mobile Device Service</dt>
+                <dd id="status-service" class="ok">Checking...</dd>
+                <dt data-i18n="device.diag_port">TCP Port 27015 (usbmuxd)</dt>
+                <dd id="diag-tcp-port" class="ok">Checking...</dd>
+                <dt data-i18n="device.diag_devmode">Developer Mode (iOS)</dt>
+                <dd id="status-devmode">Checking...</dd>
+                <dt data-i18n="device.diag_hevc">HEVC Video Extension</dt>
+                <dd id="diag-hevc-codec" class="ok">Checking...</dd>
+              </dl>
+              <div class="device-diag-actions" style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">
+                <button type="button" class="ctl ctl-sm" id="btn-unlock-devmode" style="width:100%;display:inline-flex;align-items:center;justify-content:center;gap:6px;">
+                  <svg class="fluent-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="m9 12 2 2 4-4"/>
+                  </svg>
+                  <span class="btn-label" data-i18n="device.unlock_devmode">Munculkan Menu Developer Mode (1-Klik)</span>
+                </button>
+                <button type="button" class="ctl ctl-sm" id="btn-repair-driver" style="width:100%;display:inline-flex;align-items:center;justify-content:center;gap:6px;">
+                  <svg class="fluent-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                  </svg>
+                  <span class="btn-label" data-i18n="device.repair_driver">Perbaiki / Instal Driver Apple</span>
+                </button>
+                <p class="fine" id="devmode-action-status" hidden style="margin:4px 0 0;padding:6px 8px;border-radius:8px;background:rgba(0,120,212,0.12);border:1px solid rgba(56,189,248,0.28);font-size:11.5px;line-height:1.45;"></p>
+              </div>
               <p class="fine" id="status-note"></p>
             </div>
           </details>

@@ -87,6 +87,19 @@
     window.addEventListener("scroll", updateNavScrolled, { passive: true });
   }
 
+  function setMobileNavOpen(willOpen) {
+    if (navLinksEl) {
+      navLinksEl.classList.toggle("is-open", !!willOpen);
+      navLinksEl.classList.toggle("open", !!willOpen);
+    }
+    if (floatingNav) {
+      floatingNav.classList.toggle("is-open", !!willOpen);
+    }
+    if (mobileToggle) {
+      mobileToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    }
+  }
+
   if (navLinksEl) {
     var navAnchors = Array.prototype.slice.call(navLinksEl.querySelectorAll("a"));
     if (navAnchors.length > 0) {
@@ -130,7 +143,7 @@
       a.addEventListener("click", function () {
         activeNavLink = a;
         syncNavPillToActive();
-        navLinksEl.classList.remove("open", "is-open");
+        setMobileNavOpen(false);
       });
     });
 
@@ -140,7 +153,7 @@
 
     window.addEventListener("resize", function () {
       if (window.innerWidth > 1080) {
-        navLinksEl.classList.remove("open", "is-open");
+        setMobileNavOpen(false);
       }
       syncNavPillToActive();
     });
@@ -176,10 +189,20 @@
   }
 
   if (mobileToggle && navLinksEl) {
-    mobileToggle.addEventListener("click", function () {
-      var willOpen = !(navLinksEl.classList.contains("is-open") || navLinksEl.classList.contains("open"));
-      navLinksEl.classList.toggle("is-open", willOpen);
-      navLinksEl.classList.toggle("open", willOpen);
+    mobileToggle.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var currentlyOpen = navLinksEl.classList.contains("is-open") || navLinksEl.classList.contains("open");
+      setMobileNavOpen(!currentlyOpen);
+    });
+    document.addEventListener("click", function (e) {
+      if (floatingNav && !floatingNav.contains(e.target)) {
+        setMobileNavOpen(false);
+      }
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        setMobileNavOpen(false);
+      }
     });
   }
 
@@ -199,14 +222,53 @@
   }
 
   /* --------------------------------------------------------------------------
-     3. BENTO SPOTLIGHT MOUSE TRACKING & GITHUB STARS
+     3. UNIVERSAL INTERACTIVE SPOTLIGHT MOUSE TRACKING & GITHUB STARS (TAHAP 220)
      -------------------------------------------------------------------------- */
-  document.querySelectorAll(".bento-card").forEach(function (card) {
+  var INTERACTIVE_GLOW_SELECTOR = [
+    ".bento-card",
+    ".lead-metric-box",
+    ".evo-table-card",
+    ".conn-card",
+    ".pipe-node",
+    ".stat-card",
+    ".bar-chart-card",
+    ".custom-card",
+    "#ios-shortcut-guide",
+    "#shortcut-ip-callout",
+    "#icloud-shortcut-featured-card",
+    ".shortcut-card",
+    ".timeline-card",
+    ".dl-card",
+    ".smartscreen-card",
+    ".ss-step",
+    ".sha-bar",
+    ".community-card",
+    ".creator-card",
+    ".faq-item",
+    ".glass-table-card",
+    ".glass-panel",
+    ".tl-card",
+    ".trust-box",
+    ".privacy-card"
+  ].join(", ");
+
+  function updateCardSpotlight(card, clientX, clientY) {
+    var rect = card.getBoundingClientRect();
+    var x = Math.round((clientX - rect.left) * 10) / 10 + "px";
+    var y = Math.round((clientY - rect.top) * 10) / 10 + "px";
+    card.style.setProperty("--mouse-x", x);
+    card.style.setProperty("--mouse-y", y);
+    card.style.setProperty("--mx", x);
+    card.style.setProperty("--my", y);
+  }
+
+  document.querySelectorAll(INTERACTIVE_GLOW_SELECTOR).forEach(function (card) {
+    card.addEventListener("mousemove", function (e) {
+      updateCardSpotlight(card, e.clientX, e.clientY);
+    }, { passive: true });
     card.addEventListener("pointermove", function (e) {
-      var rect = card.getBoundingClientRect();
-      card.style.setProperty("--mx", (e.clientX - rect.left) + "px");
-      card.style.setProperty("--my", (e.clientY - rect.top) + "px");
-    });
+      updateCardSpotlight(card, e.clientX, e.clientY);
+    }, { passive: true });
   });
 
   var ghStarNumEl = document.getElementById("gh-star-num");
@@ -418,6 +480,7 @@
       secOcr: "KEYBOARD & PINTASAN OCR",
       btnPaste: "Tempel PC (Alt+V)",
       btnOcr: "Salin OCR (Alt+C)",
+      btnGrabLink: "Ambil Link (Alt+B)",
       btnCache: "Clear Cache (Alt+R)",
       btnKb: "Keyboard (Ctrl+K)",
       secStealth: "KONTROL LAYAR & MODE REDUP",
@@ -438,7 +501,13 @@
       langId: "ID Indonesia",
       langEn: "EN English",
       liquidGlassLbl: "Liquid Glass",
-      glassThickLbl: "Ketebalan Kaca (Glass Thickness)"
+      glassThickLbl: "Ketebalan Kaca (Glass Thickness)",
+      secDiag: "DETAIL PERANGKAT & DIAGNOSTIK",
+      diagInstalled: "Terpasang",
+      diagRunning: "Berjalan (Started)",
+      diagDevActive: "Aktif (Enabled)",
+      diagHevcOk: "Terpasang (60fps)",
+      btnUnlockDevmode: "Unlock Developer Mode (1-Klik)"
     },
     en: {
       secAppearance: "APPEARANCE & LANGUAGE",
@@ -456,6 +525,7 @@
       secOcr: "KEYBOARD & OCR SHORTCUTS",
       btnPaste: "Paste PC (Alt+V)",
       btnOcr: "Copy OCR (Alt+C)",
+      btnGrabLink: "Grab Link (Alt+B)",
       btnCache: "Clear Cache (Alt+R)",
       btnKb: "Keyboard (Ctrl+K)",
       secStealth: "SCREEN & STEALTH CONTROL",
@@ -476,7 +546,13 @@
       langId: "ID Indonesia",
       langEn: "EN English",
       liquidGlassLbl: "Liquid Glass",
-      glassThickLbl: "Glass Thickness"
+      glassThickLbl: "Glass Thickness",
+      secDiag: "DEVICE & CONNECTION DIAGNOSTICS",
+      diagInstalled: "Installed",
+      diagRunning: "Running (Started)",
+      diagDevActive: "Enabled (Active)",
+      diagHevcOk: "Installed (60fps)",
+      btnUnlockDevmode: "Unlock Developer Mode (1-Click)"
     }
   };
 
@@ -902,7 +978,7 @@
   if (sRestart) sRestart.addEventListener("click", function () {
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("Keyframe PLI Restarted (0ms)");
+    showSimToast("Stream Refreshed (0ms)");
   });
   if (sStop) sStop.addEventListener("click", function () {
     simState.stopped = !simState.stopped;
@@ -1072,6 +1148,7 @@
   // Keyboard & OCR Controls
   var sPaste = document.getElementById("sim-btn-paste");
   var sOcr = document.getElementById("sim-btn-ocr");
+  var sGrabLink = document.getElementById("sim-btn-grablink");
   var sClearCache = document.getElementById("sim-btn-clearcache");
   var sKbBtn = document.getElementById("sim-btn-kb");
 
@@ -1080,13 +1157,19 @@
     simState.screen = "notes";
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("HID Text Pasted to iPhone (Alt+V)");
+    showSimToast("Text Pasted to iPhone (Alt+V)");
   });
   if (sOcr) sOcr.addEventListener("click", function () {
     simState.screen = "notes";
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("Copied to PC!");
+    showSimToast("Copied to PC! (38.8 ms Instant OCR)");
+  });
+  if (sGrabLink) sGrabLink.addEventListener("click", function () {
+    simState.screen = "instagram";
+    simState.stopped = false;
+    renderSimViewport();
+    showSimToast("Link Copied (< 5 ms): https://www.instagram.com/reel/DScCQallz12/");
   });
   if (sClearCache) sClearCache.addEventListener("click", function () {
     showSimToast("OCR Stitching Cache Cleared!");
@@ -1136,6 +1219,13 @@
   if (sCheckUpd) sCheckUpd.addEventListener("click", function () {
     var msg = (SIM_TEXTS[simState.lang] || SIM_TEXTS.id).updLatest;
     if (sUpdStatus) sUpdStatus.textContent = msg;
+    showSimToast(msg);
+  });
+  var sUnlockDevBtn = document.getElementById("sim-btn-unlock-devmode");
+  if (sUnlockDevBtn) sUnlockDevBtn.addEventListener("click", function () {
+    var msg = simState.lang === "en"
+      ? "Developer Mode menu unlocked on iPhone! Ready to enable in Settings."
+      : "Menu Developer Mode dimunculkan di iPhone! Siap diaktifkan di Settings.";
     showSimToast(msg);
   });
 
@@ -1194,15 +1284,15 @@
   var SHA_TABLE = {
     setup: {
       name: "iPhone-Link-v4.0.0-Setup.exe",
-      hash: "F70DDE4A1018DE7CC2B18DA802095FEFF15885943AEC580B86B2769F80C8DE8C"
+      hash: "AF54AC770F3DD2BF1A998F83CE1E955B4929E0D552C3B406536BF216A890C42C"
     },
     zip: {
       name: "iPhone-Link-Win64-Native-Rust-v4.0.0.zip",
-      hash: "48F3AA2C48107512DDFB4D107230D9BDA1DD26645D890A912FFA1BAC5B54CE82"
+      hash: "93350959EFECD44B764B0593367709694424912536B4B0E2A013F8E2C5A0BD1A"
     },
     exe: {
       name: "iPhone Link.exe",
-      hash: "2D23A81AE4F31B9F2A2E6A1D77F6AF2A987BCD3EBC9933288610B52DD3718CD8"
+      hash: "D2DE068AA5B12C59B86C5F80B99ECB910F0BA341FCEE8B8A5241AADDDDBDA8B4"
     }
   };
 
@@ -1257,6 +1347,37 @@
       if (ico) ico.textContent = willOpen ? "-" : "+";
     });
   });
+
+  var copySiriBtn = document.getElementById("btn-web-copy-siri-prompt");
+  var siriPromptEl = document.getElementById("web-siri-prompt-text");
+  if (copySiriBtn && siriPromptEl) {
+    copySiriBtn.addEventListener("click", function () {
+      var promptTxt = (siriPromptEl.textContent || "").trim();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(promptTxt).catch(function () {});
+      }
+      var siriLbl = copySiriBtn.querySelector("span[data-id]") || copySiriBtn;
+      siriLbl.textContent = siteLang === "en" ? "Copied!" : "Tersalin!";
+      setTimeout(function () {
+        siriLbl.textContent = siteLang === "en" ? "Copy Siri Prompt" : "Salin Prompt Siri";
+      }, 1500);
+    });
+  }
+
+  var copyIcloudBtn = document.getElementById("btn-copy-icloud-shortcut-url");
+  if (copyIcloudBtn) {
+    copyIcloudBtn.addEventListener("click", function () {
+      var icloudUrl = copyIcloudBtn.getAttribute("data-icloud-url") || "https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(icloudUrl).catch(function () {});
+      }
+      var icloudLbl = copyIcloudBtn.querySelector("span[data-id]") || copyIcloudBtn;
+      icloudLbl.textContent = siteLang === "en" ? "Copied!" : "Tersalin!";
+      setTimeout(function () {
+        icloudLbl.textContent = siteLang === "en" ? "Copy iCloud Shortcut Link" : "Salin Link iCloud Shortcut";
+      }, 1500);
+    });
+  }
 
   /* --------------------------------------------------------------------------
      8. INITIAL RENDER

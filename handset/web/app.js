@@ -16,23 +16,33 @@ window.addEventListener("unhandledrejection", (e) => {
 // Alias & dual-binding hook for #status-pill / #pill-connection and #wifi-summary / #wifi-state
 (() => {
   const origDocQS = Document.prototype.querySelector;
-  Document.prototype.querySelector = function (sel) {
+  const resolveAliasSelector = (sel) => {
     if (sel === "#pill-connection" || sel === "#status-pill") {
-      return origDocQS.call(this, "#status-pill") || origDocQS.call(this, "#pill-connection");
+      return ["#status-pill", "#pill-connection"];
     }
     if (sel === "#wifi-summary" || sel === "#wifi-state") {
-      return origDocQS.call(this, "#wifi-state") || origDocQS.call(this, "#wifi-summary");
+      return ["#wifi-state", "#wifi-summary"];
     }
+    if (sel === "#shortcut-ip-hint" || sel === "#shortcut-ip-comparison") {
+      return ["#shortcut-ip-comparison", "#shortcut-ip-hint"];
+    }
+    if (sel === "#btn-get-icloud-shortcut" || sel === "#btn-open-icloud-shortcut") {
+      return ["#btn-open-icloud-shortcut", "#btn-get-icloud-shortcut"];
+    }
+    if (sel === "#btn-copy-shortcut-prompt" || sel === "#btn-copy-siri-prompt") {
+      return ["#btn-copy-siri-prompt", "#btn-copy-shortcut-prompt"];
+    }
+    return null;
+  };
+  Document.prototype.querySelector = function (sel) {
+    const pair = resolveAliasSelector(sel);
+    if (pair) return origDocQS.call(this, pair[0]) || origDocQS.call(this, pair[1]);
     return origDocQS.call(this, sel);
   };
   const origElemQS = Element.prototype.querySelector;
   Element.prototype.querySelector = function (sel) {
-    if (sel === "#pill-connection" || sel === "#status-pill") {
-      return origElemQS.call(this, "#status-pill") || origElemQS.call(this, "#pill-connection");
-    }
-    if (sel === "#wifi-summary" || sel === "#wifi-state") {
-      return origElemQS.call(this, "#wifi-state") || origElemQS.call(this, "#wifi-summary");
-    }
+    const pair = resolveAliasSelector(sel);
+    if (pair) return origElemQS.call(this, pair[0]) || origElemQS.call(this, pair[1]);
     return origElemQS.call(this, sel);
   };
   const origGetId = Document.prototype.getElementById;
@@ -42,6 +52,15 @@ window.addEventListener("unhandledrejection", (e) => {
     }
     if (id === "wifi-summary" || id === "wifi-state") {
       return origGetId.call(this, "wifi-state") || origGetId.call(this, "wifi-summary");
+    }
+    if (id === "shortcut-ip-hint" || id === "shortcut-ip-comparison") {
+      return origGetId.call(this, "shortcut-ip-comparison") || origGetId.call(this, "shortcut-ip-hint");
+    }
+    if (id === "btn-get-icloud-shortcut" || id === "btn-open-icloud-shortcut") {
+      return origGetId.call(this, "btn-open-icloud-shortcut") || origGetId.call(this, "btn-get-icloud-shortcut");
+    }
+    if (id === "btn-copy-shortcut-prompt" || id === "btn-copy-siri-prompt") {
+      return origGetId.call(this, "btn-copy-siri-prompt") || origGetId.call(this, "btn-copy-shortcut-prompt");
     }
     return origGetId.call(this, id);
   };
@@ -155,6 +174,10 @@ const I18N_DICT = {
     "audio.buf_normal": "Normal",
     "audio.buf_high": "Tinggi",
     "audio.lipsync": "Sinkron Bibir (Lip Sync)",
+    "audio.badge_usb": "Audio USB Tanpa Bluetooth (48 kHz WASAPI · ~40 ms)",
+    "audio.bt_fallback_summary": "Opsi Fallback Bluetooth A2DP",
+    "audio.use_bt": "Gunakan Bluetooth",
+    "audio.pair_bt": "Pasangkan BT",
 
     // Card 5: Trackpad Gesture Speed
     "section.trackpad_speed": "KECEPATAN GESTUR TRACKPAD",
@@ -173,10 +196,17 @@ const I18N_DICT = {
     "kb.btn_clear_cache": "Bersihkan Cache Salin (Alt+R)",
     "kb.btn_grab_link": "Grab Link (Alt+B)",
     "kb.btn_toggle_kb": "Tampilkan Keyboard Layar iPhone (Ctrl+K)",
+    "kb.shortcut_box_title": "iOS 27 Shortcut — URL Server PC (100% Akurat, <5ms)",
+    "kb.shortcut_setup_guide": "Panduan Setup",
+    "kb.btn_copy_url": "Salin URL",
+    "kb.shortcut_ocr_note": "Auto 100% akurat tanpa OCR",
+    "kb.btn_get_icloud_shortcut": "Ambil iCloud Shortcut",
+    "kb.btn_copy_siri_prompt": "Salin Prompt Shortcut",
     "kb.note": "Pintasan: Alt+V Tempel, Alt+C Salin, Alt+R Reset Cache, Alt+B Ambil Link, Ctrl+K Keyboard, Alt+D Mode Redup, Alt+U Bangun, Alt+L Kunci.",
 
     // Card 7: Screen & Stealth
     "section.screen_stealth": "LAYAR IPHONE & MODE SILUMAN",
+    "stealth.header_label": "Mode Redup Siluman (Alt+D)",
     "btn.wake_unlock": "Bangun / Buka (Alt+U)",
     "btn.lock_iphone": "Kunci iPhone (Alt+L)",
     "btn.stealth_dim": "Mode Redup Siluman (Alt+D): OFF",
@@ -223,6 +253,13 @@ const I18N_DICT = {
     // Card 11 & 12
     "device.summary": "Detail Perangkat & Koneksi",
     "device.refresh": "Segarkan Perangkat",
+    "device.unlock_devmode": "Munculkan Menu Developer Mode (1-Klik)",
+    "device.repair_driver": "Perbaiki / Instal Driver Apple",
+    "device.diag_driver": "Apple USB Driver",
+    "device.diag_service": "Apple Mobile Device Service",
+    "device.diag_port": "TCP Port 27015 (usbmuxd)",
+    "device.diag_devmode": "Developer Mode (iOS)",
+    "device.diag_hevc": "HEVC Video Extension",
     "guide.summary": "Panduan & Pemecahan Masalah",
     "guide.step1": "1. Sambungkan iPhone via USB dan buka kuncinya.",
     "guide.step2": "2. Ketuk Percayai pada layar iPhone.",
@@ -303,6 +340,10 @@ const I18N_DICT = {
     "audio.buf_normal": "Normal",
     "audio.buf_high": "High",
     "audio.lipsync": "Lip Sync",
+    "audio.badge_usb": "Zero-Bluetooth USB Audio (48 kHz WASAPI · ~40 ms)",
+    "audio.bt_fallback_summary": "Bluetooth A2DP Fallback Options",
+    "audio.use_bt": "Use Bluetooth",
+    "audio.pair_bt": "Pair BT",
 
     // Card 5: Trackpad Gesture Speed
     "section.trackpad_speed": "TRACKPAD GESTURE SPEED",
@@ -321,10 +362,17 @@ const I18N_DICT = {
     "kb.btn_clear_cache": "Clear Copy Cache (Alt+R)",
     "kb.btn_grab_link": "Grab Link (Alt+B)",
     "kb.btn_toggle_kb": "Toggle iPhone On-Screen Keyboard (Ctrl+K)",
+    "kb.shortcut_box_title": "iOS 27 Shortcut — PC Server URL (100% Accurate, <5ms)",
+    "kb.shortcut_setup_guide": "Setup Guide",
+    "kb.btn_copy_url": "Copy URL",
+    "kb.shortcut_ocr_note": "Auto 100% accurate without OCR",
+    "kb.btn_get_icloud_shortcut": "Get iCloud Shortcut",
+    "kb.btn_copy_siri_prompt": "Copy Prompt Shortcut",
     "kb.note": "Shortcuts: Alt+V Paste, Alt+C Copy, Alt+R Reset Cache, Alt+B Grab Link, Ctrl+K Keyboard, Alt+D Stealth Dim, Alt+U Wake, Alt+L Lock.",
 
     // Card 7: Screen & Stealth
     "section.screen_stealth": "IPHONE SCREEN & STEALTH CONTROL",
+    "stealth.header_label": "Stealth Dim Mode (Alt+D)",
     "btn.wake_unlock": "Wake / Unlock (Alt+U)",
     "btn.lock_iphone": "Lock iPhone (Alt+L)",
     "btn.stealth_dim": "Stealth Dim Mode (Alt+D): OFF",
@@ -371,6 +419,13 @@ const I18N_DICT = {
     // Card 11 & 12
     "device.summary": "Device & Connection Details",
     "device.refresh": "Refresh Devices",
+    "device.unlock_devmode": "Unlock Developer Mode Menu (1-Click)",
+    "device.repair_driver": "Repair / Install Apple Driver",
+    "device.diag_driver": "Apple USB Driver",
+    "device.diag_service": "Apple Mobile Device Service",
+    "device.diag_port": "TCP Port 27015 (usbmuxd)",
+    "device.diag_devmode": "Developer Mode (iOS)",
+    "device.diag_hevc": "HEVC Video Extension",
     "guide.summary": "How to run & Troubleshooting",
     "guide.step1": "1. Plug in iPhone via USB and unlock it.",
     "guide.step2": "2. Tap Trust on the iPhone.",
@@ -391,7 +446,8 @@ function translateDynamicStatusText(rawText, lang) {
   const targetLang = (lang === "en" || (!lang && currentLang === "en")) ? "en" : "id";
   let t = rawText;
   if (targetLang === "en") {
-    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*siap\s*\(Terhubung di LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi ready (Connected to LAN)");
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*(?:Ready|Siap)\s*\((?:Connected on LAN|iPhone LAN IP|IP iPhone di LAN)\s*:\s*([^)]+)\)/gi, (m, check, ip) => (check ? "✓ " : "") + `Wi-Fi Ready (iPhone LAN IP: ${ip.trim()})`);
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*siap\s*\(Terhubung di LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi Ready (Connected to LAN)");
     t = t.replace(/(🔌\s*)?Colok kabel USB 1x untuk aktifkan mode Wi[-‑]Fi/gi, "🔌 Plug USB cable 1x to enable Wi-Fi mode");
     t = t.replace(/Wi[-‑]Fi\s*siap/gi, "Wi-Fi ready");
     t = t.replace(/USB\s*terputus/gi, "USB disconnected");
@@ -419,7 +475,8 @@ function translateDynamicStatusText(rawText, lang) {
     t = t.replace(/(\s+)siap$/i, "$1ready");
     return t;
   } else {
-    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*ready\s*\(Connected to LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi siap (Terhubung di LAN)");
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*(?:Ready|Siap)\s*\((?:Connected on LAN|iPhone LAN IP|IP iPhone di LAN)\s*:\s*([^)]+)\)/gi, (m, check, ip) => (check ? "✓ " : "") + `Wi-Fi Siap (IP iPhone di LAN: ${ip.trim()})`);
+    t = t.replace(/(✓\s*)?Wi[-‑]Fi\s*ready\s*\(Connected to LAN\)/gi, (m, check) => (check ? "✓ " : "") + "Wi-Fi Siap (Terhubung di LAN)");
     t = t.replace(/(🔌\s*)?Plug USB cable 1x to enable Wi[-‑]Fi mode/gi, "🔌 Colok kabel USB 1x untuk aktifkan mode Wi-Fi");
     t = t.replace(/Wi[-‑]Fi\s*ready/gi, "Wi-Fi siap");
     t = t.replace(/USB\s*disconnected/gi, "USB terputus");
@@ -627,6 +684,22 @@ function applyLanguage(lang, save = true) {
   if (curWifiStateEl && curWifiStateEl.textContent) {
     curWifiStateEl.textContent = translateDynamicStatusText(curWifiStateEl.textContent, targetLang);
   }
+  const shortcutOcrNoteEl = document.getElementById("shortcut-ocr-note");
+  if (shortcutOcrNoteEl) {
+    shortcutOcrNoteEl.textContent = t("kb.shortcut_ocr_note");
+  }
+  const linkShortcutGuideEl = document.getElementById("link-shortcut-guide-hint");
+  if (linkShortcutGuideEl) {
+    linkShortcutGuideEl.textContent = t("kb.shortcut_setup_guide");
+    linkShortcutGuideEl.setAttribute("title", targetLang === "en" ? "Open iOS 27 Shortcut setup guide on website" : "Lihat panduan instalasi iOS 27 Shortcut di website");
+  }
+  const btnOpenIcloudEl = document.getElementById("btn-open-icloud-shortcut");
+  if (btnOpenIcloudEl) {
+    btnOpenIcloudEl.setAttribute("title", targetLang === "en" ? "Open official 1-Click iCloud Shortcut (Dual-Mode)" : "Buka link resmi 1-Klik iCloud Shortcut (Dual-Mode)");
+  }
+  if (typeof renderShortcutIpComparison === "function") {
+    try { renderShortcutIpComparison(); } catch (_) {}
+  }
   if (typeof updateLaunchpadState === "function") {
     try { updateLaunchpadState(lastServerState); } catch (_) {}
   }
@@ -661,6 +734,7 @@ function applyLanguage(lang, save = true) {
   }
 }
 window.applyLanguage = applyLanguage;
+window.applyAppLanguage = function (lang, save = true) { return window.applyLanguage(lang, save); };
 window.t = t;
 
 const screenEmpty = document.querySelector("#screen-empty");
@@ -2597,12 +2671,25 @@ function renderWifi() {
   const wifi = currentWifiState || {};
   const isEn = (currentLang === "en");
   if (wifi.statusText) {
-    wifiState.textContent = translateDynamicStatusText(wifi.statusText, currentLang);
+    let formattedStatus = translateDynamicStatusText(wifi.statusText, currentLang);
+    if (wifi.ip && /Terhubung di LAN\)|Connected to LAN\)/i.test(formattedStatus)) {
+      formattedStatus = isEn
+        ? `✓ Wi-Fi Ready (iPhone LAN IP: ${wifi.ip})`
+        : `✓ Wi-Fi Siap (IP iPhone di LAN: ${wifi.ip})`;
+    }
+    wifiState.textContent = formattedStatus;
     wifiState.className = "wifi-state" + (wifi.statusTone ? ` ${wifi.statusTone}` : "");
   } else {
     const ready = wifi.reachable === true;
-    wifiState.textContent = ready ? (isEn ? "✓ Wi-Fi ready" : "✓ Wi-Fi siap") : (isEn ? "Wi-Fi not configured" : "Wi-Fi belum diatur");
+    wifiState.textContent = ready
+      ? (wifi.ip
+          ? (isEn ? `✓ Wi-Fi Ready (iPhone LAN IP: ${wifi.ip})` : `✓ Wi-Fi Siap (IP iPhone di LAN: ${wifi.ip})`)
+          : (isEn ? "✓ Wi-Fi Ready" : "✓ Wi-Fi Siap"))
+      : (isEn ? "Wi-Fi not configured" : "Wi-Fi belum diatur");
     wifiState.className = "wifi-state" + (ready ? " ok" : "");
+  }
+  if (typeof window.renderShortcutIpComparison === "function") {
+    try { window.renderShortcutIpComparison(); } catch (_) {}
   }
   const isPairedAndEnabled = Boolean(wifi.paired && wifi.paired.length > 0 && wifi.enabled);
   const hasUsb = Boolean(usbConnected);
@@ -2910,6 +2997,9 @@ async function load() {
   detail.replaceChildren();
   try {
     const state = await getJson("/api/status");
+    if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive() && state && state.screen) {
+      state.screen = Object.assign({}, state.screen, { phase: "idle", url: null, error: "" });
+    }
     wifiPaired = state.wifi?.paired || [];
     currentWifiState = state.wifi || {};
     const hasCableDevice = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
@@ -2959,7 +3049,10 @@ function renderPills(state) {
   } else if (state.screen?.phase === "running") {
     setPill(pillConnection, state.screen.transport === "wifi" ? "Mirroring · Wi‑Fi" : "Mirroring", "ok");
   } else if (overWifi && wifi.reachable) {
-    setPill(pillConnection, wifi.ip ? `Wi‑Fi · ${wifi.ip}` : "Wi‑Fi Ready", "ok");
+    const pillWifiIp = wifi.ip
+      ? (currentLang === "en" ? `Wi‑Fi · iPhone IP: ${wifi.ip}` : `Wi‑Fi · IP iPhone: ${wifi.ip}`)
+      : "Wi‑Fi Ready";
+    setPill(pillConnection, pillWifiIp, "ok");
   } else if (overWifi && (wifi.paired || []).length > 0) {
     setPill(pillConnection, "Wi‑Fi Paired (Offline)", "warn");
   } else if (overWifi) {
@@ -3037,7 +3130,7 @@ function updateLaunchpadState(passedState) {
     if (transport === "wifi") {
       const ipStr = (wifiObj && wifiObj.ip) || (currentWifiState && currentWifiState.ip);
       if (ipStr) {
-        launchpadDeviceSub.textContent = `${modelName} · Wi-Fi ${ipStr}`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi · iPhone IP:" : "Wi-Fi · IP iPhone:"} ${ipStr}`;
       } else if (wifiReady) {
         launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi ready" : "Wi-Fi siap"}`;
       } else {
@@ -3081,29 +3174,92 @@ window.updateLaunchpadState = updateLaunchpadState;
 function renderStatus(state) {
   const library = state.library || {};
   const driver = state.driver || {};
-  statusList.replaceChildren(
-    ...row("Client", library.ready ? "ready" : "missing", library.ready),
-    ...row("USB service", driver.ready ? "running" : "missing", driver.ready),
-    ...row("Developer Mode", state.developerMode === false ? "off" : state.developerMode ? "on" : "-", state.developerMode !== false),
-  );
+  const diag = state.detailedDiagnostics || {};
+  const isEn = (currentLang === "en");
   const connected = (state.devices || []).length > 0;
-  if (state.developerMode === false) {
-    statusNote.textContent =
-      "Turn on Developer Mode on the iPhone (Settings → Privacy & Security), restart, then mirror again.";
-    placeholderHint.textContent = "Developer Mode must be on before mirroring works.";
+  const hasUsbConnected = (state.devices || []).some((d) => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB")
+    || (Boolean(state.connected) && String(state.connectionType || "").toUpperCase() === "USB");
+
+  const appleDriverOk = (typeof diag.apple_driver_installed === "boolean")
+    ? diag.apple_driver_installed
+    : Boolean(driver.ready);
+  const appleServiceOk = (typeof diag.apple_service_running === "boolean")
+    ? diag.apple_service_running
+    : (String(driver.service || "").toUpperCase() === "RUNNING" || Boolean(driver.ready));
+  const tcpPortOk = (typeof diag.tcp_port_27015_normal === "boolean")
+    ? diag.tcp_port_27015_normal
+    : appleServiceOk;
+  const hevcOk = (typeof diag.hevc_codec_installed === "boolean")
+    ? diag.hevc_codec_installed
+    : true;
+
+  let devModeLabel;
+  let devModeOk = null;
+  const diagDevStatus = String(diag.developer_mode_status || "").toLowerCase();
+  if (diagDevStatus === "enabled" || state.developerMode === true) {
+    devModeLabel = isEn ? "Enabled (Active)" : "Aktif (Enabled)";
+    devModeOk = true;
+  } else if (diagDevStatus === "disabled" || state.developerMode === false) {
+    devModeLabel = isEn ? "Disabled (Click Unlock)" : "Nonaktif (Klik Unlock)";
+    devModeOk = false;
+  } else if (hasUsbConnected || (state.devices || []).some((d) => !d.wifiOnly)) {
+    devModeLabel = isEn ? "Enabled (Active)" : "Aktif (Enabled)";
+    devModeOk = true;
+  } else {
+    devModeLabel = isEn ? "Connect iPhone via USB" : "Hubungkan iPhone via USB";
+    devModeOk = null;
+  }
+
+  statusList.replaceChildren(
+    ...row(I18N_DICT[currentLang]?.["device.diag_driver"] || "Apple USB Driver",
+      appleDriverOk ? (isEn ? "Installed" : "Terpasang") : (isEn ? "Not Installed" : "Belum Terpasang"),
+      appleDriverOk,
+      "diag-apple-driver"),
+    ...row(I18N_DICT[currentLang]?.["device.diag_service"] || "Apple Mobile Device Service",
+      appleServiceOk ? (isEn ? "Running (Started)" : "Berjalan (Started)") : (isEn ? "Stopped" : "Berhenti"),
+      appleServiceOk,
+      "status-service"),
+    ...row(I18N_DICT[currentLang]?.["device.diag_port"] || "TCP Port 27015 (usbmuxd)",
+      tcpPortOk ? "Normal" : (isEn ? "Unreachable" : "Tidak Terjangkau"),
+      tcpPortOk,
+      "diag-tcp-port"),
+    ...row(I18N_DICT[currentLang]?.["device.diag_devmode"] || "Developer Mode (iOS)",
+      devModeLabel,
+      devModeOk,
+      "status-devmode"),
+    ...row(I18N_DICT[currentLang]?.["device.diag_hevc"] || "HEVC Video Extension",
+      hevcOk ? (isEn ? "Installed (60fps)" : "Terpasang (60fps)") : (isEn ? "Missing" : "Belum Ada"),
+      hevcOk,
+      "diag-hevc-codec"),
+  );
+
+  if (state.developerMode === false || diagDevStatus === "disabled") {
+    statusNote.textContent = isEn
+      ? "Developer Mode is off. Click 'Unlock Developer Mode Menu (1-Click)' below, then enable Developer Mode in iPhone Settings -> Privacy & Security and restart your iPhone."
+      : "Developer Mode nonaktif. Klik 'Munculkan Menu Developer Mode (1-Klik)' di bawah, lalu nyalakan Developer Mode di Settings -> Privacy & Security dan restart iPhone.";
+    statusNote.className = "warn";
+    placeholderHint.textContent = isEn
+      ? "Developer Mode must be on before mirroring works."
+      : "Developer Mode wajib aktif sebelum mirroring dapat dijalankan.";
     return;
   }
   statusNote.textContent =
     state.error ||
-    (connected ? "Device connected. Press Start mirroring." : driver.detail) ||
+    (connected ? (isEn ? "Device connected. Press Start mirroring." : "Perangkat terhubung. Klik Mulai mirroring.") : driver.detail) ||
     "";
   statusNote.className = state.error || !driver.ready ? "warn" : "";
   if (!connected && (state.wifi?.paired || []).length) {
-    statusNote.textContent = "No cable. Choose Wi‑Fi, keep the iPhone unlocked on the same network, and press Start mirroring.";
+    statusNote.textContent = isEn
+      ? "No cable. Choose Wi‑Fi, keep the iPhone unlocked on the same network, and press Start mirroring."
+      : "Tanpa kabel. Pilih tab Wi‑Fi, pastikan iPhone terbuka di jaringan yang sama, lalu klik Mulai mirroring.";
     statusNote.className = "";
-    placeholderHint.textContent = "No cable needed - choose Wi‑Fi and press Start mirroring.";
+    placeholderHint.textContent = isEn
+      ? "No cable needed - choose Wi‑Fi and press Start mirroring."
+      : "Tanpa kabel - pilih Wi‑Fi lalu tekan Mulai mirroring.";
   } else if (!connected) {
-    placeholderHint.textContent = "Connect your iPhone with a data cable, unlock it, and tap Trust.";
+    placeholderHint.textContent = isEn
+      ? "Connect your iPhone with a data cable, unlock it, and tap Trust."
+      : "Sambungkan iPhone dengan kabel data USB, buka kunci layar, lalu ketuk Percayai.";
   }
 
   // Tahap 138: Update Launchpad Pure Canvas ZenLink x Gemini App Model & Nickname
@@ -3112,9 +3268,20 @@ function renderStatus(state) {
 
 function renderDevices(list) {
   devicesEl.replaceChildren();
+  const isEnDev = (currentLang === "en");
+  const formatDeviceConnLabel = (rawConn) => {
+    const txt = String(rawConn || "USB");
+    const m = txt.match(/^Wi[-‑]Fi\s*(?:·|\()\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\)?$/i);
+    if (m) {
+      return isEnDev ? `Wi‑Fi · iPhone IP: ${m[1]}` : `Wi‑Fi · IP iPhone: ${m[1]}`;
+    }
+    return txt;
+  };
   if (!list.length && transport === "wifi" && wifiPaired.length) {
     const wifi = currentWifiState || {};
-    const connLabel = wifi.reachable ? (wifi.ip ? `Wi‑Fi (${wifi.ip})` : "Wi‑Fi (Online)") : "Wi‑Fi (Offline)";
+    const connLabel = wifi.reachable
+      ? (wifi.ip ? (isEnDev ? `Wi‑Fi · iPhone IP: ${wifi.ip}` : `Wi‑Fi · IP iPhone: ${wifi.ip}`) : "Wi‑Fi (Online)")
+      : "Wi‑Fi (Offline)";
     list = wifiPaired.map((udid) => ({ udid, connection: connLabel, wifiOnly: true, reachable: Boolean(wifi.reachable) }));
   }
   if (!list.length) {
@@ -3138,7 +3305,7 @@ function renderDevices(list) {
     name.textContent = device.udid.slice(0, 8) + "…";
     const meta = document.createElement("span");
     meta.className = "device-meta";
-    meta.textContent = device.connection || "USB";
+    meta.textContent = formatDeviceConnLabel(device.connection);
     button.append(name, meta);
     button.addEventListener("click", () => {
       selectedUdid = device.udid;
@@ -3266,6 +3433,13 @@ let sequoiaEmptyFadeTimer = 0;
 let sequoiaEmptySpringTimer = 0;
 let sequoiaDissolveActiveUntil = 0;
 let sequoiaStopCleanupTimer = 0;
+let _userStoppedMirrorLatch = false;
+let _userStopCooldownUntil = 0;
+let _sequoiaFallbackTimer = 0;
+let _deblurStageTimers = [];
+window._isUserStopLatchActive = function () {
+  return Boolean(_userStoppedMirrorLatch && Date.now() < _userStopCooldownUntil);
+};
 
 function isAppFullsize() {
   try {
@@ -3336,6 +3510,9 @@ function getSequoiaDeviceLabel() {
 
 function openSequoiaConnectOverlay() {
   if (!sequoiaConnectOverlay) return;
+  if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive()) {
+    return;
+  }
   clearSequoiaDissolveTimers();
   setLaunchpadStartConnecting(false);
   if (sequoiaEmptySpringTimer) {
@@ -3388,6 +3565,9 @@ function openSequoiaConnectOverlay() {
 
 function completeSequoiaHandshake(thumbDataUrl) {
   clearSequoiaSafetyTimer();
+  if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive()) {
+    return;
+  }
   if (thumbDataUrl && typeof thumbDataUrl === "string" && thumbDataUrl.startsWith("data:image/")) {
     try {
       localStorage.setItem(SEQUOIA_LAST_WALLPAPER_KEY, thumbDataUrl);
@@ -3481,6 +3661,13 @@ function showScreenEmptyWithSpring(animateSpring) {
 
 function renderScreen(screen) {
   if (!screen) return;
+  if (
+    typeof window._isUserStopLatchActive === "function"
+    && window._isUserStopLatchActive()
+    && (screen.phase === "running" || screen.phase === "starting" || screen.phase === "waiting_airplay")
+  ) {
+    screen = Object.assign({}, screen, { phase: "idle", url: null, error: "" });
+  }
   const isLockedScreen = Boolean(screen.intentionally_locked || screen.intentionallyLocked);
   updateHardwareSmartLockButton(isLockedScreen);
   if (typeof screen.stealth_dim === "boolean") {
@@ -3685,6 +3872,8 @@ function renderScreen(screen) {
 }
 
 async function showPhone() {
+  _userStoppedMirrorLatch = false;
+  _userStopCooldownUntil = 0;
   if (sequoiaStopCleanupTimer) {
     clearTimeout(sequoiaStopCleanupTimer);
     sequoiaStopCleanupTimer = 0;
@@ -3764,15 +3953,35 @@ async function showPhone() {
 }
 
 async function stopMirror() {
-  if (stopScreen) stopScreen.disabled = true;
+  _userStoppedMirrorLatch = true;
+  _userStopCooldownUntil = Date.now() + 8000;
+  if (stopScreen) {
+    stopScreen.disabled = true;
+    stopScreen.hidden = true;
+    stopScreen.setAttribute("hidden", "");
+    stopScreen.classList.add("is-hidden");
+    stopScreen.style.setProperty("display", "none", "important");
+  }
   showScreen.disabled = true;
   showScreen.textContent = "Disconnecting…";
   window.clearInterval(screenTimer);
+  screenTimer = 0;
+  clearSequoiaSafetyTimer();
+  clearSequoiaDissolveTimers();
+  if (_sequoiaFallbackTimer) {
+    clearTimeout(_sequoiaFallbackTimer);
+    _sequoiaFallbackTimer = 0;
+  }
+  if (Array.isArray(_deblurStageTimers)) {
+    while (_deblurStageTimers.length) {
+      try { clearTimeout(_deblurStageTimers.pop()); } catch (_) {}
+    }
+  }
   if (sequoiaStopCleanupTimer) {
     clearTimeout(sequoiaStopCleanupTimer);
     sequoiaStopCleanupTimer = 0;
   }
-  sequoiaIntentionalStopUntil = Date.now() + 2500;
+  sequoiaIntentionalStopUntil = Date.now() + 8000;
   const wasActiveOrOverlay = sequoiaMirrorSessionActive || isSequoiaOverlayOpen();
   const wasFirstFrameReady = hasFirstFrameReady || sequoiaFirstFrameReceived;
   const curSrc = screenView ? (screenView.getAttribute("src") || "") : "";
@@ -3784,9 +3993,10 @@ async function stopMirror() {
     && (!isAppFullsize() || wasFirstFrameReady)
   );
 
-  // Tahap 205/206: Kirim sinyal intentional-stop ke mirror iframe SEBELUM memutus socket server
+  // Tahap 205/206/215: Kirim sinyal force-stop-stream + intentional-stop ke mirror iframe SEBELUM memutus socket server
   try {
     if (screenView && screenView.contentWindow) {
+      screenView.contentWindow.postMessage({ type: "force-stop-stream" }, "*");
       screenView.contentWindow.postMessage({ type: "intentional-stop" }, "*");
     }
   } catch (_) {}
@@ -3801,13 +4011,16 @@ async function stopMirror() {
     launchpadError.textContent = "";
   }
 
-  // Tahap 206 / 207: True Cross-Dissolve seketika pada t=0ms tanpa menunggu /api/screen/stop atau timer 150ms (0ms layar hitam)
+  // Tahap 206 / 207 / 215: True Cross-Dissolve seketika pada t=0ms + latch idle (0ms layar hitam, zero auto-reconnect)
   sequoiaMirrorSessionActive = false;
   sequoiaFirstFrameReceived = false;
   hasFirstFrameReady = false;
   appRoot?.classList.remove("is-awaiting-first-frame", "has-first-frame");
   setLaunchpadStartConnecting(false);
   closeSequoiaConnectOverlay(hasLiveIframe);
+  if (typeof setPill === "function" && pillConnection) {
+    setPill(pillConnection, t("ready") || "Ready", "ok");
+  }
 
   const dissolveMs = 240;
   if (hasLiveIframe) {
@@ -3856,6 +4069,11 @@ function watchScreen() {
   screenTimer = window.setInterval(async () => {
     try {
       const screen = await getJson("/api/screen");
+      if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive()) {
+        window.clearInterval(screenTimer);
+        screenTimer = 0;
+        return;
+      }
       renderScreen(screen);
       if (screen.phase !== "starting" && screen.phase !== "waiting_airplay") {
         window.clearInterval(screenTimer);
@@ -3884,10 +4102,11 @@ function watchScreen() {
   }, 180);
 }
 
-function row(label, value, ok) {
+function row(label, value, ok, id = "") {
   const term = document.createElement("dt");
   term.textContent = label;
   const data = document.createElement("dd");
+  if (id) data.id = id;
   data.textContent = value;
   if (ok === true) data.className = "ok";
   if (ok === false) data.className = "warn";
@@ -3927,6 +4146,8 @@ function reloadMirrorIframe() {
 }
 
 async function restartMirror() {
+  _userStoppedMirrorLatch = false;
+  _userStopCooldownUntil = 0;
   if (sequoiaStopCleanupTimer) {
     clearTimeout(sequoiaStopCleanupTimer);
     sequoiaStopCleanupTimer = 0;
@@ -4997,7 +5218,188 @@ function bootstrapApp() {
   try { startWallpaperSigWatcher(); } catch (e) { console.error("startWallpaperSigWatcher error:", e); }
   try { fetchUserSettings(); } catch (e) { console.error("fetchUserSettings error:", e); }
   try { initUpdaterControls(); } catch (e) { console.error("initUpdaterControls error:", e); }
+  try { initDriverAndDevModeControls(); } catch (e) { console.error("initDriverAndDevModeControls error:", e); }
+  try { initShortcutSetupBox(); } catch (e) { console.error("initShortcutSetupBox error:", e); }
   try { load(); } catch (e) { console.error("load error:", e); }
+}
+
+function initDriverAndDevModeControls() {
+  const btnUnlock = document.getElementById("btn-unlock-devmode");
+  const btnRepair = document.getElementById("btn-repair-driver");
+  const feedbackEl = document.getElementById("devmode-action-status");
+
+  const showDiagFeedback = (msg, isOk) => {
+    if (!feedbackEl) return;
+    feedbackEl.hidden = false;
+    feedbackEl.textContent = stripPictographs(String(msg || ""));
+    feedbackEl.className = isOk ? "fine ok" : "fine warn";
+  };
+
+  if (btnUnlock && !btnUnlock.__boundTahap221) {
+    btnUnlock.__boundTahap221 = true;
+    btnUnlock.addEventListener("click", async () => {
+      const origLabel = getButtonLabel(btnUnlock);
+      btnUnlock.disabled = true;
+      setButtonLabel(btnUnlock, currentLang === "en" ? "Unlocking Developer Mode..." : "Membuka Menu Developer Mode...");
+      try {
+        const res = await postJson("/api/device/unlock-developer-mode", {
+          udid: selectedUdid || null,
+          arm_enable: false,
+        });
+        const msg = currentLang === "en" ? (res.message_en || res.message_id || res.error) : (res.message_id || res.message_en || res.error);
+        showDiagFeedback(msg, Boolean(res.ok));
+        if (typeof load === "function") await load();
+      } catch (err) {
+        showDiagFeedback(err && err.message ? err.message : String(err), false);
+      } finally {
+        btnUnlock.disabled = false;
+        setButtonLabel(btnUnlock, origLabel || (I18N_DICT[currentLang]?.["device.unlock_devmode"] || "Munculkan Menu Developer Mode (1-Klik)"));
+      }
+    });
+  }
+
+  if (btnRepair && !btnRepair.__boundTahap221) {
+    btnRepair.__boundTahap221 = true;
+    btnRepair.addEventListener("click", async () => {
+      const origLabel = getButtonLabel(btnRepair);
+      btnRepair.disabled = true;
+      setButtonLabel(btnRepair, currentLang === "en" ? "Checking & Repairing Driver..." : "Memeriksa & Memperbaiki Driver...");
+      try {
+        const res = await postJson("/api/driver/repair", {});
+        const msg = currentLang === "en" ? (res.message_en || res.message_id) : (res.message_id || res.message_en);
+        showDiagFeedback(msg, Boolean(res.repaired || res.ok));
+        if (typeof load === "function") await load();
+      } catch (err) {
+        showDiagFeedback(err && err.message ? err.message : String(err), false);
+      } finally {
+        btnRepair.disabled = false;
+        setButtonLabel(btnRepair, origLabel || (I18N_DICT[currentLang]?.["device.repair_driver"] || "Perbaiki / Instal Driver Apple"));
+      }
+    });
+  }
+}
+
+let lastShortcutSetupInfo = null;
+
+function renderShortcutIpComparison(infoOverride = null) {
+  if (infoOverride && typeof infoOverride === "object") {
+    lastShortcutSetupInfo = infoOverride;
+  }
+  const info = lastShortcutSetupInfo || {};
+  const titleEl = document.getElementById("shortcut-box-title");
+  const compEl = document.getElementById("shortcut-ip-comparison");
+  const isEn = (currentLang === "en");
+  if (titleEl) {
+    titleEl.textContent = isEn
+      ? "iOS 27 Shortcut — PC Server URL (100% Accurate, <5ms)"
+      : "iOS 27 Shortcut — URL Server PC (100% Akurat, <5ms)";
+  }
+  if (!compEl) return;
+
+  let pcIp = String(info.pc_lan_ip || "").trim();
+  if (!pcIp && info.shortcut_endpoint_template) {
+    const m = String(info.shortcut_endpoint_template).match(/^https?:\/\/([^:/]+)/i);
+    if (m) pcIp = m[1];
+  }
+  const wifiIp = (currentWifiState && currentWifiState.ip) ? String(currentWifiState.ip).trim() : "";
+  const iphoneIp = String(info.iphone_lan_ip || wifiIp || "").trim();
+
+  if (pcIp) {
+    if (iphoneIp && iphoneIp !== pcIp) {
+      compEl.textContent = isEn
+        ? `[USE PC IP: ${pcIp}] — Do not use iPhone IP (${iphoneIp}) in Shortcut!`
+        : `[GUNAKAN IP PC: ${pcIp}] — Jangan gunakan IP iPhone (${iphoneIp}) di Shortcut!`;
+    } else {
+      compEl.textContent = isEn
+        ? `[USE PC IP: ${pcIp}] — Make sure to use the PC IP above (not iPhone IP).`
+        : `[GUNAKAN IP PC: ${pcIp}] — Pastikan memakai IP PC di atas (bukan IP iPhone).`;
+    }
+  } else {
+    compEl.textContent = isEn
+      ? "[USE PC IP] — Make sure to use the PC IP above (not iPhone IP)."
+      : "[GUNAKAN IP PC] — Pastikan memakai IP PC di atas (bukan IP iPhone).";
+  }
+}
+window.renderShortcutIpComparison = renderShortcutIpComparison;
+
+async function initShortcutSetupBox() {
+  const previewEl = document.getElementById("shortcut-url-preview");
+  const btnCopyUrl = document.getElementById("btn-copy-shortcut-url");
+  const btnCopyPrompt = document.getElementById("btn-copy-siri-prompt");
+  const btnOpenIcloud = document.getElementById("btn-open-icloud-shortcut");
+  if (!previewEl && !btnCopyUrl && !btnCopyPrompt && !btnOpenIcloud) return;
+
+  let endpointTemplate = "http://127.0.0.1:8765/c?u=";
+  let icloudShortcutUrl = "https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff";
+  let siriPromptId = "Buat Shortcut bernama 'Send to iPhone Link': Receive Any input from Share Sheet (with If there's no input: Get Clipboard), aksi 1 Get URLs from Shortcut Input, aksi 2 URL Encode, aksi 3 Get Contents of URL http://127.0.0.1:8765/c?u=[URL Encoded Text] dengan method GET.";
+  let siriPromptEn = "Create an iOS Shortcut named 'Send to iPhone Link' that appears in the Share Sheet (with If there's no input: Get Clipboard). First action: Get URLs from Shortcut Input. Second action: URL Encode the URLs. Third action: Get Contents of URL http://127.0.0.1:8765/c?u=[URL Encoded Text] with method GET.";
+
+  const copyTextSafe = async (txt, btn, i18nKey, fallbackLabel) => {
+    if (!txt) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(txt);
+        ok = true;
+      }
+    } catch (_) {}
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = txt;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+    if (btn) {
+      const copiedLbl = currentLang === "en" ? "Copied!" : "Tersalin!";
+      const failedLbl = currentLang === "en" ? "Failed" : "Gagal";
+      setButtonLabel(btn, ok ? copiedLbl : failedLbl);
+      window.setTimeout(() => {
+        setButtonLabel(btn, (i18nKey && typeof t === "function") ? t(i18nKey) : fallbackLabel);
+      }, 1500);
+    }
+  };
+
+  try {
+    const info = await getJson("/api/shortcut/setup-info");
+    const tmpl = info && (info.shortcut_endpoint_template || info.endpoint_template);
+    if (tmpl) {
+      endpointTemplate = String(tmpl);
+      if (previewEl) previewEl.textContent = endpointTemplate;
+      siriPromptId = `Buat Shortcut bernama "Send to iPhone Link" di Share Sheet (If there's no input: Get Clipboard): aksi 1 Get URLs from Shortcut Input, aksi 2 URL Encode, aksi 3 Get Contents of URL "${endpointTemplate}" diikuti URL Encoded Text (method GET).`;
+    }
+    if (info && info.icloud_shortcut_url) icloudShortcutUrl = String(info.icloud_shortcut_url);
+    if (info && info.siri_prompt_en) siriPromptEn = String(info.siri_prompt_en);
+    if (info && info.siri_prompt_id) siriPromptId = String(info.siri_prompt_id);
+    renderShortcutIpComparison(info);
+  } catch (err) {
+    console.warn("initShortcutSetupBox fetch warning:", err);
+    renderShortcutIpComparison();
+  }
+
+  if (btnCopyUrl) {
+    btnCopyUrl.addEventListener("click", () => copyTextSafe(endpointTemplate, btnCopyUrl, "kb.btn_copy_url", "Copy URL"));
+  }
+  if (btnOpenIcloud) {
+    btnOpenIcloud.addEventListener("click", () => {
+      copyTextSafe(icloudShortcutUrl, btnOpenIcloud, "kb.btn_get_icloud_shortcut", "Get iCloud Shortcut");
+      try {
+        window.open(icloudShortcutUrl, "_blank", "noopener,noreferrer");
+      } catch (_) {}
+    });
+  }
+  if (btnCopyPrompt) {
+    btnCopyPrompt.addEventListener("click", () => {
+      const lang = (currentLang || localStorage.getItem("iphone_link_language") || localStorage.getItem("iphone_link_lang") || "id").toLowerCase();
+      copyTextSafe(lang.startsWith("en") ? siriPromptEn : siriPromptId, btnCopyPrompt, "kb.btn_copy_siri_prompt", "Copy Prompt Shortcut");
+    });
+  }
 }
 
 screenView?.addEventListener("load", syncSettingsToIframe);

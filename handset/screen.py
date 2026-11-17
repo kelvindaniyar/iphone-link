@@ -57,6 +57,8 @@ _STATE = {"phase": "idle", "udid": None, "url": None, "error": None, "note": Non
 _STAGE_STEP: int = 0
 _STAGE_TITLE: str = ""
 _STAGE_DETAIL: str = ""
+_STOP_IN_PROGRESS: bool = False
+_STOP_COOLDOWN_UNTIL: float = 0.0
 _CURRENT_TASK: asyncio.Task | None = None
 _CURRENT_LOOP: asyncio.AbstractEventLoop | None = None
 _ACTIVE_SERVER = None
@@ -238,6 +240,11 @@ status = lambda: screen_status()
 def screen_status() -> dict:
     with _LOCK:
         st = dict(_STATE)
+        if _STOP_IN_PROGRESS or time.monotonic() < _STOP_COOLDOWN_UNTIL:
+            st["phase"] = "idle"
+            st["udid"] = None
+            st["url"] = None
+            st["error"] = None
         st["stealth_dim"] = _STEALTH_DIM_ACTIVE
         st["intentionally_locked"] = _DEVICE_INTENTIONALLY_LOCKED
         st["stage_step"] = _STAGE_STEP
@@ -246,6 +253,9 @@ def screen_status() -> dict:
         if not st.get("transport"):
             st["transport"] = "cable"
         return st
+
+
+get_status = screen_status
 
 
 
@@ -315,6 +325,18 @@ def _ensure_local_stream_port_free(port: int = 8766, timeout: float = 2.5) -> bo
 def stop_screen() -> dict:
     """Cleanly stop mirroring, terminate stream server, restore brightness & speaker volume, and reset state."""
     global _CURRENT_TASK, _CURRENT_LOOP, _ACTIVE_SERVER, _STEALTH_DIM_ACTIVE, _DEVICE_INTENTIONLY_LOCKED, _WIFI_MODE
+    global _STOP_IN_PROGRESS, _STOP_COOLDOWN_UNTIL, _STAGE_STEP, _STAGE_TITLE, _STAGE_DETAIL
+    with _LOCK:
+        prev_transport = _STATE.get("transport") or "cable"
+        is_wifi = (prev_transport == "wifi" and _WIFI_MODE != "coredevice")
+        notify_transport = "wifi" if prev_transport == "wifi" else "cable"
+        _STOP_IN_PROGRESS = True
+        _STOP_COOLDOWN_UNTIL = time.monotonic() + 5.0
+        _STAGE_STEP = 0
+        _STAGE_TITLE = ""
+        _STAGE_DETAIL = ""
+        _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
+
     try:
         from handset.audio import audio_manager
         audio_manager.usb_engine.stop(release_coredevice=False)
@@ -332,32 +354,31 @@ def stop_screen() -> dict:
         pass
     _DEVICE_INTENTIONALLY_LOCKED = False
 
-    is_wifi = False
-    notify_transport = "cable"
-    with _LOCK:
-        if _STATE.get("transport") == "wifi" and _WIFI_MODE != "coredevice":
-            is_wifi = True
-            notify_transport = "wifi"
+    try:
+        if is_wifi:
             from handset.airplay import get_global_airplay_server
             srv = get_global_airplay_server()
             if srv:
                 with contextlib.suppress(Exception):
                     srv.reset_stream_state()
             _ensure_local_stream_port_free(8766, timeout=1.0)
-            _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
         else:
-            if _STATE.get("transport") == "wifi":
-                notify_transport = "wifi"
-            _WIFI_MODE = None
-            if _CURRENT_TASK and _CURRENT_LOOP and _CURRENT_LOOP.is_running():
+            with _LOCK:
+                _WIFI_MODE = None
+                task_ref = _CURRENT_TASK
+                loop_ref = _CURRENT_LOOP
+                _CURRENT_TASK = None
+                _CURRENT_LOOP = None
+                _ACTIVE_SERVER = None
+            if task_ref and loop_ref and loop_ref.is_running():
                 try:
-                    _CURRENT_LOOP.call_soon_threadsafe(_CURRENT_TASK.cancel)
+                    loop_ref.call_soon_threadsafe(task_ref.cancel)
                 except Exception:
                     pass
-            _CURRENT_TASK = None
-            _CURRENT_LOOP = None
-            _ACTIVE_SERVER = None
             _ensure_local_stream_port_free(8766, timeout=1.0)
+    finally:
+        with _LOCK:
+            _STOP_IN_PROGRESS = False
             _STATE.update(phase="idle", udid=None, url=None, error=None, note="Mirroring stopped.")
 
     try:
@@ -445,7 +466,10 @@ def _stop_airplay_receiver() -> None:
 
 def _start_airplay_receiver(chosen: str, note: Optional[str] = None) -> dict:
     """Native AirPlay receiver (H.264) over Wi-Fi: video-only fallback / Control Center mode."""
-    global _WIFI_MODE
+    global _WIFI_MODE, _STOP_IN_PROGRESS, _STOP_COOLDOWN_UNTIL
+    with _LOCK:
+        _STOP_IN_PROGRESS = False
+        _STOP_COOLDOWN_UNTIL = 0.0
     _WIFI_MODE = "airplay"
     note = note or _AIRPLAY_NOTE
     server = _ensure_airplay_server_running()
@@ -494,8 +518,10 @@ def _start_airplay_receiver(chosen: str, note: Optional[str] = None) -> dict:
 
 def _start_coredevice_wifi(chosen: str) -> dict:
     """CoreDevice (ScreenStreamServer) session over a Wi-Fi tunnel: full video / touch / keyboard / audio / shortcuts."""
-    global _WIFI_MODE
+    global _WIFI_MODE, _STOP_IN_PROGRESS, _STOP_COOLDOWN_UNTIL
     with _LOCK:
+        _STOP_IN_PROGRESS = False
+        _STOP_COOLDOWN_UNTIL = 0.0
         if _STATE["phase"] in {"starting", "running"} and _STATE["udid"] == chosen and _WIFI_MODE == "coredevice":
             return dict(_STATE)
     if _WIFI_MODE == "airplay":
@@ -529,6 +555,10 @@ def _start_coredevice_wifi(chosen: str) -> dict:
 
 
 def start_screen(udid: str | None, transport: str = "cable") -> dict:
+    global _STOP_IN_PROGRESS, _STOP_COOLDOWN_UNTIL
+    with _LOCK:
+        _STOP_IN_PROGRESS = False
+        _STOP_COOLDOWN_UNTIL = 0.0
     usb = _usb_udids()
     wifi = wifi_paired_udids()
     if transport in ("auto", "cable"):
@@ -3824,6 +3854,12 @@ def _set(**values) -> dict:
     transport = "cable"
     with _LOCK:
         prev_phase = _STATE.get("phase")
+        if (_STOP_IN_PROGRESS or time.monotonic() < _STOP_COOLDOWN_UNTIL) and values.get("phase") in ("running", "starting", "waiting_airplay"):
+            _STAGE_STEP = 0
+            _STAGE_TITLE = ""
+            _STAGE_DETAIL = ""
+            _STATE.update(phase="idle", udid=None, url=None, error=None)
+            return dict(_STATE)
         if "stage_step" in values:
             _STAGE_STEP = int(values["stage_step"])
             _STAGE_TITLE = str(values.get("stage_title", ""))

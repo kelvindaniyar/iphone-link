@@ -45,8 +45,8 @@
 | :---: | :--- | :--- |
 | 1 | **Wi-Fi Low-Latency Mirroring** | Wireless local-network AirPlay/Lockdown mirroring with instant USB Cable / Wi-Fi switching inside the app and drawer. |
 | 2 | **100% Native Rust Engine (`1.33 MB`)** | Win32 + WebView2 executable shrunk by `93%` (from `19.26 MB` to `~1.33 MB`) with `< 0.25s` cold boot and `0.00%` idle CPU. |
-| 3 | **64-Bit Official Installer (`Setup.exe`) Zero Python Needed** | Modern Inno Setup 64-bit wizard (`C:\Program Files\iPhone Link`) packs an isolated Python 3.12 runtime and automatic LAN firewall rules. |
-| 4 | **Bundled Offline HEVC Codec** | Embeds `Microsoft.HEVCVideoExtension_2.5.48.0` directly in `Setup.exe` and installs silently to prevent blank black screens. |
+| 3 | **64-Bit Official Installer (`Setup.exe`) Zero Python &amp; Offline Apple USB Driver** | Modern Inno Setup 64-bit wizard (`C:\Program Files\iPhone Link`) packs an isolated Python 3.12 runtime, offline **Apple USB Driver (`AppleMobileDeviceSupport64.msi`)**, and automatic LAN firewall rules. |
+| 4 | **Bundled Offline HEVC Codec + 1-Click Developer Mode Unlocker** | Embeds `Microsoft.HEVCVideoExtension_2.5.48.0` offline and adds a 5-point diagnostic card + **1-Click `Unlock Developer Mode`** &amp; **`Repair Driver`** (zero 3uTools or Microsoft Store needed). |
 | 5 | **Zero `Python.Runtime.dll` Bug + Auto-Unblock** | Eliminates `clr`/`pythonnet` crashes and strips Windows `:Zone.Identifier` MOTW attributes automatically on startup. |
 | 6 | **Built-in Software Updater (OTA)** | Drawer `#card-updater` card plus System Tray `Check for Updates...` with `Stable` / `Beta` channel selection and SHA-256 verification. |
 | 7 | **iPad (`4:3`) Aspect Ratio Support** | Calibrated `4:3` iPad window geometry (`924x832` open / `564x832` closed) with zero drawer clipping or scrollbar gap. |
@@ -93,23 +93,46 @@
 
 ---
 
+## ⚡ Instant 100% Accurate Link Transfer via iOS 27 Shortcut (Zero-OCR)
+
+Besides visual OCR (`Grab Link Alt+B`), **iPhone Link v4.0.0** includes a **LAN-hardened Digital Link Receiver** at `http://<PC-LAN-IP>:8765/c?u=...` that copies shared iPhone links directly to the Windows clipboard in **`< 5 ms`** with **100% lossless accuracy** (supporting Instagram, Threads, YouTube, TikTok, Shopee, and any HTTP/HTTPS URL):
+
+- **Penting: Gunakan IP Wi-Fi PC Anda, Bukan IP iPhone! (`Important: Use Your PC Wi-Fi IP, Not Your iPhone IP!`):** Panel Wi-Fi di iPhone Link menampilkan **IP iPhone** (`Wi-Fi Siap (IP iPhone di LAN: 192.168.100.x)`) untuk mirroring layar. Di dalam aplikasi Apple Shortcuts iPhone, selalu masukkan **IP PC** yang tertera di kotak **`iOS 27 Shortcut — URL Server PC`** (contoh: `http://192.168.100.8:8765/c?u=`), bukan IP iPhone!
+- **Option 1 (Recommended — 1-Click Official iCloud Shortcut Dual-Mode):** Install langsung pintasan resmi **`Send to iPhone Link`** (tanpa perlu klik *Copy Link* di Share Sheet!):
+  - **Official iCloud Link:** https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff
+  - **Setup 2 Langkah di iPhone (~10 detik):**
+    1. Ketuk **"Add Shortcut"** (*Tambahkan Pintasan*) setelah membuka link iCloud di iPhone.
+    2. Buka edit pintasan **`Send to iPhone Link`**, gulir ke blok paling bawah (**`Get contents of URL`**), lalu ganti angka IP contoh (`192.168.100.8`) dengan **IP Wi-Fi PC Anda** yang tertera pada kotak `iOS 27 Shortcut — URL Server PC` di aplikasi `iPhone Link` (jangan gunakan IP iPhone!).
+  - **Struktur 6 Blok Dual-Mode Bawaan:** `If [Shortcut Input] [has any value]` &rarr; `Get URLs from [Shortcut Input]` / `Otherwise` &rarr; `Get Clipboard` &rarr; `Get URLs from [Clipboard]` &rarr; `End If` &rarr; `URL Encode [If Result]` &rarr; `Get Contents of URL [http://<IP-PC>:8765/c?u=[URL Encoded Text]]`.
+- **LAN Security Hardening (`403 Forbidden`):** External devices on your LAN port `8765` are strictly blocked (`403 Forbidden`) from `/`, `/api/status`, `/api/screen/*`, `/api/ocr/*`, `/api/hid/*`, and `/api/audio/*`. Only `/c?u=`, `/api/shortcut/push`, and `/api/clipboard/push` are reachable over Wi-Fi (installer automatically configures the `iPhone Link LAN Shortcut Receiver (TCP 8765)` inbound firewall rule).
+- **Option A — Ask Siri / Apple Intelligence (`iOS 27`):** Click **`Copy Prompt Shortcut`** in the app's **`iOS 27 Shortcut — URL Server PC`** box (under `Grab Link (Alt+B)`) or on the website guide, and ask Siri to create the Shortcut using your live PC LAN IP (`http://<PC-LAN-IP>:8765/c?u=[Shortcut Input]`).
+- **Option B — Manual Apple Shortcuts Setup (~20 seconds):**
+  1. Open Apple **Shortcuts** on iPhone &rarr; Tap **`+`** &rarr; Name it **`Send to iPhone Link`** (or **`Send to PC`**).
+  2. Enable **Show in Share Sheet** &rarr; Set top block: **`Receive [Any] input from [Share Sheet]`** (`If there's no input: Get Clipboard`) &rarr; **`Get URLs from [Shortcut Input]`**.
+  3. Add **`URL Encode`** &rarr; Add **`Get Contents of URL`** (`http://<PC-LAN-IP>:8765/c?u=[URL Encoded Text]`, Method: **`GET`**).
+- **Tips Penggunaan Cepat (1-Tap Share Sheet & Double Back Tap):**
+  - **Cara A (Double Back Tap — `< 5 ms`):** Tap **Copy Link** inside Instagram/TikTok/Threads/YouTube &rarr; Double-tap back of iPhone (*Settings -> Accessibility -> Touch -> Back Tap -> Send to iPhone Link*) &rarr; Link arrives on PC clipboard in `< 5 ms`.
+  - **Cara B (1-Tap Direct Share Sheet Tanpa Copy Link):** Thanks to `If there's no input: Get Clipboard` &amp; `Get URLs from`, one tap via **Share Sheet &rarr; `Send to iPhone Link`** sends Instagram/Threads/TikTok/YouTube URLs straight to Windows clipboard &rarr; press **`Ctrl+V`**!
+
+---
+
 ## Downloads, Quick Setup &amp; Verified SHA-256 (`v4.0.0`)
 
 ### 1. Choose Your Package
-- **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`60.62 MB`)** - Official 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Includes isolated Python 3.12 runtime, automatic LAN Firewall rules, Desktop/Start Menu shortcuts, and **Microsoft HEVC Codec (`2.5.48.0`)** bundled offline.
-- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.54 MB`)** - 21 files (`3.67 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
+- **Recommended: `iPhone-Link-v4.0.0-Setup.exe` (`73.24 MB`)** - All-in-One 64-bit Windows Installer (`C:\Program Files\iPhone Link`). Bundles the **Apple USB Driver (`AppleMobileDeviceSupport64.msi`)** offline, **Microsoft HEVC Codec (`2.5.48.0`)** offline, isolated Python 3.12 runtime, automatic LAN Firewall rules (including inbound TCP `8765` for iOS 27 Shortcut), and Desktop/Start Menu shortcuts. Zero Microsoft Store download needed!
+- **Portable: `iPhone-Link-Win64-Native-Rust-v4.0.0.zip` (`1.58 MB`)** - 21 files (`3.80 MB` uncompressed) with Native Rust `:Zone.Identifier` unblocker, `Create-Desktop-Shortcut.bat`, and `Uninstall-iPhone-Link.bat` for systems that already have Python 3.12 installed.
 - **Optional HEVC Standalone: `Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle` (`11.2 MB`)** - Already installed automatically by `Setup.exe`; download manually only if using Portable ZIP on a fresh Windows PC without H.265 codecs.
 
 ### 2. Prerequisites on Windows &amp; iPhone (`iOS 27.2` / `27.0+`)
-1. Install **[Apple Devices](https://apps.microsoft.com/detail/9np83lwlpz9k)** (or iTunes) from Microsoft Store for the Apple USB driver and tap **Trust This Computer** on your iPhone/iPad.
-2. Enable **Developer Mode** on iOS (`Settings -> Privacy &amp; Security -> Developer Mode`). If hidden, connect via USB and open **3uTools -> Toolbox -> Realtime Screen** once to reveal the toggle.
+1. **Apple USB Driver Built Into `Setup.exe`:** `iPhone-Link-v4.0.0-Setup.exe` installs `AppleMobileDeviceSupport64.msi` and starts `Apple Mobile Device Service` automatically offline (or click **`Repair / Install Apple Driver`** anytime inside `Device & Connection Details`). Tap **Trust This Computer** when plugging in via USB.
+2. **1-Click `Unlock Developer Mode` (Zero 3uTools Needed):** Enable `Settings -> Privacy & Security -> Developer Mode` on iOS (`27.0+`). If the menu is hidden, keep USB plugged in and click **`Unlock Developer Mode Menu (1-Click)`** inside `Device & Connection Details` (or auto-revealed on USB connect) without downloading 3uTools.
 3. Verify checksums anytime in PowerShell (`Get-FileHash <file> -Algorithm SHA256`):
 
 | Artifact (`v4.0.0`) | Size | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **`iPhone-Link-v4.0.0-Setup.exe`** | `60.62 MB` (`63,561,835 B`) | `F70DDE4A1018DE7CC2B18DA802095FEFF15885943AEC580B86B2769F80C8DE8C` |
-| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.54 MB` (`1,611,609 B`) | `48F3AA2C48107512DDFB4D107230D9BDA1DD26645D890A912FFA1BAC5B54CE82` |
-| **`iPhone Link.exe`** | `1.44 MiB` (`1,504,768 B`) | `2D23A81AE4F31B9F2A2E6A1D77F6AF2A987BCD3EBC9933288610B52DD3718CD8` |
+| **`iPhone-Link-v4.0.0-Setup.exe`** | `73.24 MB` (`76,795,355 B`) | `AF54AC770F3DD2BF1A998F83CE1E955B4929E0D552C3B406536BF216A890C42C` |
+| **`iPhone-Link-Win64-Native-Rust-v4.0.0.zip`** | `1.58 MB` (`1,657,632 B`) | `93350959EFECD44B764B0593367709694424912536B4B0E2A013F8E2C5A0BD1A` |
+| **`iPhone Link.exe`** | `1.51 MB` (`1,583,616 B`) | `D2DE068AA5B12C59B86C5F80B99ECB910F0BA341FCEE8B8A5241AADDDDBDA8B4` |
 | **`Microsoft.HEVCVideoExtension_2.5.48.0...AppxBundle`** | `11.2 MB` (`11,222,383 B`) | `275FB4C0AE406D51892E87281EFF0BB3B9456D9A9493813CC059EEB8A83D39BA` |
 
 ---

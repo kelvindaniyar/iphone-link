@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import contextlib
 import hashlib
 import http.client
 import os
 import json
+import queue
 import re
 import shutil
 import socket
 import sys
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -71,7 +76,7 @@ from handset.wifi import (
 )
 from handset.audio import audio_manager
 
-from handset import get_app_root, get_bundle_root
+from handset import get_app_root, get_bundle_root, patch_qr_bridge_hot_ocr
 
 
 def get_writable_temp_dir() -> Path:
@@ -112,12 +117,16 @@ def _is_writable_app_dir(path: Path) -> bool:
 
 
 def _resolve_web_root() -> Path:
+    app_root = get_app_root()
+    bundle_root = get_bundle_root()
     for cand in (
-        get_app_root() / "handset" / "web",
-        get_bundle_root() / "handset" / "web",
+        app_root.parent / "web",
+        app_root / "web",
+        app_root / "handset" / "web",
+        bundle_root / "handset" / "web",
         Path(__file__).resolve().parent / "web",
     ):
-        if cand.is_dir():
+        if cand.is_dir() and (cand / "index.html").is_file():
             return cand
     return Path(__file__).resolve().parent / "web"
 
@@ -229,6 +238,107 @@ def get_windows_clipboard_seq() -> int:
 _ACTIVE_CLIPBOARD_SOURCE = "pc"  # "pc" or "iphone"
 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
 _LAST_GRABBED_VALID_URL: tuple[float, str] = (0.0, "")
+_LATEST_SHORTCUT_URL_CACHE: dict = {"url": "", "ts": 0.0}
+
+
+def _get_pc_lan_ipv4() -> str:
+    """Detect the primary LAN IPv4 address of this Windows PC without blocking on DNS."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.25)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+                return ip
+        finally:
+            sock.close()
+    except Exception:
+        pass
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+                return ip
+    except Exception:
+        pass
+    return "192.168.1.X"
+
+
+def _get_cached_iphone_lan_ipv4(pc_ip: str = "") -> str:
+    """Read last known iPhone LAN IPv4 from wifi_state.json without touching frozen wifi.py."""
+    import ipaddress
+
+    candidates: list[Path] = []
+    for env_key in ("APPDATA", "LOCALAPPDATA"):
+        env_val = (os.environ.get(env_key) or "").strip()
+        if env_val:
+            candidates.append(Path(env_val) / "iPhone Link" / "wifi_state.json")
+    candidates.extend([
+        get_app_root() / "wifi_state.json",
+        get_writable_appdata_dir() / "wifi_state.json",
+        Path.cwd() / "wifi_state.json",
+    ])
+    for state_path in candidates:
+        try:
+            if not state_path.is_file():
+                continue
+            data = json.loads(state_path.read_text(encoding="utf-8", errors="ignore") or "{}")
+            if not isinstance(data, dict):
+                continue
+            raw_ips: list[str] = []
+            if isinstance(data.get("last_ip"), str):
+                raw_ips.append(data["last_ip"])
+            if isinstance(data.get("ip"), str):
+                raw_ips.append(data["ip"])
+            devs = data.get("devices")
+            if isinstance(devs, dict):
+                for dev in devs.values():
+                    if isinstance(dev, dict) and isinstance(dev.get("last_ip"), str):
+                        raw_ips.append(dev["last_ip"])
+            for cand in raw_ips:
+                cand_s = cand.strip()
+                if not cand_s or cand_s == pc_ip:
+                    continue
+                addr = ipaddress.IPv4Address(cand_s)
+                if not addr.is_loopback and not addr.is_link_local and not addr.is_unspecified:
+                    return str(addr)
+        except Exception:
+            continue
+    return ""
+
+
+ICLOUD_SHORTCUT_OFFICIAL_URL = "https://www.icloud.com/shortcuts/bbb096d97e174c1386f15e31aedef8ff"
+
+
+def get_shortcut_setup_info(port: int = 8765) -> dict:
+    """Return dynamic LAN endpoint info, official iCloud link, and Dual-Mode Siri Prompt."""
+    ip = _get_pc_lan_ipv4()
+    iphone_ip = _get_cached_iphone_lan_ipv4(ip)
+    template = f"http://{ip}:{int(port)}/c?u="
+    siri_prompt = (
+        'Create a new Shortcut named "Send to iPhone Link" that appears in the Share Sheet '
+        "(with If there's no input: Get Clipboard). "
+        "First action: Get URLs from Shortcut Input. "
+        "Second action: URL Encode the URLs. "
+        f'Third action: Get Contents of URL "{template}" followed by the URL Encoded Text.'
+    )
+    if iphone_ip and iphone_ip != ip:
+        ip_warning_id = f"[GUNAKAN IP PC: {ip}] — Jangan gunakan IP iPhone ({iphone_ip}) di Shortcut!"
+        ip_warning_en = f"[USE PC IP: {ip}] — Do not use iPhone IP ({iphone_ip}) in Shortcut!"
+    else:
+        ip_warning_id = f"[GUNAKAN IP PC: {ip}] — Pastikan memakai IP PC di atas (bukan IP iPhone)."
+        ip_warning_en = f"[USE PC IP: {ip}] — Make sure to use the PC IP above (not iPhone IP)."
+    return {
+        "ok": True,
+        "pc_lan_ip": ip,
+        "iphone_lan_ip": iphone_ip,
+        "ip_warning_id": ip_warning_id,
+        "ip_warning_en": ip_warning_en,
+        "port": int(port),
+        "shortcut_endpoint_template": template,
+        "icloud_shortcut_url": ICLOUD_SHORTCUT_OFFICIAL_URL,
+        "siri_prompt_en": siri_prompt,
+    }
 
 
 def get_windows_clipboard_text() -> str | None:
@@ -345,6 +455,1284 @@ def set_windows_clipboard_text(text: str) -> bool:
         return False
 
 
+def _resolve_powershell_exe() -> str:
+    """Resolve powershell.exe cleanly even under stripped worker PATH environments."""
+    found = shutil.which("powershell.exe")
+    if found:
+        return found
+    sys_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    cand = Path(sys_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if cand.is_file():
+        return str(cand)
+    return "powershell.exe"
+
+
+class _Win32MemApi:
+    """Cached Win32 ctypes signatures for accurate 64-bit HANDLE working-set queries & trimming."""
+    _initialized = False
+    _pmc_cls = None
+    _k32 = None
+    _psapi = None
+
+    @classmethod
+    def ensure(cls) -> bool:
+        if cls._initialized:
+            return cls._k32 is not None
+        cls._initialized = True
+        if sys.platform != "win32":
+            return False
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.GetCurrentProcess.argtypes = []
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            k32.CloseHandle.restype = wintypes.BOOL
+            if hasattr(k32, "K32GetProcessMemoryInfo"):
+                k32.K32GetProcessMemoryInfo.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.POINTER(_PROCESS_MEMORY_COUNTERS),
+                    wintypes.DWORD,
+                ]
+                k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+            if hasattr(k32, "K32EmptyWorkingSet"):
+                k32.K32EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+                k32.K32EmptyWorkingSet.restype = wintypes.BOOL
+            if hasattr(k32, "SetProcessWorkingSetSizeEx"):
+                k32.SetProcessWorkingSetSizeEx.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.c_size_t,
+                    ctypes.c_size_t,
+                    wintypes.DWORD,
+                ]
+                k32.SetProcessWorkingSetSizeEx.restype = wintypes.BOOL
+            if hasattr(k32, "SetProcessWorkingSetSize"):
+                k32.SetProcessWorkingSetSize.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.c_size_t,
+                    ctypes.c_size_t,
+                ]
+                k32.SetProcessWorkingSetSize.restype = wintypes.BOOL
+
+            psapi = None
+            try:
+                psapi = ctypes.WinDLL("psapi", use_last_error=True)
+                psapi.GetProcessMemoryInfo.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.POINTER(_PROCESS_MEMORY_COUNTERS),
+                    wintypes.DWORD,
+                ]
+                psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+                psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+                psapi.EmptyWorkingSet.restype = wintypes.BOOL
+            except Exception:
+                psapi = None
+
+            cls._pmc_cls = _PROCESS_MEMORY_COUNTERS
+            cls._k32 = k32
+            cls._psapi = psapi
+            return True
+        except Exception:
+            cls._k32 = None
+            return False
+
+
+def _get_win32_process_working_set_bytes(pid: int | None = None) -> int:
+    """Return physical WorkingSetSize in bytes for current process (or target PID) on Windows."""
+    if not _Win32MemApi.ensure():
+        return 0
+    try:
+        import ctypes
+
+        k32 = _Win32MemApi._k32
+        psapi = _Win32MemApi._psapi
+        pmc_cls = _Win32MemApi._pmc_cls
+        assert k32 is not None and pmc_cls is not None
+
+        close_after = False
+        if pid is None or pid == os.getpid():
+            h_proc = k32.GetCurrentProcess()
+        else:
+            # PROCESS_QUERY_INFORMATION (0x0400) | PROCESS_VM_READ (0x0010)
+            h_proc = k32.OpenProcess(0x0410, False, int(pid))
+            close_after = True
+        if not h_proc:
+            return 0
+        try:
+            pmc = pmc_cls()
+            pmc.cb = ctypes.sizeof(pmc_cls)
+            ok = False
+            if hasattr(k32, "K32GetProcessMemoryInfo"):
+                try:
+                    ok = bool(k32.K32GetProcessMemoryInfo(h_proc, ctypes.byref(pmc), pmc.cb))
+                except Exception:
+                    ok = False
+            if not ok and psapi is not None:
+                try:
+                    ok = bool(psapi.GetProcessMemoryInfo(h_proc, ctypes.byref(pmc), pmc.cb))
+                except Exception:
+                    ok = False
+            return int(pmc.WorkingSetSize) if ok else 0
+        finally:
+            if close_after:
+                k32.CloseHandle(h_proc)
+    except Exception:
+        return 0
+
+
+def _trim_win32_process_working_set(pid: int | None = None) -> bool:
+    """Trim Win32 physical working set via K32EmptyWorkingSet + SetProcessWorkingSetSizeEx(-1, -1)."""
+    if not _Win32MemApi.ensure():
+        return False
+    try:
+        import ctypes
+
+        k32 = _Win32MemApi._k32
+        psapi = _Win32MemApi._psapi
+        assert k32 is not None
+
+        close_after = False
+        if pid is None or pid == os.getpid():
+            h_proc = k32.GetCurrentProcess()
+        else:
+            # PROCESS_QUERY_INFORMATION (0x0400) | PROCESS_SET_QUOTA (0x0100)
+            h_proc = k32.OpenProcess(0x0500, False, int(pid))
+            close_after = True
+        if not h_proc:
+            return False
+        try:
+            ok_empty = False
+            if hasattr(k32, "K32EmptyWorkingSet"):
+                try:
+                    ok_empty = bool(k32.K32EmptyWorkingSet(h_proc))
+                except Exception:
+                    pass
+            if not ok_empty and psapi is not None:
+                try:
+                    ok_empty = bool(psapi.EmptyWorkingSet(h_proc))
+                except Exception:
+                    pass
+            ok_ws = False
+            neg_one = ctypes.c_size_t(-1)
+            if hasattr(k32, "SetProcessWorkingSetSizeEx"):
+                try:
+                    ok_ws = bool(k32.SetProcessWorkingSetSizeEx(h_proc, neg_one, neg_one, 0))
+                except Exception:
+                    pass
+            if not ok_ws and hasattr(k32, "SetProcessWorkingSetSize"):
+                try:
+                    ok_ws = bool(k32.SetProcessWorkingSetSize(h_proc, neg_one, neg_one))
+                except Exception:
+                    pass
+            return bool(ok_empty or ok_ws)
+        finally:
+            if close_after:
+                k32.CloseHandle(h_proc)
+    except Exception:
+        return False
+
+
+def _heapmin_crt_arenas() -> None:
+    """Release unused MSVCRT / UCRT native C-heap arenas back to Windows."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        for dll_name in ("ucrtbase", "msvcrt"):
+            try:
+                getattr(ctypes.cdll, dll_name)._heapmin()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+_RECLAIM_MEMORY_LOCK = threading.RLock()
+
+
+def reclaim_python_worker_memory(trim_hot_ocr: bool = False) -> dict:
+    """Deterministically free transient PIL/frame caches, compact C heaps, and trim Win32 Working Set (Tahap 214)."""
+    import gc
+
+    with _RECLAIM_MEMORY_LOCK:
+        before_bytes = _get_win32_process_working_set_bytes(None)
+        try:
+            qr_mod = sys.modules.get("handset.qr_bridge")
+            if qr_mod is not None:
+                cache = getattr(qr_mod, "_SPOTLIGHT_FRAME_CACHE", None)
+                if isinstance(cache, list):
+                    cache.clear()
+        except Exception:
+            pass
+
+        try:
+            gc.collect(0)
+            gc.collect(1)
+            gc.collect(2)
+        except Exception:
+            pass
+
+        _heapmin_crt_arenas()
+        _trim_win32_process_working_set(None)
+
+        if trim_hot_ocr:
+            try:
+                worker = globals().get("_hot_ocr_worker")
+                if worker is not None and hasattr(worker, "trim_memory"):
+                    worker.trim_memory()
+            except Exception:
+                pass
+
+        after_bytes = _get_win32_process_working_set_bytes(None)
+        return {
+            "ok": True,
+            "python_before_mb": round(before_bytes / (1024 * 1024), 2),
+            "python_after_mb": round(after_bytes / (1024 * 1024), 2),
+            "reclaimed_mb": round(max(0, before_bytes - after_bytes) / (1024 * 1024), 2),
+        }
+
+
+sys._iphone_link_reclaim_memory_fn = reclaim_python_worker_memory
+
+
+def _build_hot_ocr_driver_script(ocr_script_path: str) -> str:
+    """Dynamically wrap handset/ocr_extractor.ps1 into a persistent stdin/stdout PowerShell loop without altering ocr_extractor.ps1."""
+    raw = Path(ocr_script_path).read_text(encoding="utf-8", errors="replace")
+    idx_start = raw.find("Add-Type -AssemblyName 'System.Runtime.WindowsRuntime'")
+    idx_pathlist = raw.find("$pathList = @()")
+    idx_proc = raw.find("function Process-SingleFrame")
+    idx_last = raw.find("$lastIdx = $pathList.Count - 1")
+    idx_catch = raw.rfind("} catch {")
+    if not (0 <= idx_start < idx_pathlist < idx_proc < idx_last < idx_catch):
+        raise RuntimeError("Failed to locate OCR driver markers in ocr_extractor.ps1")
+
+    preamble = raw[idx_start:idx_pathlist]
+    # Tahap 214: Dispose WinRT SoftwareBitmap & BitmapDecoder inside Get-OcrParsedLines and reuse $script:HotOcrEngine (0-diff on ocr_extractor.ps1).
+    preamble = preamble.replace(
+        "$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()",
+        "$engine = if ($null -ne $script:HotOcrEngine) { $script:HotOcrEngine } else { [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); $script:HotOcrEngine = $_ }",
+    )
+    preamble = preamble.replace(
+        "$engine = if ($null -ne $script:HotOcrEngine) { $script:HotOcrEngine } else { [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); $script:HotOcrEngine = $_ }",
+        "if ($null -eq $script:HotOcrEngine) { $script:HotOcrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }\r\n        $engine = $script:HotOcrEngine",
+    )
+    preamble = preamble.replace(
+        "$ocrResult = Await-Op ($engine.RecognizeAsync($softwareBitmap)) ([Windows.Media.Ocr.OcrResult])",
+        "$ocrResult = Await-Op ($engine.RecognizeAsync($softwareBitmap)) ([Windows.Media.Ocr.OcrResult])\r\n        if ($null -ne $softwareBitmap) { try { $softwareBitmap.Dispose() } catch {} }\r\n        $softwareBitmap = $null\r\n        $decoder = $null\r\n        $storageFile = $null",
+    )
+    preamble = preamble.replace(
+        "$stream.Dispose()",
+        "if ($null -ne $softwareBitmap) { try { $softwareBitmap.Dispose() } catch {} }\r\n            $stream.Dispose()",
+        1,
+    )
+
+    proc_fn = raw[idx_proc:idx_last]
+    batch_body = raw[idx_last:idx_catch]
+    batch_body = re.sub(
+        r"\[Console\]::WriteLine\(\$outText\)\s*\r?\n\s*exit\s+0",
+        "return $outText",
+        batch_body,
+    )
+    batch_body = batch_body.replace(
+        '[Console]::WriteLine($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")',
+        'return ($allOutputs -join "`r`n---FRAME_SPLIT---`r`n")',
+    )
+    # Tahap 213: Ensure no stray `exit <code >` inside Invoke-HotOcrBatch can ever kill the persistent PowerShell process.
+    batch_body = re.sub(r"\bexit\s+\d+\b", 'return ""', batch_body)
+
+    return (
+        "$ErrorActionPreference = 'Stop'\r\n"
+        "[Console]::InputEncoding = [System.Text.Encoding]::UTF8\r\n"
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n\r\n"
+        + "if (-not (\"NativeMemReclaimer\" -as [type])) {\r\n"
+        + "    Add-Type -TypeDefinition @\"\r\n"
+        + "using System;\r\n"
+        + "using System.Diagnostics;\r\n"
+        + "using System.Runtime.InteropServices;\r\n"
+        + "public static class NativeMemReclaimer {\r\n"
+        + "    [DllImport(\"kernel32.dll\", SetLastError = true)]\r\n"
+        + "    public static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr dwMinimumWorkingSetSize, IntPtr dwMaximumWorkingSetSize);\r\n"
+        + "    [DllImport(\"kernel32.dll\", EntryPoint = \"K32EmptyWorkingSet\", SetLastError = true)]\r\n"
+        + "    public static extern bool K32EmptyWorkingSet(IntPtr hProcess);\r\n"
+        + "    [DllImport(\"psapi.dll\", EntryPoint = \"EmptyWorkingSet\", SetLastError = true)]\r\n"
+        + "    public static extern bool PsapiEmptyWorkingSet(IntPtr hProcess);\r\n"
+        + "    public static void TrimCurrentProcess() {\r\n"
+        + "        try {\r\n"
+        + "            IntPtr h = Process.GetCurrentProcess().Handle;\r\n"
+        + "            try { K32EmptyWorkingSet(h); } catch { try { PsapiEmptyWorkingSet(h); } catch {} }\r\n"
+        + "            SetProcessWorkingSetSize(h, new IntPtr(-1), new IntPtr(-1));\r\n"
+        + "        } catch {}\r\n"
+        + "    }\r\n"
+        + "}\r\n"
+        + "\"@ -ErrorAction SilentlyContinue\r\n"
+        + "}\r\n\r\n"
+        + "function Invoke-HotOcrMemoryTrim {\r\n"
+        + "    try {\r\n"
+        + "        [System.GC]::Collect()\r\n"
+        + "        [System.GC]::WaitForPendingFinalizers()\r\n"
+        + "        [System.GC]::Collect()\r\n"
+        + "        [NativeMemReclaimer]::TrimCurrentProcess()\r\n"
+        + "    } catch {}\r\n"
+        + "}\r\n\r\n"
+        + preamble
+        + "\r\n"
+        + proc_fn
+        + "\r\nfunction Invoke-HotOcrBatch([string[]]$pathList) {\r\n"
+        + "    if ($null -eq $pathList -or $pathList.Count -eq 0) { return \"\" }\r\n"
+        + batch_body
+        + "\r\n}\r\n\r\n"
+        + "function Invoke-RawWinRtBatch([string[]]$pathList) {\r\n"
+        + "    $eng = $script:HotOcrEngine\r\n"
+        + "    if ($null -eq $eng) {\r\n"
+        + "        $eng = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()\r\n"
+        + "        $script:HotOcrEngine = $eng\r\n"
+        + "    }\r\n"
+        + "    $chunks = @()\r\n"
+        + "    foreach ($p in $pathList) {\r\n"
+        + "        $linesOut = @()\r\n"
+        + "        if ($null -ne $eng -and $p -and (Test-Path -LiteralPath $p)) {\r\n"
+        + "            $stream = $null\r\n"
+        + "            $sb = $null\r\n"
+        + "            $dec = $null\r\n"
+        + "            $sf = $null\r\n"
+        + "            $res = $null\r\n"
+        + "            try {\r\n"
+        + "                $fullP = (Resolve-Path -LiteralPath $p).Path\r\n"
+        + "                $sf = Await-Op ([Windows.Storage.StorageFile]::GetFileFromPathAsync($fullP)) ([Windows.Storage.StorageFile])\r\n"
+        + "                $stream = Await-Op ($sf.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])\r\n"
+        + "                $dec = Await-Op ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])\r\n"
+        + "                $sb = Await-Op ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])\r\n"
+        + "                $res = Await-Op ($eng.RecognizeAsync($sb)) ([Windows.Media.Ocr.OcrResult])\r\n"
+        + "                foreach ($l in $res.Lines) {\r\n"
+        + "                    $lt = $l.Text.Trim()\r\n"
+        + "                    if ($lt) { $linesOut += $lt }\r\n"
+        + "                }\r\n"
+        + "            } catch {\r\n"
+        + "            } finally {\r\n"
+        + "                if ($null -ne $sb) { try { $sb.Dispose() } catch {} }\r\n"
+        + "                if ($null -ne $stream) { try { $stream.Dispose() } catch {} }\r\n"
+        + "                $sb = $null; $stream = $null; $dec = $null; $sf = $null; $res = $null\r\n"
+        + "            }\r\n"
+        + "        }\r\n"
+        + "        $chunks += ($linesOut -join \"`r`n\")\r\n"
+        + "    }\r\n"
+        + "    return ($chunks -join \"`r`n<<<RAW_IMG_SEP>>>`r`n\")\r\n"
+        + "}\r\n\r\n"
+        + "# Pre-warm WinRT OcrEngine, BitmapDecoder, StorageFile, GDI+, and C# DualOcrPreprocessor once\r\n"
+        + "try {\r\n"
+        + "    $script:HotOcrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()\r\n"
+        + "    $warmupPng = Join-Path ([System.IO.Path]::GetTempPath()) (\"iphone_link_hot_ocr_warmup_\" + $PID + \".png\")\r\n"
+        + "    try {\r\n"
+        + "        $wb = New-Object System.Drawing.Bitmap(96, 48)\r\n"
+        + "        $wg = [System.Drawing.Graphics]::FromImage($wb)\r\n"
+        + "        $wg.Clear([System.Drawing.Color]::White)\r\n"
+        + "        $wf = New-Object System.Drawing.Font(\"Arial\", 16)\r\n"
+        + "        $wg.DrawString(\"TEST\", $wf, [System.Drawing.Brushes]::Black, 8, 8)\r\n"
+        + "        $wg.Dispose()\r\n"
+        + "        $wf.Dispose()\r\n"
+        + "        $wb.Save($warmupPng, [System.Drawing.Imaging.ImageFormat]::Png)\r\n"
+        + "        $wb.Dispose()\r\n"
+        + "        [void](Process-SingleFrame -imageFilePath $warmupPng -isLast $true -isFullViewport $false -onlyCand1 $false)\r\n"
+        + "    } finally {\r\n"
+        + "        if (Test-Path $warmupPng) { Remove-Item $warmupPng -Force -ErrorAction SilentlyContinue }\r\n"
+        + "        Invoke-HotOcrMemoryTrim\r\n"
+        + "    }\r\n"
+        + "} catch {}\r\n\r\n"
+        + "[Console]::Out.WriteLine(\"<<<HOT_OCR_READY>>>\")\r\n"
+        + "[Console]::Out.Flush()\r\n\r\n"
+        + "while ($true) {\r\n"
+        + "    $line = [Console]::In.ReadLine()\r\n"
+        + "    if ($null -eq $line) { break }\r\n"
+        + "    $trimmed = $line.Trim()\r\n"
+        + "    if (-not $trimmed) { continue }\r\n"
+        + "    try {\r\n"
+        + "        $req = ConvertFrom-Json -InputObject $trimmed\r\n"
+        + "        if ($req.cmd -eq \"exit\") { break }\r\n"
+        + "        if ($req.cmd -eq \"trim_memory\") {\r\n"
+        + "            Invoke-HotOcrMemoryTrim\r\n"
+        + "            $tb64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('{\"ok\":true,\"trimmed\":true}'))\r\n"
+        + "            [Console]::Out.WriteLine(\"<<<OCR_B64:\" + $tb64 + \">>>\")\r\n"
+        + "            [Console]::Out.WriteLine(\"<<<OCR_BATCH_DONE>>>\")\r\n"
+        + "            [Console]::Out.Flush()\r\n"
+        + "            continue\r\n"
+        + "        }\r\n"
+        + "        $reqPaths = @()\r\n"
+        + "        if ($null -ne $req.paths) {\r\n"
+        + "            $reqPaths = @($req.paths | ForEach-Object { [string]$_ })\r\n"
+        + "        }\r\n"
+        + "        if ($req.cmd -eq \"raw_winrt_batch\") {\r\n"
+        + "            $resOut = Invoke-RawWinRtBatch -pathList $reqPaths\r\n"
+        + "        } else {\r\n"
+        + "            $resOut = Invoke-HotOcrBatch -pathList $reqPaths\r\n"
+        + "        }\r\n"
+        + "        $outText = \"\"\r\n"
+        + "        if ($null -ne $resOut) {\r\n"
+        + "            if ($resOut -is [System.Array]) {\r\n"
+        + "                $outText = ($resOut -join \"`r`n\")\r\n"
+        + "            } else {\r\n"
+        + "                $outText = [string]$resOut\r\n"
+        + "            }\r\n"
+        + "        }\r\n"
+        + "        $resOut = $null\r\n"
+        + "        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($outText))\r\n"
+        + "        $outText = \"\"\r\n"
+        + "        [Console]::Out.WriteLine(\"<<<OCR_B64:\" + $b64 + \">>>\")\r\n"
+        + "        [Console]::Out.WriteLine(\"<<<OCR_BATCH_DONE>>>\")\r\n"
+        + "        [Console]::Out.Flush()\r\n"
+        + "        Invoke-HotOcrMemoryTrim\r\n"
+        + "    } catch {\r\n"
+        + "        $errMsg = $_.Exception.Message\r\n"
+        + "        $eb64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($errMsg))\r\n"
+        + "        [Console]::Out.WriteLine(\"<<<OCR_ERR:\" + $eb64 + \">>>\")\r\n"
+        + "        [Console]::Out.WriteLine(\"<<<OCR_BATCH_DONE>>>\")\r\n"
+        + "        [Console]::Out.Flush()\r\n"
+        + "        Invoke-HotOcrMemoryTrim\r\n"
+        + "    }\r\n"
+        + "}\r\n"
+    )
+
+
+class _PersistentHotOcrWorker:
+    """Thread-safe persistent PowerShell WinRT OCR worker eliminating ~800ms cold-spawn & Add-Type JIT overhead."""
+
+    def __init__(self) -> None:
+        self._state_lock = threading.Lock()
+        self._io_lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._line_queue: queue.Queue[str | None] | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._ready = False
+        self._starting = False
+        self._shutdown_requested = False
+        self._ready_event = threading.Event()
+        self._warmup_ms: float | None = None
+        self._last_batch_ms: float | None = None
+        self._batches_served: int = 0
+        self._fallbacks_triggered: int = 0
+
+    def _spawn_and_warm_sync(self, wait_timeout: float = 12.0) -> bool:
+        if sys.platform != "win32":
+            return False
+        t0 = time.perf_counter()
+        with self._state_lock:
+            if self._shutdown_requested:
+                return False
+            if self._ready and self._proc is not None and self._proc.poll() is None:
+                return True
+            if self._starting:
+                evt = self._ready_event
+            else:
+                self._starting = True
+                self._ready = False
+                self._ready_event.clear()
+                evt = None
+
+        if evt is not None:
+            evt.wait(timeout=wait_timeout)
+            return self._ready and self._proc is not None and self._proc.poll() is None
+
+        try:
+            script_path = _resolve_ocr_script_path()
+            driver_ps1 = _build_hot_ocr_driver_script(script_path)
+            driver_path = get_writable_temp_dir() / "_hot_ocr_driver.ps1"
+            driver_path.write_text(driver_ps1, encoding="utf-8")
+
+            line_q: queue.Queue[str | None] = queue.Queue()
+            proc = subprocess.Popen(
+                [_resolve_powershell_exe(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(driver_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
+
+            def _reader() -> None:
+                try:
+                    assert proc.stdout is not None
+                    for raw_line in proc.stdout:
+                        line_q.put(raw_line.rstrip("\r\n"))
+                except Exception:
+                    pass
+                finally:
+                    line_q.put(None)
+
+            rt = threading.Thread(target=_reader, name="hot-ocr-stdout-reader", daemon=True)
+            rt.start()
+
+            deadline = time.perf_counter() + wait_timeout
+            ready_seen = False
+            while time.perf_counter() < deadline:
+                rem = max(0.05, deadline - time.perf_counter())
+                try:
+                    line = line_q.get(timeout=min(0.5, rem))
+                except queue.Empty:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                if line is None:
+                    break
+                if line.strip() == "<<<HOT_OCR_READY>>>":
+                    ready_seen = True
+                    break
+
+            with self._state_lock:
+                if ready_seen and not self._shutdown_requested and proc.poll() is None:
+                    self._proc = proc
+                    self._line_queue = line_q
+                    self._reader_thread = rt
+                    self._ready = True
+                    self._warmup_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                else:
+                    self._ready = False
+                    self._proc = None
+                    self._terminate_proc(proc)
+            if self._ready and self._proc is not None and self._proc.poll() is None:
+                _trim_win32_process_working_set(self._proc.pid)
+        except Exception as e:
+            print(f"_PersistentHotOcrWorker warm error: {e}", flush=True)
+            with self._state_lock:
+                self._ready = False
+                self._proc = None
+        finally:
+            with self._state_lock:
+                self._starting = False
+                self._ready_event.set()
+        return self._ready
+
+    def prewarm_async(self) -> None:
+        if sys.platform != "win32" or self._shutdown_requested:
+            return
+        with self._state_lock:
+            if self._ready or self._starting:
+                return
+        threading.Thread(target=self._spawn_and_warm_sync, kwargs={"wait_timeout": 15.0}, daemon=True, name="hot-ocr-prewarm").start()
+
+    def _send_driver_command(self, cmd_payload: dict, timeout: float = 8.0) -> str | None:
+        """Execute a single JSON command against the persistent PowerShell WinRT OCR worker."""
+        if sys.platform != "win32" or self._shutdown_requested:
+            return None
+        with self._io_lock:
+            if not (self._ready and self._proc is not None and self._proc.poll() is None):
+                if not self._spawn_and_warm_sync(wait_timeout=12.0):
+                    self._fallbacks_triggered += 1
+                    return None
+
+            proc = self._proc
+            line_q = self._line_queue
+            if proc is None or proc.poll() is not None or proc.stdin is None or line_q is None:
+                self._reset_worker()
+                self._fallbacks_triggered += 1
+                return None
+
+            t0 = time.perf_counter()
+            try:
+                while not line_q.empty():
+                    try:
+                        line_q.get_nowait()
+                    except queue.Empty:
+                        break
+                payload = json.dumps(cmd_payload, ensure_ascii=False)
+                proc.stdin.write(payload + "\n")
+                proc.stdin.flush()
+
+                deadline = time.perf_counter() + timeout
+                decoded_text: str | None = None
+                err_text: str | None = None
+                done = False
+                while time.perf_counter() < deadline:
+                    rem = max(0.02, deadline - time.perf_counter())
+                    try:
+                        line = line_q.get(timeout=min(0.25, rem))
+                    except queue.Empty:
+                        if proc.poll() is not None:
+                            break
+                        continue
+                    if line is None:
+                        break
+                    s = line.strip()
+                    if s.startswith("<<<OCR_B64:") and s.endswith(">>>"):
+                        b64 = s[len("<<<OCR_B64:"):-3]
+                        decoded_text = base64.b64decode(b64).decode("utf-8", errors="replace")
+                    elif s.startswith("<<<OCR_ERR:") and s.endswith(">>>"):
+                        eb64 = s[len("<<<OCR_ERR:"):-3]
+                        err_text = base64.b64decode(eb64).decode("utf-8", errors="replace")
+                    elif s == "<<<OCR_BATCH_DONE>>>":
+                        done = True
+                        break
+
+                if not done or err_text is not None or decoded_text is None:
+                    if err_text:
+                        print(f"Hot OCR worker batch error (falling back): {err_text}", flush=True)
+                    self._reset_worker()
+                    self._fallbacks_triggered += 1
+                    return None
+
+                self._last_batch_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                if cmd_payload.get("cmd") != "trim_memory":
+                    self._batches_served += 1
+                _trim_win32_process_working_set(proc.pid)
+                return decoded_text
+            except Exception as e:
+                print(f"Hot OCR worker pipe failure (falling back): {e}", flush=True)
+                self._reset_worker()
+                self._fallbacks_triggered += 1
+                return None
+
+    def run_batch(self, tmp_files: list[str], timeout: float = 8.0) -> str | None:
+        if not tmp_files:
+            return None
+        return self._send_driver_command({"paths": tmp_files}, timeout=timeout)
+
+    def run_raw_winrt_batch(self, imgs: list, timeout: float = 8.0) -> list[list[str]] | None:
+        """Run raw WinRT OcrResult line extraction on PIL images via the persistent PowerShell worker."""
+        if sys.platform != "win32" or self._shutdown_requested:
+            return None
+        if not imgs:
+            return []
+
+        results: list[list[str]] = [[] for _ in imgs]
+        temp_ocr_dir = get_writable_temp_dir()
+        active_indices: list[int] = []
+        active_paths: list[str] = []
+        pid = os.getpid()
+        tid = threading.get_ident()
+        try:
+            for orig_i, im in enumerate(imgs):
+                gray = None
+                gray_crop = None
+                try:
+                    gray = im.convert("L")
+                    w_im, h_im = gray.size
+                    if w_im > 80 and h_im > 80:
+                        gray_crop = gray.crop((38, 38, w_im - 38, h_im - 38))
+                        lo_c, hi_c = gray_crop.getextrema()
+                    else:
+                        lo_c, hi_c = gray.getextrema()
+                    if (hi_c - lo_c) < 18:
+                        continue
+                except Exception:
+                    pass
+                finally:
+                    if gray_crop is not None:
+                        try:
+                            gray_crop.close()
+                        except Exception:
+                            pass
+                    if gray is not None:
+                        try:
+                            gray.close()
+                        except Exception:
+                            pass
+                out_path = temp_ocr_dir / f"hot_raw_{pid}_{tid}_{orig_i}.png"
+                im.save(out_path, format="PNG")
+                active_indices.append(orig_i)
+                active_paths.append(str(out_path))
+
+            if not active_paths:
+                return results
+
+            raw_out = self._send_driver_command({"cmd": "raw_winrt_batch", "paths": active_paths}, timeout=timeout)
+            if raw_out is None:
+                return None
+
+            chunks = raw_out.split("<<<RAW_IMG_SEP>>>")
+            for orig_i, chunk in zip(active_indices, chunks):
+                results[orig_i] = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
+            return results
+        except Exception as e:
+            print(f"Hot OCR raw WinRT batch error (falling back): {e}", flush=True)
+            return None
+        finally:
+            for p_str in active_paths:
+                try:
+                    os.remove(p_str)
+                except Exception:
+                    pass
+
+    def trim_memory(self) -> dict:
+        """Actively run .NET GC + Win32 Working Set Trim on persistent Hot OCR PowerShell process."""
+        with self._state_lock:
+            proc = self._proc
+            alive = proc is not None and proc.poll() is None and proc.pid is not None
+            ps_pid = proc.pid if alive and proc is not None else None
+        if not ps_pid:
+            return {"ok": True, "hot_ocr_alive": False, "hot_ocr_ps_working_set_mb": 0.0}
+        before_b = _get_win32_process_working_set_bytes(ps_pid)
+        _trim_win32_process_working_set(ps_pid)
+        try:
+            self._send_driver_command({"cmd": "trim_memory"}, timeout=3.0)
+        except Exception:
+            pass
+        time.sleep(0.015)
+        _trim_win32_process_working_set(ps_pid)
+        after_b = _get_win32_process_working_set_bytes(ps_pid)
+        return {
+            "ok": True,
+            "hot_ocr_alive": True,
+            "pid": ps_pid,
+            "before_mb": round(before_b / (1024 * 1024), 2),
+            "hot_ocr_ps_working_set_mb": round(after_b / (1024 * 1024), 2),
+        }
+
+    def _terminate_proc(self, proc: subprocess.Popen | None) -> None:
+        if proc is None:
+            return
+        try:
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.write('{"cmd":"exit"}\n')
+                    proc.stdin.flush()
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            try:
+                proc.wait(timeout=0.8)
+            except Exception:
+                proc.kill()
+        except Exception:
+            pass
+
+    def _reset_worker(self) -> None:
+        with self._state_lock:
+            proc = self._proc
+            self._proc = None
+            self._line_queue = None
+            self._ready = False
+        self._terminate_proc(proc)
+
+    def shutdown(self) -> None:
+        with self._state_lock:
+            self._shutdown_requested = True
+            proc = self._proc
+            self._proc = None
+            self._line_queue = None
+            self._ready = False
+        self._terminate_proc(proc)
+
+    def status(self) -> dict:
+        with self._state_lock:
+            proc = self._proc
+            alive = proc is not None and proc.poll() is None
+            return {
+                "ok": True,
+                "hot_ocr_engine_ready": bool(self._ready and alive),
+                "worker_alive": bool(alive),
+                "pid": proc.pid if alive and proc is not None else None,
+                "batches_served": self._batches_served,
+                "fallbacks_triggered": self._fallbacks_triggered,
+                "warmup_ms": self._warmup_ms,
+                "last_batch_ms": self._last_batch_ms,
+            }
+
+
+_existing_hot_ocr = getattr(sys, "_iphone_link_hot_ocr_worker", None)
+if (
+    hasattr(_existing_hot_ocr, "run_batch")
+    and hasattr(_existing_hot_ocr, "run_raw_winrt_batch")
+    and hasattr(_existing_hot_ocr, "trim_memory")
+    and not getattr(_existing_hot_ocr, "_shutdown_requested", False)
+):
+    _hot_ocr_worker = _existing_hot_ocr
+else:
+    if hasattr(_existing_hot_ocr, "shutdown"):
+        try:
+            _existing_hot_ocr.shutdown()
+        except Exception:
+            pass
+    _hot_ocr_worker = _PersistentHotOcrWorker()
+    sys._iphone_link_hot_ocr_worker = _hot_ocr_worker
+
+if "handset.qr_bridge" in sys.modules:
+    patch_qr_bridge_hot_ocr(sys.modules["handset.qr_bridge"])
+
+
+def get_hot_ocr_status() -> dict:
+    """Return runtime health & telemetry for the persistent Hot WinRT OCR engine."""
+    return _hot_ocr_worker.status()
+
+
+def get_system_memory_telemetry(reclaim: bool = False) -> dict:
+    """Return exact Win32 physical WorkingSetSize for Python worker and persistent PowerShell Hot OCR worker (Tahap 214)."""
+    with _RECLAIM_MEMORY_LOCK:
+        reclaim_report = None
+        if reclaim:
+            reclaim_report = reclaim_python_worker_memory(trim_hot_ocr=True)
+        py_ws = _get_win32_process_working_set_bytes(None)
+        st = _hot_ocr_worker.status()
+        ps_pid = st.get("pid")
+        ps_ws = _get_win32_process_working_set_bytes(ps_pid) if ps_pid else 0
+        py_mb = round(py_ws / (1024 * 1024), 2)
+        ps_mb = round(ps_ws / (1024 * 1024), 2)
+        out = {
+            "ok": True,
+            "reclaimed": bool(reclaim),
+            "python_worker_pid": os.getpid(),
+            "python_worker_working_set_bytes": py_ws,
+            "python_worker_working_set_mb": py_mb,
+            "hot_ocr_ps_pid": ps_pid,
+            "hot_ocr_ps_working_set_bytes": ps_ws,
+            "hot_ocr_ps_working_set_mb": ps_mb,
+            "hot_ocr_alive": bool(st.get("worker_alive")),
+            "rust_shell_working_set_mb": 0.0,
+            "total_backend_working_set_mb": round(py_mb + ps_mb, 2),
+        }
+        if reclaim_report is not None:
+            out["reclaim_detail"] = reclaim_report
+        return out
+
+
+# ======================================================================
+# Tahap 221: 3uTools-Style Diagnostics, Offline Driver Repair, & 1-Click Unlock Developer Mode
+# ======================================================================
+_DIAGNOSTICS_LOCK = threading.RLock()
+_HEVC_STATUS_CACHE: dict = {"ts": 0.0, "installed": None}
+_AUTO_REVEALED_DEVMODE_UDIDS: set[str] = set()
+
+
+def _check_hevc_codec_installed(force: bool = False) -> bool:
+    """Detect whether Microsoft HEVC Video Extensions is installed (60s TTL cached)."""
+    now = time.monotonic()
+    with _DIAGNOSTICS_LOCK:
+        cached = _HEVC_STATUS_CACHE.get("installed")
+        if not force and cached is not None and (now - float(_HEVC_STATUS_CACHE.get("ts", 0.0))) < 60.0:
+            return bool(cached)
+
+    installed = False
+    if sys.platform == "win32":
+        try:
+            win_apps = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "WindowsApps"
+            if any(win_apps.glob("Microsoft.HEVCVideoExtension*")):
+                installed = True
+        except OSError:
+            pass
+        if not installed:
+            try:
+                proc = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        "if (Get-AppxPackage -Name '*HEVCVideoExtension*' -ErrorAction SilentlyContinue) { '1' } else { '0' }",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                    **_WIN_NO_WINDOW_KWARGS,
+                )
+                installed = proc.returncode == 0 and "1" in (proc.stdout or "").strip()
+            except Exception:
+                installed = False
+    with _DIAGNOSTICS_LOCK:
+        _HEVC_STATUS_CACHE["ts"] = now
+        _HEVC_STATUS_CACHE["installed"] = bool(installed)
+    return bool(installed)
+
+
+def _find_bundled_apple_driver_files() -> tuple[Path | None, Path | None]:
+    """Locate bundled install_apple_driver.ps1 and AppleMobileDeviceSupport64.msi."""
+    roots: list[Path] = []
+    for candidate_root in (get_app_root(), get_bundle_root()):
+        if isinstance(candidate_root, Path) and candidate_root not in roots:
+            roots.append(candidate_root)
+    ps1_path: Path | None = None
+    msi_path: Path | None = None
+    for root in roots:
+        for rel_ps1 in (Path("drivers") / "install_apple_driver.ps1", Path("release") / "install_apple_driver.ps1"):
+            p = root / rel_ps1
+            if ps1_path is None and p.is_file():
+                ps1_path = p
+        for rel_msi in (
+            Path("drivers") / "AppleMobileDeviceSupport64.msi",
+            Path("release") / "AppleMobileDeviceSupport64.msi",
+            Path("assets") / "AppleMobileDeviceSupport64.msi",
+        ):
+            p = root / rel_msi
+            if msi_path is None and p.is_file():
+                msi_path = p
+    if msi_path is None:
+        cache_cand = Path(r"C:\ProgramData\Apple\Installer Cache\Apple Mobile Device Support 19.4.0.10\AppleMobileDeviceSupport64.msi")
+        if cache_cand.is_file():
+            msi_path = cache_cand
+    return ps1_path, msi_path
+
+
+def _is_apple_usb_driver_installed(drv: dict) -> bool:
+    """Check Apple USB Driver directories, DriverStore usbaapl64.inf, or active service."""
+    from handset.device import DRIVER_PATHS
+
+    if bool(drv.get("ready")):
+        return True
+    if any(p.exists() for p in DRIVER_PATHS):
+        return True
+    try:
+        repo = Path(r"C:\Windows\System32\DriverStore\FileRepository")
+        if repo.is_dir() and any(repo.glob("usbaapl64.inf*")):
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _query_devmode_lockdown_fallback(udid: str) -> bool | None:
+    """Fallback direct Lockdown/pymobiledevice3 query when cached developerMode is None."""
+    from handset.mux import list_devices, lockdown_request, open_lockdown
+
+    try:
+        connected = list_devices()
+        match = next(
+            (d for d in connected if d.get("udid") == udid and str(d.get("connection", "USB")).upper() == "USB"),
+            None,
+        )
+        if match is not None:
+            with open_lockdown(int(match["deviceId"])) as sock:
+                res = lockdown_request(sock, "GetValue", {"Domain": "com.apple.security.mac.amfi", "Key": "DeveloperModeStatus"})
+                val = res.get("Value")
+                if isinstance(val, bool):
+                    return val
+    except Exception:
+        pass
+
+    async def _async_query() -> bool | None:
+        from pymobiledevice3.lockdown import create_using_usbmux
+
+        lockdown = await create_using_usbmux(serial=udid, autopair=False)
+        try:
+            return bool(await lockdown.get_developer_mode_status())
+        finally:
+            with contextlib.suppress(Exception):
+                await lockdown.close()
+
+    try:
+        return asyncio.run(_async_query())
+    except Exception:
+        return None
+
+
+def _resolve_developer_mode_status(
+    udid: str | None,
+    has_usb: bool,
+    force_refresh: bool = False,
+) -> tuple[bool | None, str]:
+    """Resolve exact Developer Mode state and trigger background AMFI auto-reveal if disabled."""
+    from handset.device import (
+        _DEVELOPER_MODE_CACHE,
+        _DEVICE_CACHE_LOCK,
+        _DEV_MODE_RETRY_AFTER,
+        developer_mode_enabled,
+    )
+
+    if has_usb and udid:
+        if force_refresh:
+            with _DEVICE_CACHE_LOCK:
+                _DEVELOPER_MODE_CACHE.pop(udid, None)
+                _DEV_MODE_RETRY_AFTER.pop(udid, None)
+        dev_bool = developer_mode_enabled(udid)
+        if dev_bool is None:
+            dev_bool = _query_devmode_lockdown_fallback(udid)
+            if dev_bool is not None:
+                with _DEVICE_CACHE_LOCK:
+                    _DEVELOPER_MODE_CACHE[udid] = bool(dev_bool)
+                    _DEV_MODE_RETRY_AFTER.pop(udid, None)
+        if dev_bool is None:
+            # Never return '-' when an iPhone is connected via USB: if already streaming it's True, else False
+            st = screen_status()
+            dev_bool = bool(st.get("phase") == "running")
+        if dev_bool is False:
+            with _DIAGNOSTICS_LOCK:
+                should_reveal = udid not in _AUTO_REVEALED_DEVMODE_UDIDS
+                if should_reveal:
+                    _AUTO_REVEALED_DEVMODE_UDIDS.add(udid)
+            if should_reveal:
+                threading.Thread(
+                    target=_unlock_developer_mode_on_device,
+                    kwargs={"udid": udid, "arm_enable": False},
+                    daemon=True,
+                ).start()
+        return bool(dev_bool), ("enabled" if dev_bool else "disabled")
+
+    if udid:
+        with _DEVICE_CACHE_LOCK:
+            cached = _DEVELOPER_MODE_CACHE.get(udid)
+        if isinstance(cached, bool):
+            return cached, ("enabled" if cached else "disabled")
+    return None, "disconnected"
+
+
+def _get_detailed_driver_and_device_diagnostics(
+    udid: str | None = None,
+    has_usb: bool | None = None,
+    force_refresh: bool = False,
+) -> dict:
+    """Return 3uTools-style 5-point diagnostics for Device & Connection Details card."""
+    from handset.device import _mux_listening, clear_device_caches, driver_status
+    from handset.mux import list_devices
+
+    if force_refresh:
+        clear_device_caches(udid)
+
+    if has_usb is None or udid is None:
+        try:
+            devs = list_devices()
+        except Exception:
+            devs = []
+        usb_devs = [d for d in devs if str(d.get("connection", "")).upper() == "USB" and d.get("udid")]
+        if has_usb is None:
+            has_usb = len(usb_devs) > 0
+        if udid is None and usb_devs:
+            udid = usb_devs[0].get("udid")
+
+    drv = driver_status()
+    apple_driver_installed = _is_apple_usb_driver_installed(drv)
+    mux_up = _mux_listening()
+    apple_service_running = bool(drv.get("service") == "RUNNING" or mux_up)
+    tcp_port_27015_normal = bool(mux_up or apple_service_running)
+    hevc_codec_installed = _check_hevc_codec_installed(force=force_refresh)
+    dev_bool, dev_status = _resolve_developer_mode_status(udid, bool(has_usb), force_refresh=force_refresh)
+
+    if dev_status == "enabled":
+        dev_label_en = "Enabled (Active)"
+        dev_label_id = "Aktif (Enabled)"
+    elif dev_status == "disabled":
+        dev_label_en = "Disabled (Click Unlock)"
+        dev_label_id = "Nonaktif (Klik Unlock)"
+    else:
+        dev_label_en = "Connect iPhone via USB"
+        dev_label_id = "Hubungkan iPhone via USB"
+
+    return {
+        "ok": True,
+        "udid": udid,
+        "usb_connected": bool(has_usb),
+        "apple_driver_installed": apple_driver_installed,
+        "apple_driver_label": "Installed" if apple_driver_installed else "Not Installed",
+        "apple_driver_label_id": "Terpasang" if apple_driver_installed else "Belum Terpasang",
+        "apple_service_running": apple_service_running,
+        "apple_service_label": "Running (Started)" if apple_service_running else "Stopped",
+        "apple_service_label_id": "Berjalan (Started)" if apple_service_running else "Berhenti",
+        "tcp_port_27015_normal": tcp_port_27015_normal,
+        "tcp_port_label": "Normal" if tcp_port_27015_normal else "Unreachable",
+        "tcp_port_label_id": "Normal" if tcp_port_27015_normal else "Tidak Terjangkau",
+        "hevc_codec_installed": hevc_codec_installed,
+        "hevc_codec_label": "Installed (60fps)" if hevc_codec_installed else "Missing",
+        "hevc_codec_label_id": "Terpasang (60fps)" if hevc_codec_installed else "Belum Ada",
+        "developer_mode_status": dev_status,
+        "developer_mode_bool": dev_bool,
+        "developer_mode_label": dev_label_en,
+        "developer_mode_label_id": dev_label_id,
+    }
+
+
+def _repair_apple_driver_and_service() -> dict:
+    """Repair or install Apple USB Driver & start Apple Mobile Device Service silently."""
+    from handset.device import clear_device_caches, driver_status
+
+    svc_name = "Apple Mobile Device Service"
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["sc", "config", svc_name, "start=", "auto"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["sc", "start", svc_name],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                check=False,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
+
+    clear_device_caches()
+    drv_now = driver_status()
+    ps1_path, msi_path = _find_bundled_apple_driver_files()
+
+    if sys.platform == "win32" and (not _is_apple_usb_driver_installed(drv_now) or drv_now.get("service") != "RUNNING"):
+        if ps1_path is not None:
+            with contextlib.suppress(Exception):
+                subprocess.run(
+                    [
+                        "powershell",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(ps1_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                    **_WIN_NO_WINDOW_KWARGS,
+                )
+        elif msi_path is not None and not _is_apple_usb_driver_installed(drv_now):
+            with contextlib.suppress(Exception):
+                subprocess.run(
+                    ["msiexec.exe", "/i", str(msi_path), "/qn", "/norestart"],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                    **_WIN_NO_WINDOW_KWARGS,
+                )
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["sc", "config", svc_name, "start=", "auto"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["sc", "start", svc_name],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                check=False,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
+
+    clear_device_caches()
+    diag = _get_detailed_driver_and_device_diagnostics(force_refresh=True)
+    ok = bool(diag.get("apple_driver_installed") and diag.get("apple_service_running"))
+    return {
+        "ok": True,
+        "repaired": ok,
+        "driver_ready": bool(diag.get("apple_driver_installed")),
+        "service_running": bool(diag.get("apple_service_running")),
+        "bundled_msi_found": msi_path is not None,
+        "diagnostics": diag,
+        "driver": driver_status(),
+        "message_id": (
+            "Layanan Apple Mobile Device Service & Driver USB aktif dan siap digunakan."
+            if ok
+            else "Perbaikan driver selesai dijalankan. Jika belum aktif, jalankan Repair sebagai Administrator atau pasang ulang Setup.exe."
+        ),
+        "message_en": (
+            "Apple Mobile Device Service & USB Driver verified and running."
+            if ok
+            else "Driver repair finished. If still inactive, run Repair as Administrator or re-run Setup.exe."
+        ),
+    }
+
+
+def _unlock_developer_mode_on_device(udid: str | None = None, arm_enable: bool = False) -> dict:
+    """Reveal Developer Mode menu on a connected USB iPhone via pymobiledevice3 AmfiService."""
+    from handset.device import _DEVELOPER_MODE_CACHE, _DEVICE_CACHE_LOCK, _DEV_MODE_RETRY_AFTER
+    from handset.mux import list_devices
+
+    try:
+        connected = list_devices()
+    except Exception:
+        connected = []
+    usb_devices = [d for d in connected if str(d.get("connection", "")).upper() == "USB" and d.get("udid")]
+    if not usb_devices:
+        return {
+            "ok": False,
+            "connected": False,
+            "udid": None,
+            "revealed": False,
+            "developer_mode_status": "disconnected",
+            "error": "No USB iPhone connected",
+            "message_id": "Hubungkan iPhone menggunakan kabel data USB terlebih dahulu, buka kunci layar, dan ketuk Trust This Computer.",
+            "message_en": "Connect your iPhone with a USB data cable first, unlock the screen, and tap Trust This Computer.",
+        }
+
+    target_udid = udid if udid and any(d.get("udid") == udid for d in usb_devices) else str(usb_devices[0]["udid"])
+
+    async def _run_amfi() -> tuple[bool, str]:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.amfi import AmfiService
+
+        lockdown = await create_using_usbmux(serial=target_udid, autopair=True)
+        try:
+            amfi = AmfiService(lockdown)
+            await amfi.reveal_developer_mode_option_in_ui()
+            if arm_enable:
+                with contextlib.suppress(Exception):
+                    await amfi.enable_developer_mode(enable_post_restart=False)
+            dev_status = bool(await lockdown.get_developer_mode_status())
+            return dev_status, str(getattr(lockdown, "udid", target_udid) or target_udid)
+        finally:
+            with contextlib.suppress(Exception):
+                await lockdown.close()
+
+    try:
+        dev_enabled, resolved_udid = asyncio.run(_run_amfi())
+        with _DEVICE_CACHE_LOCK:
+            _DEVELOPER_MODE_CACHE[resolved_udid] = bool(dev_enabled)
+            _DEV_MODE_RETRY_AFTER.pop(resolved_udid, None)
+        with _DIAGNOSTICS_LOCK:
+            _AUTO_REVEALED_DEVMODE_UDIDS.add(resolved_udid)
+        if dev_enabled:
+            msg_id = "Developer Mode sudah aktif di iPhone Anda. Siap langsung melakukan mirroring."
+            msg_en = "Developer Mode is already enabled on your iPhone. Ready to start mirroring."
+        else:
+            msg_id = (
+                "Berhasil! Menu Developer Mode telah dimunculkan di iPhone Anda. "
+                "Buka Settings -> Privacy & Security -> Developer Mode (paling bawah) -> Nyalakan -> Restart iPhone."
+            )
+            msg_en = (
+                "Success! Developer Mode menu is now visible on your iPhone. "
+                "Open Settings -> Privacy & Security -> Developer Mode -> Turn On -> Restart iPhone."
+            )
+        return {
+            "ok": True,
+            "connected": True,
+            "udid": resolved_udid,
+            "revealed": True,
+            "developer_mode_status": "enabled" if dev_enabled else "disabled",
+            "message_id": msg_id,
+            "message_en": msg_en,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "connected": True,
+            "udid": target_udid,
+            "revealed": False,
+            "developer_mode_status": "disabled",
+            "error": str(exc),
+            "message_id": f"Pastikan iPhone dalam keadaan terbuka kuncinya & telah mengetuk Trust This Computer. ({exc})",
+            "message_en": f"Make sure your iPhone is unlocked and Trust This Computer was accepted. ({exc})",
+        }
+
+
 def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> list[str]:
     """Extract text from one or more iPhone frames in a single PowerShell process.
     The last frame in frame_data_urls uses Highlight-Crop; earlier frames use Full-Viewport Content Crop.
@@ -352,10 +1740,11 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
     """
     if not frame_data_urls:
         return []
+    created_tmp_files: list[str] = []
+    valid_frames = []
+    tmp_files: list[str] = []
     try:
         import base64, tempfile, subprocess, os, json
-        valid_frames = []
-        tmp_files = []
         temp_ocr_dir = get_writable_temp_dir()
 
         for idx, furl in enumerate(frame_data_urls):
@@ -371,6 +1760,7 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
                 tmp.write(raw_bytes)
                 tmp.close()
                 tmp_files.append(tmp.name)
+                created_tmp_files.append(tmp.name)
                 valid_frames.append((idx, tmp.name, raw_bytes))
             elif os.path.isfile(furl):
                 abs_f = os.path.abspath(furl)
@@ -391,22 +1781,27 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
                     f_raw.write(valid_frames[-1][2])
             except Exception:
                 pass
+        valid_frames.clear()
 
-        joined_paths = "|".join(tmp_files)
-        script_path = _resolve_ocr_script_path()
-        timeout_sec = 18.0
+        stdout_raw = _hot_ocr_worker.run_batch(tmp_files, timeout=8.0)
+        if stdout_raw is None:
+            joined_paths = "|".join(tmp_files)
+            script_path = _resolve_ocr_script_path()
+            timeout_sec = 18.0
 
-        res = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, "-ImagePaths", joined_paths],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_sec,
-            **_WIN_NO_WINDOW_KWARGS,
-        )
+            res = subprocess.run(
+                [_resolve_powershell_exe(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path, "-ImagePaths", joined_paths],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_sec,
+                **_WIN_NO_WINDOW_KWARGS,
+            )
 
-        stdout_raw = res.stdout or ""
+            stdout_raw = res.stdout or ""
+            _hot_ocr_worker.prewarm_async()
+
         frame_chunks = stdout_raw.split("---FRAME_SPLIT---")
         results = [chunk.strip() for chunk in frame_chunks if chunk.strip()]
         return results
@@ -414,13 +1809,15 @@ def extract_text_batch(frame_data_urls: list[str], save_debug: bool = True) -> l
         print(f"extract_text_batch error: {e}", flush=True)
         return []
     finally:
-        temp_dir = tempfile.gettempdir()
-        for tpath in tmp_files:
-            if temp_dir in tpath:
-                try:
-                    os.remove(tpath)
-                except Exception:
-                    pass
+        for tpath in created_tmp_files:
+            try:
+                os.remove(tpath)
+            except Exception:
+                pass
+        valid_frames.clear()
+        tmp_files.clear()
+        if not getattr(sys, "_iphone_link_in_http_scan_handler", False):
+            reclaim_python_worker_memory(trim_hot_ocr=True)
 
 
 def extract_text_from_frame(frame_data_url: str, save_debug: bool = True) -> str | None:
@@ -731,8 +2128,8 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     @staticmethod
-    def _handle_digital_clipboard_push(raw_url: str) -> tuple[bool, str, bool]:
-        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ, _LAST_GRABBED_VALID_URL
+    def _handle_digital_clipboard_push(raw_url: str, preserve_exact: bool = False) -> tuple[bool, str, bool]:
+        global _ACTIVE_CLIPBOARD_SOURCE, _LAST_WIN_CLIPBOARD_SEQ, _LAST_GRABBED_VALID_URL, _LATEST_SHORTCUT_URL_CACHE
         from urllib.parse import unquote
         from handset import qr_bridge as _q
 
@@ -745,15 +2142,49 @@ class Handler(BaseHTTPRequestHandler):
         if not candidate:
             return False, "", False
 
-        clean_url = _q.clean_extracted_url(candidate)
-        if not clean_url or not _q.is_strict_valid_grabbed_url(clean_url):
-            return False, "", False
+        clean_url = candidate
+        if not preserve_exact:
+            q_cleaned = _q.clean_extracted_url(candidate)
+            if q_cleaned and _q.is_strict_valid_grabbed_url(q_cleaned):
+                clean_url = q_cleaned
+            else:
+                # Allow general valid HTTP(S) URLs (e.g. Shopee, YouTube, TikTok) while rejecting broken social stubs
+                parsed_c = urlparse(candidate)
+                host = (parsed_c.hostname or "").lower()
+                is_broken_social = (
+                    ("threads.com" in host or "threads.net" in host)
+                    or ("instagram.com" in host)
+                )
+                if (
+                    parsed_c.scheme.lower() not in ("http", "https")
+                    or not host
+                    or "." not in host
+                    or any(ch.isspace() for ch in candidate)
+                    or len(host.rsplit(".", 1)[-1]) < 2
+                    or is_broken_social
+                ):
+                    return False, "", False
+        else:
+            parsed_c = urlparse(candidate)
+            host = (parsed_c.hostname or "").lower()
+            if (
+                parsed_c.scheme.lower() not in ("http", "https")
+                or not host
+                or "." not in host
+                or any(ch.isspace() for ch in candidate)
+                or len(host.rsplit(".", 1)[-1]) < 2
+                or (host.endswith("threads.com") and parsed_c.path in ("/sha", "/share", "/"))
+            ):
+                return False, "", False
 
         clip_ok = set_windows_clipboard_text(clean_url)
         if clip_ok:
             _ACTIVE_CLIPBOARD_SOURCE = "iphone"
             _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
-        _LAST_GRABBED_VALID_URL = (time.time(), clean_url)
+        now_ts = time.time()
+        _LAST_GRABBED_VALID_URL = (now_ts, clean_url)
+        _LATEST_SHORTCUT_URL_CACHE["url"] = clean_url
+        _LATEST_SHORTCUT_URL_CACHE["ts"] = now_ts
         return True, clean_url, clip_ok
 
     def do_GET(self) -> None:
@@ -790,6 +2221,21 @@ class Handler(BaseHTTPRequestHandler):
             _, wallpaper_sig = _get_current_wallpaper_file_and_signature()
             self._json({"ok": True, "wallpaperSig": wallpaper_sig})
             return
+        if path == "/api/shortcut/setup-info":
+            self._json(get_shortcut_setup_info(port=8765))
+            return
+        if path == "/api/ocr/status":
+            self._json(get_hot_ocr_status())
+            return
+        if path == "/api/driver/diagnostics":
+            query = parse_qs(urlparse(self.path).query)
+            target_udid = (query.get("udid") or [None])[0]
+            force_ref = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes")
+            self._json({"ok": True, "diagnostics": _get_detailed_driver_and_device_diagnostics(udid=target_udid, force_refresh=force_ref)})
+            return
+        if path == "/api/system/memory":
+            self._json(get_system_memory_telemetry(reclaim=False))
+            return
         if path == "/api/status":
             payload = snapshot()
             payload["screen"] = screen_status()
@@ -810,6 +2256,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload["connected"] = False
                 payload["udid"] = selected_udid
                 payload["connectionType"] = "Network" if selected_udid else None
+            diag = _get_detailed_driver_and_device_diagnostics(udid=selected_udid, has_usb=has_usb)
+            payload["detailedDiagnostics"] = diag
+            if has_usb and payload.get("developerMode") is None:
+                payload["developerMode"] = diag.get("developer_mode_bool")
             # Zero network / ARP / TCP scan on routine /api/status polls!
             payload["wifi"] = get_wifi_status(selected_udid, probe_network=False)
             payload["audio"] = audio_manager.status()
@@ -824,6 +2274,9 @@ class Handler(BaseHTTPRequestHandler):
             payload["deviceProfile"] = _normalize_device_profile(
                 load_user_settings(persist_instance=False).get("deviceProfile")
             )
+            ocr_st = get_hot_ocr_status()
+            payload["hot_ocr_engine_ready"] = bool(ocr_st.get("hot_ocr_engine_ready", False))
+            payload["hot_ocr_worker"] = ocr_st
             self._json(payload)
             return
         if path == "/api/tray-state":
@@ -862,6 +2315,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
             clear_recent_long_ocr_chunks()
             self._json({"ok": True, "action": "clear_chunks"})
+            reclaim_python_worker_memory(trim_hot_ocr=True)
             return
         if path == "/debug-metrics":
             log_path = get_app_root() / "debug_metrics.json"
@@ -907,17 +2361,36 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             payload = {}
 
-        if path == "/api/clipboard/push":
+        if path in ("/api/clipboard/push", "/api/shortcut/push"):
             raw_u = payload.get("url") or payload.get("u") or payload.get("text") or ""
             if not raw_u:
                 raw_txt = raw.decode("utf-8", errors="ignore").strip()
                 if raw_txt.startswith("http"):
                     raw_u = raw_txt
-            ok, clean_url, clip_ok = self._handle_digital_clipboard_push(str(raw_u))
+            del raw
+            ok, clean_url, clip_ok = self._handle_digital_clipboard_push(
+                str(raw_u),
+                preserve_exact=(path == "/api/shortcut/push"),
+            )
             if ok:
-                self._json({"ok": True, "url": clean_url, "clipboardWritten": clip_ok}, status=200)
+                self._json({
+                    "ok": True,
+                    "source": "ios_shortcut_digital",
+                    "url": clean_url,
+                    "clipboardWritten": clip_ok,
+                    "copied_to_clipboard": clip_ok,
+                }, status=200)
             else:
-                self._json({"ok": False, "error": "Invalid or missing social URL", "url": ""}, status=400)
+                self._json({"ok": False, "error": "Invalid or missing URL", "url": ""}, status=400)
+            return
+
+        del raw
+
+        if path == "/api/system/memory":
+            self._json(get_system_memory_telemetry(reclaim=False))
+            return
+        if path == "/api/system/reclaim-memory":
+            self._json(get_system_memory_telemetry(reclaim=True))
             return
 
         if path == "/api/update/check":
@@ -953,6 +2426,10 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             try:
                 audio_manager.shutdown()
+            except Exception:
+                pass
+            try:
+                _hot_ocr_worker.shutdown()
             except Exception:
                 pass
             self._json({"ok": True, "shuttingDown": True})
@@ -1003,7 +2480,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/audio/pair":
             self._json(audio_manager.open_bluetooth_settings())
             return
-        if path == "/api/qr/scan":
+        if path in ("/api/qr/scan", "/api/social/grab-link"):
             frame_data_url = payload.get("frameDataUrl")
             tail_frame_data_url = payload.get("tailFrameDataUrl")
             pass_mode = payload.get("passMode", "")
@@ -1015,60 +2492,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not tail_frame_data_url and len(frames) >= 2:
                     tail_frame_data_url = frames[1]
             frame_history = payload.get("frameHistory") or []
+            payload.clear()
             qr_text = None
             source_tag = "qr_bridge"
-
-            # Tahap 98..111: Auto-Spotlight Multi-line URL Assembler & Grabber mode
-            if tail_frame_data_url and frame_data_url:
-                try:
-                    from handset.qr_bridge import (
-                        decode_qr_from_image,
-                        extract_visible_url_from_frame,
-                        extract_url_or_fragment_from_frame,
-                        stitch_url_head_and_tail,
-                        pick_best_extracted_url,
-                    )
-                    head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
-                    if head_qr:
-                        qr_text = head_qr
-                        source_tag = "qr_bridge"
-                    else:
-                        qr_text = extract_visible_url_from_frame(
-                            frame_data_url,
-                            tail_frame_data_url=tail_frame_data_url,
-                            frames=frames if isinstance(frames, list) else None,
-                        )
-                        if not qr_text:
-                            head_part = extract_url_or_fragment_from_frame(frame_data_url)
-                            tail_part = extract_url_or_fragment_from_frame(tail_frame_data_url)
-                            qr_text = stitch_url_head_and_tail(head_part, tail_part)
-                        if qr_text:
-                            source_tag = "spotlight_grabber"
-                except Exception as stitch_err:
-                    print(f"[/api/qr/scan] Spotlight Head+Tail error: {stitch_err}", flush=True)
-
-            elif frame_data_url:
-                try:
-                    from handset.qr_bridge import (
-                        decode_qr_from_image,
-                        extract_visible_url_from_frame,
-                        extract_url_or_fragment_from_frame,
-                    )
-                    # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
-                    qr_text = decode_qr_from_image(frame_data_url)
-                    if not qr_text and frame_history:
-                        for h_url in reversed(frame_history):
-                            if h_url:
-                                qr_text = decode_qr_from_image(h_url)
-                                if qr_text:
-                                    break
-                    # Priority 2: Direct Unhighlighted URL Scanner
-                    if not qr_text:
-                        qr_text = extract_url_or_fragment_from_frame(frame_data_url)
-                        if qr_text:
-                            source_tag = "url_scanner"
-                except Exception as qr_err:
-                    print(f"[/api/qr/scan] Error: {qr_err}", flush=True)
 
             # Tahap 111..194: Completeness verification for Pass 1 clean paste
             def _is_url_complete(u: Optional[str]) -> bool:
@@ -1088,65 +2514,151 @@ class Handler(BaseHTTPRequestHandler):
                     return True
                 return False
 
-            is_complete = _is_url_complete(qr_text)
+            with _RECLAIM_MEMORY_LOCK:
+                try:
+                    sys._iphone_link_in_http_scan_handler = True
+                    # Tahap 98..111: Auto-Spotlight Multi-line URL Assembler & Grabber mode
+                    if tail_frame_data_url and frame_data_url:
+                        try:
+                            from handset.qr_bridge import (
+                                decode_qr_from_image,
+                                extract_visible_url_from_frame,
+                                extract_url_or_fragment_from_frame,
+                                stitch_url_head_and_tail,
+                                pick_best_extracted_url,
+                            )
+                            head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
+                            if head_qr:
+                                qr_text = head_qr
+                                source_tag = "qr_bridge"
+                            else:
+                                qr_text = extract_visible_url_from_frame(
+                                    frame_data_url,
+                                    tail_frame_data_url=tail_frame_data_url,
+                                    frames=frames if isinstance(frames, list) else None,
+                                )
+                                if not qr_text:
+                                    head_part = extract_url_or_fragment_from_frame(frame_data_url)
+                                    tail_part = extract_url_or_fragment_from_frame(tail_frame_data_url)
+                                    qr_text = stitch_url_head_and_tail(head_part, tail_part)
+                                if qr_text:
+                                    source_tag = "spotlight_grabber"
+                        except Exception as stitch_err:
+                            print(f"[/api/qr/scan] Spotlight Head+Tail error: {stitch_err}", flush=True)
 
-            if pass_mode == "clean_paste_only" and not is_complete:
-                # Pass 1 did not produce a complete link yet; request Pass 2 cursor shift
-                self._json({
-                    "ok": False,
-                    "action": "scan-qr",
-                    "extractedText": qr_text,
-                    "complete": False,
-                    "error": "Pass 1 incomplete, proceeding to Pass 2 cursor shift",
-                    "source": source_tag,
-                    "qrDetected": bool(qr_text),
-                })
-                return
+                    elif frame_data_url:
+                        try:
+                            from handset.qr_bridge import (
+                                decode_qr_from_image,
+                                extract_visible_url_from_frame,
+                                extract_url_or_fragment_from_frame,
+                            )
+                            # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
+                            qr_text = decode_qr_from_image(frame_data_url)
+                            if not qr_text and frame_history:
+                                for h_url in reversed(frame_history):
+                                    if h_url:
+                                        qr_text = decode_qr_from_image(h_url)
+                                        if qr_text:
+                                            break
+                            # Priority 2: Direct Unhighlighted URL Scanner
+                            if not qr_text:
+                                qr_text = extract_url_or_fragment_from_frame(frame_data_url)
+                                if qr_text:
+                                    source_tag = "url_scanner"
+                        except Exception as qr_err:
+                            print(f"[/api/qr/scan] Error: {qr_err}", flush=True)
 
-            from handset.qr_bridge import is_strict_valid_grabbed_url
-            if qr_text and not is_strict_valid_grabbed_url(qr_text):
-                print(f"[{source_tag}] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
-                qr_text = None
-            if qr_text:
-                clip_ok = set_windows_clipboard_text(qr_text)
-                if clip_ok:
-                    _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
-                    _ACTIVE_CLIPBOARD_SOURCE = "pc"
-                    print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
-                _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
-                self._json({
-                    "ok": True,
-                    "action": "scan-qr",
-                    "text": qr_text,
-                    "extractedText": qr_text,
-                    "url": qr_text,
-                    "clipboardWritten": bool(clip_ok),
-                    "complete": True,
-                    "source": source_tag,
-                    "qrDetected": True,
-                    "length": len(qr_text),
-                })
-                return
-            from handset.qr_bridge import was_last_spotlight_empty_or_placeholder
-            spotlight_empty = bool(was_last_spotlight_empty_or_placeholder())
-            self._json({
-                "ok": False,
-                "action": "scan-qr",
-                "extractedText": None,
-                "complete": False,
-                "error": "QR Code atau link belum tampil di layar iPhone",
-                "source": "qr_bridge",
-                "qrDetected": False,
-                "spotlightEmpty": spotlight_empty,
-                "retrySuggested": bool(not is_retry),
-            })
-            return
+                    is_complete = _is_url_complete(qr_text)
+
+                    if pass_mode == "clean_paste_only" and not is_complete:
+                        # Pass 1 did not produce a complete link yet; request Pass 2 cursor shift
+                        self._json({
+                            "ok": False,
+                            "action": "scan-qr",
+                            "extractedText": qr_text,
+                            "complete": False,
+                            "error": "Pass 1 incomplete, proceeding to Pass 2 cursor shift",
+                            "source": source_tag,
+                            "qrDetected": bool(qr_text),
+                        })
+                        return
+
+                    from handset.qr_bridge import is_strict_valid_grabbed_url
+                    if qr_text and not is_strict_valid_grabbed_url(qr_text):
+                        print(f"[{source_tag}] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
+                        qr_text = None
+                    if qr_text:
+                        clip_ok = set_windows_clipboard_text(qr_text)
+                        if clip_ok:
+                            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                            _ACTIVE_CLIPBOARD_SOURCE = "pc"
+                            print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                        _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
+                        self._json({
+                            "ok": True,
+                            "action": "scan-qr",
+                            "text": qr_text,
+                            "extractedText": qr_text,
+                            "url": qr_text,
+                            "clipboardWritten": bool(clip_ok),
+                            "complete": True,
+                            "source": source_tag,
+                            "qrDetected": True,
+                            "length": len(qr_text),
+                        })
+                        return
+                    if (
+                        not qr_text
+                        and _LATEST_SHORTCUT_URL_CACHE.get("url")
+                        and (time.time() - float(_LATEST_SHORTCUT_URL_CACHE.get("ts") or 0.0)) < 12.0
+                    ):
+                        cached_sc_url = str(_LATEST_SHORTCUT_URL_CACHE["url"])
+                        clip_ok = set_windows_clipboard_text(cached_sc_url)
+                        if clip_ok:
+                            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                            _ACTIVE_CLIPBOARD_SOURCE = "iphone"
+                        self._json({
+                            "ok": True,
+                            "action": "scan-qr",
+                            "text": cached_sc_url,
+                            "extractedText": cached_sc_url,
+                            "url": cached_sc_url,
+                            "clipboardWritten": bool(clip_ok),
+                            "complete": True,
+                            "source": "ios_shortcut_digital",
+                            "qrDetected": True,
+                            "length": len(cached_sc_url),
+                        })
+                        return
+                    from handset.qr_bridge import was_last_spotlight_empty_or_placeholder
+                    spotlight_empty = bool(was_last_spotlight_empty_or_placeholder())
+                    self._json({
+                        "ok": False,
+                        "action": "scan-qr",
+                        "extractedText": None,
+                        "complete": False,
+                        "error": "QR Code atau link belum tampil di layar iPhone",
+                        "source": "qr_bridge",
+                        "qrDetected": False,
+                        "spotlightEmpty": spotlight_empty,
+                        "retrySuggested": bool(not is_retry),
+                    })
+                    return
+                finally:
+                    sys._iphone_link_in_http_scan_handler = False
+                    frame_data_url = None
+                    tail_frame_data_url = None
+                    frames = None
+                    frame_history = []
+                    reclaim_python_worker_memory(trim_hot_ocr=True)
         if path == "/api/keyboard/shortcut":
             commit_and_reset_current_typed_line()
             action = str(payload.get("action", ""))
             if action == "clear-copy-cache":
                 clear_recent_long_ocr_chunks()
                 self._json({"ok": True, "action": "clear-copy-cache"})
+                reclaim_python_worker_memory(trim_hot_ocr=True)
                 return
 
             frame_data_url = payload.get("frameDataUrl")
@@ -1154,89 +2666,100 @@ class Handler(BaseHTTPRequestHandler):
             wait_result = bool(payload.get("waitResult", False))
             skip_ocr = bool(payload.get("skipOcr", False))
 
-            if action == "scan-qr":
+            if action in ("scan-qr", "grab-link"):
                 qr_text = None
                 source_tag = "qr_bridge"
                 tail_frame_data_url = payload.get("tailFrameDataUrl")
-                if tail_frame_data_url and frame_data_url:
+                payload.clear()
+                with _RECLAIM_MEMORY_LOCK:
                     try:
-                        from handset.qr_bridge import (
-                            decode_qr_from_image,
-                            extract_visible_url_from_frame,
-                            extract_url_or_fragment_from_frame,
-                            stitch_url_head_and_tail,
-                            pick_best_extracted_url,
-                        )
-                        head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
-                        if head_qr:
-                            qr_text = head_qr
-                            source_tag = "qr_bridge"
-                        else:
-                            head_part = extract_visible_url_from_frame(frame_data_url) or extract_url_or_fragment_from_frame(frame_data_url)
-                            tail_part = extract_visible_url_from_frame(tail_frame_data_url) or extract_url_or_fragment_from_frame(tail_frame_data_url)
-                            final_url = stitch_url_head_and_tail(head_part, tail_part)
-                            if final_url:
-                                qr_text = final_url
-                                source_tag = "spotlight_grabber"
-                    except Exception as stitch_err:
-                        print(f"[Visual QR Bridge] Shortcut Spotlight Head+Tail error: {stitch_err}", flush=True)
-                elif frame_data_url:
-                    try:
-                        from handset.qr_bridge import (
-                            decode_qr_from_image,
-                            extract_visible_url_from_frame,
-                            extract_url_or_fragment_from_frame,
-                        )
-                        # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
-                        qr_text = decode_qr_from_image(frame_data_url)
-                        if not qr_text and frame_history:
-                            for h_url in reversed(frame_history):
-                                if h_url:
-                                    qr_text = decode_qr_from_image(h_url)
+                        sys._iphone_link_in_http_scan_handler = True
+                        if tail_frame_data_url and frame_data_url:
+                            try:
+                                from handset.qr_bridge import (
+                                    decode_qr_from_image,
+                                    extract_visible_url_from_frame,
+                                    extract_url_or_fragment_from_frame,
+                                    stitch_url_head_and_tail,
+                                    pick_best_extracted_url,
+                                )
+                                head_qr = decode_qr_from_image(frame_data_url) or decode_qr_from_image(tail_frame_data_url)
+                                if head_qr:
+                                    qr_text = head_qr
+                                    source_tag = "qr_bridge"
+                                else:
+                                    head_part = extract_visible_url_from_frame(frame_data_url) or extract_url_or_fragment_from_frame(frame_data_url)
+                                    tail_part = extract_visible_url_from_frame(tail_frame_data_url) or extract_url_or_fragment_from_frame(tail_frame_data_url)
+                                    final_url = stitch_url_head_and_tail(head_part, tail_part)
+                                    if final_url:
+                                        qr_text = final_url
+                                        source_tag = "spotlight_grabber"
+                            except Exception as stitch_err:
+                                print(f"[Visual QR Bridge] Shortcut Spotlight Head+Tail error: {stitch_err}", flush=True)
+                        elif frame_data_url:
+                            try:
+                                from handset.qr_bridge import (
+                                    decode_qr_from_image,
+                                    extract_visible_url_from_frame,
+                                    extract_url_or_fragment_from_frame,
+                                )
+                                # Priority 1: ISO/IEC 18004 QR Matrix (< 15ms, 100% precision)
+                                qr_text = decode_qr_from_image(frame_data_url)
+                                if not qr_text and frame_history:
+                                    for h_url in reversed(frame_history):
+                                        if h_url:
+                                            qr_text = decode_qr_from_image(h_url)
+                                            if qr_text:
+                                                break
+                                # Priority 2: Tahap 97 Smart Fallback - Direct Unhighlighted URL Scanner
+                                if not qr_text:
+                                    qr_text = extract_url_or_fragment_from_frame(frame_data_url)
                                     if qr_text:
-                                        break
-                        # Priority 2: Tahap 97 Smart Fallback - Direct Unhighlighted URL Scanner
-                        if not qr_text:
-                            qr_text = extract_url_or_fragment_from_frame(frame_data_url)
-                            if qr_text:
-                                source_tag = "url_scanner"
-                    except Exception as qr_err:
-                        print(f"[Visual QR Bridge] Shortcut scan error: {qr_err}", flush=True)
+                                        source_tag = "url_scanner"
+                            except Exception as qr_err:
+                                print(f"[Visual QR Bridge] Shortcut scan error: {qr_err}", flush=True)
 
-                from handset.qr_bridge import is_strict_valid_grabbed_url
-                if qr_text and not is_strict_valid_grabbed_url(qr_text):
-                    print(f"[shortcut] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
-                    qr_text = None
-                if qr_text:
-                    clip_ok = set_windows_clipboard_text(qr_text)
-                    if clip_ok:
-                        _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
-                        _ACTIVE_CLIPBOARD_SOURCE = "pc"
-                        print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
-                    _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
-                    self._json({
-                        "ok": True,
-                        "action": "scan-qr",
-                        "text": qr_text,
-                        "extractedText": qr_text,
-                        "url": qr_text,
-                        "clipboardWritten": bool(clip_ok),
-                        "source": source_tag,
-                        "qrDetected": True,
-                        "length": len(qr_text),
-                    })
-                    return
-                self._json({
-                    "ok": False,
-                    "action": "scan-qr",
-                    "extractedText": None,
-                    "error": "QR Code atau link belum tampil di layar iPhone",
-                    "source": "qr_bridge",
-                    "qrDetected": False,
-                })
-                return
+                        from handset.qr_bridge import is_strict_valid_grabbed_url
+                        if qr_text and not is_strict_valid_grabbed_url(qr_text):
+                            print(f"[shortcut] Rejected non-HTTP(S)/invalid fragment from Grab Link: {qr_text!r}", flush=True)
+                            qr_text = None
+                        if qr_text:
+                            clip_ok = set_windows_clipboard_text(qr_text)
+                            if clip_ok:
+                                _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
+                                _ACTIVE_CLIPBOARD_SOURCE = "pc"
+                                print(f"[{source_tag}] Scanned link to PC clipboard ({len(qr_text)} chars): {qr_text}", flush=True)
+                            _LAST_GRABBED_VALID_URL = (time.time(), qr_text)
+                            self._json({
+                                "ok": True,
+                                "action": "scan-qr",
+                                "text": qr_text,
+                                "extractedText": qr_text,
+                                "url": qr_text,
+                                "clipboardWritten": bool(clip_ok),
+                                "source": source_tag,
+                                "qrDetected": True,
+                                "length": len(qr_text),
+                            })
+                            return
+                        self._json({
+                            "ok": False,
+                            "action": "scan-qr",
+                            "extractedText": None,
+                            "error": "QR Code atau link belum tampil di layar iPhone",
+                            "source": "qr_bridge",
+                            "qrDetected": False,
+                        })
+                        return
+                    finally:
+                        sys._iphone_link_in_http_scan_handler = False
+                        frame_data_url = None
+                        tail_frame_data_url = None
+                        frame_history = []
+                        reclaim_python_worker_memory(trim_hot_ocr=True)
 
             # Trigger native iOS hotkey
+            payload.clear()
             ok = trigger_ios_shortcut(action)
 
             if action in ("copy", "cut"):
@@ -1244,57 +2767,30 @@ class Handler(BaseHTTPRequestHandler):
                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
 
                 if skip_ocr or not frame_data_url:
+                    frame_data_url = None
+                    frame_history = []
                     self._json({"ok": ok, "action": action, "internal": True})
+                    reclaim_python_worker_memory(trim_hot_ocr=True)
                     return
 
-                # Tahap 96/97: Fast Visual QR Bridge check (< 20ms) before launching heavy OCR pipeline
-                try:
-                    from handset.qr_bridge import decode_qr_from_image, extract_visible_url_from_frame
-                    qr_text = decode_qr_from_image(frame_data_url)
-                    source_tag = "qr_bridge"
-                    if not qr_text and frame_history:
-                        for h_url in reversed(frame_history):
-                            if h_url:
-                                qr_text = decode_qr_from_image(h_url)
-                                if qr_text:
-                                    break
-                    # Fallback to direct visible URL scanner
-                    if not qr_text:
-                        qr_text = extract_visible_url_from_frame(frame_data_url)
-                        if qr_text:
-                            source_tag = "url_scanner"
-                    if qr_text:
-                        if set_windows_clipboard_text(qr_text):
-                            _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
-                            _ACTIVE_CLIPBOARD_SOURCE = "iphone"
-                            print(f"[{source_tag}] Pre-OCR detected link ({len(qr_text)} chars): {qr_text}", flush=True)
-                        self._json({
-                            "ok": ok,
-                            "action": action,
-                            "text": qr_text,
-                            "extractedText": qr_text,
-                            "source": source_tag,
-                            "qrDetected": True,
-                            "autoClearedCache": False,
-                            "length": len(qr_text),
-                        })
-                        return
-                except Exception as qr_err:
-                    print(f"[Visual QR Bridge] Pre-OCR check error: {qr_err}", flush=True)
-
+                # Tahap 213: Execute fast Hot-OCR _do_extract directly (< 130ms for short snippets / early-exit)
+                # without blocking Alt+C on multi-frame QR scanning first. If text extraction yields empty,
+                # _do_extract transparently checks Visual QR Bridge + Hot-OCR URL scanner as fallback.
                 extracted_text = None
                 auto_cleared_cache = False
+                fallback_source = None
 
                 def _do_extract(frame_url: str, hist_urls: list[str]):
                     try:
                         recent_hist = [h for h in hist_urls if h and h != frame_url][:3] if hist_urls else []
                         frames_to_batch = recent_hist + [frame_url]
 
-                        # Single-Pass Batch OCR: executes PowerShell with fast single-frame first (< 1.5s)!
+                        # Single-Pass Batch OCR via persistent Hot WinRT OCR engine (< 130ms)
                         batch_texts = extract_text_batch(frames_to_batch, save_debug=True)
 
                         # Centralized OCR post-processing pipeline (Tahap 39/40)
                         final_text, auto_cleared = process_ocr_batch_results(batch_texts, return_meta=True)
+                        src_tag = None
 
                         # Save debug info strictly inside writable %TEMP%\iPhoneLink
                         try:
@@ -1316,10 +2812,22 @@ class Handler(BaseHTTPRequestHandler):
 
                         if not final_text and frame_url:
                             try:
-                                from handset.qr_bridge import extract_visible_url_from_frame
-                                fallback_url = extract_visible_url_from_frame(frame_url)
-                                if fallback_url:
-                                    final_text = fallback_url
+                                from handset.qr_bridge import decode_qr_from_image, extract_visible_url_from_frame
+                                qr_fb = decode_qr_from_image(frame_url)
+                                if not qr_fb and hist_urls:
+                                    for h_url in reversed(hist_urls):
+                                        if h_url:
+                                            qr_fb = decode_qr_from_image(h_url)
+                                            if qr_fb:
+                                                break
+                                if qr_fb:
+                                    final_text = qr_fb
+                                    src_tag = "qr_bridge"
+                                else:
+                                    fallback_url = extract_visible_url_from_frame(frame_url)
+                                    if fallback_url:
+                                        final_text = fallback_url
+                                        src_tag = "url_scanner"
                             except Exception:
                                 pass
 
@@ -1328,7 +2836,7 @@ class Handler(BaseHTTPRequestHandler):
                                 _LAST_WIN_CLIPBOARD_SEQ = get_windows_clipboard_seq()
                                 _ACTIVE_CLIPBOARD_SOURCE = "iphone"
                                 print(f"Copied iPhone selection to Windows PC clipboard ({len(final_text)} chars, {len(final_text.splitlines())} lines)", flush=True)
-                        return final_text, auto_cleared
+                        return final_text, auto_cleared, src_tag
                     except Exception as err:
                         import traceback
                         err_trace = traceback.format_exc()
@@ -1339,27 +2847,47 @@ class Handler(BaseHTTPRequestHandler):
                                 f_err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OCR Extract Error: {err}\n{err_trace}\n")
                         except Exception:
                             pass
-                        return None, False
+                        return None, False, None
+                    finally:
+                        if not getattr(sys, "_iphone_link_in_http_scan_handler", False):
+                            reclaim_python_worker_memory(trim_hot_ocr=True)
 
-                if frame_data_url:
-                    if wait_result:
-                        res = _do_extract(frame_data_url, frame_history)
-                        if isinstance(res, tuple):
-                            extracted_text, auto_cleared_cache = res
-                        else:
-                            extracted_text = res
-                    else:
-                        import threading
-                        threading.Thread(target=_do_extract, args=(frame_data_url, frame_history), daemon=True).start()
+                with _RECLAIM_MEMORY_LOCK:
+                    try:
+                        if frame_data_url:
+                            if wait_result:
+                                sys._iphone_link_in_http_scan_handler = True
+                                res = _do_extract(frame_data_url, frame_history)
+                                frame_data_url = None
+                                frame_history = []
+                                if isinstance(res, tuple):
+                                    extracted_text, auto_cleared_cache = res[0], res[1]
+                                    fallback_source = res[2] if len(res) > 2 else None
+                                else:
+                                    extracted_text = res
+                            else:
+                                import threading
+                                threading.Thread(target=_do_extract, args=(frame_data_url, frame_history), daemon=True).start()
+                                frame_data_url = None
+                                frame_history = []
 
-                self._json({
-                    "ok": ok,
-                    "action": action,
-                    "text": extracted_text,
-                    "autoClearedCache": auto_cleared_cache,
-                    "length": len(extracted_text) if extracted_text else 0,
-                })
-                return
+                        resp_payload = {
+                            "ok": ok,
+                            "action": action,
+                            "text": extracted_text,
+                            "autoClearedCache": auto_cleared_cache,
+                            "length": len(extracted_text) if extracted_text else 0,
+                        }
+                        if fallback_source:
+                            resp_payload["source"] = fallback_source
+                            if fallback_source == "qr_bridge":
+                                resp_payload["qrDetected"] = True
+                        self._json(resp_payload)
+                        return
+                    finally:
+                        if wait_result:
+                            sys._iphone_link_in_http_scan_handler = False
+                            reclaim_python_worker_memory(trim_hot_ocr=True)
 
             self._json({"ok": ok, "action": action})
             return
@@ -1391,6 +2919,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/ocr/clear-chunks", "/api/keyboard/clear-chunks"):
             clear_recent_long_ocr_chunks()
             self._json({"ok": True, "action": "clear_chunks"})
+            reclaim_python_worker_memory(trim_hot_ocr=True)
             return
 
         if path == "/api/device/wake-unlock":
@@ -1409,6 +2938,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/device/wipe-privacy-data":
             self._json(wipe_all_privacy_data())
+            return
+        if path == "/api/driver/repair":
+            self._json(_repair_apple_driver_and_service())
+            return
+        if path == "/api/device/unlock-developer-mode":
+            req_udid = payload.get("udid") if isinstance(payload.get("udid"), str) else None
+            arm_enable = bool(payload.get("arm_enable", False))
+            self._json(_unlock_developer_mode_on_device(udid=req_udid, arm_enable=arm_enable))
             return
         if path in ("/api/device/spotlight-paste", "/api/device/spotlight-paste-tail"):
             from handset.screen import spotlight_paste_clipboard_on_iphone
@@ -1735,6 +3272,7 @@ def create_http_server(host: str = HOST, port: int = PORT) -> SingleServer:
                 pass
 
         threading.Thread(target=_restore_audio_async, name="handset-audio-restore", daemon=True).start()
+    _hot_ocr_worker.prewarm_async()
     return server
 
 
@@ -1750,6 +3288,7 @@ def serve(host: str = HOST, port: int = PORT) -> None:
         server.serve_forever()
     finally:
         audio_manager.shutdown()
+        _hot_ocr_worker.shutdown()
 
 
 def main() -> None:
