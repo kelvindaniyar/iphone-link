@@ -85,10 +85,13 @@ pub fn extract_xml_integer(xml: &str, key: &str) -> Option<u32> {
     after_key[val_start..val_start + int_close].trim().parse().ok()
 }
 
-/// Query usbmuxd on 127.0.0.1:27015 for connected USB devices.
+/// Query usbmuxd on `USBMUXD_SOCKET_ADDRESS` (default 127.0.0.1:27015) for connected USB devices.
 /// If usbmuxd is not running or no devices attached, gracefully returns Ok(vec![]) within timeout.
 pub fn list_connected_usb_devices(timeout: Duration) -> Result<Vec<ConnectedAppleDevice>, AppleError> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], USBMUX_DEFAULT_PORT));
+    let addr: SocketAddr = std::env::var("USBMUXD_SOCKET_ADDRESS")
+        .ok()
+        .and_then(|s| s.trim().parse::<SocketAddr>().ok())
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], USBMUX_DEFAULT_PORT)));
     let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => s,
         Err(_) => {
@@ -194,10 +197,10 @@ mod tests {
 
     #[test]
     fn test_xml_extractors() {
-        let xml = "<dict><key>SerialNumber</key><string>00008150-000202D02299401C</string><key>DeviceID</key><integer>12</integer></dict>";
+        let xml = "<dict><key>SerialNumber</key><string>00008101-0000000000000003</string><key>DeviceID</key><integer>12</integer></dict>";
         assert_eq!(
             extract_xml_string(xml, "SerialNumber"),
-            Some("00008150-000202D02299401C".to_string())
+            Some("00008101-0000000000000003".to_string())
         );
         assert_eq!(extract_xml_integer(xml, "DeviceID"), Some(12));
         assert_eq!(extract_xml_string(xml, "NonExistent"), None);

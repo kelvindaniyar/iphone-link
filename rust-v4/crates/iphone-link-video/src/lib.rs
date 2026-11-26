@@ -5,4 +5,8 @@ pub mod autorotate;
 pub mod d3d11_context;
 pub mod decoder;
 pub mod mf_decoder;
+pub mod nv12_hd_shader;
 pub mod shader_glass;
+pub mod video_hwnd;
+
+pub use video_hwnd::{StageKeyCallback, StageKeyEvent, StagePointerCallback, StagePointerEvent};

@@ -317,7 +317,7 @@
       <div class="app-title-area brand">
         <img src="/logo.svg" class="app-logo" width="20" height="20" alt="iPhone Link">
         <span class="brand-title">iPhone Link</span>
-        <span class="pill pill-ok" id="status-pill">Ready</span>
+        <span class="pill pill-muted" id="status-pill">Menunggu iPhone</span>
         <span class="pill pill-muted" id="pill-device" hidden></span>
       </div>
       <div class="app-actions">
@@ -404,17 +404,17 @@
                       <div class="launchpad-hero-icon">
                         <img src="/logo.svg" alt="iPhone Link" class="launchpad-logo-img" width="56" height="56" />
                       </div>
-                      <h2 class="launchpad-title" id="launchpad-title">iPhone 17 Pro siap</h2>
-                      <p class="launchpad-subtitle" id="launchpad-subtitle" data-i18n="launchpad.subtitle">Buka kunci, lalu tekan Mulai mirroring.</p>
+                      <h2 class="launchpad-title" id="launchpad-title" data-i18n="launchpad.connect_title">Hubungkan iPhone Anda</h2>
+                      <p class="launchpad-subtitle" id="launchpad-subtitle" data-i18n="launchpad.connect_subtitle">Colokkan iPhone via kabel USB untuk memulai.</p>
                       <p id="placeholder-hint" hidden></p>
                     </div>
 
                     <!-- Device Card -->
                     <div class="launchpad-device-card" id="launchpad-device-card">
-                      <span class="launchpad-status-dot" id="launchpad-status-dot"></span>
+                      <span class="launchpad-status-dot device-dot warn" id="launchpad-status-dot"></span>
                       <div class="launchpad-card-text">
-                        <div class="launchpad-card-title" id="launchpad-device-name">iPhone</div>
-                        <div class="launchpad-card-sub" id="launchpad-device-sub">USB · siap</div>
+                        <div class="launchpad-card-title" id="launchpad-device-name" data-i18n="launchpad.no_device_title">Belum ada iPhone terdeteksi</div>
+                        <div class="launchpad-card-sub" id="launchpad-device-sub" data-i18n="launchpad.no_device_sub">Menunggu koneksi USB atau Wi-Fi</div>
                       </div>
                       <button type="button" class="launchpad-icon-btn" id="launchpad-scan-btn" title="Pindai ulang perangkat" aria-label="Refresh">
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -425,6 +425,20 @@
                         </svg>
                       </button>
                     </div>
+
+                    <!-- Smart Multi-iPhone Device Picker (Tahap 247: hidden when 0 or 1 device) -->
+                    <div class="launchpad-device-picker" id="launchpad-device-picker" hidden>
+                      <div class="launchpad-picker-header">
+                        <span class="launchpad-picker-title" id="launchpad-picker-title" data-i18n="launchpad.choose_iphone">Pilih iPhone</span>
+                        <span class="launchpad-picker-count" id="launchpad-picker-count">0</span>
+                      </div>
+                      <div class="launchpad-picker-list" id="launchpad-picker-list" role="listbox" aria-label="Pilih iPhone"></div>
+                    </div>
+
+                    <!-- 1-Click Quick Switch to Wi-Fi when Cable tab has 0 USB but selected iPhone is Wi-Fi Online -->
+                    <button type="button" class="launchpad-switch-wifi-btn" id="launchpad-switch-wifi-btn" hidden>
+                      <span class="btn-label" data-i18n="launchpad.use_wifi">Gunakan Wi-Fi</span>
+                    </button>
 
                     <!-- Transport Pills Row -->
                     <div class="launchpad-transport-row" id="launchpad-transport-row">
@@ -462,7 +476,7 @@
                     <div class="launchpad-wifi-feedback" id="launchpad-wifi-feedback" hidden></div>
 
                     <!-- Primary Action Button -->
-                    <button type="button" class="launchpad-start-btn" id="launchpad-start-btn">
+                    <button type="button" class="launchpad-start-btn" id="launchpad-start-btn" disabled>
                       <span class="btn-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
                           <polygon points="6 4 20 12 6 20 6 4"></polygon>
@@ -676,6 +690,25 @@
                 <button type="button" class="seg is-active" data-auto-rotate-choice="off" role="radio" aria-checked="true">OFF</button>
                 <button type="button" class="seg" data-auto-rotate-choice="on" role="radio" aria-checked="false">ON</button>
               </div>
+            </div>
+
+            <!-- Tahap 252: Stream Mode Selector (Auto vs AirPlay H.264 Fallback) -->
+            <div class="setting-toggle-item" style="margin-top: 10px;">
+              <div class="setting-toggle-header">
+                <span class="setting-label">
+                  <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2" y="4" width="20" height="14" rx="2"></rect>
+                    <path d="M8 21h8M12 18v3"></path>
+                  </svg>
+                  <span class="btn-label" data-i18n="stream.mode_label">Mode Video Stream</span>
+                </span>
+                <span class="setting-hint" id="stream-mode-hint">Auto</span>
+              </div>
+              <div class="segmented segmented-toggle" id="segmented-stream-mode" role="radiogroup" aria-label="Mode Video Stream">
+                <button type="button" class="seg is-active" data-stream-mode="auto" role="radio" aria-checked="true" data-i18n="stream.mode_auto">Auto (Disarankan)</button>
+                <button type="button" class="seg" data-stream-mode="airplay" role="radio" aria-checked="false" data-i18n="stream.mode_airplay">AirPlay H.264</button>
+              </div>
+              <div class="setting-desc" id="stream-mode-desc">iOS 27+: HEVC 60 FPS + kontrol penuh · iOS 17.4–26: Hybrid kontrol (eksperimental) · iOS ≤17.3: AirPlay H.264</div>
             </div>
             
             <div class="crop-grid">
@@ -956,7 +989,7 @@
               <div id="shortcut-url-box" class="shortcut-url-card" style="margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 11px; line-height: 1.45;">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
                   <strong id="shortcut-box-title" class="shortcut-box-title" data-i18n="kb.shortcut_box_title" style="font-size: 11px;">iOS 27 Shortcut — URL Server PC (100% Akurat, &lt;5ms)</strong>
-                  <a href="https://kelvindaniyar.github.io/iphone-link/#ios-shortcut-guide" target="_blank" rel="noopener noreferrer" id="link-shortcut-guide-hint" class="shortcut-setup-link" data-i18n="kb.shortcut_setup_guide" style="font-size: 10px; text-decoration: underline;" title="Lihat panduan instalasi iOS 27 Shortcut di website">Panduan Setup</a>
+                  <a href="https://support.apple.com/guide/shortcuts/welcome/ios" target="_blank" rel="noopener noreferrer" id="link-shortcut-guide-hint" class="shortcut-setup-link" data-i18n="kb.shortcut_setup_guide" style="font-size: 10px; text-decoration: underline;" title="Lihat panduan instalasi iOS Shortcut">Panduan Setup</a>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                   <code id="shortcut-url-preview" class="shortcut-url-code" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 10px; padding: 3px 6px; border-radius: 6px;">http://&lt;PC-IP&gt;:8765/c?u=</code>
@@ -1321,20 +1354,8 @@
 
           <!-- Footer Attribution -->
           <div class="drawer-footer drawer-footer-credits" style="padding: 16px 12px 10px; text-align: center; font-size: 11px; line-height: 1.5; margin-top: 16px;">
-            <div style="margin-bottom: 10px;">
-              <a href="https://saweria.co/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="saweria-support-btn">
-                <svg class="fluent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
-                  <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
-                  <line x1="6" y1="1" x2="6" y2="4"></line>
-                  <line x1="10" y1="1" x2="10" y2="4"></line>
-                  <line x1="14" y1="1" x2="14" y2="4"></line>
-                </svg>
-                <span class="btn-label" data-i18n="saweria.btn">Support Creator on Saweria</span>
-              </a>
-            </div>
             <p class="credit-main" style="margin: 0; font-weight: 600;">
-              <span class="credit-app-name">iPhone Link v3.0</span> by <a href="https://github.com/kelvindaniyar" target="_blank" rel="noopener noreferrer" class="credit-author">Kelvin Daniyar</a>
+              <span class="credit-app-name">iPhone Link v5.0</span> · Native Rust Edition
             </p>
             <p class="credit-sub" style="margin: 4px 0 0;">
               Forked from <a href="https://github.com/teyboxv1/pane-iphone-mirror-windows" target="_blank" rel="noopener noreferrer" class="credit-upstream">teyboxv1/pane-iphone-mirror-windows</a> · GPL-3.0

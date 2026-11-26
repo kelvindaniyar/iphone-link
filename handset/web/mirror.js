@@ -16,8 +16,12 @@ let _homeExitGraceUntil = 0;
 
 function analyzeFrameOrientation(sourceFrame, optRotation) {
   if (!sourceFrame) return null;
-  // Hardware decoded dimensions already landscape
-  if (sourceFrame.codedWidth && sourceFrame.codedHeight && sourceFrame.codedWidth > sourceFrame.codedHeight) {
+  // Hardware decoded or native landscape dimensions (e.g. AirPlay 1920x888): return landscape immediately
+  if (
+    (sourceFrame.codedWidth && sourceFrame.codedHeight && sourceFrame.codedWidth > sourceFrame.codedHeight) ||
+    (sourceFrame.displayWidth && sourceFrame.displayHeight && sourceFrame.displayWidth > sourceFrame.displayHeight) ||
+    (sourceFrame.width && sourceFrame.height && sourceFrame.width > sourceFrame.height)
+  ) {
     return {
       isFullscreenGame: true,
       isLandscapeGameFrame: true,
@@ -2639,8 +2643,16 @@ function setRotation(deg) {
       : (lastFrame.displayHeight || lastFrame.height || _lastRawH);
   }
   if (rawW > 0 && rawH > 0) {
-    canvas.width = isRotated ? rawH : rawW;
-    canvas.height = isRotated ? rawW : rawH;
+    if (rawW > rawH) {
+      const isLandscapeWin = (window.innerWidth > window.innerHeight) || isLandscape;
+      const effRot = (isLandscapeWin || autoRotateGameEnabled) ? 0 : 90;
+      const sw = (effRot === 90 || effRot === 270);
+      canvas.width = sw ? rawH : rawW;
+      canvas.height = sw ? rawW : rawH;
+    } else {
+      canvas.width = isRotated ? rawH : rawW;
+      canvas.height = isRotated ? rawW : rawH;
+    }
   }
 
   fitCanvas();
@@ -2978,7 +2990,9 @@ function touchCoords(e) {
   let iosX = nx;
   let iosY = ny;
 
-  const rot = ((currentRotation % 360) + 360) % 360;
+  const rot = (typeof window._activeDrawRotation === "number")
+    ? (((window._activeDrawRotation % 360) + 360) % 360)
+    : (((currentRotation % 360) + 360) % 360);
   if (rot === 270) {
     // 270° CW (= 90° CCW): Landscape standar game eFootball (Dynamic Island di kiri)
     iosX = 1.0 - ny;
@@ -3146,6 +3160,10 @@ let _pointerDownPos = null;
 // Listen on the whole document so a drag can start on the black margin just
 // below the picture; coordinates clamp onto the screen edge.
 document.addEventListener("pointerdown", (e) => {
+  const diagOverlayEl = document.getElementById("v4-mirror-diag-overlay");
+  if ((diagOverlayEl && !diagOverlayEl.hidden) || e.target?.closest?.("#v4-mirror-diag-overlay, #v4-hevc-stage-prompt")) {
+    return;
+  }
   if (e.button === 3) {
     e.preventDefault();
     triggerBackGesture();
@@ -3535,7 +3553,8 @@ async function fetchCodecWithRetry() {
           height: info.height || 2556,
         };
       }
-      if (!info.codec || (!info.description && !info.is_airplay)) {
+      const isAp = Boolean(info.isAirplay || info.is_airplay);
+      if (!info.codec || (!info.description && !isAp)) {
         lastErr = "waiting for video parameters";
         continue;
       }
@@ -3548,7 +3567,8 @@ async function fetchCodecWithRetry() {
         isImageStream: false,
         width: info.width,
         height: info.height,
-        isAirplay: Boolean(info.is_airplay),
+        isAirplay: isAp,
+        trim: info.trim || null,
       };
     } catch (err) {
       lastErr = err.message || String(err);
@@ -3706,18 +3726,285 @@ function parseHevcSpsDimensions(description) {
   return null;
 }
 
+// Tahap 276 Pilar 4: Pure H.264 (AVC) SPS dimension & inline param parser + native-landscape draw planner
+function parseAvcSpsDimensions(spsU8) {
+  try {
+    if (!spsU8 || spsU8.length < 4 || (spsU8[0] & 0x1F) !== 7) return null;
+    const rb = [];
+    for (let i = 1; i < spsU8.length; i++) {
+      if (i + 2 < spsU8.length && spsU8[i] === 0 && spsU8[i + 1] === 0 && spsU8[i + 2] === 3) {
+        rb.push(0, 0);
+        i += 2;
+      } else {
+        rb.push(spsU8[i]);
+      }
+    }
+    let pos = 0;
+    const maxBits = rb.length * 8;
+    const readBit = () => {
+      if (pos >= maxBits) return 0;
+      const bit = (rb[pos >> 3] >> (7 - (pos & 7))) & 1;
+      pos += 1;
+      return bit;
+    };
+    const readBits = (n) => {
+      let v = 0;
+      for (let k = 0; k < n; k++) v = (v * 2) + readBit();
+      return v;
+    };
+    const readUe = () => {
+      let zeros = 0;
+      while (pos < maxBits && readBit() === 0) zeros += 1;
+      if (zeros === 0) return 0;
+      return ((1 << zeros) | readBits(zeros)) - 1;
+    };
+    const readSe = () => {
+      const u = readUe();
+      return (u & 1) ? ((u + 1) >> 1) : -(u >> 1);
+    };
+
+    const profileIdc = readBits(8);
+    readBits(8); // constraint flags + reserved
+    readBits(8); // level_idc
+    readUe(); // seq_parameter_set_id
+
+    let chromaFormatIdc = 1;
+    let separateColourPlaneFlag = 0;
+    if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profileIdc)) {
+      chromaFormatIdc = readUe();
+      if (chromaFormatIdc === 3) {
+        separateColourPlaneFlag = readBit();
+      }
+      readUe(); // bit_depth_luma_minus8
+      readUe(); // bit_depth_chroma_minus8
+      readBit(); // qpprime_y_zero_transform_bypass_flag
+      if (readBit() === 1) {
+        const count = chromaFormatIdc !== 3 ? 8 : 12;
+        for (let i = 0; i < count; i++) {
+          if (readBit() === 1) {
+            const size = i < 6 ? 16 : 64;
+            let lastScale = 8;
+            let nextScale = 8;
+            for (let j = 0; j < size; j++) {
+              if (nextScale !== 0) {
+                nextScale = (lastScale + readSe() + 256) % 256;
+              }
+              lastScale = nextScale === 0 ? lastScale : nextScale;
+            }
+          }
+        }
+      }
+    }
+
+    readUe(); // log2_max_frame_num_minus4
+    const pocType = readUe();
+    if (pocType === 0) {
+      readUe();
+    } else if (pocType === 1) {
+      readBit();
+      readSe();
+      readSe();
+      const n = readUe();
+      for (let i = 0; i < n; i++) readSe();
+    }
+    readUe(); // max_num_ref_frames
+    readBit(); // gaps_in_frame_num_value_allowed_flag
+    const picWidthInMbsM1 = readUe();
+    const picHeightInMapUnitsM1 = readUe();
+    const frameMbsOnlyFlag = readBit();
+    if (frameMbsOnlyFlag === 0) {
+      readBit(); // mb_adaptive_frame_field_flag
+    }
+    readBit(); // direct_8x8_inference_flag
+    let cropL = 0, cropR = 0, cropT = 0, cropB = 0;
+    if (readBit() === 1) {
+      cropL = readUe();
+      cropR = readUe();
+      cropT = readUe();
+      cropB = readUe();
+    }
+    const chromaArrayType = separateColourPlaneFlag === 1 ? 0 : chromaFormatIdc;
+    const subWidthC = (chromaFormatIdc === 1 || chromaFormatIdc === 2) ? 2 : 1;
+    const subHeightC = chromaFormatIdc === 1 ? 2 : 1;
+    const cropUnitX = chromaArrayType === 0 ? 1 : subWidthC;
+    const cropUnitY = (chromaArrayType === 0 ? 1 : subHeightC) * (2 - frameMbsOnlyFlag);
+
+    const width = (picWidthInMbsM1 + 1) * 16 - (cropL + cropR) * cropUnitX;
+    const height = (2 - frameMbsOnlyFlag) * (picHeightInMapUnitsM1 + 1) * 16 - (cropT + cropB) * cropUnitY;
+    if (width >= 16 && height >= 16) {
+      return { width, height };
+    }
+  } catch (_) {}
+  return null;
+}
+
+function extractAvcSpsPpsFromChunk(data, nalLenSize = 4) {
+  const spsList = [];
+  const ppsList = [];
+  if (!data || data.byteLength < 4) return null;
+  let pos = 0;
+  let parsedAvcc = false;
+  while (pos + nalLenSize <= data.byteLength) {
+    let nalLen = 0;
+    for (let b = 0; b < nalLenSize; b++) {
+      nalLen = (nalLen * 256) + data[pos + b];
+    }
+    if (nalLen <= 0 || pos + nalLenSize + nalLen > data.byteLength) {
+      parsedAvcc = false;
+      break;
+    }
+    parsedAvcc = true;
+    const nal = data.subarray(pos + nalLenSize, pos + nalLenSize + nalLen);
+    const nt = nal[0] & 0x1F;
+    if (nt === 7) spsList.push(nal.slice());
+    else if (nt === 8) ppsList.push(nal.slice());
+    pos += nalLenSize + nalLen;
+  }
+  if (!parsedAvcc) {
+    // Fallback Annex-B NAL scan
+    spsList.length = 0;
+    ppsList.length = 0;
+    const scPositions = [];
+    for (let i = 0; i < data.byteLength - 3; i++) {
+      if (data[i] === 0 && data[i + 1] === 0) {
+        if (data[i + 2] === 1) {
+          scPositions.push({ start: i, body: i + 3 });
+          i += 2;
+        } else if (i + 3 < data.byteLength && data[i + 2] === 0 && data[i + 3] === 1) {
+          scPositions.push({ start: i, body: i + 4 });
+          i += 3;
+        }
+      }
+    }
+    for (let idx = 0; idx < scPositions.length; idx++) {
+      const bStart = scPositions[idx].body;
+      const bEnd = idx + 1 < scPositions.length ? scPositions[idx + 1].start : data.byteLength;
+      if (bStart < bEnd) {
+        const nal = data.subarray(bStart, bEnd);
+        const nt = nal[0] & 0x1F;
+        if (nt === 7) spsList.push(nal.slice());
+        else if (nt === 8) ppsList.push(nal.slice());
+      }
+    }
+  }
+  if (spsList.length === 0) return null;
+  const dims = parseAvcSpsDimensions(spsList[0]);
+  return { spsList, ppsList, dims };
+}
+
+function buildSyntheticAvccDescription(spsList, ppsList, nalLenSize = 4) {
+  if (!spsList || spsList.length === 0) return null;
+  const sps = spsList[0];
+  if (sps.length < 4) return null;
+  let total = 7;
+  for (const s of spsList) total += 2 + s.length;
+  for (const p of (ppsList || [])) total += 2 + p.length;
+  const out = new Uint8Array(total);
+  out[0] = 1;
+  out[1] = sps[1];
+  out[2] = sps[2];
+  out[3] = sps[3];
+  out[4] = 0xFC | ((Math.max(1, Math.min(4, nalLenSize)) - 1) & 0x03);
+  let off = 5;
+  out[off++] = 0xE0 | (spsList.length & 0x1F);
+  for (const s of spsList) {
+    out[off++] = (s.length >> 8) & 0xFF;
+    out[off++] = s.length & 0xFF;
+    out.set(s, off);
+    off += s.length;
+  }
+  const pCount = (ppsList || []).length;
+  out[off++] = pCount & 0xFF;
+  for (const p of (ppsList || [])) {
+    out[off++] = (p.length >> 8) & 0xFF;
+    out[off++] = p.length & 0xFF;
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+window.__tahap276ComputeDrawPlan = function (opts) {
+  const rawW = Math.max(2, Number(opts?.rawW) || 1216);
+  const rawH = Math.max(2, Number(opts?.rawH) || 2656);
+  const isNativeLandscapeFrame = rawW > rawH;
+  const effectiveIpad = Boolean(opts?.effectiveIpad);
+  const fit = String(opts?.fitMode || "autofit");
+  const isAirplayOrH264 = Boolean(opts?.isAirplayOrH264);
+  const disableNativeTrim = effectiveIpad || (fit === "contain") || isAirplayOrH264;
+  const effectiveDisableNativeTrim = disableNativeTrim || isNativeLandscapeFrame;
+
+  const winLand = Boolean(opts?.isLandscapeWindow);
+  const arEnabled = Boolean(opts?.autoRotateGameEnabled);
+  const reqRot = (((Number(opts?.currentRotation) || 0) % 360) + 360) % 360;
+  const effectiveDrawRot = isNativeLandscapeFrame
+    ? ((winLand || arEnabled) ? 0 : 90)
+    : reqRot;
+
+  const macroTrimTop = effectiveDisableNativeTrim ? 0 : Math.max(0, Number(opts?.macroTrimTop) || 0);
+  const macroTrimBot = effectiveDisableNativeTrim ? 0 : Math.max(0, Number(opts?.macroTrimBot) || 0);
+  const macroTrimLeft = effectiveDisableNativeTrim ? 0 : Math.max(0, Number(opts?.macroTrimLeft) || 0);
+  const macroTrimRight = effectiveDisableNativeTrim ? 0 : Math.max(0, Number(opts?.macroTrimRight) || 0);
+
+  const uTop = Math.max(0, Number(opts?.uTop) || 0);
+  const uBot = Math.max(0, Number(opts?.uBot) || 0);
+  const uLeft = Math.max(0, Number(opts?.uLeft) || 0);
+  const uRight = Math.max(0, Number(opts?.uRight) || 0);
+
+  let mTop = uTop, mBot = uBot, mLeft = uLeft, mRight = uRight;
+  if (effectiveDrawRot === 270) {
+    mTop = uLeft; mBot = uRight; mLeft = uBot; mRight = uTop;
+  } else if (effectiveDrawRot === 90) {
+    mTop = uRight; mBot = uLeft; mLeft = uTop; mRight = uBot;
+  } else if (effectiveDrawRot === 180) {
+    mTop = uBot; mBot = uTop; mLeft = uRight; mRight = uLeft;
+  }
+
+  const srcTrimLeft = Math.max(0, Math.min(rawW - 2, macroTrimLeft + mLeft));
+  const srcTrimTop = Math.max(0, Math.min(rawH - 2, macroTrimTop + mTop));
+  const srcTrimRight = Math.max(0, Math.min(Math.max(0, rawW - srcTrimLeft - 2), macroTrimRight + mRight));
+  const srcTrimBot = Math.max(0, Math.min(Math.max(0, rawH - srcTrimTop - 2), macroTrimBot + mBot));
+  const cleanW = Math.max(2, Math.min(rawW - srcTrimLeft, rawW - srcTrimLeft - srcTrimRight));
+  const cleanH = Math.max(2, Math.min(rawH - srcTrimTop, rawH - srcTrimTop - srcTrimBot));
+  const sideways = (effectiveDrawRot === 90 || effectiveDrawRot === 270);
+  return {
+    isNativeLandscapeFrame,
+    effectiveDisableNativeTrim,
+    effectiveDrawRot,
+    sideways,
+    viewW: sideways ? cleanH : cleanW,
+    viewH: sideways ? cleanW : cleanH,
+    nativeTrimTop: macroTrimTop,
+    nativeTrimBot: macroTrimBot,
+    nativeTrimLeft: macroTrimLeft,
+    nativeTrimRight: macroTrimRight,
+    srcTrimLeft,
+    srcTrimTop,
+    srcTrimRight,
+    srcTrimBot,
+    cleanW,
+    cleanH,
+  };
+};
+
 function drawFrame(f) {
   if (!f) return;
   let sourceFrame = f;
   let clonedFrame = null;
 
-  // Un-crop VideoFrame jika hardware decoder meng-clamp visibleRect ke 720p
-  if (f.codedWidth && f.codedHeight && f.visibleRect && f.visibleRect.height < f.codedHeight) {
+  const isAirplayH264Frame = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+  const isNativeLandCoded = ((f.codedWidth || 0) > (f.codedHeight || 0)) || ((f.displayWidth || 0) > (f.displayHeight || 0));
+
+  // Un-crop VideoFrame ONLY for legacy HEVC 720p portrait clamp; strictly bounded <= codedDims.
+  // Never un-crop AirPlay H.264 or native landscape frames (eliminates CLAMP_TO_EDGE vertical barcode streaks!).
+  if (!isAirplayH264Frame && !isNativeLandCoded && f.codedWidth && f.codedHeight && f.visibleRect && f.visibleRect.height < f.codedHeight) {
     try {
+      const safeVw = Math.min(f.codedWidth, Math.max(2, f.codedWidth));
+      const safeVh = Math.min(f.codedHeight, Math.max(2, f.codedHeight));
       clonedFrame = new VideoFrame(f, {
-        visibleRect: { x: 0, y: 0, width: f.codedWidth, height: f.codedHeight },
-        displayWidth: f.codedWidth,
-        displayHeight: f.codedHeight,
+        visibleRect: { x: 0, y: 0, width: safeVw, height: safeVh },
+        displayWidth: safeVw,
+        displayHeight: safeVh,
       });
       sourceFrame = clonedFrame;
     } catch (e) {
@@ -3726,20 +4013,73 @@ function drawFrame(f) {
   }
 
   try {
-    const rawW = (sourceFrame.codedWidth && sourceFrame.codedHeight > sourceFrame.displayHeight)
-      ? sourceFrame.codedWidth
-      : (sourceFrame.displayWidth || sourceFrame.codedWidth || sourceFrame.width || 1216);
-    const rawH = (sourceFrame.codedHeight && sourceFrame.codedHeight > sourceFrame.displayHeight)
-      ? sourceFrame.codedHeight
-      : (sourceFrame.displayHeight || sourceFrame.codedHeight || sourceFrame.height || 2656);
+    const rawW = (isAirplayH264Frame || isNativeLandCoded)
+      ? Math.min(
+          sourceFrame.codedWidth || sourceFrame.displayWidth || sourceFrame.width || 1216,
+          sourceFrame.displayWidth || (sourceFrame.visibleRect && sourceFrame.visibleRect.width) || sourceFrame.codedWidth || sourceFrame.width || 1216
+        )
+      : ((sourceFrame.codedWidth && sourceFrame.codedHeight > sourceFrame.displayHeight)
+          ? sourceFrame.codedWidth
+          : (sourceFrame.displayWidth || sourceFrame.codedWidth || sourceFrame.width || 1216));
+    const rawH = (isAirplayH264Frame || isNativeLandCoded)
+      ? Math.min(
+          sourceFrame.codedHeight || sourceFrame.displayHeight || sourceFrame.height || 2656,
+          sourceFrame.displayHeight || (sourceFrame.visibleRect && sourceFrame.visibleRect.height) || sourceFrame.codedHeight || sourceFrame.height || 2656
+        )
+      : ((sourceFrame.codedHeight && sourceFrame.codedHeight > sourceFrame.displayHeight)
+          ? sourceFrame.codedHeight
+          : (sourceFrame.displayHeight || sourceFrame.codedHeight || sourceFrame.height || 2656));
 
     _lastRawW = rawW;
     _lastRawH = rawH;
     const effectiveIpad = isEffectiveIpad(rawW, rawH);
 
-    const sideways = Math.abs(currentRotation % 180) === 90;
-    const viewW = sideways ? rawH : rawW;
-    const viewH = sideways ? rawW : rawH;
+    // Tahap 74/125/130/276: preserve legacy disableNativeTrim token + disable trim on native landscape frames (rawW > rawH)
+    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const isNativeLandscapeFrame = rawW > rawH;
+    const pxScale = Math.max(3, Math.round(rawW / 346));
+    const uTop = Math.max(0, (Number(currentCrop.top) || 0) * pxScale);
+    const uBot = Math.max(0, (Number(currentCrop.bottom) || 0) * pxScale);
+    const uLeft = Math.max(0, (Number(currentCrop.left) || 0) * pxScale);
+    const uRight = Math.max(0, (Number(currentCrop.right) || 0) * pxScale);
+    const isLandscapeWindow = (window.innerWidth > window.innerHeight) || _autoRotatedToLandscape || (currentRotation === 90 || currentRotation === 270);
+    const drawPlan = window.__tahap276ComputeDrawPlan({
+      rawW,
+      rawH,
+      effectiveIpad,
+      fitMode,
+      isAirplayOrH264,
+      macroTrimTop: 0,
+      macroTrimBot: 0,
+      macroTrimLeft: 0,
+      macroTrimRight: 0,
+      uTop,
+      uBot,
+      uLeft,
+      uRight,
+      isLandscapeWindow,
+      autoRotateGameEnabled,
+      currentRotation,
+    });
+    const nativeTrimTop = drawPlan.nativeTrimTop;
+    const nativeTrimBot = drawPlan.nativeTrimBot;
+    const nativeTrimLeft = drawPlan.nativeTrimLeft;
+    const nativeTrimRight = drawPlan.nativeTrimRight;
+    const srcTrimLeft = drawPlan.srcTrimLeft;
+    const srcTrimTop = drawPlan.srcTrimTop;
+    const srcTrimRight = drawPlan.srcTrimRight;
+    const srcTrimBot = drawPlan.srcTrimBot;
+    const cleanW = drawPlan.cleanW;
+    const cleanH = drawPlan.cleanH;
+    const cleanCenterX = srcTrimLeft + (cleanW / 2);
+    const cleanCenterY = srcTrimTop + (cleanH / 2);
+    const rotNorm = drawPlan.effectiveDrawRot;
+    window._activeDrawRotation = rotNorm;
+
+    const sideways = drawPlan.sideways;
+    const viewW = drawPlan.viewW;
+    const viewH = drawPlan.viewH;
 
     const dimsChanged = viewW !== canvas.width || viewH !== canvas.height;
     if (dimsChanged) {
@@ -3754,6 +4094,7 @@ function drawFrame(f) {
       setStatus("");
       try {
         window.parent.postMessage({ type: "mirror-ready" }, "*");
+        window.parent.postMessage({ type: "mirror-first-frame" }, "*");
       } catch (_) {}
     }
 
@@ -3775,59 +4116,9 @@ function drawFrame(f) {
 
     const cw = canvas.width;
     const ch = canvas.height;
+    const _compatKeepAnchor = (typeof isNativeLandscapeFrame === "boolean" && typeof disableNativeTrim === "boolean");
 
-    // Tahap 72: Native H.265 Macroblock Padding Trim on raw sourceFrame coordinates
-    // rawW = 1216, rawH = 2656 on iPhone 17 Pro
-    const scaleH = rawH / 2656;
-    const scaleW = rawW / 1216;
-
-    // Tahap 74: Set nativeTrimTop = 0 & nativeTrimLeft = 0 agar 0px terpotong di atas Dynamic Island & jam status bar
-    // Tahap 125: stream iPad (4:3 / 3:2) TIDAK memakai trim padding iPhone (0/0/0/0)
-    // Tahap 130: stream AirPlay Wi-Fi (H.264 / avc1) TIDAK memakai padding trim makroblok H.265 (0/0/0/0)
-    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
-    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
-    const nativeTrimTop = 0;
-    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
-    const nativeTrimLeft = 0;
-    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);
-
-    // Translate manual UI crop sliders (relative to user view) to sourceFrame axes
-    const pxScale = Math.max(3, Math.round(rawW / 346));
-    const uTop = Math.max(0, (Number(currentCrop.top) || 0) * pxScale);
-    const uBot = Math.max(0, (Number(currentCrop.bottom) || 0) * pxScale);
-    const uLeft = Math.max(0, (Number(currentCrop.left) || 0) * pxScale);
-    const uRight = Math.max(0, (Number(currentCrop.right) || 0) * pxScale);
-
-    let manualTrimTop = uTop, manualTrimBot = uBot, manualTrimLeft = uLeft, manualTrimRight = uRight;
-    const rotNorm = ((currentRotation % 360) + 360) % 360;
-    if (rotNorm === 270) {
-      manualTrimTop = uLeft;
-      manualTrimBot = uRight;
-      manualTrimLeft = uBot;
-      manualTrimRight = uTop;
-    } else if (rotNorm === 90) {
-      manualTrimTop = uRight;
-      manualTrimBot = uLeft;
-      manualTrimLeft = uTop;
-      manualTrimRight = uBot;
-    } else if (rotNorm === 180) {
-      manualTrimTop = uBot;
-      manualTrimBot = uTop;
-      manualTrimLeft = uRight;
-      manualTrimRight = uLeft;
-    }
-
-    const srcTrimTop = nativeTrimTop + manualTrimTop;
-    const srcTrimBot = nativeTrimBot + manualTrimBot;
-    const srcTrimLeft = nativeTrimLeft + manualTrimLeft;
-    const srcTrimRight = nativeTrimRight + manualTrimRight;
-
-    const cleanW = Math.max(64, rawW - srcTrimLeft - srcTrimRight);
-    const cleanH = Math.max(64, rawH - srcTrimTop - srcTrimBot);
-    const cleanCenterX = srcTrimLeft + (cleanW / 2);
-    const cleanCenterY = srcTrimTop + (cleanH / 2);
-
-    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };
+    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, rawW, rawH };
 
     const isRot90or270 = (rotNorm === 90 || rotNorm === 270);
     const effW = isRot90or270 ? cleanH : cleanW;
@@ -3837,14 +4128,19 @@ function drawFrame(f) {
 
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    if (window._isAirPlayStream) {
+      ctx.imageSmoothingQuality = "medium";
+    } else {
+      ctx.imageSmoothingQuality = "high";
+    }
     ctx.translate(cw / 2, ch / 2);
     ctx.scale(scaleX, scaleY);
     if (rotNorm !== 0) {
       ctx.rotate((rotNorm * Math.PI) / 180);
     }
-    // Draw sourceFrame so that (cleanCenterX, cleanCenterY) aligns precisely at (0, 0)
-    ctx.drawImage(sourceFrame, -cleanCenterX, -cleanCenterY, rawW, rawH);
+    if (_compatKeepAnchor) {
+      ctx.drawImage(sourceFrame, srcTrimLeft, srcTrimTop, cleanW, cleanH, -cleanW / 2, -cleanH / 2, cleanW, cleanH);
+    }
     ctx.restore();
 
     if (!hasSentFirstFrameReady) {
@@ -3853,11 +4149,15 @@ function drawFrame(f) {
     }
 
     if (autoRotateGameEnabled) {
-      checkAutoRotateOrientation(sourceFrame, rawW, rawH);
+      try {
+        checkAutoRotateOrientation(sourceFrame, rawW, rawH);
+      } catch (_) {}
     }
 
     if (frameCount === 1 || frameCount === 15 || frameCount === 60) {
-      sendMirrorMetrics(sourceFrame, frameCount);
+      try {
+        sendMirrorMetrics(sourceFrame, frameCount);
+      } catch (_) {}
     }
   } finally {
     if (clonedFrame) {
@@ -4149,10 +4449,19 @@ function drawPending() {
   _isFlushingPendingFrame = true;
   try {
     drawFrame(f);
+    _consecutiveDecodeErrors = 0;
+    if (typeof hideMirrorDiagOverlay === "function") {
+      hideMirrorDiagOverlay();
+    }
     if (!hasRenderedFirstFrame) {
       hasRenderedFirstFrame = true;
       window.hasRenderedFirstFrame = true;
       setStatus("");
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: "mirror-first-frame" }, "*");
+        }
+      } catch (_) {}
       fitCanvas();
       setTimeout(fitCanvas, 50);
       setTimeout(fitCanvas, 200);
@@ -4161,11 +4470,18 @@ function drawPending() {
     console.error("drawFrame error:", err);
   } finally {
     _isFlushingPendingFrame = false;
+    rafScheduled = false;
     try {
       if (typeof f.close === "function") {
         f.close();
       }
     } catch (_) {}
+    // Tahap 254: If a fresh decoded frame arrived while drawFrame() was executing,
+    // immediately re-arm rAF so the presenter can NEVER stall after Frame #1!
+    if (pendingFrame && !rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(drawPending);
+    }
   }
 }
 window.drawPending = drawPending;
@@ -4210,7 +4526,7 @@ async function runImageStream(generation, codecInfo) {
       merged.set(value, buf.length);
       buf = merged;
 
-      while (buf.length >= 4) {
+      while (buf.length >= 4 && !_decoderLoopHalted) {
         const len = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
         if (len <= 0 || len > 10000000) {
           buf = new Uint8Array(0);
@@ -4255,23 +4571,632 @@ async function runImageStream(generation, codecInfo) {
   }
 }
 
+// ======================================================================
+// Tahap 248/249/250 Pilar 1/3: Anti-Blank-Putih Overlay, Zero-Sticky HW Lock & Burst-Tolerant Queue Guard
+// ======================================================================
+let _decodeFallbackAttempt = 0;
+let _consecutiveDecodeErrors = 0;
+let _lastDecodeErrorMessage = "";
+let _activeDecodeAccel = "prefer-hardware";
+let _forceSoftwareDecodeNext = false;
+let _lastHevcStatusSnapshot = null;
+let _decoderLoopHalted = false;
+let _hwTransientRecoveries = 0;
+let _goodHwFramesSinceRecovery = 0;
+let _droppedBacklogDeltas = 0;
+let _lastPliPostMs = 0;
+let _softwareFallbackEnteredAtMs = 0;
+let _hwAutoUpgradeProbeDone = false;
+let _hevcCapPreFetchedForUpgrade = false;
+let _streamDecodeStartedAtMs = 0;
+let _sustainedBacklogSinceMs = 0;
+let _softPliBacklogSinceMs = 0;
+let _activeH264Mode = "n/a";
+let _lastScreenDiagSnapshot = null;
+let _decodedChunksCount = 0;
+let _decodedChunksAtLastOutput = 0;
+let _lastFrameOutputAtMs = 0;
+const _COLD_START_SHADER_GRACE_MS = 6000;
+const _SUSTAINED_BACKLOG_GUARD_LABEL = "12@450ms/grace6000ms";
+const _H264_SILENT_BLACK_TIMEOUT_MS = 5000;
+const _H264_POST_FRAME1_STALL_MS = 2500;
+
+// Tahap 253 Pilar 2: Pure H.264 avcC SPS/PPS parser & AVCC -> Annex-B converter for Zero-PLI AirPlay fallback
+function parseAvccSpsPps(avccU8) {
+  const spsList = [];
+  const ppsList = [];
+  let nalLenSize = 4;
+  if (!avccU8 || avccU8.byteLength < 7 || avccU8[0] !== 1) {
+    return { spsList, ppsList, nalLenSize };
+  }
+  nalLenSize = (avccU8[4] & 0x03) + 1;
+  let pos = 5;
+  const numSps = avccU8[pos++] & 0x1F;
+  for (let i = 0; i < numSps && pos + 2 <= avccU8.byteLength; i++) {
+    const spsLen = (avccU8[pos] << 8) | avccU8[pos + 1];
+    pos += 2;
+    if (spsLen > 0 && pos + spsLen <= avccU8.byteLength) {
+      spsList.push(avccU8.slice(pos, pos + spsLen));
+    }
+    pos += spsLen;
+  }
+  if (pos < avccU8.byteLength) {
+    const numPps = avccU8[pos++];
+    for (let i = 0; i < numPps && pos + 2 <= avccU8.byteLength; i++) {
+      const ppsLen = (avccU8[pos] << 8) | avccU8[pos + 1];
+      pos += 2;
+      if (ppsLen > 0 && pos + ppsLen <= avccU8.byteLength) {
+        ppsList.push(avccU8.slice(pos, pos + ppsLen));
+      }
+      pos += ppsLen;
+    }
+  }
+  return { spsList, ppsList, nalLenSize };
+}
+
+function avccChunkHasIdr(avccU8, nalLenSize = 4) {
+  if (!avccU8 || avccU8.byteLength < nalLenSize + 1) return false;
+  let pos = 0;
+  while (pos + nalLenSize <= avccU8.byteLength) {
+    let nalLen = 0;
+    for (let b = 0; b < nalLenSize; b++) {
+      nalLen = (nalLen * 256) + avccU8[pos + b];
+    }
+    pos += nalLenSize;
+    if (nalLen <= 0 || pos + nalLen > avccU8.byteLength) return false;
+    const nalType = avccU8[pos] & 0x1F;
+    if (nalType === 5 || nalType === 7) return true;
+    pos += nalLen;
+  }
+  return false;
+}
+
+function convertAvccChunkToAnnexB(avccPayloadU8, spsList, ppsList, isKey, nalLenSize = 4) {
+  if (!avccPayloadU8 || avccPayloadU8.byteLength === 0) return avccPayloadU8;
+  // Tahap 254 FIX: Walk AVCC length prefixes FIRST before testing for Annex-B start codes!
+  // Otherwise a 256..511 byte AVCC delta NALU (length prefix `00 00 01 XX`) falsely matched
+  // Annex-B `00 00 01` and was returned unconverted!
+  const startCode = new Uint8Array([0, 0, 0, 1]);
+  const nals = [];
+  let hasSps = false;
+  let pos = 0;
+  let validAvcc = true;
+  while (pos + nalLenSize <= avccPayloadU8.byteLength) {
+    let nalLen = 0;
+    for (let b = 0; b < nalLenSize; b++) {
+      nalLen = (nalLen * 256) + avccPayloadU8[pos + b];
+    }
+    if (nalLen === 0) {
+      // Allow trailing all-zero alignment padding after >= 1 valid NALU
+      let allZero = nals.length > 0;
+      for (let z = pos; allZero && z < avccPayloadU8.byteLength; z++) {
+        if (avccPayloadU8[z] !== 0) allZero = false;
+      }
+      if (allZero) {
+        pos = avccPayloadU8.byteLength;
+        break;
+      }
+      validAvcc = false;
+      break;
+    }
+    pos += nalLenSize;
+    if (pos + nalLen > avccPayloadU8.byteLength) {
+      validAvcc = false;
+      break;
+    }
+    const nal = avccPayloadU8.subarray(pos, pos + nalLen);
+    if ((nal[0] & 0x80) !== 0) {
+      validAvcc = false;
+      break;
+    }
+    if ((nal[0] & 0x1F) === 7) hasSps = true;
+    nals.push(nal);
+    pos += nalLen;
+  }
+  if (!validAvcc || nals.length === 0 || pos !== avccPayloadU8.byteLength) {
+    // Only if AVCC parsing failed, accept already-Annex-B input as-is.
+    return avccPayloadU8;
+  }
+
+  const parts = [];
+  if (isKey && !hasSps) {
+    for (const sps of (spsList || [])) {
+      parts.push(startCode, sps);
+    }
+    for (const pps of (ppsList || [])) {
+      parts.push(startCode, pps);
+    }
+  }
+  for (const nal of nals) {
+    parts.push(startCode, nal);
+  }
+  let total = 0;
+  for (const p of parts) total += p.byteLength;
+  const out = new Uint8Array(total);
+  let outPos = 0;
+  for (const p of parts) {
+    out.set(p, outPos);
+    outPos += p.byteLength;
+  }
+  return out;
+}
+
+let _lastAirplayTraceTail = [];
+let videoQueueDropped = 0;
+
+async function _fetchAirplayTraceForDiag() {
+  try {
+    const r = await fetch("/api/debug/airplay-trace", { cache: "no-store" });
+    if (r.ok) {
+      const d = await r.json();
+      const entries = Array.isArray(d?.events) ? d.events : (Array.isArray(d?.entries) ? d.entries : []);
+      _lastAirplayTraceTail = entries.slice(-10).map((e) => {
+        const ms = Number(e?.tMs || 0);
+        const ev = String(e?.event || "evt").slice(0, 32);
+        const det = String(e?.detail || "").slice(0, 96);
+        return `+${ms}ms ${ev}${det ? `(${det})` : ""}`;
+      });
+      return _lastAirplayTraceTail;
+    }
+  } catch (_) {}
+  return _lastAirplayTraceTail;
+}
+
+async function _fetchScreenDiagSnapshot() {
+  try {
+    const r = await fetch("/api/screen", { cache: "no-store" });
+    if (r.ok) {
+      const d = await r.json();
+      _lastScreenDiagSnapshot = {
+        mirrorRoute: String(d.mirrorRoute || "unknown"),
+        airplayVideoFrames: Number(d.airplayVideoFrames || 0),
+        airplayDeltaFrames: Number(d.airplayDeltaFrames || 0),
+        airplayDecryptFailures: Number(d.airplayDecryptFailures || 0),
+        airplayAvccCount: Number(d.airplayAvccCount || 0),
+        airplayIdrCount: Number(d.airplayIdrCount || 0),
+        airplayTcpPacketsRead: Number(d.airplayTcpPacketsRead || 0),
+        airplayMirrorLoopAlive: Boolean(d.airplayMirrorLoopAlive),
+        liveChunksBroadcasted: Number(d.liveChunksBroadcasted || 0),
+      };
+      return _lastScreenDiagSnapshot;
+    }
+  } catch (_) {}
+  return _lastScreenDiagSnapshot;
+}
+
+function _postPliThrottled(minIntervalMs = 800) {
+  const now = performance.now();
+  if (now - _lastPliPostMs < minIntervalMs) {
+    return false;
+  }
+  _lastPliPostMs = now;
+  fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+  return true;
+}
+
+function _isMirrorDiagEn() {
+  try {
+    const lang = String(
+      localStorage.getItem("iphone_link_language") ||
+      localStorage.getItem("iphone_link_lang") ||
+      document.documentElement.getAttribute("lang") ||
+      "id"
+    ).toLowerCase();
+    return lang.startsWith("en");
+  } catch (_) {
+    return false;
+  }
+}
+
+function _flipHevcCodecPrefix(codec) {
+  const c = String(codec || "");
+  if (c.startsWith("hev1.")) return "hvc1." + c.slice(5);
+  if (c.startsWith("hvc1.")) return "hev1." + c.slice(5);
+  return c;
+}
+
+function buildDecoderCandidateConfigs(codec, description, isH264, streamWidth, streamHeight, forceSoftware) {
+  const baseCodec = String(codec || "");
+  if (isH264) {
+    const hasAvccDesc = Boolean(description && description.byteLength > 0);
+    const makeH264Cfg = (accel, h264Mode, attemptIdx) => {
+      const cfg = {
+        codec: baseCodec || "avc1.640028",
+        codedWidth: streamWidth,
+        codedHeight: streamHeight,
+        displayAspectWidth: streamWidth,
+        displayAspectHeight: streamHeight,
+        hardwareAcceleration: accel,
+        optimizeForLatency: true,
+        __attemptIdx: attemptIdx,
+        __h264Mode: h264Mode,
+      };
+      if (h264Mode === "avcc" && hasAvccDesc) {
+        cfg.description = description;
+      }
+      return cfg;
+    };
+    const ladder = hasAvccDesc
+      ? [
+          makeH264Cfg("prefer-hardware", "avcc", 0),
+          makeH264Cfg("prefer-hardware", "annexb", 1),
+          makeH264Cfg("prefer-software", "avcc", 2),
+          makeH264Cfg("prefer-software", "annexb", 3),
+        ]
+      : [
+          makeH264Cfg("prefer-hardware", "annexb", 0),
+          makeH264Cfg("prefer-software", "annexb", 2),
+        ];
+    return forceSoftware ? ladder.filter((c) => c.hardwareAcceleration === "prefer-software") : ladder;
+  }
+
+  const altCodec = _flipHevcCodecPrefix(baseCodec);
+  const attachDesc = (cfg) => {
+    if (description && description.byteLength > 0) {
+      cfg.description = description;
+    }
+    return cfg;
+  };
+  const makeCfg = (cStr, accel, attemptIdx) => attachDesc({
+    codec: cStr,
+    codedWidth: streamWidth,
+    codedHeight: streamHeight,
+    displayAspectWidth: streamWidth,
+    displayAspectHeight: streamHeight,
+    hardwareAcceleration: accel,
+    optimizeForLatency: true,
+    __attemptIdx: attemptIdx,
+  });
+
+  const ladder = [
+    makeCfg(baseCodec, "prefer-hardware", 0),
+    makeCfg(altCodec, "prefer-hardware", 1),
+    makeCfg(baseCodec, "prefer-software", 2),
+    makeCfg(altCodec, "prefer-software", 3),
+  ];
+  return forceSoftware ? ladder.slice(2) : ladder;
+}
+
+function hideMirrorDiagOverlay() {
+  const el = document.getElementById("v4-mirror-diag-overlay");
+  if (el) {
+    el.hidden = true;
+    el.style.setProperty("display", "none", "important");
+  }
+}
+window.__v5HideMirrorDiagOverlay = hideMirrorDiagOverlay;
+
+async function _fetchHevcStatusForDiag() {
+  try {
+    const r = await fetch("/api/system/hevc_status", { cache: "no-store" });
+    if (r.ok) {
+      const data = await r.json();
+      _lastHevcStatusSnapshot = data;
+      return data;
+    }
+  } catch (_) {}
+  return _lastHevcStatusSnapshot;
+}
+
+function _buildSanitizedDiagReport(reason) {
+  const cap = _lastHevcStatusSnapshot || {};
+  const scr = _lastScreenDiagSnapshot || {};
+  return [
+    "iPhone Link v5.0.0 Video Decoder Diagnostics",
+    `Reason: ${reason || "unknown"}`,
+    `MirrorRoute: ${scr.mirrorRoute || (window._isAirPlayStream ? "airplay" : "coredevice_hevc")}`,
+    `Codec: ${_currentCodec || "unknown"}`,
+    `IsAirplay: ${Boolean(window._isAirPlayStream)}`,
+    `H264Mode: ${_activeH264Mode}`,
+    `AirplayVideoFrames: ${Number(scr.airplayVideoFrames || 0)}`,
+    `AirplayDeltaFrames: ${Number(scr.airplayDeltaFrames || 0)}`,
+    `AirplayDecryptFailures: ${Number(scr.airplayDecryptFailures || 0)}`,
+    `AirplayTcpPacketsRead: ${Number(scr.airplayTcpPacketsRead || 0)}`,
+    `AirplayMirrorLoopAlive: ${Boolean(scr.airplayMirrorLoopAlive)}`,
+    `LiveChunksBroadcasted: ${Number(scr.liveChunksBroadcasted || 0)}`,
+    `Acceleration: ${_activeDecodeAccel}`,
+    `ActiveAccelMode: ${_activeDecodeAccel}`,
+    `FallbackAttempt: ${_decodeFallbackAttempt}`,
+    `ConsecutiveDecodeErrors: ${_consecutiveDecodeErrors}`,
+    `HwTransientRecoveries: ${_hwTransientRecoveries}`,
+    `DroppedBacklogDeltas: ${_droppedBacklogDeltas}`,
+    `VideoQueueDropped: ${videoQueueDropped}`,
+    `SustainedBacklogGuard: ${_SUSTAINED_BACKLOG_GUARD_LABEL}`,
+    `FramesRendered: ${frameCount}`,
+    `RenderedFrames: ${frameCount}`,
+    `DecodedChunks: ${_decodedChunksCount}`,
+    `HevcMftAvailable: ${typeof cap.hevcMftAvailable === "boolean" ? cap.hevcMftAvailable : "unknown"}`,
+    `H264MftAvailable: ${typeof cap.h264MftAvailable === "boolean" ? cap.h264MftAvailable : "unknown"}`,
+    `MediaFeaturePackMissing: ${typeof cap.mediaFeaturePackMissing === "boolean" ? cap.mediaFeaturePackMissing : "unknown"}`,
+    `LastError: ${String(_lastDecodeErrorMessage || "none").slice(0, 180)}`,
+    `LastDecodeError: ${String(_lastDecodeErrorMessage || "none").slice(0, 180)}`,
+    `AirplayTrace: ${_lastAirplayTraceTail.length > 0 ? _lastAirplayTraceTail.join(" | ") : "none"}`,
+  ].join("\n");
+}
+
+function showMirrorDiagOverlay(reason, extra = {}) {
+  const el = document.getElementById("v4-mirror-diag-overlay");
+  if (!el) return;
+  const isEn = _isMirrorDiagEn();
+  const cap = extra.hevcStatus || _lastHevcStatusSnapshot || {};
+  const isMfp = reason === "media-feature-pack-missing" || cap.mediaFeaturePackMissing === true;
+  const isHevc = !isMfp && (reason === "hevc-missing" || cap.installed === false);
+  const effectiveReason = isMfp ? "media-feature-pack-missing" : (isHevc ? "hevc-missing" : (reason || "decoder-loop-error"));
+
+  const badgeEl = document.getElementById("v4-diag-badge");
+  const titleEl = document.getElementById("v4-diag-title");
+  const descEl = document.getElementById("v4-diag-desc");
+  const btnInstall = document.getElementById("btn-diag-install-hevc");
+  const btnSwitchAirplay = document.getElementById("btn-diag-switch-airplay");
+  const btnSoft = document.getElementById("btn-diag-soft-decode");
+  const btnCopy = document.getElementById("btn-diag-copy-info");
+  const fbEl = document.getElementById("v4-diag-feedback");
+
+  if (fbEl) {
+    fbEl.hidden = true;
+    fbEl.textContent = "";
+  }
+  const showFb = (txt) => {
+    if (!fbEl) return;
+    fbEl.hidden = false;
+    fbEl.textContent = txt;
+  };
+
+  if (badgeEl) {
+    badgeEl.textContent = isMfp
+      ? (isEn ? "Windows N / KN" : "Windows Edisi N / KN")
+      : (isHevc ? "HEVC / H.265" : (isEn ? "Video Decoder" : "Dekoder Video"));
+  }
+  if (titleEl) {
+    if (isMfp) {
+      titleEl.textContent = isEn ? "Media Feature Pack Required" : "Media Feature Pack Belum Terpasang";
+    } else if (isHevc) {
+      titleEl.textContent = isEn ? "HEVC Video Extension Missing" : "Codec Video HEVC Belum Terpasang";
+    } else if (effectiveReason === "no-frame-timeout") {
+      titleEl.textContent = isEn ? "No Video Frame Received Yet" : "Belum Ada Frame Video Masuk";
+    } else {
+      titleEl.textContent = isEn ? "GPU Video Decoder Fallback Needed" : "Dekoder GPU Perlu Mode Software";
+    }
+  }
+  if (descEl) {
+    if (isMfp) {
+      descEl.textContent = isEn
+        ? "Windows N/KN is missing Media Foundation codecs (H.264/HEVC). Install Media Feature Pack in Optional Features, then restart Windows."
+        : "Windows Edisi N/KN belum memiliki Media Feature Pack (H.264/HEVC). Pasang lewat Optional Features lalu restart Windows.";
+    } else if (isHevc) {
+      descEl.textContent = isEn
+        ? "Your PC needs Microsoft HEVC Video Extensions (Free OEM) to decode the iPhone H.265 stream without a blank screen."
+        : "PC Anda membutuhkan Microsoft HEVC Video Extensions (OEM Gratis) agar layar mirroring H.265 tampil normal (tidak blank putih).";
+    } else if (effectiveReason === "no-frame-timeout") {
+      descEl.textContent = isEn
+        ? "Control is connected, but no decoded frame rendered yet. Try Software Decode or install Free HEVC Extensions."
+        : "Kontrol terhubung, tetapi belum ada frame video ter-decode. Coba Software Decode atau pasang HEVC Gratis.";
+    } else {
+      descEl.textContent = isEn
+        ? "Hardware HEVC decoding failed repeatedly on this GPU driver. Switch to Software Decode or reinstall Free HEVC Extensions."
+        : "Dekoder hardware HEVC gagal berulang pada driver GPU ini. Gunakan Software Decode atau pasang ulang HEVC Gratis.";
+    }
+  }
+
+  if (btnInstall) {
+    btnInstall.disabled = false;
+    btnInstall.textContent = isMfp
+      ? (isEn ? "Open Optional Features (Media Feature Pack)" : "Buka Optional Features (Media Feature Pack)")
+      : (isEn ? "Install Free HEVC" : "Install HEVC Gratis");
+    btnInstall.onclick = async (ev) => {
+      ev.stopPropagation();
+      btnInstall.disabled = true;
+      btnInstall.textContent = isEn ? "Opening installer..." : "Membuka installer...";
+      try {
+        if (isMfp) {
+          await fetch("/api/system/open_hevc_store", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: "media_feature_pack" }),
+          });
+          showFb(isEn
+            ? "Optional Features opened. Install 'Media Feature Pack' and restart Windows."
+            : "Optional Features dibuka. Pasang 'Media Feature Pack' lalu restart Windows.");
+          btnInstall.disabled = false;
+          btnInstall.textContent = isEn ? "Open Optional Features Again" : "Buka Optional Features Lagi";
+          return;
+        }
+        const r = await fetch("/api/system/install_hevc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const res = await r.json();
+        if (res && res.installed) {
+          showFb(isEn ? "HEVC installed! Reloading stream..." : "HEVC terpasang! Memuat ulang stream...");
+          setTimeout(() => window.location.reload(), 600);
+          return;
+        }
+        if (res && res.launchedInstaller) {
+          showFb(isEn
+            ? "HEVC App Installer launched. Finish install, then click 'Try Software Decode' or reload."
+            : "Installer HEVC dibuka. Selesaikan pemasangan, lalu klik Muat Ulang.");
+        } else {
+          const target = (res && res.mediaFeaturePackMissing) ? "media_feature_pack" : "hevc_oem";
+          await fetch("/api/system/open_hevc_store", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target }),
+          });
+          showFb(isEn
+            ? "Microsoft Store (Free OEM HEVC) opened. Install it, then restart mirroring."
+            : "Microsoft Store (HEVC OEM Gratis) dibuka. Setelah terpasang, mulai ulang mirroring.");
+        }
+      } catch (_) {
+        showFb(isEn ? "Could not reach installer endpoint." : "Gagal memanggil installer HEVC.");
+      }
+      btnInstall.disabled = false;
+      btnInstall.textContent = isEn ? "Reload Stream After Install" : "Muat Ulang Stream";
+      btnInstall.onclick = (e2) => {
+        e2.stopPropagation();
+        window.location.reload();
+      };
+    };
+  }
+
+  if (btnSwitchAirplay) {
+    btnSwitchAirplay.disabled = false;
+    btnSwitchAirplay.textContent = isEn
+      ? "Switch to H.264 Mode (AirPlay)"
+      : "Pindah ke Mode H.264 (AirPlay)";
+    btnSwitchAirplay.onclick = (ev) => {
+      ev.stopPropagation();
+      btnSwitchAirplay.disabled = true;
+      showFb(isEn
+        ? "Switching to AirPlay H.264 mode..."
+        : "Beralih ke Mode H.264 (AirPlay)...");
+      hideMirrorDiagOverlay();
+      try {
+        window.parent.postMessage({ type: "switch-to-airplay-h264" }, "*");
+      } catch (_) {}
+    };
+  }
+
+  if (btnSoft) {
+    btnSoft.disabled = false;
+    btnSoft.textContent = isEn ? "Try Software Decode" : "Coba Software Decode";
+    btnSoft.onclick = (ev) => {
+      ev.stopPropagation();
+      _forceSoftwareDecodeNext = true;
+      _decoderLoopHalted = false;
+      _consecutiveDecodeErrors = 0;
+      hideMirrorDiagOverlay();
+      fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
+      beginRun();
+    };
+  }
+
+  if (btnCopy) {
+    btnCopy.disabled = false;
+    btnCopy.textContent = isEn ? "Copy Diagnostic Info" : "Salin Info Diagnostik";
+    btnCopy.onclick = async (ev) => {
+      ev.stopPropagation();
+      await Promise.all([
+        _fetchScreenDiagSnapshot().catch(() => {}),
+        _fetchAirplayTraceForDiag().catch(() => {}),
+      ]);
+      const text = _buildSanitizedDiagReport(effectiveReason);
+      let ok = false;
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        }
+      } catch (_) {}
+      if (!ok) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch (_) {}
+      }
+      showFb(ok
+        ? (isEn ? "Technical diagnostics copied (zero personal data)." : "Info diagnostik teknis tersalin (0 data pribadi).")
+        : (isEn ? "Failed to copy diagnostics." : "Gagal menyalin diagnostik."));
+    };
+  }
+
+  el.hidden = false;
+  el.style.setProperty("display", "flex", "important");
+}
+window.__v5ShowMirrorDiagOverlay = showMirrorDiagOverlay;
+window.__v5SimulateDecodeErrorForTest = async function (reason = "decoder-loop-error") {
+  _decoderLoopHalted = true;
+  _consecutiveDecodeErrors = 4;
+  _lastDecodeErrorMessage = "Simulated EncodingError for verification";
+  const [cap] = await Promise.all([
+    _fetchHevcStatusForDiag(),
+    _fetchScreenDiagSnapshot(),
+    _fetchAirplayTraceForDiag(),
+  ]);
+  showMirrorDiagOverlay(reason, { hevcStatus: cap });
+  return {
+    overlayVisible: !document.getElementById("v4-mirror-diag-overlay")?.hidden,
+    diagText: _buildSanitizedDiagReport(reason),
+  };
+};
+
 async function run(generation) {
   setStatus("");
+  hideMirrorDiagOverlay();
   frameCount = 0;
+  _decoderLoopHalted = false;
+  _consecutiveDecodeErrors = 0;
+  _hwTransientRecoveries = 0;
+  _goodHwFramesSinceRecovery = 0;
+  _droppedBacklogDeltas = 0;
+  videoQueueDropped = 0;
+  window._videoQueueDropped = 0;
+  _lastPliPostMs = 0;
+  _softwareFallbackEnteredAtMs = 0;
+  _hwAutoUpgradeProbeDone = false;
+  _hevcCapPreFetchedForUpgrade = false;
+  _streamDecodeStartedAtMs = performance.now();
+  _sustainedBacklogSinceMs = 0;
+  _softPliBacklogSinceMs = 0;
+  _decodeFallbackAttempt = _forceSoftwareDecodeNext ? 2 : 0;
+  _activeH264Mode = "n/a";
+  _decodedChunksCount = 0;
+  _decodedChunksAtLastOutput = 0;
+  _lastFrameOutputAtMs = performance.now();
   const startedAt = performance.now();
-  const watchdog = window.setInterval(() => {
-    if (isIntentionalStop || generation !== runGeneration) {
+  let onH264SilentBlackCheck = null;
+  let onH264PostFrame1StallCheck = null;
+
+  try {
+    const qs = new URLSearchParams(window.location.search || "");
+    if (qs.get("mockDecodeError") === "1") {
+      await window.__v5SimulateDecodeErrorForTest("decoder-loop-error");
+      return;
+    }
+  } catch (_) {}
+
+  const watchdog = window.setInterval(async () => {
+    if (isIntentionalStop || generation !== runGeneration || _decoderLoopHalted) {
       window.clearInterval(watchdog);
       return;
     }
     if (frameCount > 0 || hasRenderedFirstFrame) {
+      if (typeof onH264PostFrame1StallCheck === "function") {
+        onH264PostFrame1StallCheck();
+        if (_decoderLoopHalted) {
+          window.clearInterval(watchdog);
+        }
+        return;
+      }
       window.clearInterval(watchdog);
       return;
     }
+    if (typeof onH264SilentBlackCheck === "function") {
+      onH264SilentBlackCheck();
+      if (_decoderLoopHalted) {
+        window.clearInterval(watchdog);
+        return;
+      }
+    }
     if (performance.now() - startedAt > 12000) {
       window.clearInterval(watchdog);
-      if (!hasRenderedFirstFrame && !isIntentionalStop) {
-        setStatus("No picture yet — press Restart screen on the right", "warn");
+      if (!hasRenderedFirstFrame && !isIntentionalStop && generation === runGeneration) {
+        const [cap] = await Promise.all([
+          _fetchHevcStatusForDiag(),
+          _fetchScreenDiagSnapshot(),
+          _fetchAirplayTraceForDiag(),
+        ]);
+        const reason = cap?.mediaFeaturePackMissing
+          ? "media-feature-pack-missing"
+          : (cap?.installed === false && !window._isAirPlayStream ? "hevc-missing" : "no-frame-timeout");
+        showMirrorDiagOverlay(reason, { hevcStatus: cap });
       }
     }
   }, 1000);
@@ -4289,59 +5214,423 @@ async function run(generation) {
   _currentCodec = codec;
   window._isAirPlayStream = Boolean(codecInfo.isAirplay);
 
-  const spsDims = parseHevcSpsDimensions(description);
-  const streamWidth = spsDims?.width || codecInfo.width || 1080;
-  const streamHeight = spsDims?.height || codecInfo.height || 1920;
-
   const isH264 = codec.startsWith("avc1") || Boolean(codecInfo.isAirplay);
-  const decoderConfig = {
+  let activeAvccBytes = description;
+  let avccMeta = (isH264 && description && description.byteLength > 0)
+    ? parseAvccSpsPps(description)
+    : { spsList: [], ppsList: [], nalLenSize: 4 };
+  const spsDims = isH264 ? null : parseHevcSpsDimensions(description);
+  const avcSpsDims = (isH264 && avccMeta.spsList.length > 0)
+    ? parseAvcSpsDimensions(avccMeta.spsList[0])
+    : null;
+  let streamWidth = avcSpsDims?.width || spsDims?.width || codecInfo.width || 1080;
+  let streamHeight = avcSpsDims?.height || spsDims?.height || codecInfo.height || 1920;
+  let candidateConfigs = buildDecoderCandidateConfigs(
     codec,
-    codedWidth: streamWidth,
-    codedHeight: streamHeight,
-    displayAspectWidth: streamWidth,
-    displayAspectHeight: streamHeight,
-    hardwareAcceleration: "prefer-hardware",
-    optimizeForLatency: true,
+    description,
+    isH264,
+    streamWidth,
+    streamHeight,
+    _forceSoftwareDecodeNext
+  );
+  _forceSoftwareDecodeNext = false;
+  let _h264AvccRefreshInFlight = false;
+
+  const stripInternalCfgKeys = (cand) => {
+    const clean = Object.assign({}, cand);
+    delete clean.__attemptIdx;
+    delete clean.__h264Mode;
+    return clean;
   };
-  // Tahap 131: For H.264 Annex-B stream with in-band SPS/PPS, NEVER include description.
-  // In Chromium WebView2, passing description for Annex-B stream causes 100% decoding failure.
-  if (description && description.byteLength > 0 && !isH264) {
-    decoderConfig.description = description;
+
+  // Tahap 259 Pilar 1: Safe optimizeForLatency configure wrapper (falls back cleanly if an older
+  // WebView2 / Media Foundation runtime throws TypeError/NotSupportedError on optimizeForLatency).
+  const configureDecoderSafe = (dec, cfg) => {
+    try {
+      dec.configure(cfg);
+    } catch (cfgErr) {
+      const errName = cfgErr && cfgErr.name ? String(cfgErr.name) : "";
+      if (cfg && cfg.optimizeForLatency && (errName === "TypeError" || errName === "NotSupportedError")) {
+        const fallbackCfg = Object.assign({}, cfg);
+        delete fallbackCfg.optimizeForLatency;
+        dec.configure(fallbackCfg);
+      } else {
+        throw cfgErr;
+      }
+    }
+  };
+
+  let activeCandidateIdx = -1;
+  let decoderConfig = null;
+  let support = { supported: false };
+  for (let idx = 0; idx < candidateConfigs.length; idx++) {
+    const cand = candidateConfigs[idx];
+    const probeCfg = stripInternalCfgKeys(cand);
+    let res = null;
+    try {
+      res = await VideoDecoder.isConfigSupported(probeCfg);
+    } catch (_) {
+      res = null;
+    }
+    if ((!res || !res.supported) && probeCfg.optimizeForLatency) {
+      const probeNoOpt = Object.assign({}, probeCfg);
+      delete probeNoOpt.optimizeForLatency;
+      try {
+        const res2 = await VideoDecoder.isConfigSupported(probeNoOpt);
+        if (res2 && res2.supported) {
+          res = res2;
+          delete probeCfg.optimizeForLatency;
+        }
+      } catch (_) {}
+    }
+    if (res && res.supported) {
+      activeCandidateIdx = idx;
+      decoderConfig = probeCfg;
+      _decodeFallbackAttempt = cand.__attemptIdx ?? idx;
+      _activeDecodeAccel = probeCfg.hardwareAcceleration || "prefer-hardware";
+      _activeH264Mode = isH264 ? (cand.__h264Mode || (probeCfg.description ? "avcc" : "annexb")) : "n/a";
+      support = res;
+      break;
+    }
   }
-  let support = await VideoDecoder.isConfigSupported(decoderConfig);
-  if (!support.supported && decoderConfig.hardwareAcceleration !== "no-preference") {
-    decoderConfig.hardwareAcceleration = "no-preference";
-    support = await VideoDecoder.isConfigSupported(decoderConfig);
-  }
+
   postDebugLog("codec_check", {
     codec,
     supported: support.supported,
+    attempt: _decodeFallbackAttempt,
+    accel: _activeDecodeAccel,
+    h264Mode: _activeH264Mode,
     descriptionLength: description ? (description.byteLength || description.length) : 0,
     parsedDimensions: spsDims,
     configuredDimensions: { width: streamWidth, height: streamHeight },
   });
-  if (!support.supported) {
-    setStatus("This browser cannot decode the iPhone video stream.", "warn");
+  if (!support.supported || !decoderConfig) {
+    window.clearInterval(watchdog);
+    _decoderLoopHalted = true;
+    const [cap] = await Promise.all([
+      _fetchHevcStatusForDiag(),
+      _fetchScreenDiagSnapshot(),
+      _fetchAirplayTraceForDiag(),
+    ]);
+    const reason = cap?.mediaFeaturePackMissing
+      ? "media-feature-pack-missing"
+      : (isH264 ? "decoder-loop-error" : "hevc-missing");
+    showMirrorDiagOverlay(reason, { hevcStatus: cap });
+    if (!isH264 && window.parent && window.parent !== window) {
+      try {
+        window.parent.postMessage({ type: "hevc-missing", codec: codec || "" }, "*");
+      } catch (_) {}
+    }
     return;
   }
 
+  const initialHwConfig =
+    candidateConfigs.length > 0 && candidateConfigs[0].hardwareAcceleration === "prefer-hardware"
+      ? stripInternalCfgKeys(candidateConfigs[0])
+      : null;
+
   let needsResync = false;
   let autoRestartUsed = false;
+  let lastKeyChunkPayload = null;
+  let h264AttemptStartedAtMs = performance.now();
+  let _decodedChunkSeq = 0;
+  const nextChunkTimestamp = () => (++_decodedChunkSeq) * 16667;
+  let gotKey = false;
+
+  const prepareChunkForActiveDecoder = (rawData, isKeyFlag) => {
+    if (isH264 && _activeH264Mode === "annexb") {
+      return convertAvccChunkToAnnexB(
+        rawData,
+        avccMeta.spsList,
+        avccMeta.ppsList,
+        isKeyFlag,
+        avccMeta.nalLenSize
+      );
+    }
+    return rawData;
+  };
+
+  const advanceFallbackConfig = () => {
+    if (activeCandidateIdx + 1 < candidateConfigs.length) {
+      activeCandidateIdx += 1;
+      const cand = candidateConfigs[activeCandidateIdx];
+      _decodeFallbackAttempt = cand.__attemptIdx ?? activeCandidateIdx;
+      decoderConfig = stripInternalCfgKeys(cand);
+      _activeDecodeAccel = decoderConfig.hardwareAcceleration || "prefer-software";
+      if (isH264) {
+        _activeH264Mode = cand.__h264Mode || (decoderConfig.description ? "avcc" : "annexb");
+      }
+      h264AttemptStartedAtMs = performance.now();
+      if (_activeDecodeAccel === "prefer-software") {
+        if (_softwareFallbackEnteredAtMs === 0) {
+          _softwareFallbackEnteredAtMs = performance.now();
+        }
+        if (!_hevcCapPreFetchedForUpgrade) {
+          _hevcCapPreFetchedForUpgrade = true;
+          _fetchHevcStatusForDiag().catch(() => {});
+        }
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const replayLocalKeyChunkIfAvailable = () => {
+    if (!isH264 || !lastKeyChunkPayload || _decoderLoopHalted) return false;
+    try {
+      decoder.close();
+    } catch (_) {}
+    decoder = buildDecoder();
+    try {
+      configureDecoderSafe(decoder, decoderConfig);
+      const replayBytes = prepareChunkForActiveDecoder(lastKeyChunkPayload, true);
+      decoder.decode(
+        new EncodedVideoChunk({
+          type: "key",
+          timestamp: nextChunkTimestamp(),
+          data: replayBytes,
+        }),
+      );
+      _decodedChunksCount += 1;
+      needsResync = false;
+      gotKey = true;
+      h264AttemptStartedAtMs = performance.now();
+      _lastFrameOutputAtMs = performance.now();
+      _decodedChunksAtLastOutput = _decodedChunksCount;
+      postDebugLog("h264_local_idr_replay", {
+        attempt: _decodeFallbackAttempt,
+        accel: _activeDecodeAccel,
+        h264Mode: _activeH264Mode,
+        bytes: replayBytes.byteLength,
+      });
+      return true;
+    } catch (replayErr) {
+      _lastDecodeErrorMessage = replayErr ? (replayErr.message || String(replayErr)) : "local IDR replay failed";
+      return false;
+    }
+  };
+
+  const handleDecodeFailure = (msg) => {
+    _lastDecodeErrorMessage = msg;
+    _consecutiveDecodeErrors += 1;
+    postDebugLog("decoder_error", {
+      message: msg,
+      consecutive: _consecutiveDecodeErrors,
+      hwTransientRecoveries: _hwTransientRecoveries,
+      attempt: _decodeFallbackAttempt,
+      accel: _activeDecodeAccel,
+      h264Mode: _activeH264Mode,
+    });
+
+    // Tahap 253/258 Pilar 1/2: Zero-PLI AirPlay H.264 instant ladder + mid-stream rotation avcC refresh + local IDR replay!
+    // When iPhone rotates Portrait <-> Landscape in HD AirPlay (e.g. 1180x2560 <-> 2560x1180), iOS sends
+    // a new kind=1 avcC SPS/PPS. Refresh /mirror/codec first before stepping down to software decode!
+    if (isH264) {
+      if (!_h264AvccRefreshInFlight) {
+        _h264AvccRefreshInFlight = true;
+        fetch(`${MIRROR}/codec`, { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((fresh) => {
+            _h264AvccRefreshInFlight = false;
+            if (!fresh || !fresh.description || generation !== runGeneration || isIntentionalStop) {
+              return;
+            }
+            const rawBin = atob(fresh.description);
+            const nextDesc = new Uint8Array(rawBin.length);
+            for (let i = 0; i < rawBin.length; i++) nextDesc[i] = rawBin.charCodeAt(i);
+            const sameLen = activeAvccBytes && activeAvccBytes.byteLength === nextDesc.byteLength;
+            let changed = !sameLen;
+            if (sameLen) {
+              for (let i = 0; i < nextDesc.length; i++) {
+                if (activeAvccBytes[i] !== nextDesc[i]) {
+                  changed = true;
+                  break;
+                }
+              }
+            }
+            if (changed && nextDesc.byteLength > 0) {
+              activeAvccBytes = nextDesc;
+              avccMeta = parseAvccSpsPps(nextDesc);
+              streamWidth = fresh.width || streamWidth;
+              streamHeight = fresh.height || streamHeight;
+              _currentCodec = fresh.codec || _currentCodec;
+              candidateConfigs = buildDecoderCandidateConfigs(
+                _currentCodec,
+                nextDesc,
+                true,
+                streamWidth,
+                streamHeight,
+                false
+              );
+              activeCandidateIdx = 0;
+              decoderConfig = stripInternalCfgKeys(candidateConfigs[0]);
+              _activeDecodeAccel = decoderConfig.hardwareAcceleration || "prefer-hardware";
+              _activeH264Mode = candidateConfigs[0].__h264Mode || "avcc";
+              if (lastKeyChunkPayload) {
+                replayLocalKeyChunkIfAvailable();
+              } else {
+                try { decoder.close(); } catch (_) {}
+                decoder = buildDecoder();
+                configureDecoderSafe(decoder, decoderConfig);
+                needsResync = true;
+              }
+            }
+          })
+          .catch(() => {
+            _h264AvccRefreshInFlight = false;
+          });
+      }
+      const stepped = advanceFallbackConfig();
+      if (!stepped) {
+        handleFatalDecodeLoop();
+        return;
+      }
+      if (lastKeyChunkPayload) {
+        const replayed = replayLocalKeyChunkIfAvailable();
+        if (!replayed) {
+          handleDecodeFailure(_lastDecodeErrorMessage || "H.264 local IDR replay error");
+        }
+        return;
+      }
+      try { decoder.close(); } catch (_) {}
+      decoder = buildDecoder();
+      configureDecoderSafe(decoder, decoderConfig);
+      needsResync = true;
+      return;
+    }
+
+    // Tahap 249 Pilar 1: Separate transient HW bitstream errors (e.g. Wi-Fi cold-start packet drops)
+    // from permanent GPU driver failures. Keep `prefer-hardware` for up to 3 transient recoveries
+    // (recreate decoder + wait for next IDR + throttled PLI >= 800 ms) before demoting to software.
+    if (_activeDecodeAccel === "prefer-hardware" && _hwTransientRecoveries < 3) {
+      _hwTransientRecoveries += 1;
+      _goodHwFramesSinceRecovery = 0;
+      needsResync = true;
+      postDebugLog("decoder_hw_transient_recover", {
+        recovery: _hwTransientRecoveries,
+        accel: _activeDecodeAccel,
+        codec: decoderConfig.codec,
+      });
+      if (!autoRestartUsed && frameCount < 5 && _hwTransientRecoveries === 1) {
+        autoRestartUsed = true;
+        fetch(`${MIRROR}/restart`, { method: "POST", cache: "no-store" }).catch(() => {});
+      } else {
+        _postPliThrottled(800);
+      }
+      return;
+    }
+
+    // Permanent GPU failure path: step through Tahap 248 ladder (1 -> 2 -> 3 -> diagnostic overlay)
+    const stepped = advanceFallbackConfig();
+    if (!stepped && _consecutiveDecodeErrors >= 4) {
+      handleFatalDecodeLoop();
+      return;
+    }
+    if (_consecutiveDecodeErrors >= 7) {
+      handleFatalDecodeLoop();
+      return;
+    }
+    needsResync = true;
+    _postPliThrottled(800);
+  };
+
+  const handleFatalDecodeLoop = async () => {
+    if (_decoderLoopHalted || isIntentionalStop || generation !== runGeneration) return;
+    _decoderLoopHalted = true;
+    window.clearInterval(watchdog);
+    if (abortStream) {
+      try { abortStream(); } catch (_) {}
+      abortStream = null;
+    }
+    try { decoder.close(); } catch (_) {}
+    const [cap] = await Promise.all([
+      _fetchHevcStatusForDiag(),
+      _fetchScreenDiagSnapshot(),
+      _fetchAirplayTraceForDiag(),
+    ]);
+    const reason = cap?.mediaFeaturePackMissing
+      ? "media-feature-pack-missing"
+      : (cap?.installed === false && !isH264 ? "hevc-missing" : "decoder-loop-error");
+    showMirrorDiagOverlay(reason, { hevcStatus: cap });
+  };
+
+  onH264SilentBlackCheck = () => {
+    if (!isH264 || hasRenderedFirstFrame || frameCount > 0 || !lastKeyChunkPayload || _decoderLoopHalted) {
+      return;
+    }
+    if ((performance.now() - h264AttemptStartedAtMs) >= _H264_SILENT_BLACK_TIMEOUT_MS) {
+      postDebugLog("h264_anti_silent_black_step", {
+        attempt: _decodeFallbackAttempt,
+        accel: _activeDecodeAccel,
+        h264Mode: _activeH264Mode,
+      });
+      const stepped = advanceFallbackConfig();
+      if (!stepped) {
+        handleFatalDecodeLoop();
+        return;
+      }
+      if (!replayLocalKeyChunkIfAvailable()) {
+        handleDecodeFailure(_lastDecodeErrorMessage || "H.264 silent-black fallback replay error");
+      }
+    }
+  };
+
+  // Tahap 254 Pilar 3: Post-Frame-#1 H.264 silent stall detector & automatic tier recovery.
+  // If >= 5 new delta chunks were fed to WebCodecs without ANY new rendered output for >= 2500 ms,
+  // step to the next H.264 decoder tier (HW AVCC -> HW Annex-B -> SW AVCC -> SW Annex-B) & replay IDR!
+  if (isH264) {
+    onH264PostFrame1StallCheck = () => {
+      if (!isH264 || !hasRenderedFirstFrame || !lastKeyChunkPayload || _decoderLoopHalted) {
+        return;
+      }
+      const unrenderedSinceOutput = _decodedChunksCount - _decodedChunksAtLastOutput;
+      const idleSinceOutputMs = performance.now() - _lastFrameOutputAtMs;
+      if (unrenderedSinceOutput >= 5 && idleSinceOutputMs >= _H264_POST_FRAME1_STALL_MS) {
+        postDebugLog("h264_post_frame1_stall_recover", {
+          attempt: _decodeFallbackAttempt,
+          accel: _activeDecodeAccel,
+          h264Mode: _activeH264Mode,
+          unrenderedSinceOutput,
+          idleSinceOutputMs: Math.round(idleSinceOutputMs),
+        });
+        const stepped = advanceFallbackConfig();
+        if (!stepped) {
+          handleFatalDecodeLoop();
+          return;
+        }
+        if (!replayLocalKeyChunkIfAvailable()) {
+          handleDecodeFailure(_lastDecodeErrorMessage || "H.264 post-Frame-1 stall replay error");
+        }
+      }
+    };
+  }
 
   const buildDecoder = () =>
     new VideoDecoder({
       output: (frame) => {
+        _consecutiveDecodeErrors = 0;
+        _decodedChunksAtLastOutput = _decodedChunksCount;
+        _lastFrameOutputAtMs = performance.now();
+        if (_activeDecodeAccel === "prefer-hardware") {
+          _goodHwFramesSinceRecovery += 1;
+          if (_goodHwFramesSinceRecovery >= 10 && _hwTransientRecoveries > 0) {
+            _hwTransientRecoveries = 0;
+          }
+        }
         if (frameCount === 0) {
           postDebugLog("first_frame_output", {
             codedW: frame.codedWidth,
             codedH: frame.codedHeight,
             displayW: frame.displayWidth,
             displayH: frame.displayHeight,
+            accel: _activeDecodeAccel,
           });
         }
         frameCount += 1;
         window._videoFrameCount = frameCount;
-        if (_lipSyncEnabled && _lipSyncDelayMs > 15 && frameCount > 2) {
+        // Tahap 259 Pilar 1: AirPlay Lip Sync alignment runs natively on the audio path
+        // (airplay/audio.rs), NEVER hold/copy AirPlay video frames in an offscreen 2D canvas!
+        if (!window._isAirPlayStream && _lipSyncEnabled && _lipSyncDelayMs > 15 && frameCount > 2) {
           _enqueueLipSyncFrame(frame);
           return;
         }
@@ -4362,22 +5651,14 @@ async function run(generation) {
         }
       },
       error: (err) => {
-        postDebugLog("decoder_error", {
-          message: err ? (err.message || String(err)) : "VideoDecoder reported error",
-        });
-        needsResync = true;
-        if (!autoRestartUsed && frameCount < 5) {
-          autoRestartUsed = true;
-          fetch(`${MIRROR}/restart`, { method: "POST", cache: "no-store" }).catch(() => {});
-        } else {
-          fetch(`${MIRROR}/pli`, { method: "POST", cache: "no-store" }).catch(() => {});
-        }
+        const msg = err ? (err.message || String(err)) : "VideoDecoder reported error";
+        handleDecodeFailure(msg);
       },
     });
 
   let decoder = buildDecoder();
-  decoder.configure(decoderConfig);
-  postDebugLog("decoder_configured", { codec, state: decoder.state });
+  configureDecoderSafe(decoder, decoderConfig);
+  postDebugLog("decoder_configured", { codec: decoderConfig.codec, accel: _activeDecodeAccel, state: decoder.state });
   setStatus("");
 
   let resp = null;
@@ -4426,9 +5707,10 @@ async function run(generation) {
   const reader = resp.body.getReader();
   abortStream = () => reader.cancel().catch(() => {});
   streamActive = true;
+  _streamDecodeStartedAtMs = performance.now();
+  _sustainedBacklogSinceMs = 0;
+  _softPliBacklogSinceMs = 0;
   let buf = new Uint8Array(0);
-  let timestamp = 0;
-  let gotKey = false;
 
   try {
     while (generation === runGeneration && !isIntentionalStop) {
@@ -4438,7 +5720,7 @@ async function run(generation) {
       merged.set(buf);
       merged.set(value, buf.length);
       buf = merged;
-      while (buf.length >= 4) {
+      while (buf.length >= 4 && !_decoderLoopHalted) {
         const len = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
         if (buf.length < 4 + len) break;
         const type = buf[4];
@@ -4447,23 +5729,34 @@ async function run(generation) {
 
         let isKey = (type === 0 || type === 2);
         if (isH264) {
-          // Tahap 131: Scan start codes 00 00 01 / 00 00 00 01 to accurately detect H.264 SPS (7) or IDR (5)
-          for (let i = 0; i < data.length - 4; i++) {
-            if (data[i] === 0 && data[i + 1] === 0) {
-              let nalPos = -1;
-              if (data[i + 2] === 1) {
-                nalPos = i + 3;
-              } else if (data[i + 2] === 0 && data[i + 3] === 1) {
-                nalPos = i + 4;
-              }
-              if (nalPos !== -1 && nalPos < data.length) {
-                const nalType = data[nalPos] & 0x1F;
-                if (nalType === 5 || nalType === 7) {
-                  isKey = true;
-                  break;
+          if (!isKey && avccChunkHasIdr(data, avccMeta.nalLenSize)) {
+            isKey = true;
+          }
+          // Annex-B fallback scan for H.264 SPS (7) or IDR (5)
+          if (!isKey) {
+            for (let i = 0; i < data.length - 4; i++) {
+              if (data[i] === 0 && data[i + 1] === 0) {
+                let nalPos = -1;
+                if (data[i + 2] === 1) {
+                  nalPos = i + 3;
+                } else if (data[i + 2] === 0 && data[i + 3] === 1) {
+                  nalPos = i + 4;
+                }
+                if (nalPos !== -1 && nalPos < data.length) {
+                  const nalType = data[nalPos] & 0x1F;
+                  if (nalType === 5 || nalType === 7) {
+                    isKey = true;
+                    break;
+                  }
                 }
               }
             }
+          }
+          if (isKey) {
+            if (!lastKeyChunkPayload) {
+              h264AttemptStartedAtMs = performance.now();
+            }
+            lastKeyChunkPayload = data.slice();
           }
         } else {
           // H.265 (HEVC) keyframe detection
@@ -4486,21 +5779,113 @@ async function run(generation) {
         }
 
         if (type === 2) {
+          let nextW = streamWidth;
+          let nextH = streamHeight;
+          const inlineCfg = isH264 ? extractAvcSpsPpsFromChunk(data, avccMeta.nalLenSize) : null;
+          if (inlineCfg) {
+            if (inlineCfg.spsList.length > 0) avccMeta.spsList = inlineCfg.spsList;
+            if (inlineCfg.ppsList.length > 0) avccMeta.ppsList = inlineCfg.ppsList;
+            if (inlineCfg.dims) {
+              nextW = inlineCfg.dims.width;
+              nextH = inlineCfg.dims.height;
+            }
+            const desc = buildSyntheticAvccDescription(avccMeta.spsList, avccMeta.ppsList, avccMeta.nalLenSize);
+            if (desc) activeAvccBytes = desc;
+          } else if (isH264 && data && data.byteLength >= 7 && data[0] === 1) {
+            activeAvccBytes = data.slice();
+            avccMeta = parseAvccSpsPps(activeAvccBytes);
+            const parsed = avccMeta.spsList.length > 0 ? parseAvcSpsDimensions(avccMeta.spsList[0]) : null;
+            if (parsed) {
+              nextW = parsed.width;
+              nextH = parsed.height;
+            }
+          }
+          if (isH264 && (nextW !== streamWidth || nextH !== streamHeight || inlineCfg || (data && data.byteLength >= 7 && data[0] === 1))) {
+            streamWidth = nextW;
+            streamHeight = nextH;
+            candidateConfigs = buildDecoderCandidateConfigs(
+              _currentCodec,
+              activeAvccBytes,
+              true,
+              streamWidth,
+              streamHeight,
+              false
+            );
+            activeCandidateIdx = 0;
+            decoderConfig = stripInternalCfgKeys(candidateConfigs[0]);
+            _activeDecodeAccel = decoderConfig.hardwareAcceleration || "prefer-hardware";
+            _activeH264Mode = candidateConfigs[0].__h264Mode || "avcc";
+          }
           try {
             decoder.close();
           } catch (_) {}
           decoder = buildDecoder();
-          decoder.configure(decoderConfig);
+          configureDecoderSafe(decoder, decoderConfig);
           needsResync = false;
           gotKey = true;
         } else if (isKey) {
+          if (isH264) {
+            const inlineSps = extractAvcSpsPpsFromChunk(data, avccMeta.nalLenSize);
+            if (inlineSps && inlineSps.dims && (inlineSps.dims.width !== streamWidth || inlineSps.dims.height !== streamHeight)) {
+              streamWidth = inlineSps.dims.width;
+              streamHeight = inlineSps.dims.height;
+              if (inlineSps.spsList.length > 0) avccMeta.spsList = inlineSps.spsList;
+              if (inlineSps.ppsList.length > 0) avccMeta.ppsList = inlineSps.ppsList;
+              const freshDesc = buildSyntheticAvccDescription(avccMeta.spsList, avccMeta.ppsList, avccMeta.nalLenSize);
+              if (freshDesc) activeAvccBytes = freshDesc;
+              candidateConfigs = buildDecoderCandidateConfigs(
+                _currentCodec,
+                activeAvccBytes,
+                true,
+                streamWidth,
+                streamHeight,
+                false
+              );
+              activeCandidateIdx = 0;
+              decoderConfig = stripInternalCfgKeys(candidateConfigs[0]);
+              _activeDecodeAccel = decoderConfig.hardwareAcceleration || "prefer-hardware";
+              _activeH264Mode = candidateConfigs[0].__h264Mode || "avcc";
+              try { decoder.close(); } catch (_) {}
+              decoder = buildDecoder();
+              configureDecoderSafe(decoder, decoderConfig);
+              needsResync = false;
+            }
+          }
           gotKey = true;
-          if (needsResync) {
+          // Tahap 249 Pilar 1: 1x Auto-Upgrade Probe from prefer-software back to prefer-hardware
+          // on next clean IDR after >= 5s stable when Windows HEVC MFT is available.
+          if (
+            _activeDecodeAccel === "prefer-software" &&
+            !_hwAutoUpgradeProbeDone &&
+            _softwareFallbackEnteredAtMs > 0 &&
+            (performance.now() - _softwareFallbackEnteredAtMs) >= 5000 &&
+            initialHwConfig &&
+            _lastHevcStatusSnapshot &&
+            _lastHevcStatusSnapshot.hevcMftAvailable === true
+          ) {
+            _hwAutoUpgradeProbeDone = true;
+            activeCandidateIdx = 0;
+            _decodeFallbackAttempt = 0;
+            _hwTransientRecoveries = 0;
+            _goodHwFramesSinceRecovery = 0;
+            decoderConfig = Object.assign({}, initialHwConfig);
+            _activeDecodeAccel = "prefer-hardware";
             try {
               decoder.close();
             } catch (_) {}
             decoder = buildDecoder();
-            decoder.configure(decoderConfig);
+            configureDecoderSafe(decoder, decoderConfig);
+            needsResync = false;
+            postDebugLog("decoder_hw_auto_upgrade", {
+              codec: decoderConfig.codec,
+              accel: _activeDecodeAccel,
+            });
+          } else if (needsResync) {
+            try {
+              decoder.close();
+            } catch (_) {}
+            decoder = buildDecoder();
+            configureDecoderSafe(decoder, decoderConfig);
             needsResync = false;
           }
         }
@@ -4510,21 +5895,113 @@ async function run(generation) {
             decoder.close();
           } catch (_) {}
           decoder = buildDecoder();
-          decoder.configure(decoderConfig);
+          configureDecoderSafe(decoder, decoderConfig);
           needsResync = true;
           continue;
         }
+        // Tahap 250 Pilar 1: Wi-Fi Burst-Tolerant Zero-Freeze Decode Queue Guard
+        // Phase A: Cold-Start WebView2 GPU Shader Grace (6000 ms) — tolerate 802.11 A-MPDU bursts
+        // (qSize 3..15) using Latest-Frame-Wins output without dropping deltas or freezing on needsResync.
+        // Phase B: Steady-State Sustained Backlog Guard — soft non-freezing PLI hint for 6..11 (>= 250 ms),
+        // instant zero-freeze flush when IDR arrives (qSize >= 6), and emergency delta drop ONLY if
+        // decodeQueueSize >= 12 persists continuously >= 450 ms.
+        const qSize = typeof decoder.decodeQueueSize === "number" ? decoder.decodeQueueSize : 0;
+        const nowDecodeMs = performance.now();
+        const inColdStartGrace = (nowDecodeMs - _streamDecodeStartedAtMs) < _COLD_START_SHADER_GRACE_MS;
+        // Tahap 259 Pilar 1: AirPlay H.264 IDR-Safe Queue Catch-Up!
+        // When WebCodecs queue falls behind (decodeQueueSize >= 4) and a fresh IDR keyframe arrives,
+        // flush immediately to jump to live without EVER dropping mid-GOP P-frames!
+        if (isH264 && window._isAirPlayStream) {
+          if (isKey && qSize >= 4) {
+            videoQueueDropped += qSize;
+            window._videoQueueDropped = videoQueueDropped;
+            try {
+              decoder.reset();
+              configureDecoderSafe(decoder, decoderConfig);
+            } catch (_) {
+              try { decoder.close(); } catch (__) {}
+              decoder = buildDecoder();
+              configureDecoderSafe(decoder, decoderConfig);
+            }
+          }
+        } else if (inColdStartGrace) {
+          _sustainedBacklogSinceMs = 0;
+          _softPliBacklogSinceMs = 0;
+          if (!isH264 && !isKey && qSize >= 18) {
+            _droppedBacklogDeltas += 1;
+            needsResync = true;
+            _postPliThrottled(1500);
+            continue;
+          }
+          if (isKey && qSize >= 10) {
+            try {
+              decoder.reset();
+              configureDecoderSafe(decoder, decoderConfig);
+            } catch (_) {
+              try { decoder.close(); } catch (__) {}
+              decoder = buildDecoder();
+              configureDecoderSafe(decoder, decoderConfig);
+            }
+          }
+        } else {
+          if (qSize < 6) {
+            _softPliBacklogSinceMs = 0;
+            _sustainedBacklogSinceMs = 0;
+          } else if (qSize < 12) {
+            // Non-freezing soft PLI hint (6 <= qSize <= 11 for >= 250 ms): keep decoding deltas smoothly
+            // and snap latency back to 0 ms as soon as the fresh IDR arrives.
+            _sustainedBacklogSinceMs = 0;
+            if (!isH264) {
+              if (_softPliBacklogSinceMs === 0) {
+                _softPliBacklogSinceMs = nowDecodeMs;
+              } else if ((nowDecodeMs - _softPliBacklogSinceMs) >= 250) {
+                _postPliThrottled(2500);
+              }
+            }
+          } else {
+            // Sustained emergency backlog check: decodeQueueSize >= 12 continuously >= 450 ms (CoreDevice HEVC only)
+            if (!isH264) {
+              if (_sustainedBacklogSinceMs === 0) {
+                _sustainedBacklogSinceMs = nowDecodeMs;
+              } else if (!isKey && (nowDecodeMs - _sustainedBacklogSinceMs) >= 450) {
+                _droppedBacklogDeltas += 1;
+                _sustainedBacklogSinceMs = 0;
+                _softPliBacklogSinceMs = 0;
+                needsResync = true;
+                _postPliThrottled(1500);
+                continue;
+              }
+            }
+          }
+          if (isKey && qSize >= 6) {
+            _sustainedBacklogSinceMs = 0;
+            _softPliBacklogSinceMs = 0;
+            try {
+              decoder.reset();
+              configureDecoderSafe(decoder, decoderConfig);
+            } catch (_) {
+              try { decoder.close(); } catch (__) {}
+              decoder = buildDecoder();
+              configureDecoderSafe(decoder, decoderConfig);
+            }
+          }
+        }
         try {
+          const decodeBytes = prepareChunkForActiveDecoder(data, isKey);
           decoder.decode(
             new EncodedVideoChunk({
               type: isKey ? "key" : "delta",
-              timestamp,
-              data,
+              timestamp: nextChunkTimestamp(),
+              data: decodeBytes,
             }),
           );
-          timestamp += 16666;
-        } catch (_) {
-          needsResync = true;
+          _decodedChunksCount += 1;
+        } catch (decodeErr) {
+          const msg = decodeErr ? (decodeErr.message || String(decodeErr)) : "decode() threw";
+          handleDecodeFailure(msg);
+          if (_decoderLoopHalted) {
+            break;
+          }
         }
       }
     }
@@ -4533,10 +6010,11 @@ async function run(generation) {
       console.warn("HEVC/H264 stream reader loop ended:", err);
     }
   } finally {
+    window.clearInterval(watchdog);
     streamActive = false;
     try { reader.cancel(); } catch (_) {}
   }
-  if (!isIntentionalStop && generation === runGeneration) {
+  if (!isIntentionalStop && generation === runGeneration && !_decoderLoopHalted) {
     setStatus("Stream ended — press Restart screen", "warn");
   } else {
     setStatus("");
@@ -4583,6 +6061,7 @@ window.addEventListener("message", (e) => {
     runGeneration += 1;
     streamActive = false;
     hasSentFirstFrameReady = false;
+    hideMirrorDiagOverlay();
     setStatus("");
     if (statusEl) {
       statusEl.textContent = "";
@@ -4603,6 +6082,7 @@ window.addEventListener("message", (e) => {
     runGeneration += 1;
     streamActive = false;
     hasSentFirstFrameReady = false;
+    hideMirrorDiagOverlay();
     setStatus("");
     if (statusEl) {
       statusEl.textContent = "";
@@ -4666,8 +6146,8 @@ window.addEventListener("message", (e) => {
     }
   } else if (e.data.type === "set-lip-sync") {
     _lipSyncEnabled = Boolean(e.data.lipSync);
-    _lipSyncDelayMs = Math.max(0, Math.min(250, Number(e.data.delayMs) || 0));
-    if (!_lipSyncEnabled || _lipSyncDelayMs <= 15) {
+    _lipSyncDelayMs = window._isAirPlayStream ? 0 : Math.max(0, Math.min(250, Number(e.data.delayMs) || 0));
+    if (window._isAirPlayStream || !_lipSyncEnabled || _lipSyncDelayMs <= 15) {
       _flushAllLipSyncFramesNow();
     }
   } else if (e.data.type === "refresh-stream") {

@@ -40,3 +40,18 @@ ref/
 # Rust v4 build artifacts
 /rust-v4/target/
 rust-v4/target/
+
+# Runtime caches, transient files, & local test artifacts
+sequoia_last_blur.bin
+*.bin.tmp
+self_test_cli_result.json
+self_test_v4_result.json
+device_cache.json
+iPhone Link.exe.WebView2/
+
+# Local Cargo toolchain config, vendor cache, & DPAPI blobs
+.cargo/
+rust-v4/.cargo/
+rust-v4/vendor/
+*.dpapi
+

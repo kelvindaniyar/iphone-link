@@ -41,13 +41,16 @@ pub fn is_ip_on_local_subnets(ip: IpAddr) -> bool {
 
 /// Retrieve local IPv4 addresses of this machine.
 pub fn get_host_local_ips() -> Vec<Ipv4Addr> {
+    if crate::connection::is_loopback_only_test_mode() {
+        return vec![Ipv4Addr::new(192, 168, 1, 1)];
+    }
     let mut ips = Vec::new();
     // Use dummy outbound UDP sockets to query default routing interfaces
     let probe_targets = [
         "8.8.8.8:80",
         "1.1.1.1:80",
         "192.168.1.1:80",
-        "192.168.100.1:80",
+        "192.168.0.1:80",
         "10.0.0.1:80",
     ];
 
@@ -67,7 +70,7 @@ pub fn get_host_local_ips() -> Vec<Ipv4Addr> {
 
     // Fallback if no outbound route
     if ips.is_empty() {
-        ips.push(Ipv4Addr::new(192, 168, 100, 8)); // Host default fallback
+        ips.push(Ipv4Addr::new(192, 168, 1, 1));
     }
     ips
 }
@@ -147,7 +150,10 @@ pub fn parse_srv_port_from_dns(payload: &[u8]) -> Option<u16> {
 /// Send UDP unicast DNS-SD query for _remotepairing._tcp.local. directly to (ip, 5353).
 /// Bypasses network routers (like Devani 5G) that block multicast traffic.
 pub fn query_unicast_mdns_remotepairing(ip: IpAddr, timeout: Duration) -> Option<u16> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    if crate::connection::is_loopback_only_test_mode() && !ip.is_loopback() {
+        return None;
+    }
+    let socket = UdpSocket::bind(crate::connection::bind_addr_v4(0)).ok()?;
     socket.set_read_timeout(Some(timeout)).ok()?;
     socket.set_write_timeout(Some(timeout)).ok()?;
 
@@ -274,8 +280,8 @@ mod tests {
 
     #[test]
     fn test_verify_ip_non_apple_rejected() {
-        // Fake IP that does not exist or does not run lockdown
-        let fake = IpAddr::V4(Ipv4Addr::new(192, 168, 100, 249));
+        // Fake IP (RFC 5737 TEST-NET-2) that does not run lockdown
+        let fake = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 249));
         let verified = verify_ip_is_apple_device(fake, Duration::from_millis(50));
         assert!(!verified);
     }

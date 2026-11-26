@@ -8,8 +8,41 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Current desktop application semantic version synchronized with iPhone Link v4.0.0.
-pub const CURRENT_VERSION: &str = "4.0.0";
+/// Canonical public GitHub repository URL (single source of truth for runtime API derivation).
+pub const PUBLIC_GITHUB_REPO_URL: &str = "https://github.com/kelvindaniyar/iphone-link";
+
+/// Current desktop application semantic version synchronized with iPhone Link v5.0.0.
+pub const CURRENT_VERSION: &str = "5.0.0";
+
+/// Derives the GitHub Releases REST API URL at runtime from `PUBLIC_GITHUB_REPO_URL`.
+pub fn github_releases_api_url() -> String {
+    let trimmed = PUBLIC_GITHUB_REPO_URL.trim().trim_end_matches('/');
+    let slug = trimmed.strip_prefix("https://github.com/").unwrap_or("");
+    format!("https://api.github.com/repos/{slug}/releases")
+}
+
+/// Strict allowlist for opening external GitHub release / asset URLs via `ShellExecuteW`.
+pub fn is_allowed_github_release_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return false;
+    }
+    if let Some(rest) = trimmed.strip_prefix(PUBLIC_GITHUB_REPO_URL) {
+        return rest == "/releases" || rest.starts_with("/releases/");
+    }
+    trimmed.starts_with("https://objects.githubusercontent.com/")
+}
+
+/// Returns `true` strictly for explicit local loopback HTTP test endpoints.
+pub fn is_loopback_http_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://127.0.0.1:")
+        || lower.starts_with("http://localhost:")
+        || lower == "http://127.0.0.1"
+        || lower == "http://localhost"
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateChannel {
@@ -457,50 +490,526 @@ impl UpdateStateCache {
     }
 }
 
+fn env_truthy_updater(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+mod updater_winhttp {
+    use std::ffi::c_void;
+    use std::ptr;
+
+    type Hinternet = *mut c_void;
+    type Bool = i32;
+
+    const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: u32 = 0;
+    const WINHTTP_ACCESS_TYPE_NO_PROXY: u32 = 1;
+    const WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY: u32 = 4;
+    const WINHTTP_FLAG_SECURE: u32 = 0x0080_0000;
+    const WINHTTP_ADDREQ_FLAG_ADD: u32 = 0x2000_0000;
+    const WINHTTP_ADDREQ_FLAG_REPLACE: u32 = 0x8000_0000;
+    const WINHTTP_QUERY_STATUS_CODE: u32 = 19;
+    const WINHTTP_QUERY_FLAG_NUMBER: u32 = 0x2000_0000;
+
+    #[link(name = "winhttp")]
+    extern "system" {
+        fn WinHttpOpen(
+            psz_agent_w: *const u16,
+            dw_access_type: u32,
+            psz_proxy_w: *const u16,
+            psz_proxy_bypass_w: *const u16,
+            dw_flags: u32,
+        ) -> Hinternet;
+        fn WinHttpSetTimeouts(
+            h_internet: Hinternet,
+            n_resolve_timeout: i32,
+            n_connect_timeout: i32,
+            n_send_timeout: i32,
+            n_receive_timeout: i32,
+        ) -> Bool;
+        fn WinHttpConnect(
+            h_session: Hinternet,
+            pswz_server_name: *const u16,
+            n_server_port: u16,
+            dw_reserved: u32,
+        ) -> Hinternet;
+        fn WinHttpOpenRequest(
+            h_connect: Hinternet,
+            pwsz_verb: *const u16,
+            pwsz_object_name: *const u16,
+            pwsz_version: *const u16,
+            pwsz_referrer: *const u16,
+            ppwsz_accept_types: *const *const u16,
+            dw_flags: u32,
+        ) -> Hinternet;
+        fn WinHttpAddRequestHeaders(
+            h_request: Hinternet,
+            lpsz_headers: *const u16,
+            dw_headers_length: u32,
+            dw_modifiers: u32,
+        ) -> Bool;
+        fn WinHttpSendRequest(
+            h_request: Hinternet,
+            lpsz_headers: *const u16,
+            dw_headers_length: u32,
+            lp_optional: *mut c_void,
+            dw_optional_length: u32,
+            dw_total_length: u32,
+            dw_context: usize,
+        ) -> Bool;
+        fn WinHttpReceiveResponse(h_request: Hinternet, lp_reserved: *mut c_void) -> Bool;
+        fn WinHttpQueryHeaders(
+            h_request: Hinternet,
+            dw_info_level: u32,
+            pwsz_name: *const u16,
+            lp_buffer: *mut c_void,
+            lpdw_buffer_length: *mut u32,
+            lpdw_index: *mut u32,
+        ) -> Bool;
+        fn WinHttpQueryDataAvailable(
+            h_request: Hinternet,
+            lpdw_number_of_bytes_available: *mut u32,
+        ) -> Bool;
+        fn WinHttpReadData(
+            h_request: Hinternet,
+            lp_buffer: *mut c_void,
+            dw_number_of_bytes_to_read: u32,
+            lpdw_number_of_bytes_read: *mut u32,
+        ) -> Bool;
+        fn WinHttpCloseHandle(h_internet: Hinternet) -> Bool;
+    }
+
+    struct HandleGuard(Hinternet);
+    impl HandleGuard {
+        fn new(h: Hinternet) -> Option<Self> {
+            if h.is_null() { None } else { Some(Self(h)) }
+        }
+        fn raw(&self) -> Hinternet {
+            self.0
+        }
+    }
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    let _ = WinHttpCloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    fn to_wide_nul(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn parse_url(url: &str) -> Result<(bool, String, u16, String), String> {
+        let trimmed = url.trim();
+        let (https, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
+            (true, r)
+        } else if let Some(r) = trimmed.strip_prefix("http://") {
+            (false, r)
+        } else {
+            return Err("unsupported URL scheme".to_string());
+        };
+        let (host_port, path_and_query) = match rest.find('/') {
+            Some(idx) => (&rest[..idx], rest[idx..].to_string()),
+            None => (rest, "/".to_string()),
+        };
+        if host_port.is_empty() {
+            return Err("missing host".to_string());
+        }
+        let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+            let parsed_p = p.parse::<u16>().map_err(|_| "invalid port".to_string())?;
+            (h.to_string(), parsed_p)
+        } else {
+            (host_port.to_string(), if https { 443 } else { 80 })
+        };
+        Ok((https, host, port, path_and_query))
+    }
+
+    pub fn get_github_json(url: &str, timeout_ms: u32) -> Result<(u32, String), String> {
+        let (https, host, port, path_and_query) = parse_url(url)?;
+        let is_loopback = host.eq_ignore_ascii_case("127.0.0.1")
+            || host.eq_ignore_ascii_case("localhost")
+            || host == "::1";
+        let access = if is_loopback {
+            WINHTTP_ACCESS_TYPE_NO_PROXY
+        } else {
+            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+        };
+        let ua = format!("iPhone-Link/{}", super::CURRENT_VERSION);
+        let ua_w = to_wide_nul(&ua);
+        let session = HandleGuard::new(unsafe {
+            WinHttpOpen(ua_w.as_ptr(), access, ptr::null(), ptr::null(), 0)
+        })
+        .or_else(|| {
+            HandleGuard::new(unsafe {
+                WinHttpOpen(
+                    ua_w.as_ptr(),
+                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                    ptr::null(),
+                    ptr::null(),
+                    0,
+                )
+            })
+        })
+        .ok_or_else(|| "WinHttpOpen failed".to_string())?;
+
+        let t_ms = timeout_ms.clamp(1_000, 30_000) as i32;
+        unsafe {
+            let _ = WinHttpSetTimeouts(session.raw(), t_ms, t_ms, t_ms, t_ms);
+        }
+
+        let host_w = to_wide_nul(&host);
+        let connect = HandleGuard::new(unsafe {
+            WinHttpConnect(session.raw(), host_w.as_ptr(), port, 0)
+        })
+        .ok_or_else(|| "WinHttpConnect failed".to_string())?;
+
+        let verb_w = to_wide_nul("GET");
+        let path_w = to_wide_nul(&path_and_query);
+        let flags = if https { WINHTTP_FLAG_SECURE } else { 0 };
+        let req = HandleGuard::new(unsafe {
+            WinHttpOpenRequest(
+                connect.raw(),
+                verb_w.as_ptr(),
+                path_w.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                flags,
+            )
+        })
+        .ok_or_else(|| "WinHttpOpenRequest failed".to_string())?;
+
+        let hdr_w = to_wide_nul("Accept: application/vnd.github+json\r\nCache-Control: no-cache\r\n");
+        let hdr_len = (hdr_w.len().saturating_sub(1)) as u32;
+        unsafe {
+            let _ = WinHttpAddRequestHeaders(
+                req.raw(),
+                hdr_w.as_ptr(),
+                hdr_len,
+                WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE,
+            );
+            if WinHttpSendRequest(req.raw(), ptr::null(), 0, ptr::null_mut(), 0, 0, 0) == 0 {
+                return Err("WinHttpSendRequest failed".to_string());
+            }
+            if WinHttpReceiveResponse(req.raw(), ptr::null_mut()) == 0 {
+                return Err("WinHttpReceiveResponse failed".to_string());
+            }
+        }
+
+        let mut status: u32 = 0;
+        let mut status_len: u32 = std::mem::size_of::<u32>() as u32;
+        unsafe {
+            let _ = WinHttpQueryHeaders(
+                req.raw(),
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                ptr::null(),
+                (&mut status as *mut u32).cast::<c_void>(),
+                &mut status_len,
+                ptr::null_mut(),
+            );
+        }
+
+        let mut body = Vec::with_capacity(8192);
+        let mut buf = vec![0u8; 32 * 1024];
+        loop {
+            let mut avail: u32 = 0;
+            if unsafe { WinHttpQueryDataAvailable(req.raw(), &mut avail) } == 0 {
+                return Err("WinHttpQueryDataAvailable failed".to_string());
+            }
+            if avail == 0 {
+                break;
+            }
+            let want = (avail as usize).min(buf.len()) as u32;
+            let mut got: u32 = 0;
+            if unsafe {
+                WinHttpReadData(
+                    req.raw(),
+                    buf.as_mut_ptr().cast::<c_void>(),
+                    want,
+                    &mut got,
+                )
+            } == 0
+            {
+                return Err("WinHttpReadData failed".to_string());
+            }
+            if got == 0 {
+                break;
+            }
+            body.extend_from_slice(&buf[..got as usize]);
+            if body.len() > 4 * 1024 * 1024 {
+                return Err("GitHub response exceeded 4 MB cap".to_string());
+            }
+        }
+
+        Ok((status, String::from_utf8_lossy(&body).to_string()))
+    }
+}
+
+/// Parses GitHub Releases JSON (array or single release object) using SemVer, channel filter
+/// (`stable` vs `beta`), draft exclusion, and Windows asset matching (`Setup.exe` / `Win64-Native-Rust-*.zip`).
+pub fn parse_github_releases_json(raw_json: &str, channel: &str) -> Result<UpdateStateCache, String> {
+    let active_ch = if channel.trim().eq_ignore_ascii_case("beta") {
+        "beta"
+    } else {
+        "stable"
+    };
+    let val: serde_json::Value =
+        serde_json::from_str(raw_json).map_err(|e| format!("invalid GitHub JSON: {e}"))?;
+    let releases: Vec<&serde_json::Value> = match val {
+        serde_json::Value::Array(ref arr) => arr.iter().collect(),
+        serde_json::Value::Object(_) => vec![&val],
+        _ => return Err("unexpected GitHub JSON root type".to_string()),
+    };
+
+    let mut best_ver: Option<(Semver, String, &serde_json::Value)> = None;
+    for rel in releases {
+        let Some(obj) = rel.as_object() else {
+            continue;
+        };
+        if obj.get("draft").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let is_pre = obj.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false);
+        let tag_raw = obj
+            .get("tag_name")
+            .or_else(|| obj.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if tag_raw.is_empty() {
+            continue;
+        }
+        let Some(sv) = Semver::parse(&tag_raw) else {
+            continue;
+        };
+        if active_ch == "stable" && (is_pre || sv.is_beta) {
+            continue;
+        }
+        let replace = match &best_ver {
+            None => true,
+            Some((cur_sv, cur_tag, _)) => {
+                is_newer_version(cur_tag, &tag_raw) || (sv > *cur_sv && cur_tag != &tag_raw)
+            }
+        };
+        if replace {
+            best_ver = Some((sv, tag_raw, rel));
+        }
+    }
+
+    let mut out = UpdateStateCache::default();
+    out.channel = active_ch.to_string();
+    out.offline_fallback = false;
+    out.last_checked_ms = UpdateStateCache::now_ms();
+
+    let Some((_, best_tag, best_rel)) = best_ver else {
+        return Ok(out);
+    };
+
+    if !is_newer_version(CURRENT_VERSION, &best_tag) {
+        return Ok(out);
+    }
+
+    let clean_ver = best_tag
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .to_string();
+    let release_url = best_rel
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let mut setup_url = String::new();
+    let mut win_zip_url = String::new();
+    let mut any_zip_url = String::new();
+    let mut first_asset_url = String::new();
+    if let Some(assets) = best_rel.get("assets").and_then(|v| v.as_array()) {
+        for a in assets {
+            let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let dl = a
+                .get("browser_download_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if dl.is_empty() {
+                continue;
+            }
+            let nl = name.to_ascii_lowercase();
+            if first_asset_url.is_empty() {
+                first_asset_url = dl.to_string();
+            }
+            if setup_url.is_empty() && nl.ends_with(".exe") && nl.contains("setup") {
+                setup_url = dl.to_string();
+            } else if nl.ends_with(".zip") {
+                if any_zip_url.is_empty() {
+                    any_zip_url = dl.to_string();
+                }
+                if win_zip_url.is_empty()
+                    && (nl.contains("win") || nl.contains("native-rust") || nl.contains("standalone"))
+                {
+                    win_zip_url = dl.to_string();
+                }
+            }
+        }
+    }
+
+    let installed_in_program_files = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_ascii_lowercase().contains("program files")))
+        .unwrap_or(false);
+    let chosen_dl = if installed_in_program_files && !setup_url.is_empty() {
+        setup_url
+    } else if !win_zip_url.is_empty() {
+        win_zip_url
+    } else if !setup_url.is_empty() {
+        setup_url
+    } else if !any_zip_url.is_empty() {
+        any_zip_url
+    } else if !first_asset_url.is_empty() {
+        first_asset_url
+    } else {
+        release_url.clone()
+    };
+
+    let raw_notes = best_rel
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let notes = if raw_notes.chars().count() > 400 {
+        let mut s: String = raw_notes.chars().take(397).collect();
+        s.push_str("...");
+        s
+    } else {
+        raw_notes.to_string()
+    };
+
+    out.latest_version = clean_ver.clone();
+    out.update_available = true;
+    out.status = "update_available".to_string();
+    out.download_url = chosen_dl;
+    out.release_url = if release_url.is_empty() {
+        format!("{PUBLIC_GITHUB_REPO_URL}/releases")
+    } else {
+        release_url
+    };
+    out.release_notes = notes;
+    out.message = format!("Tersedia pembaruan: iPhone Link v{clean_ver}");
+    Ok(out)
+}
+
+/// Checks GitHub Releases using native Win32 WinHTTP (`winhttp.dll`), respecting
+/// `IPHONE_LINK_TEST_LOOPBACK_ONLY=1` so tests never touch external networks.
+pub fn check_github_updates_native(channel: &str, api_url_override: Option<&str>) -> UpdateStateCache {
+    let active_ch = if channel.trim().eq_ignore_ascii_case("beta") {
+        "beta"
+    } else {
+        "stable"
+    };
+    let loopback_only = cfg!(test) || env_truthy_updater("IPHONE_LINK_TEST_LOOPBACK_ONLY");
+    let override_clean = api_url_override.map(str::trim).filter(|s| !s.is_empty());
+
+    let target_url = match override_clean {
+        Some(u) => {
+            if loopback_only && !is_loopback_http_url(u) {
+                let mut fb = UpdateStateCache::default();
+                fb.set_offline_fallback(active_ch);
+                return fb;
+            }
+            u.to_string()
+        }
+        None => {
+            if loopback_only {
+                let mut fb = UpdateStateCache::default();
+                fb.set_offline_fallback(active_ch);
+                return fb;
+            }
+            github_releases_api_url()
+        }
+    };
+
+    #[cfg(windows)]
+    {
+        match updater_winhttp::get_github_json(&target_url, 6_000) {
+            Ok((200, body)) => match parse_github_releases_json(&body, active_ch) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    let mut fb = UpdateStateCache::default();
+                    fb.set_offline_fallback(active_ch);
+                    fb
+                }
+            },
+            _ => {
+                let mut fb = UpdateStateCache::default();
+                fb.set_offline_fallback(active_ch);
+                fb
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target_url;
+        let mut fb = UpdateStateCache::default();
+        fb.set_offline_fallback(active_ch);
+        fb
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_semver_version_comparison_v4() {
-        assert!(!is_newer_version("4.0.0", "2.0.0"));
-        assert!(!is_newer_version("4.0.0", "3.0.0"));
-        assert!(!is_newer_version("4.0.0", "v3.0.0"));
-        assert!(!is_newer_version("4.0.0", "4.0.0"));
-        assert!(!is_newer_version("4.0.0", "v4.0.0"));
-        assert!(!is_newer_version("4.0.0", "4.0.0-beta.1"));
-        assert!(is_newer_version("4.0.0", "4.0.1"));
-        assert!(is_newer_version("4.0.0", "v4.1.0-beta.1"));
-        assert!(is_newer_version("4.1.0-beta.1", "4.1.0-beta.2"));
-        assert!(is_newer_version("4.1.0-beta.2", "4.1.0"));
+        assert!(!is_newer_version("5.0.0", "2.0.0"));
+        assert!(!is_newer_version("5.0.0", "3.0.0"));
+        assert!(!is_newer_version("5.0.0", "v4.0.0"));
+        assert!(!is_newer_version("5.0.0", "5.0.0"));
+        assert!(!is_newer_version("5.0.0", "v5.0.0"));
+        assert!(!is_newer_version("5.0.0", "5.0.0-beta.1"));
+        assert!(is_newer_version("5.0.0", "5.0.1"));
+        assert!(is_newer_version("5.0.0", "v5.1.0-beta.1"));
+        assert!(is_newer_version("5.1.0-beta.1", "5.1.0-beta.2"));
+        assert!(is_newer_version("5.1.0-beta.2", "5.1.0"));
     }
 
     #[test]
     fn test_update_state_cache_rejects_downgrade_or_stale_v3() {
         let mut cache = UpdateStateCache::default();
-        let stale_payload = r#"{"ok":true,"status":"update_available","latestVersion":"3.0.0","updateAvailable":true,"channel":"stable"}"#;
+        let stale_payload = r#"{"ok":true,"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#;
         cache.apply_worker_payload(stale_payload, "stable");
         assert!(!cache.update_available);
-        assert_eq!(cache.current_version, "4.0.0");
-        assert_eq!(cache.latest_version, "4.0.0");
+        assert_eq!(cache.current_version, "5.0.0");
+        assert_eq!(cache.latest_version, "5.0.0");
         assert_eq!(cache.status, "up_to_date");
 
-        let newer_payload = r#"{"ok":true,"status":"update_available","latestVersion":"4.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v4.0.1.zip","channel":"stable"}"#;
+        let newer_payload = r#"{"ok":true,"status":"update_available","latestVersion":"5.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.1.zip","channel":"stable"}"#;
         cache.apply_worker_payload(newer_payload, "stable");
         assert!(cache.update_available);
-        assert_eq!(cache.latest_version, "4.0.1");
+        assert_eq!(cache.latest_version, "5.0.1");
         assert_eq!(cache.status, "update_available");
     }
 
     #[test]
     fn test_semver_parsing_and_comparison() {
+        let v5 = Semver::parse("v5.0.0").unwrap();
         let v4 = Semver::parse("v4.0.0").unwrap();
-        let v3 = Semver::parse("v3.0.0").unwrap();
-        let v4_beta = Semver::parse("v4.0.0-beta.1").unwrap();
+        let v5_beta = Semver::parse("v5.0.0-beta.1").unwrap();
 
-        assert!(v4.is_newer_than(&v3));
-        assert!(v4.is_newer_than(&v4_beta));
-        assert!(!v3.is_newer_than(&v4));
+        assert!(v5.is_newer_than(&v4));
+        assert!(v5.is_newer_than(&v5_beta));
+        assert!(!v4.is_newer_than(&v5));
     }
 
     #[test]
@@ -529,5 +1038,84 @@ mod tests {
         assert!(is_protected_config_file("typed_history.json"));
         assert!(!is_protected_config_file("iphone-link-v4.exe"));
         assert!(!is_protected_config_file("zlaac.dll"));
+    }
+
+    #[test]
+    fn test_tahap285_updater_github_loopback_v5_and_v4_contract_parity() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().unwrap().port();
+        let captured_headers = Arc::new(Mutex::new(Vec::<String>::new()));
+        let hdr_srv = captured_headers.clone();
+
+        let rel_base = format!("{PUBLIC_GITHUB_REPO_URL}/releases");
+        let obj_base = "https://objects.githubusercontent.com/github-production-release-asset";
+        let releases_json = format!(
+            concat!(
+                r#"[{{"tag_name":"v5.3.0","draft":true,"prerelease":false,"html_url":"{rel}/tag/v5.3.0","body":"Draft","assets":[{{"name":"iPhone-Link-Win64-Native-Rust-v5.3.0.zip","browser_download_url":"{rel}/download/v5.3.0/iPhone-Link-Win64-Native-Rust-v5.3.0.zip"}}]}},"#,
+                r#"{{"tag_name":"v5.2.0-beta.1","draft":false,"prerelease":true,"html_url":"{rel}/tag/v5.2.0-beta.1","body":"Beta channel release","assets":[{{"name":"iPhone-Link-v5.2.0-beta.1-Setup.exe","browser_download_url":"{rel}/download/v5.2.0-beta.1/iPhone-Link-v5.2.0-beta.1-Setup.exe"}},{{"name":"iPhone-Link-Win64-Native-Rust-v5.2.0-beta.1.zip","browser_download_url":"{rel}/download/v5.2.0-beta.1/iPhone-Link-Win64-Native-Rust-v5.2.0-beta.1.zip"}}]}},"#,
+                r#"{{"tag_name":"v5.1.0","draft":false,"prerelease":false,"html_url":"{rel}/tag/v5.1.0","body":"Stable v5.1.0 release","assets":[{{"name":"iPhone-Link-v5.1.0-Setup.exe","browser_download_url":"{rel}/download/v5.1.0/iPhone-Link-v5.1.0-Setup.exe"}},{{"name":"iPhone-Link-Win64-Native-Rust-v5.1.0.zip","browser_download_url":"{rel}/download/v5.1.0/iPhone-Link-Win64-Native-Rust-v5.1.0.zip"}}]}},"#,
+                r#"{{"tag_name":"v5.0.0","draft":false,"prerelease":false,"html_url":"{rel}/tag/v5.0.0","body":"Baseline v5.0.0","assets":[{{"name":"iPhone-Link-Win64-Native-Rust-v5.0.0.zip","browser_download_url":"{rel}/download/v5.0.0/iPhone-Link-Win64-Native-Rust-v5.0.0.zip"}}]}}]"#
+            ),
+            rel = rel_base
+        );
+
+        let srv_body = releases_json.clone();
+        let srv = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().expect("accept");
+                let mut req_buf = [0u8; 4096];
+                let n = sock.read(&mut req_buf).unwrap_or(0);
+                let req_str = String::from_utf8_lossy(&req_buf[..n]).to_string();
+                hdr_srv.lock().unwrap().push(req_str);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    srv_body.len(),
+                    srv_body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+                let _ = sock.flush();
+            }
+        });
+
+        let api_url = format!("http://127.0.0.1:{port}/repos/releases");
+        let stable_res = check_github_updates_native("stable", Some(&api_url));
+        assert!(stable_res.update_available, "stable channel MUST detect v5.1.0");
+        assert_eq!(stable_res.latest_version, "5.1.0");
+        assert_eq!(stable_res.status, "update_available");
+        assert!(!stable_res.offline_fallback);
+        assert!(stable_res.download_url.contains("Win64-Native-Rust-v5.1.0.zip") || stable_res.download_url.contains("v5.1.0-Setup.exe"));
+        assert!(is_allowed_github_release_url(&stable_res.release_url));
+
+        let beta_res = check_github_updates_native("beta", Some(&api_url));
+        assert!(beta_res.update_available, "beta channel MUST detect v5.2.0-beta.1");
+        assert_eq!(beta_res.latest_version, "5.2.0-beta.1");
+        assert!(!beta_res.offline_fallback);
+
+        let _ = srv.join();
+        let reqs = captured_headers.lock().unwrap();
+        assert_eq!(reqs.len(), 2);
+        for req in reqs.iter() {
+            let low = req.to_ascii_lowercase();
+            assert!(low.contains("user-agent: iphone-link/5.0.0"), "missing User-Agent header: {req}");
+            assert!(low.contains("accept: application/vnd.github+json"), "missing GitHub Accept header: {req}");
+        }
+
+        // Loopback guard MUST skip external github.com calls cleanly when override is None
+        let offline_guard = check_github_updates_native("stable", None);
+        assert!(!offline_guard.update_available);
+        assert!(offline_guard.offline_fallback);
+
+        // Allowlist URL security & v4.0.0 ZIP asset naming parity
+        assert!(is_allowed_github_release_url(&format!("{rel_base}/tag/v5.0.0")));
+        assert!(is_allowed_github_release_url(&format!("{obj_base}/12345")));
+        assert!(!is_allowed_github_release_url("http://github.com/kelvindaniyar/iphone-link/releases"));
+        assert!(!is_allowed_github_release_url("https://evil.example/releases/v5.1.0"));
+        assert!(!is_allowed_github_release_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(github_releases_api_url().starts_with("https://api.github.com/repos/"));
+        assert!(github_releases_api_url().ends_with("/releases"));
     }
 }

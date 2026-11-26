@@ -114,6 +114,14 @@ const I18N_DICT = {
     // Launchpad
     "launchpad.tab_usb": "Kabel (USB)",
     "launchpad.tab_wifi": "Wi-Fi",
+    "launchpad.connect_title": "Hubungkan iPhone Anda",
+    "launchpad.connect_subtitle": "Colokkan iPhone via kabel USB untuk memulai.",
+    "launchpad.no_device_title": "Belum ada iPhone terdeteksi",
+    "launchpad.no_device_sub": "Menunggu koneksi USB atau Wi-Fi",
+    "launchpad.waiting_pill": "Menunggu iPhone",
+    "launchpad.choose_iphone": "Pilih iPhone",
+    "launchpad.use_wifi": "Gunakan Wi-Fi",
+    "launchpad.usb_connected": "USB Terhubung",
     "launchpad.device_ready": "{model} siap",
     "launchpad.device_disconnected": "{model} · USB terputus",
     "launchpad.device_connected": "{model} · USB siap",
@@ -162,6 +170,9 @@ const I18N_DICT = {
     "crop.right": "Kanan (Right)",
     "crop.reset": "Reset (0 px)",
     "crop.save": "Simpan Crop",
+    "stream.mode_label": "Mode Video Stream",
+    "stream.mode_auto": "Auto (Disarankan)",
+    "stream.mode_airplay": "AirPlay H.264",
 
     // Card 4: Audio
     "section.audio": "Audio (iPhone -> PC)",
@@ -280,6 +291,14 @@ const I18N_DICT = {
     // Launchpad
     "launchpad.tab_usb": "Cable (USB)",
     "launchpad.tab_wifi": "Wi-Fi",
+    "launchpad.connect_title": "Connect your iPhone",
+    "launchpad.connect_subtitle": "Connect your iPhone via USB cable to begin.",
+    "launchpad.no_device_title": "No iPhone detected",
+    "launchpad.no_device_sub": "Waiting for USB or Wi-Fi connection",
+    "launchpad.waiting_pill": "Waiting for iPhone",
+    "launchpad.choose_iphone": "Choose iPhone",
+    "launchpad.use_wifi": "Switch to Wi-Fi",
+    "launchpad.usb_connected": "USB Connected",
     "launchpad.device_ready": "{model} ready",
     "launchpad.device_disconnected": "{model} · USB disconnected",
     "launchpad.device_connected": "{model} · USB ready",
@@ -328,6 +347,9 @@ const I18N_DICT = {
     "crop.right": "Right",
     "crop.reset": "Reset (0 px)",
     "crop.save": "Save Crop",
+    "stream.mode_label": "Video Stream Mode",
+    "stream.mode_auto": "Auto (Recommended)",
+    "stream.mode_airplay": "AirPlay H.264",
 
     // Card 4: Audio
     "section.audio": "Audio (iPhone -> PC)",
@@ -721,6 +743,9 @@ function applyLanguage(lang, save = true) {
   if (typeof render === "function") {
     try { render(); } catch (_) {}
   }
+  if (typeof updateStreamModeDescription === "function") {
+    try { updateStreamModeDescription(currentStreamMode); } catch (_) {}
+  }
 
   // Save preference
   try {
@@ -746,6 +771,11 @@ const launchpadSubtitle = document.querySelector("#launchpad-subtitle");
 const launchpadDeviceName = document.querySelector("#launchpad-device-name");
 const launchpadDeviceSub = document.querySelector("#launchpad-device-sub");
 const launchpadStatusDot = document.querySelector("#launchpad-status-dot");
+const launchpadDevicePicker = document.querySelector("#launchpad-device-picker");
+const launchpadPickerTitle = document.querySelector("#launchpad-picker-title");
+const launchpadPickerCount = document.querySelector("#launchpad-picker-count");
+const launchpadPickerList = document.querySelector("#launchpad-picker-list");
+const launchpadSwitchWifiBtn = document.querySelector("#launchpad-switch-wifi-btn");
 const launchpadScanBtn = document.querySelector("#launchpad-scan-btn");
 const launchpadTransportCable = document.querySelector("#launchpad-transport-cable, #launchpad-btn-cable");
 const launchpadTransportWifi = document.querySelector("#launchpad-transport-wifi, #launchpad-btn-wifi");
@@ -900,7 +930,82 @@ try {
 } catch (_) { }
 
 let selectedUdid = null;
-let transport = "usb";
+function _normalizeTransportPref(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (s === "wifi") return "wifi";
+  if (s === "usb" || s === "cable") return "usb";
+  return "";
+}
+function resolveInitialTransport() {
+  let hasSettingsMeta = false;
+  let hasSavedSettingsFile = false;
+  try {
+    if (window.__V4_INITIAL_SETTINGS__ && typeof window.__V4_INITIAL_SETTINGS__ === "object") {
+      hasSettingsMeta = true;
+      hasSavedSettingsFile = Boolean(window.__V4_INITIAL_SETTINGS__.hasUserSettingsFile);
+      const fromSettings = _normalizeTransportPref(window.__V4_INITIAL_SETTINGS__.transport);
+      if (hasSavedSettingsFile && fromSettings) {
+        return { value: fromSettings, explicit: true };
+      }
+    }
+  } catch (_) {}
+  // Tahap 250 Pilar 3: On a true fresh install (no user_settings.json yet), NEVER treat a
+  // default/boot-seeded localStorage("handset-transport") as an explicit user preference!
+  if (!hasSettingsMeta || hasSavedSettingsFile) {
+    try {
+      const fromStorage = _normalizeTransportPref(localStorage.getItem("handset-transport"));
+      if (fromStorage) {
+        return { value: fromStorage, explicit: true };
+      }
+    } catch (_) {}
+  }
+  try {
+    const activeTab = document.querySelector('[data-transport].is-active, [data-transport].active, [data-transport][aria-checked="true"]');
+    const fromDom = _normalizeTransportPref(activeTab?.dataset?.transport);
+    if (fromDom) {
+      return { value: fromDom, explicit: false };
+    }
+  } catch (_) {}
+  return { value: "usb", explicit: false };
+}
+const _initialTransportInfo = resolveInitialTransport();
+let transport = _initialTransportInfo.value;
+let currentTransport = (transport === "wifi") ? "wifi" : "cable";
+window.currentTransport = currentTransport;
+let hasSavedExplicitTransport = Boolean(
+  window.__V4_INITIAL_SETTINGS__?.hasUserSettingsFile
+  && _normalizeTransportPref(window.__V4_INITIAL_SETTINGS__?.transport)
+);
+let userExplicitlyClickedTransport = false;
+let _hasExplicitTransportPref = _initialTransportInfo.explicit;
+let _userChangedTransport = false;
+
+function _syncTransportTabDom(tr) {
+  const norm = (tr === "wifi") ? "wifi" : "usb";
+  transport = norm;
+  currentTransport = (norm === "wifi") ? "wifi" : "cable";
+  window.currentTransport = currentTransport;
+  document.querySelectorAll("[data-transport]").forEach((btn) => {
+    const active = (btn.dataset.transport === norm) || (norm === "usb" && btn.dataset.transport === "cable");
+    btn.classList.toggle("is-active", active);
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+}
+
+function syncLaunchpadSwitchWifiButton(selUsb, selWifiOnline, hasDevices, isEnLp) {
+  if (!launchpadSwitchWifiBtn) return;
+  const shouldShow = (currentTransport === "cable") && Boolean(hasDevices) && !selUsb && Boolean(selWifiOnline);
+  if (shouldShow) {
+    launchpadSwitchWifiBtn.hidden = false;
+    launchpadSwitchWifiBtn.style.display = "";
+    const lbl = launchpadSwitchWifiBtn.querySelector(".btn-label");
+    if (lbl) lbl.textContent = isEnLp ? "Switch to Wi-Fi" : "Gunakan Wi-Fi";
+  } else {
+    launchpadSwitchWifiBtn.hidden = true;
+    launchpadSwitchWifiBtn.style.display = "none";
+  }
+}
 let screenTimer = 0;
 let wifiPaired = [];
 let usbConnected = false;
@@ -1200,6 +1305,23 @@ async function saveUserSettings() {
 
 function syncLipSyncToIframe() {
   try {
+    const isApMode = Boolean(
+      currentAudioState.airplayActive
+      || lastServerState?.screen?.airplayActive
+    );
+    if (isApMode) {
+      // Tahap 259 Pilar 1/3: AirPlay Lip Sync alignment runs natively in airplay/audio.rs
+      // (never artificially delay AirPlay video frames in mirror.js!).
+      screenView?.contentWindow?.postMessage(
+        {
+          type: "set-lip-sync",
+          lipSync: false,
+          delayMs: 0,
+        },
+        "*"
+      );
+      return;
+    }
     const mode = currentAudioState.audioOut || "pc";
     const activeDelay =
       mode === "pc" && !currentAudioState.muted
@@ -1240,6 +1362,118 @@ function renderAudio(audio) {
   const iconOn = btnTop?.querySelector(".audio-icon-on");
   const iconOff = btnTop?.querySelector(".audio-icon-off");
   const isEnAudio = (currentLang === "en");
+  const isAirplayAudioMode = Boolean(
+    currentAudioState.airplayActive
+    || lastServerState?.screen?.airplayActive
+  );
+  if (isAirplayAudioMode) {
+    const apMuted = Boolean(
+      currentAudioState.airplayAudioMuted !== undefined
+        ? currentAudioState.airplayAudioMuted
+        : lastServerState?.screen?.airplayAudioMuted
+    );
+    const apActive = Boolean(
+      currentAudioState.airplayAudioActive !== undefined
+        ? currentAudioState.airplayAudioActive
+        : lastServerState?.screen?.airplayAudioActive
+    );
+    const apAudible = !apMuted;
+    if (btnTop) {
+      btnTop.classList.toggle("is-active", apAudible);
+      btnTop.title = apMuted
+        ? (isEnAudio ? "AirPlay Audio Muted - Click or press Alt+M to Unmute" : "Audio AirPlay Dibisukan - Klik atau tekan Alt+M untuk Unmute")
+        : apActive
+          ? (isEnAudio ? "AirPlay Audio Active (44.1 kHz) - Click / Alt+M to Mute" : "Audio AirPlay Aktif (44.1 kHz) - Klik / Alt+M untuk Mute")
+          : (isEnAudio ? "AirPlay Audio Ready (Auto on playback) - Click / Alt+M to Mute" : "Audio AirPlay Siap (Otomatis saat video diputar) - Klik / Alt+M untuk Mute");
+      if (iconOn && iconOff) {
+        iconOn.hidden = !apAudible;
+        iconOff.hidden = apAudible;
+        iconOn.style.display = apAudible ? "block" : "none";
+        iconOff.style.display = apAudible ? "none" : "block";
+      }
+    }
+    const badge = document.querySelector("#audio-status-badge");
+    if (badge) {
+      const badgeLbl = badge.querySelector(".btn-label") || badge;
+      badge.classList.toggle("active", !apMuted);
+      if (apMuted) {
+        badgeLbl.textContent = isEnAudio ? "AirPlay Audio Muted" : "Audio AirPlay Dibisukan";
+      } else if (apActive) {
+        badgeLbl.textContent = isEnAudio ? "AirPlay Audio Active (44.1 kHz)" : "Audio AirPlay Aktif (44.1 kHz)";
+      } else {
+        badgeLbl.textContent = isEnAudio
+          ? "AirPlay Audio Ready (Auto on playback)"
+          : "Audio AirPlay Siap (Otomatis saat video diputar)";
+      }
+    }
+    const btnDrawer = document.querySelector("#btn-audio-drawer");
+    const textDrawer = document.querySelector("#audio-toggle-text");
+    const iconDrawer = document.querySelector("#audio-toggle-icon");
+    if (btnDrawer) {
+      btnDrawer.classList.toggle("is-muted", apMuted);
+      btnDrawer.classList.toggle("is-active", apMuted);
+      if (textDrawer) textDrawer.textContent = apMuted ? "Muted" : "Alt+M";
+      if (iconDrawer) setIconPairToggle(iconDrawer, !apMuted);
+    }
+    const apVol = Number(
+      currentAudioState.airplayAudioVolume !== undefined
+        ? currentAudioState.airplayAudioVolume
+        : (lastServerState?.screen?.airplayAudioVolume !== undefined
+            ? lastServerState.screen.airplayAudioVolume
+            : (currentAudioState.volume ?? 100))
+    );
+    const apPreset = String(
+      currentAudioState.airplayAudioBufferPreset
+        || lastServerState?.screen?.airplayAudioBufferPreset
+        || currentAudioState.bufferPreset
+        || "normal"
+    );
+    const apLipSync = (
+      currentAudioState.airplayAudioLipSync !== undefined
+        ? Boolean(currentAudioState.airplayAudioLipSync)
+        : (lastServerState?.screen?.airplayAudioLipSync !== undefined
+            ? Boolean(lastServerState.screen.airplayAudioLipSync)
+            : (currentAudioState.lipSync !== false))
+    );
+    const apTargetMs = Math.round(
+      Number(
+        currentAudioState.airplayAudioTargetMs
+          || lastServerState?.screen?.airplayAudioTargetMs
+          || ((apPreset === "low" ? 22 : apPreset === "high" ? 90 : 45) + (apLipSync ? 55 : 0))
+      )
+    );
+    document.querySelectorAll("[data-audio-buffer]").forEach((btn) => {
+      const active = btn.dataset.audioBuffer === apPreset;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+    const apBufHint = document.querySelector("#audio-buffer-hint");
+    if (apBufHint) {
+      const labelMap = isEnAudio
+        ? { low: "Low", normal: "Normal", high: "High" }
+        : { low: "Rendah", normal: "Normal", high: "Tinggi" };
+      apBufHint.textContent = `${labelMap[apPreset] || "Normal"} · ~${apTargetMs} ms`;
+    }
+    document.querySelectorAll("[data-lip-sync]").forEach((btn) => {
+      const active = (btn.dataset.lipSync === "true") === apLipSync;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+    const apLipHint = document.querySelector("#lip-sync-hint");
+    if (apLipHint) {
+      apLipHint.textContent = apLipSync ? "ON" : "OFF";
+    }
+    const apVolSlider = document.querySelector("#audio-vol-slider");
+    const apVolVal = document.querySelector("#audio-vol-val");
+    if (apVolSlider && document.activeElement !== apVolSlider) {
+      apVolSlider.value = String(apVol);
+    }
+    if (apVolVal) {
+      apVolVal.textContent = apMuted ? `Muted (${apVol}%)` : `${apVol}%`;
+    }
+    syncLipSyncToIframe();
+    return;
+  }
   if (btnTop) {
     btnTop.classList.toggle("is-active", isAudibleOnPc);
     btnTop.title = isMuted
@@ -1257,21 +1491,47 @@ function renderAudio(audio) {
 
   const badge = document.querySelector("#audio-status-badge");
   if (badge) {
-    badge.classList.toggle("active", mode === "pc" && !isMuted);
+    const badgeLbl = badge.querySelector(".btn-label") || badge;
+    const bridgeActive = currentAudioState.pcBridgeActive === true;
+    const bridgeConnecting = currentAudioState.pcBridgeConnecting === true;
+    const bridgeDev = String(currentAudioState.pcBridgeDevice || "").trim();
+    badge.classList.toggle("active", (mode === "pc" || mode === "bluetooth") && !isMuted);
     if (mode === "pc") {
       if (isMuted) {
-        badge.textContent = isEnAudio ? "🔇 On this PC · Muted (Alt+M)" : "🔇 Di PC ini · Muted (Alt+M)";
-      } else if (currentAudioState.iphoneSpeakerMuted) {
-        badge.textContent = isEnAudio ? `✓ USB Audio · iPhone Speaker Auto-Muted (~${shownMs} ms)` : `✓ USB Audio · Speaker iPhone Auto-Muted (~${shownMs} ms)`;
+        badgeLbl.textContent = isEnAudio ? "🔇 On this PC · Muted (Alt+M)" : "🔇 Di PC ini · Muted (Alt+M)";
+      } else if (bridgeActive && bridgeDev) {
+        badgeLbl.textContent = isEnAudio
+          ? `A2DP Connected: ${bridgeDev} (48 kHz WASAPI)`
+          : `A2DP Terhubung: ${bridgeDev} (48 kHz WASAPI)`;
+      } else if (bridgeActive) {
+        badgeLbl.textContent = isEnAudio
+          ? `✓ PC Audio Active (48 kHz WASAPI · ~${shownMs} ms)`
+          : `✓ Audio PC Aktif (48 kHz WASAPI · ~${shownMs} ms)`;
+      } else if (bridgeConnecting) {
+        badgeLbl.textContent = isEnAudio
+          ? "⟳ Connecting PC Audio (A2DP)..."
+          : "⟳ Menyambungkan Audio PC (A2DP)...";
       } else {
-        badge.textContent = `✓ Zero-Bluetooth USB Audio (48 kHz WASAPI · ~${shownMs} ms)`;
+        badgeLbl.textContent = isEnAudio
+          ? `PC Audio Ready (48 kHz WASAPI · ~${shownMs} ms)`
+          : `Audio PC Siap (48 kHz WASAPI · ~${shownMs} ms)`;
       }
     } else if (mode === "bluetooth") {
-      badge.textContent = currentAudioState.streaming
-        ? `🔵 Bluetooth A2DP (${currentAudioState.device || "iPhone"})`
-        : "○ Bluetooth A2DP (Disconnected)";
+      if (bridgeActive && bridgeDev) {
+        badgeLbl.textContent = isEnAudio
+          ? `A2DP Connected: ${bridgeDev} (48 kHz WASAPI)`
+          : `A2DP Terhubung: ${bridgeDev} (48 kHz WASAPI)`;
+      } else if (bridgeConnecting) {
+        badgeLbl.textContent = isEnAudio
+          ? "⟳ Connecting Bluetooth A2DP..."
+          : "⟳ Menyambungkan Bluetooth A2DP...";
+      } else {
+        badgeLbl.textContent = currentAudioState.streaming
+          ? `🔵 Bluetooth A2DP (${currentAudioState.device || "iPhone"})`
+          : "○ Bluetooth A2DP (Disconnected)";
+      }
     } else {
-      badge.textContent = isEnAudio ? "📱 Device only (iPhone Speaker)" : "📱 Hanya perangkat (Speaker iPhone)";
+      badgeLbl.textContent = isEnAudio ? "📱 Device only (iPhone Speaker)" : "📱 Hanya perangkat (Speaker iPhone)";
     }
   }
 
@@ -1331,7 +1591,34 @@ function renderAudio(audio) {
 
 async function updateAudioConfig(patch) {
   try {
-    const res = await postJson("/api/audio", patch || {});
+    const p = patch || {};
+    if (lastServerState?.screen?.airplayActive || currentAudioState.airplayActive) {
+      // Tahap 259 Pilar 3: Live zero-drop atomic hot-reload via /api/audio/airplay-config
+      // (NEVER triggers Bluetooth A2DP or audio bridge restart -> 0 ms audio dropout!).
+      const apPayload = {};
+      if (p.volume !== undefined) apPayload.volume = Math.max(0, Math.min(100, parseInt(p.volume, 10) || 0));
+      if (p.bufferPreset !== undefined || p.buffer !== undefined) {
+        apPayload.buffer = String(p.bufferPreset ?? p.buffer ?? "normal");
+      }
+      if (p.lipSync !== undefined) apPayload.lipSync = Boolean(p.lipSync);
+      if (p.muted !== undefined) apPayload.muted = Boolean(p.muted);
+      if (p.audioOut !== undefined) apPayload.muted = (p.audioOut === "device");
+      const res = await postJson("/api/audio/airplay-config", apPayload);
+      if (res) {
+        if (lastServerState?.screen) {
+          lastServerState.screen.airplayAudioMuted = Boolean(res.airplayAudioMuted);
+          lastServerState.screen.airplayAudioActive = Boolean(res.airplayAudioActive);
+          if (res.airplayAudioVolume !== undefined) lastServerState.screen.airplayAudioVolume = Number(res.airplayAudioVolume);
+          if (res.airplayAudioBufferPreset) lastServerState.screen.airplayAudioBufferPreset = String(res.airplayAudioBufferPreset);
+          if (res.airplayAudioLipSync !== undefined) lastServerState.screen.airplayAudioLipSync = Boolean(res.airplayAudioLipSync);
+          if (res.airplayAudioTargetMs !== undefined) lastServerState.screen.airplayAudioTargetMs = Number(res.airplayAudioTargetMs);
+          if (res.airplayAudioBufferMs !== undefined) lastServerState.screen.airplayAudioBufferMs = Number(res.airplayAudioBufferMs);
+        }
+        renderAudio(Object.assign({}, currentAudioState, res, { airplayActive: true }));
+      }
+      return res;
+    }
+    const res = await postJson("/api/audio", p);
     if (res) renderAudio(res);
     return res;
   } catch (err) {
@@ -1346,6 +1633,18 @@ async function triggerToggleAudioMute(explicitMuted = null) {
   if (explicitMuted === null && now - _lastMuteToggleTs < 200) return;
   _lastMuteToggleTs = now;
   try {
+    if (lastServerState?.screen?.airplayActive || currentAudioState.airplayActive) {
+      const payload = explicitMuted !== null ? { muted: Boolean(explicitMuted) } : {};
+      const res = await postJson("/api/audio/airplay-mute", payload);
+      if (res) {
+        if (lastServerState?.screen) {
+          lastServerState.screen.airplayAudioMuted = Boolean(res.airplayAudioMuted);
+          lastServerState.screen.airplayAudioActive = Boolean(res.airplayAudioActive);
+        }
+        renderAudio(Object.assign({}, currentAudioState, res, { airplayActive: true }));
+      }
+      return;
+    }
     const payload = explicitMuted !== null ? { muted: Boolean(explicitMuted) } : {};
     const res = await postJson("/api/audio/mute", payload);
     if (res) renderAudio(res);
@@ -1357,6 +1656,11 @@ window.triggerToggleAudioMute = triggerToggleAudioMute;
 
 async function toggleAudio(forcedState) {
   try {
+    if (lastServerState?.screen?.airplayActive || currentAudioState.airplayActive) {
+      const targetMuted = forcedState !== undefined ? !Boolean(forcedState) : null;
+      await triggerToggleAudioMute(targetMuted);
+      return;
+    }
     if (forcedState !== undefined) {
       const res = await postJson("/api/audio", { audioOut: forcedState ? "pc" : "device" });
       renderAudio(res);
@@ -1377,9 +1681,24 @@ window.trayToggleAudio = () => {
   return updateAudioConfig({ audioOut: nextOut });
 };
 
+let _lastAirplayVolPostTs = 0;
 async function setAudioVolume(vol) {
   try {
     const parsed = Math.max(0, Math.min(100, parseInt(vol, 10) || 0));
+    if (lastServerState?.screen?.airplayActive || currentAudioState.airplayActive) {
+      const res = await postJson("/api/audio/airplay-config", {
+        volume: parsed,
+        muted: parsed === 0 ? true : false,
+      });
+      if (res) {
+        if (lastServerState?.screen) {
+          lastServerState.screen.airplayAudioVolume = Number(res.airplayAudioVolume ?? parsed);
+          lastServerState.screen.airplayAudioMuted = Boolean(res.airplayAudioMuted);
+        }
+        renderAudio(Object.assign({}, currentAudioState, res, { airplayActive: true }));
+      }
+      return;
+    }
     const res = await postJson("/api/audio", {
       volume: parsed,
       muted: parsed === 0 ? true : false,
@@ -1422,6 +1741,17 @@ function initAudioControls() {
   const volVal = document.querySelector("#audio-vol-val");
   volSlider?.addEventListener("input", (e) => {
     if (volVal) volVal.textContent = `${e.target.value}%`;
+    if (lastServerState?.screen?.airplayActive || currentAudioState.airplayActive) {
+      const nowMs = Date.now();
+      if (nowMs - _lastAirplayVolPostTs >= 50) {
+        _lastAirplayVolPostTs = nowMs;
+        const parsed = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+        postJson("/api/audio/airplay-config", {
+          volume: parsed,
+          muted: parsed === 0 ? true : false,
+        }).catch(() => {});
+      }
+    }
   });
   volSlider?.addEventListener("change", (e) => {
     setAudioVolume(e.target.value);
@@ -2164,7 +2494,25 @@ async function triggerWifiScan(udid) {
     if (res?.wifi) {
       currentWifiState = res.wifi;
       renderWifi();
-      renderPills({ wifi: res.wifi, devices: usbConnected ? [{ udid }] : [] });
+      const baseState = lastServerState || {};
+      const mergedDevices = Array.isArray(baseState.devices) && baseState.devices.length > 0
+        ? baseState.devices.map((d) => {
+            if (!d) return d;
+            if (res.wifi.udid && d.udid === res.wifi.udid) {
+              return Object.assign({}, d, {
+                wifiOnline: Boolean(res.wifi.reachable),
+                reachable: Boolean(d.usb || res.wifi.reachable),
+                ip: res.wifi.ip || d.ip,
+              });
+            }
+            return d;
+          })
+        : (usbConnected ? [{ udid, usb: true, reachable: true }] : []);
+      renderPills(Object.assign({}, baseState, {
+        driver: baseState.driver || { ready: true },
+        wifi: res.wifi,
+        devices: mergedDevices,
+      }));
     }
   } catch (_) { }
 }
@@ -2241,57 +2589,46 @@ const APPLE_PRODUCT_MAP = {
 };
 
 function resolveFriendlyDeviceModel(dev) {
-  if (!dev) return "iPhone 17 Pro";
+  if (!dev) return "";
   let udid = "";
   let pType = "";
+  let modelField = "";
   let rawName = "";
 
   if (typeof dev === "string") {
-    if (dev.startsWith("0000") || dev.length > 20) {
-      udid = dev;
+    const trimmed = dev.trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("0000") || trimmed.length > 20) {
+      udid = trimmed;
+    } else if (APPLE_PRODUCT_MAP[trimmed]) {
+      pType = trimmed;
     } else {
-      pType = dev;
+      modelField = trimmed;
     }
   } else if (typeof dev === "object") {
     udid = dev.udid || "";
-    pType = dev.product_type || dev.productType || dev.model || "";
+    pType = dev.product_type || dev.productType || "";
+    modelField = dev.model || "";
     rawName = dev.name || dev.deviceName || "";
   }
 
-  // Tahap 142: Priority hierarchy - Hardware UDID -> ProductType -> Nickname / rawName
-  // 1. Strict Hardware UDID Check
-  if (udid.startsWith("00008150") || udid.includes("00008150")) {
-    return "iPhone 17 Pro";
-  }
-  if (udid.startsWith("00008030") || udid.includes("00008030")) {
-    return "iPhone 11 Pro Max";
-  }
-
-  // 2. Strict Product Type Check
-  if (pType === "iPhone18,1") {
-    return "iPhone 17 Pro";
-  }
-  if (pType === "iPhone12,5") {
-    return "iPhone 11 Pro Max";
-  }
-
-  // 3. Device Name / Nickname Fallback
-  if (rawName.includes("iPhone 11 Pro Max")) {
-    return "iPhone 11 Pro Max";
-  }
-  if (rawName === "UWE UH" || rawName.includes("iPhone 17")) {
-    return "iPhone 17 Pro";
-  }
-
-  // 3. Known product types in APPLE_PRODUCT_MAP
+  // 1. Official Apple ProductType mapping (strictly from real Lockdown ProductType)
   if (pType && APPLE_PRODUCT_MAP[pType]) {
     try {
       if (udid) localStorage.setItem("dev-model-" + udid, APPLE_PRODUCT_MAP[pType]);
     } catch (_) {}
     return APPLE_PRODUCT_MAP[pType];
   }
+  if (modelField && APPLE_PRODUCT_MAP[modelField]) {
+    return APPLE_PRODUCT_MAP[modelField];
+  }
 
-  // 4. iPad patterns
+  // 2. Backend-resolved friendly marketing model name (only from real connected device)
+  if (modelField && (modelField.startsWith("iPhone") || modelField.startsWith("iPad"))) {
+    return modelField;
+  }
+
+  // 3. iPad patterns
   if (pType && pType.startsWith("iPad")) {
     if (pType.includes("Pro") || pType.startsWith("iPad16,") || pType.startsWith("iPad14,3") || pType.startsWith("iPad14,4") || pType.startsWith("iPad14,5") || pType.startsWith("iPad14,6") || pType.startsWith("iPad13,4") || pType.startsWith("iPad13,5") || pType.startsWith("iPad13,6") || pType.startsWith("iPad13,7") || pType.startsWith("iPad13,8") || pType.startsWith("iPad13,9") || pType.startsWith("iPad13,10") || pType.startsWith("iPad13,11")) {
       return "iPad Pro";
@@ -2305,7 +2642,7 @@ function resolveFriendlyDeviceModel(dev) {
     return "iPad";
   }
 
-  // 5. Cached model in localStorage
+  // 4. Cached model in localStorage for a real UDID
   if (udid) {
     try {
       const cached = localStorage.getItem("dev-model-" + udid);
@@ -2313,17 +2650,31 @@ function resolveFriendlyDeviceModel(dev) {
     } catch (_) {}
   }
 
-  // 6. Friendly device name
+  // 5. Friendly device name
   if (rawName && (rawName.startsWith("iPhone ") || rawName.startsWith("iPad "))) {
     return rawName;
   }
 
-  return "iPhone 17 Pro";
+  return (udid || pType || rawName) ? "iPhone" : "";
 }
 window.resolveFriendlyDeviceModel = resolveFriendlyDeviceModel;
 window.APPLE_PRODUCT_MAP = APPLE_PRODUCT_MAP;
-function setTransport(value, reload = true) {
-  transport = (value === "wifi") ? "wifi" : "usb";
+function setTransport(value, reload = true, userInitiated = false) {
+  const norm = (value === "wifi") ? "wifi" : "usb";
+  _syncTransportTabDom(norm);
+  // Tahap 250 Pilar 3: Only persist handset-transport & lock explicit preference on REAL user clicks!
+  if (userInitiated) {
+    userExplicitlyClickedTransport = true;
+    hasSavedExplicitTransport = true;
+    _userChangedTransport = true;
+    _hasExplicitTransportPref = true;
+    try { localStorage.setItem("handset-transport", transport); } catch (_) {}
+    postJson("/api/settings", { transport }).catch(() => {});
+  }
+  if (transport === "wifi" && launchpadSwitchWifiBtn) {
+    launchpadSwitchWifiBtn.hidden = true;
+    launchpadSwitchWifiBtn.style.display = "none";
+  }
   if (launchpadError) {
     launchpadError.hidden = true;
     launchpadError.classList.add("is-hidden");
@@ -2333,19 +2684,18 @@ function setTransport(value, reload = true) {
     screenErrorBanner.style.display = "none";
     screenErrorBanner.textContent = "";
   }
-  localStorage.setItem("handset-transport", transport);
-  document.querySelectorAll("[data-transport]").forEach((btn) => {
-    const active = (btn.dataset.transport === transport) || (transport === "usb" && btn.dataset.transport === "cable");
-    btn.classList.toggle("is-active", active);
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-checked", String(active));
-  });
   updateLaunchpadState();
-  if (transport === "wifi" && (selectedUdid || (currentWifiState?.paired || []).length)) {
+  if (lastServerState) {
+    renderPills(lastServerState);
+    renderScreen(lastServerState.screen || { phase: "idle" });
+  }
+  if (transport === "wifi" && reload && (selectedUdid || (currentWifiState?.paired || []).length)) {
     triggerWifiScan(selectedUdid || currentWifiState.paired[0]);
   }
-  if (reload) initAutoRotateControls();
-  load();
+  if (reload) {
+    initAutoRotateControls();
+    load();
+  }
 }
 
 // ======================================================================
@@ -2357,7 +2707,7 @@ function initTransportControls() {
   document.querySelectorAll("[data-transport]").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      setTransport(btn.dataset.transport);
+      setTransport(btn.dataset.transport, true, true);
     };
   });
   if (wifiPair) wifiPair.onclick = () => setUpWifi();
@@ -2367,6 +2717,12 @@ function initTransportControls() {
     launchpadStartBtn.onclick = (e) => {
       e.stopPropagation();
       showPhone();
+    };
+  }
+  if (launchpadSwitchWifiBtn) {
+    launchpadSwitchWifiBtn.onclick = (e) => {
+      e.stopPropagation();
+      setTransport("wifi", false, true);
     };
   }
   if (launchpadCancelBtn) {
@@ -2991,42 +3347,136 @@ function startWallpaperSigWatcher() {
 }
 window.startWallpaperSigWatcher = startWallpaperSigWatcher;
 
+function applyServerStatusState(state) {
+  if (!state || typeof state !== "object") return;
+  if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive() && state.screen) {
+    state.screen = Object.assign({}, state.screen, { phase: "idle", url: null, error: "" });
+  }
+  lastServerState = state;
+  wifiPaired = state.wifi?.paired || [];
+  currentWifiState = state.wifi || {};
+  const devices = state.devices || [];
+  const hasCableDevice = devices.some(d => d.usb === true || (!d.wifiOnly && String(d.connection || "").toUpperCase() === "USB"));
+  usbConnected = hasCableDevice;
+  const backendSel = state.selectedUdid || state.udid || "";
+  if (backendSel) {
+    selectedUdid = backendSel;
+  } else if (devices.length === 0) {
+    selectedUdid = null;
+  }
+  stateDevicesList = devices;
+  // Tahap 248/250 Pilar 3: Smart Fresh-Install Wi-Fi Tab Auto-Switch.
+  // When user has NOT explicitly clicked a transport tab and there is no saved explicit user_settings
+  // transport yet, automatically switch to Wi-Fi as soon as an online Wi-Fi iPhone is discovered
+  // with 0 USB cables plugged (works on both initial load and post-boot-probe poll #2; preserves 0-device Clean-Slate).
+  const hasOnlineWifiDevice = devices.some(d => d && (d.wifiOnline === true || (d.wifiOnly && d.reachable === true)))
+    || Boolean(state.wifi && state.wifi.reachable && state.wifi.ip);
+  if (!userExplicitlyClickedTransport && !hasSavedExplicitTransport && devices.length > 0 && !hasCableDevice && hasOnlineWifiDevice) {
+    if (transport !== "wifi") {
+      _syncTransportTabDom("wifi");
+    }
+  } else {
+    _syncTransportTabDom(transport);
+  }
+  renderStatus(state);
+  try {
+    if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
+      applyDeviceProfile(state.deviceProfile, { persist: false, syncNative: false });
+    }
+    if (state.deviceFamily) applyDetectedDeviceFamily(state.deviceFamily);
+  } catch (_) { }
+  renderDevices(devices);
+  renderWifi();
+  renderScreen(state.screen);
+  renderPills(state);
+  if (state.audio) renderAudio(state.audio);
+  if (state.wallpaperSig) {
+    applyWallpaperSignature(state.wallpaperSig);
+  }
+}
+window.applyServerStatusState = applyServerStatusState;
+
+async function selectDeviceByUdid(udid, opts = {}) {
+  const cleanUdid = String(udid || "").trim();
+  if (!cleanUdid) return null;
+  const autoSwitch = opts.autoSwitchTransport !== false;
+  selectedUdid = cleanUdid;
+
+  // Optimistic instant UI update (< 10ms)
+  if (lastServerState && Array.isArray(lastServerState.devices)) {
+    lastServerState.selectedUdid = cleanUdid;
+    lastServerState.udid = cleanUdid;
+    let clickedDev = null;
+    lastServerState.devices.forEach((d) => {
+      const isMatch = d && d.udid === cleanUdid;
+      if (d) d.selected = isMatch;
+      if (isMatch) clickedDev = d;
+    });
+    if (clickedDev) {
+      lastServerState.device = clickedDev;
+      if (autoSwitch) {
+        const isUsb = clickedDev.usb === true || (!clickedDev.wifiOnly && String(clickedDev.connection || "").toUpperCase() === "USB");
+        const isWifiOn = clickedDev.wifiOnline === true || (clickedDev.wifiOnly && clickedDev.reachable === true);
+        if (isUsb && !isWifiOn && transport !== "usb") {
+          setTransport("usb", false);
+        } else if (!isUsb && isWifiOn && transport !== "wifi") {
+          setTransport("wifi", false);
+        }
+      }
+    }
+    updateLaunchpadState(lastServerState);
+    renderDevices(lastServerState.devices);
+    renderPills(lastServerState);
+    renderScreen(lastServerState.screen || { phase: "idle" });
+  }
+
+  try {
+    const resp = await postJson("/api/device/select", { udid: cleanUdid });
+    if (resp && resp.ok && resp.status) {
+      applyServerStatusState(resp.status);
+    } else if (resp && resp.ok) {
+      await load();
+    }
+    return resp;
+  } catch (err) {
+    console.warn("selectDeviceByUdid error:", err);
+    return null;
+  }
+}
+window.selectDeviceByUdid = selectDeviceByUdid;
+
+function getSelectedDeviceFromState(state) {
+  const st = state || lastServerState || {};
+  const devices = st.devices || [];
+  if (!devices.length) return null;
+  const targetUdid = selectedUdid || st.selectedUdid || st.udid || "";
+  if (targetUdid) {
+    const found = devices.find(d => d && d.udid === targetUdid);
+    if (found) return found;
+  }
+  return devices.find(d => d && d.selected) || devices[0] || null;
+}
+
+function isSelectedDeviceStartable(state) {
+  const st = state || lastServerState || {};
+  const activeDev = getSelectedDeviceFromState(st);
+  if (!activeDev) return false;
+  const selUsb = activeDev.usb === true || (!activeDev.wifiOnly && String(activeDev.connection || "").toUpperCase() === "USB");
+  const selWifiPaired = activeDev.wifiPaired === true || activeDev.wifi_enabled === true || (st.wifi?.paired || []).includes(activeDev.udid);
+  const selWifiOnline = activeDev.wifiOnline === true || (activeDev.wifiOnly && activeDev.reachable === true);
+  if (transport === "wifi") {
+    return Boolean(selWifiOnline || selWifiPaired);
+  }
+  return Boolean(selUsb);
+}
+
 async function load() {
   refresh.disabled = true;
   detail.hidden = true;
   detail.replaceChildren();
   try {
     const state = await getJson("/api/status");
-    if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive() && state && state.screen) {
-      state.screen = Object.assign({}, state.screen, { phase: "idle", url: null, error: "" });
-    }
-    wifiPaired = state.wifi?.paired || [];
-    currentWifiState = state.wifi || {};
-    const hasCableDevice = (state.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
-    usbConnected = hasCableDevice;
-    if (state.udid && !selectedUdid) {
-      selectedUdid = state.udid;
-    }
-    stateDevicesList = state.devices || [];
-    const wifiObj = state.wifi || currentWifiState || {};
-    const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
-    // Tahap 140: User choice is respected! Do NOT auto-switch transport back to wifi when user clicked Cable tab.
-    renderStatus(state);
-    try {
-      if (state.deviceProfile && state.deviceProfile !== currentDeviceProfile && !window.__profileUserTouched) {
-        applyDeviceProfile(state.deviceProfile, { persist: false, syncNative: false });
-      }
-      if (state.deviceFamily) applyDetectedDeviceFamily(state.deviceFamily);
-    } catch (_) { }
-    renderDevices(state.devices || []);
-    renderWifi();
-    renderScreen(state.screen);
-    renderPills(state);
-    if (state.audio) renderAudio(state.audio);
-    // Tahap 95: Update wallpaper background image instantly when wallpaperSig changes
-    if (state.wallpaperSig) {
-      applyWallpaperSignature(state.wallpaperSig);
-    }
+    applyServerStatusState(state);
     startWallpaperSigWatcher();
   } catch (error) {
     setPill(pillConnection, "Offline", "bad");
@@ -3038,48 +3488,82 @@ async function load() {
 }
 
 function renderPills(state) {
+  if (!state || typeof state !== "object") return;
   const driver = state.driver || {};
-  const connected = (state.devices || []).length > 0;
+  const diag = state.detailedDiagnostics || {};
+  const devices = state.devices || [];
+  const activeDev = getSelectedDeviceFromState(state);
   const wifi = state.wifi || currentWifiState || {};
+  const pairedWifiCount = (wifi.paired || []).length;
+  const selUsb = Boolean(activeDev && (activeDev.usb === true || (!activeDev.wifiOnly && String(activeDev.connection || "").toUpperCase() === "USB")));
+  const selWifiOnline = Boolean(activeDev && (activeDev.wifiOnline === true || (activeDev.wifiOnly && activeDev.reachable === true)));
+  const selWifiPaired = Boolean(activeDev && (activeDev.wifiPaired === true || activeDev.wifi_enabled === true || (wifi.paired || []).includes(activeDev.udid)));
+  const selIp = (activeDev && activeDev.ip) || (wifi.udid === activeDev?.udid ? wifi.ip : null) || null;
+  const anyWifiOnline = devices.some(d => d && (d.wifiOnline === true || (d.wifiOnly && d.reachable === true)))
+    || Boolean(wifi && wifi.reachable);
+  const anyConnected = devices.some(d => d && (d.usb === true || d.wifiOnline === true || d.reachable === true));
   const overWifi = transport === "wifi";
+  const isEnPill = (currentLang === "en");
+  const scrPhase = String(state.screen?.phase || "idle");
+  const effectiveStreaming = scrPhase === "running" || scrPhase === "starting" || scrPhase === "waiting_airplay";
+  const driverExplicitlyMissing = driver.ready === false && state.driverReady !== true;
+  const driverOk = !driverExplicitlyMissing
+    || diag.apple_driver_installed === true
+    || diag.apple_service_running === true
+    || diag.tcp_port_27015_normal === true
+    || anyWifiOnline
+    || effectiveStreaming;
+
   if (state.screen?.intentionally_locked) {
     setPill(pillConnection, "Standby · Locked", "ok");
-  } else if (state.screen?.phase === "waiting_airplay") {
+  } else if (scrPhase === "waiting_airplay" || (scrPhase === "starting" && isAirplayWaitingStage(state.screen?.stage))) {
     setPill(pillConnection, "AirPlay Ready", "ok");
-  } else if (state.screen?.phase === "running") {
+  } else if (scrPhase === "running") {
     setPill(pillConnection, state.screen.transport === "wifi" ? "Mirroring · Wi‑Fi" : "Mirroring", "ok");
-  } else if (overWifi && wifi.reachable) {
-    const pillWifiIp = wifi.ip
-      ? (currentLang === "en" ? `Wi‑Fi · iPhone IP: ${wifi.ip}` : `Wi‑Fi · IP iPhone: ${wifi.ip}`)
-      : "Wi‑Fi Ready";
-    setPill(pillConnection, pillWifiIp, "ok");
-  } else if (overWifi && (wifi.paired || []).length > 0) {
-    setPill(pillConnection, "Wi‑Fi Paired (Offline)", "warn");
-  } else if (overWifi) {
-    setPill(pillConnection, "Plug USB 1x", "bad");
+  } else if (scrPhase === "starting") {
+    setPill(pillConnection, isEnPill ? "Connecting…" : "Menyambungkan…", "muted");
   } else if (state.error) {
     setPill(pillConnection, "Error", "bad");
-  } else if (!driver.ready) {
+  } else if (!driverOk && !overWifi) {
     setPill(pillConnection, "Install Apple Devices", "warn");
-  } else if (!connected) {
-    setPill(pillConnection, "Ready", "ok");
-  } else if (state.developerMode === false) {
-    setPill(pillConnection, "Developer Mode off", "warn");
-  } else if (state.screen?.phase === "running") {
-    setPill(pillConnection, "Mirroring", "ok");
+  } else if (devices.length === 0 && pairedWifiCount === 0) {
+    setPill(pillConnection, isEnPill ? "Waiting for iPhone" : "Menunggu iPhone", "muted");
+  } else if (overWifi) {
+    if (selWifiOnline) {
+      const pillWifiIp = selIp
+        ? (isEnPill ? `Wi‑Fi · iPhone IP: ${selIp}` : `Wi‑Fi · IP iPhone: ${selIp}`)
+        : "Wi‑Fi Ready";
+      setPill(pillConnection, pillWifiIp, "ok");
+    } else if (selWifiPaired || pairedWifiCount > 0) {
+      setPill(pillConnection, "Wi‑Fi Paired (Offline)", "warn");
+    } else {
+      setPill(pillConnection, isEnPill ? "Plug USB 1x" : "Colok USB 1x", "muted");
+    }
   } else {
-    setPill(pillConnection, "Ready", "ok");
+    // Cable (USB) tab — strictly honest about USB cable state!
+    if (state.developerMode === false && selUsb) {
+      setPill(pillConnection, "Developer Mode off", "warn");
+    } else if (selUsb) {
+      setPill(pillConnection, "Ready", "ok");
+    } else if (activeDev) {
+      setPill(pillConnection, isEnPill ? "USB Disconnected" : "USB Terputus", "muted");
+    } else {
+      setPill(pillConnection, isEnPill ? "Waiting for iPhone" : "Menunggu iPhone", "muted");
+    }
   }
 
-  if (!connected) {
+  if (!anyConnected || devices.length === 0) {
     pillDevice.hidden = true;
     pillDevice.textContent = "";
     return;
   }
   pillDevice.hidden = false;
-  const count = state.devices.length;
-  pillDevice.textContent = count === 1 ? "1 device · USB" : `${count} devices`;
+  const count = devices.length;
+  pillDevice.textContent = count === 1
+    ? (selUsb ? "1 device · USB" : "1 device · Wi‑Fi")
+    : `${count} devices`;
 }
+window.renderPills = renderPills;
 
 function setPill(el, text, tone) {
   if (!text) {
@@ -3092,6 +3576,91 @@ function setPill(el, text, tone) {
   el.className = "pill" + (tone ? ` pill-${tone}` : "");
 }
 
+function formatPickerDeviceLabels(dev, isEn) {
+  const model = resolveFriendlyDeviceModel(dev) || "iPhone";
+  const rawName = String(dev?.name || dev?.deviceName || "").trim();
+  const showName = rawName && rawName.toLowerCase() !== model.toLowerCase() && rawName.toLowerCase() !== "iphone" ? rawName : "";
+  const isUsb = dev?.usb === true || (!dev?.wifiOnly && String(dev?.connection || "").toUpperCase() === "USB");
+  const isWifiOn = dev?.wifiOnline === true || (dev?.wifiOnly && dev?.reachable === true);
+  const ip = dev?.ip || null;
+  let sub = "";
+  if (isUsb) {
+    sub = isEn ? "USB Connected" : "USB Terhubung";
+    if (isWifiOn && ip) sub += ` · Wi-Fi ${ip}`;
+  } else if (isWifiOn) {
+    sub = ip ? `Wi-Fi · ${ip}` : (isEn ? "Wi-Fi Online" : "Wi-Fi Aktif");
+  } else {
+    sub = ip ? `Offline (${ip})` : "Offline";
+  }
+  return { model, showName, sub, isOnline: Boolean(isUsb || isWifiOn) };
+}
+
+function renderLaunchpadDevicePicker(devices, currentSelectedUdid, isEn) {
+  if (!launchpadDevicePicker || !launchpadPickerList) return;
+  if (!Array.isArray(devices) || devices.length < 2) {
+    launchpadDevicePicker.hidden = true;
+    launchpadPickerList.replaceChildren();
+    if (launchpadIdleView) launchpadIdleView.classList.remove("has-multi-devices");
+    return;
+  }
+  launchpadDevicePicker.hidden = false;
+  if (launchpadIdleView) launchpadIdleView.classList.add("has-multi-devices");
+  if (launchpadPickerTitle) {
+    launchpadPickerTitle.textContent = isEn ? "Choose iPhone" : "Pilih iPhone";
+  }
+  if (launchpadPickerCount) {
+    launchpadPickerCount.textContent = String(devices.length);
+  }
+  launchpadPickerList.replaceChildren();
+
+  for (const dev of devices) {
+    if (!dev || !dev.udid) continue;
+    const isSel = dev.udid === currentSelectedUdid;
+    const info = formatPickerDeviceLabels(dev, isEn);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "launchpad-picker-item" + (isSel ? " is-selected" : "");
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", String(isSel));
+    btn.dataset.udid = dev.udid;
+
+    const dot = document.createElement("span");
+    dot.className = "launchpad-picker-dot " + (info.isOnline ? "is-online" : "is-offline");
+
+    const body = document.createElement("div");
+    body.className = "launchpad-picker-body";
+
+    const main = document.createElement("div");
+    main.className = "launchpad-picker-main";
+    const modelSpan = document.createElement("span");
+    modelSpan.className = "launchpad-picker-model";
+    modelSpan.textContent = info.model;
+    main.append(modelSpan);
+    if (info.showName) {
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "launchpad-picker-name";
+      nameSpan.textContent = ` · ${info.showName}`;
+      main.append(nameSpan);
+    }
+
+    const sub = document.createElement("div");
+    sub.className = "launchpad-picker-sub";
+    sub.textContent = info.sub;
+    body.append(main, sub);
+
+    const check = document.createElement("span");
+    check.className = "launchpad-picker-check";
+    check.setAttribute("aria-hidden", "true");
+    check.textContent = "✓";
+
+    btn.append(dot, body, check);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectDeviceByUdid(dev.udid, { autoSwitchTransport: true });
+    });
+    launchpadPickerList.append(btn);
+  }
+}
 
 let lastServerState = null;
 function updateLaunchpadState(passedState) {
@@ -3099,74 +3668,162 @@ function updateLaunchpadState(passedState) {
   if (passedState) lastServerState = passedState;
 
   const devices = state.devices || [];
-  const targetUdid = selectedUdid || state.udid || (state.wifi?.paired && state.wifi.paired[0]) || "";
-  let activeDev = targetUdid ? devices.find(d => d.udid === targetUdid) : null;
-  if (!activeDev && devices.length > 0) {
-    activeDev = devices.find(d => (d.udid || "").includes("00008150")) || devices[0];
+  const wifiObj = state.wifi || currentWifiState || {};
+  const pairedWifi = wifiObj.paired || [];
+  const hasAnyCableDevice = devices.some(d => d.usb === true || (!d.wifiOnly && String(d.connection || "").toUpperCase() === "USB"));
+  usbConnected = hasAnyCableDevice;
+
+  const activeDev = getSelectedDeviceFromState(state);
+  if (activeDev && activeDev.udid) {
+    selectedUdid = activeDev.udid;
+  } else if (devices.length === 0 && pairedWifi.length === 0) {
+    selectedUdid = null;
   }
-  if (!selectedUdid && (targetUdid || (activeDev && activeDev.udid))) {
-    selectedUdid = targetUdid || activeDev.udid;
-  }
-  const modelName = resolveFriendlyDeviceModel(activeDev || targetUdid);
-  const nickname = (activeDev && (activeDev.name || activeDev.deviceName)) || (targetUdid && targetUdid.includes("00008150") ? "UWE UH" : (activeDev?.name || "iPhone"));
 
   const isEnLp = (currentLang === "en");
-  if (launchpadTitle) {
-    launchpadTitle.textContent = (activeDev || targetUdid) ? `${modelName} ${isEnLp ? "ready" : "siap"}` : "iPhone Link";
-  }
-  if (launchpadSubtitle) {
-    launchpadSubtitle.textContent = isEnLp ? "Unlock device, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.";
-  }
-  if (launchpadDeviceName) {
-    launchpadDeviceName.textContent = nickname;
+  const isStreamingNow = Boolean(state.screen && (state.screen.phase === "running" || state.screen.phase === "starting" || state.screen.phase === "waiting_airplay"));
+
+  // Render adaptive Multi-iPhone Device Picker (hidden for 0 or 1 device!)
+  renderLaunchpadDevicePicker(devices, selectedUdid || "", isEnLp);
+
+  // Tahap 246/247 Kasus A: True Clean-Slate (0 USB devices & 0 paired Wi-Fi devices)
+  if (!activeDev && devices.length === 0 && pairedWifi.length === 0) {
+    if (launchpadTitle) {
+      launchpadTitle.textContent = isEnLp ? "Connect your iPhone" : "Hubungkan iPhone Anda";
+    }
+    if (launchpadSubtitle) {
+      launchpadSubtitle.textContent = isEnLp
+        ? "Connect your iPhone via USB cable to begin."
+        : "Colokkan iPhone via kabel USB untuk memulai.";
+    }
+    if (launchpadDeviceName) {
+      launchpadDeviceName.textContent = isEnLp ? "No iPhone detected" : "Belum ada iPhone terdeteksi";
+    }
+    if (launchpadDeviceSub) {
+      launchpadDeviceSub.textContent = isEnLp
+        ? "Waiting for USB or Wi-Fi connection"
+        : "Menunggu koneksi USB atau Wi-Fi";
+    }
+    if (launchpadStatusDot) {
+      launchpadStatusDot.className = "launchpad-status-dot device-dot warn";
+    }
+    syncLaunchpadSwitchWifiButton(false, false, false, isEnLp);
+    const heroIcon = document.querySelector(".launchpad-hero-icon");
+    if (heroIcon) {
+      heroIcon.classList.remove("is-ready");
+      heroIcon.classList.add("is-disconnected");
+    }
+    if (launchpadSetupWifiBtn) {
+      launchpadSetupWifiBtn.disabled = true;
+      launchpadSetupWifiBtn.title = isEnLp
+        ? "Connect iPhone via USB cable to set up Wi-Fi"
+        : "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi";
+    }
+    if (launchpadStartBtn && !isStreamingNow) {
+      launchpadStartBtn.disabled = true;
+    }
+    if (showScreen && !isStreamingNow) {
+      showScreen.disabled = true;
+    }
+    return;
   }
 
-  const hasCableDevice = devices.some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
-  usbConnected = hasCableDevice;
-  const wifiObj = state.wifi || currentWifiState || {};
-  const wifiReady = Boolean(wifiObj && (wifiObj.reachable || wifiObj.ip || (wifiObj.paired && wifiObj.paired.length > 0)));
+  // Selected device properties (strictly per-selected-device, honest Cable vs Wi-Fi!)
+  const modelName = resolveFriendlyDeviceModel(activeDev) || "iPhone";
+  const rawNick = String((activeDev && (activeDev.name || activeDev.deviceName)) || "").trim();
+  const nickname = (rawNick && rawNick.toLowerCase() !== modelName.toLowerCase())
+    ? `${modelName} · ${rawNick}`
+    : (rawNick || modelName);
+  const selUsb = Boolean(activeDev && (activeDev.usb === true || (!activeDev.wifiOnly && String(activeDev.connection || "").toUpperCase() === "USB")));
+  const selWifiOnline = Boolean(activeDev && (activeDev.wifiOnline === true || (activeDev.wifiOnly && activeDev.reachable === true)));
+  const selWifiPaired = Boolean(activeDev && (activeDev.wifiPaired === true || activeDev.wifi_enabled === true || pairedWifi.includes(activeDev.udid)));
+  const selIp = (activeDev && activeDev.ip) || (wifiObj.udid === activeDev?.udid ? wifiObj.ip : null) || null;
 
-  if (launchpadDeviceSub) {
-    if (transport === "wifi") {
-      const ipStr = (wifiObj && wifiObj.ip) || (currentWifiState && currentWifiState.ip);
-      if (ipStr) {
-        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi · iPhone IP:" : "Wi-Fi · IP iPhone:"} ${ipStr}`;
-      } else if (wifiReady) {
+  if (transport === "wifi") {
+    const wifiStarting = Boolean(state.screen && (state.screen.phase === "starting" || state.screen.phase === "running"));
+    const effectiveWifiReady = selWifiOnline || wifiStarting;
+    syncLaunchpadSwitchWifiButton(selUsb, effectiveWifiReady, devices.length > 0, isEnLp);
+    if (launchpadTitle) {
+      launchpadTitle.textContent = wifiStarting
+        ? (isEnLp ? `Connecting to ${modelName}…` : `Menyambungkan ke ${modelName}…`)
+        : selWifiOnline
+          ? `${modelName} ${isEnLp ? "ready" : "siap"}`
+          : `${modelName} ${isEnLp ? "offline" : "terputus"}`;
+    }
+    if (launchpadSubtitle) {
+      launchpadSubtitle.textContent = wifiStarting
+        ? (isEnLp ? "Opening encrypted CoreDevice Wi-Fi stream..." : "Membuka koneksi aman CoreDevice Wi-Fi...")
+        : selWifiOnline
+          ? (isEnLp ? "Unlock device, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.")
+          : (isEnLp ? "Wake your iPhone on Wi-Fi or pick another iPhone below." : "Nyalakan layar iPhone di Wi-Fi atau pilih iPhone lain di bawah.");
+    }
+    if (launchpadDeviceName) {
+      launchpadDeviceName.textContent = nickname;
+    }
+    if (launchpadDeviceSub) {
+      if (effectiveWifiReady && selIp) {
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi · iPhone IP:" : "Wi-Fi · IP iPhone:"} ${selIp}`;
+      } else if (effectiveWifiReady) {
         launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi ready" : "Wi-Fi siap"}`;
+      } else if (selWifiPaired) {
+        launchpadDeviceSub.textContent = selIp
+          ? `${modelName} · Offline (${selIp})`
+          : `${modelName} · Wi-Fi (Offline)`;
       } else {
-        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi (Click Scan)" : "Wi-Fi (Klik Scan)"}`;
-      }
-    } else {
-      if (hasCableDevice) {
-        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "USB ready" : "USB siap"}`;
-      } else {
-        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "USB disconnected" : "USB terputus"}`;
+        launchpadDeviceSub.textContent = `${modelName} · ${isEnLp ? "Wi-Fi not configured" : "Wi-Fi belum diatur"}`;
       }
     }
-  }
-
-  if (launchpadStatusDot) {
-    if (transport === "wifi") {
-      launchpadStatusDot.className = wifiReady ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
-    } else {
-      launchpadStatusDot.className = hasCableDevice ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
+    if (launchpadStatusDot) {
+      launchpadStatusDot.className = effectiveWifiReady ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
     }
+  } else {
+    // Cable (USB) tab — strictly honest: NEVER claim "Wi-Fi ready" or enable USB Start when selUsb === false!
+    if (launchpadTitle) {
+      launchpadTitle.textContent = selUsb
+        ? `${modelName} ${isEnLp ? "ready" : "siap"}`
+        : `${modelName} · ${isEnLp ? "USB disconnected" : "USB terputus"}`;
+    }
+    if (launchpadSubtitle) {
+      launchpadSubtitle.textContent = selUsb
+        ? (isEnLp ? "Unlock device, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.")
+        : (selWifiOnline
+            ? (isEnLp ? "USB cable unplugged. Plug in USB or switch to Wi-Fi." : "Kabel USB terputus. Colok kabel USB atau gunakan Wi-Fi.")
+            : (isEnLp ? "Connect iPhone via USB cable to begin." : "Colokkan kabel USB ke iPhone untuk memulai."));
+    }
+    if (launchpadDeviceName) {
+      launchpadDeviceName.textContent = nickname;
+    }
+    if (launchpadDeviceSub) {
+      launchpadDeviceSub.textContent = selUsb
+        ? `${modelName} · ${isEnLp ? "USB ready" : "USB siap"}`
+        : `${modelName} · ${isEnLp ? "USB disconnected" : "USB terputus"}`;
+    }
+    if (launchpadStatusDot) {
+      launchpadStatusDot.className = selUsb ? "launchpad-status-dot device-dot" : "launchpad-status-dot device-dot warn";
+    }
+    syncLaunchpadSwitchWifiButton(selUsb, selWifiOnline, devices.length > 0, isEnLp);
   }
 
   const heroIcon = document.querySelector(".launchpad-hero-icon");
   if (heroIcon) {
-    if (activeDev && ((transport === "wifi" && wifiReady) || (transport === "usb" && hasCableDevice))) {
-      heroIcon.classList.remove("is-disconnected");
-      heroIcon.classList.add("is-ready");
-    } else {
-      heroIcon.classList.remove("is-ready");
-      heroIcon.classList.add("is-disconnected");
-    }
+    const wifiConnectingOrLive = Boolean(state.screen && (state.screen.phase === "starting" || state.screen.phase === "running"));
+    const isHeroReady = (transport === "wifi") ? (selWifiOnline || wifiConnectingOrLive) : selUsb;
+    heroIcon.classList.toggle("is-ready", isHeroReady);
+    heroIcon.classList.toggle("is-disconnected", !isHeroReady);
   }
 
   if (launchpadSetupWifiBtn) {
-    launchpadSetupWifiBtn.disabled = !hasCableDevice;
-    launchpadSetupWifiBtn.title = hasCableDevice ? "Atur atau perbarui Wi-Fi melalui kabel USB" : "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi";
+    launchpadSetupWifiBtn.disabled = !hasAnyCableDevice;
+    launchpadSetupWifiBtn.title = hasAnyCableDevice
+      ? (isEnLp ? "Set up or refresh Wi-Fi over USB cable" : "Atur atau perbarui Wi-Fi melalui kabel USB")
+      : (isEnLp ? "Connect iPhone via USB cable to set up Wi-Fi" : "Colokkan kabel USB ke iPhone untuk mengatur Wi-Fi");
+  }
+  const canStart = isSelectedDeviceStartable(state);
+  if (launchpadStartBtn && !isStreamingNow) {
+    launchpadStartBtn.disabled = !canStart;
+  }
+  if (showScreen && !isStreamingNow) {
+    showScreen.disabled = !canStart;
   }
 }
 window.updateLaunchpadState = updateLaunchpadState;
@@ -3262,7 +3919,7 @@ function renderStatus(state) {
       : "Sambungkan iPhone dengan kabel data USB, buka kunci layar, lalu ketuk Percayai.";
   }
 
-  // Tahap 138: Update Launchpad Pure Canvas ZenLink x Gemini App Model & Nickname
+  // Tahap 246: Update Launchpad Clean-Slate / Connected Device State
   updateLaunchpadState(state);
 }
 
@@ -3300,17 +3957,18 @@ function renderDevices(list) {
     const button = document.createElement("button");
     button.className = "device" + (device.udid === selectedUdid ? " selected" : "");
     button.type = "button";
+    const devInfo = formatPickerDeviceLabels(device, isEnDev);
     const name = document.createElement("span");
     name.className = "device-name";
-    name.textContent = device.udid.slice(0, 8) + "…";
+    name.textContent = devInfo.showName ? `${devInfo.model} (${devInfo.showName})` : devInfo.model;
     const meta = document.createElement("span");
     meta.className = "device-meta";
-    meta.textContent = formatDeviceConnLabel(device.connection);
+    meta.textContent = devInfo.sub || formatDeviceConnLabel(device.connection);
     button.append(name, meta);
     button.addEventListener("click", () => {
-      selectedUdid = device.udid;
       devicesEl.querySelectorAll(".device").forEach((el) => el.classList.remove("selected"));
       button.classList.add("selected");
+      selectDeviceByUdid(device.udid, { autoSwitchTransport: true });
       openDevice(device.udid);
       renderWifi();
     });
@@ -3461,7 +4119,11 @@ function setLaunchpadStartConnecting(connecting) {
     const lang = (document.documentElement.getAttribute("lang") || localStorage.getItem("iphone_link_lang") || "id").toLowerCase();
     const connectingText = lang.startsWith("en") ? "Connecting…" : "Menyambungkan…";
     const labelText = connecting ? connectingText : t("launchpad.start_mirror");
-    launchpadStartBtn.disabled = Boolean(connecting);
+    if (connecting) {
+      launchpadStartBtn.disabled = true;
+    } else {
+      launchpadStartBtn.disabled = !isSelectedDeviceStartable(lastServerState);
+    }
     if (lbl) {
       lbl.textContent = labelText;
     } else {
@@ -3507,6 +4169,160 @@ function getSequoiaDeviceLabel() {
   } catch (_) {}
   return "iPhone";
 }
+
+// Tahap 251/252 Pilar 4: DDI Auto-Mount & AirPlay Waiting Progress + Extended Connecting Timeout Guard
+const DDI_ACTIVE_STAGES = new Set(["downloading_ddi", "mounting_ddi", "reconnecting_rsd"]);
+const AIRPLAY_ACTIVE_STAGES = new Set(["waiting_airplay"]);
+const CONNECTING_TIMEOUT_DEFAULT_MS = 25000;
+const CONNECTING_TIMEOUT_DDI_MS = 90000;
+const CONNECTING_TIMEOUT_AIRPLAY_MS = 120000;
+let _connectingWatchStartedAt = 0;
+let _connectingLastStageKey = "";
+let currentStreamMode = (() => {
+  try {
+    // Tahap 255 Pilar 1: Fresh install (!hasUserSettingsFile) MUST purge any stale streamMode
+    // left in WebView2's persistent localStorage profile so Click #1 always starts in Auto!
+    const init = window.__V4_INITIAL_SETTINGS__;
+    if (init && init.hasUserSettingsFile === false) {
+      try {
+        localStorage.removeItem("iphone_link_stream_mode");
+        localStorage.removeItem("handset-stream-mode");
+        localStorage.removeItem("v4-stream-mode");
+      } catch (_) {}
+      window.currentStreamMode = "auto";
+      return "auto";
+    }
+    if (window.currentStreamMode === "auto" || window.currentStreamMode === "airplay") {
+      return window.currentStreamMode;
+    }
+    const saved = String(localStorage.getItem("iphone_link_stream_mode") || "auto").trim().toLowerCase();
+    const resolved = saved === "airplay" ? "airplay" : "auto";
+    window.currentStreamMode = resolved;
+    return resolved;
+  } catch (_) {
+    window.currentStreamMode = "auto";
+    return "auto";
+  }
+})();
+
+function isDdiActiveStage(stage) {
+  return DDI_ACTIVE_STAGES.has(String(stage || "").trim().toLowerCase());
+}
+
+function isAirplayWaitingStage(stage) {
+  return AIRPLAY_ACTIVE_STAGES.has(String(stage || "").trim().toLowerCase());
+}
+
+function resolveConnectingTimeoutMs(screen) {
+  const st = String(screen?.stage || "").trim().toLowerCase();
+  if (isAirplayWaitingStage(st)) return CONNECTING_TIMEOUT_AIRPLAY_MS;
+  return isDdiActiveStage(st) ? CONNECTING_TIMEOUT_DDI_MS : CONNECTING_TIMEOUT_DEFAULT_MS;
+}
+window.resolveConnectingTimeoutMs = resolveConnectingTimeoutMs;
+
+function formatSequoiaConnectingStage(screen) {
+  const st = String(screen?.stage || "").trim().toLowerCase();
+  const lang = (document.documentElement.getAttribute("lang") || localStorage.getItem("iphone_link_lang") || "id").toLowerCase();
+  const isEn = lang.startsWith("en");
+  const detail = String(screen?.stageDetail || screen?.stage_detail || "").trim();
+  if (isAirplayWaitingStage(st) || (screen?.airplayActive && st === "waiting_frame")) {
+    const apName = String(screen?.airplayName || "iPhone Link").trim() || "iPhone Link";
+    if (st === "waiting_frame") {
+      return isEn
+        ? `Connected to '${apName}' · Starting H.264 stream...`
+        : (detail || `iPhone tersambung via AirPlay · Memulai video H.264...`);
+    }
+    if (isEn) {
+      return `Open Control Center on iPhone → Screen Mirroring → select '${apName}'`;
+    }
+    return detail || `Buka Control Center di iPhone → Screen Mirroring → pilih '${apName}'`;
+  }
+  if (!isDdiActiveStage(st)) return "";
+  const pct = Number(screen?.stageProgress || 0);
+  if (isEn) {
+    if (st === "downloading_ddi") {
+      return pct > 0
+        ? `Preparing iPhone (first time) · Downloading DDI (${pct}%)...`
+        : "Preparing iPhone (first time) · Downloading Developer Disk Image...";
+    }
+    if (st === "mounting_ddi") {
+      return "Signing & mounting Developer Disk Image to iPhone...";
+    }
+    return "Reconnecting iPhone display service...";
+  }
+  if (detail) return detail;
+  if (st === "downloading_ddi") {
+    return pct > 0
+      ? `Menyiapkan iPhone (pertama kali) · Mengunduh DDI (${pct}%)...`
+      : "Menyiapkan iPhone (pertama kali) · Mengunduh Developer Disk Image...";
+  }
+  if (st === "mounting_ddi") {
+    return "Menandatangani & memasang Developer Disk Image ke iPhone...";
+  }
+  return "Menyambungkan ulang layanan tampilan iPhone...";
+}
+window.formatSequoiaConnectingStage = formatSequoiaConnectingStage;
+
+function updateStreamModeDescription(mode) {
+  const descEl = document.getElementById("stream-mode-desc");
+  if (!descEl) return;
+  const norm = String(mode || currentStreamMode || "auto").trim().toLowerCase() === "airplay" ? "airplay" : "auto";
+  const lang = (document.documentElement.getAttribute("lang") || localStorage.getItem("iphone_link_lang") || "id").toLowerCase();
+  const isEn = lang.startsWith("en");
+  if (norm === "airplay") {
+    descEl.textContent = isEn
+      ? "AirPlay H.264 Full HD 60 FPS + PC Audio (no touch/keyboard) — works on all iOS versions & PCs without HEVC extension"
+      : "AirPlay H.264 Full HD 60 FPS + Audio PC (tanpa sentuh/keyboard) — kompatibel semua iOS & PC tanpa ekstensi HEVC";
+  } else {
+    descEl.textContent = isEn
+      ? "iOS 27+: HEVC 60 FPS + full control · iOS 17.4–26: Hybrid control (experimental) · iOS ≤17.3: AirPlay H.264"
+      : "iOS 27+: HEVC 60 FPS + kontrol penuh · iOS 17.4–26: Hybrid kontrol (eksperimental) · iOS ≤17.3: AirPlay H.264";
+  }
+}
+window.updateStreamModeDescription = updateStreamModeDescription;
+
+function applyStreamModeChoice(mode, persist = true) {
+  const norm = String(mode || "auto").trim().toLowerCase() === "airplay" ? "airplay" : "auto";
+  currentStreamMode = norm;
+  window.currentStreamMode = norm;
+  if (persist) {
+    try { localStorage.setItem("iphone_link_stream_mode", norm); } catch (_) {}
+  }
+  document.querySelectorAll("[data-stream-mode]").forEach((btn) => {
+    const active = btn.dataset.streamMode === norm;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-checked", active ? "true" : "false");
+  });
+  const hint = document.getElementById("stream-mode-hint");
+  if (hint) {
+    hint.textContent = norm === "airplay" ? "AirPlay H.264" : "Auto";
+  }
+  updateStreamModeDescription(norm);
+}
+window.applyStreamModeChoice = applyStreamModeChoice;
+
+async function switchToAirplayH264Mode() {
+  applyStreamModeChoice("airplay", true);
+  _userStoppedMirrorLatch = false;
+  _userStopCooldownUntil = 0;
+  hasFirstFrameReady = false;
+  sequoiaMirrorSessionActive = false;
+  sequoiaFirstFrameReceived = false;
+  appRoot?.classList.remove("is-stopping-dissolve", "is-awaiting-first-frame", "has-first-frame");
+  openSequoiaConnectOverlay();
+  try {
+    renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport, mode: "airplay" }));
+    watchScreen();
+    load();
+  } catch (error) {
+    closeSequoiaConnectOverlay(true);
+    if (screenNote) {
+      screenNote.textContent = error.message || "Gagal beralih ke Mode AirPlay H.264.";
+      screenNote.className = "warn";
+    }
+  }
+}
+window.switchToAirplayH264Mode = switchToAirplayH264Mode;
 
 function openSequoiaConnectOverlay() {
   if (!sequoiaConnectOverlay) return;
@@ -3659,6 +4475,76 @@ function showScreenEmptyWithSpring(animateSpring) {
   }
 }
 
+let airplayLiveWatcherTimer = 0;
+
+function stopAirplayLiveStateWatcher() {
+  if (airplayLiveWatcherTimer) {
+    window.clearInterval(airplayLiveWatcherTimer);
+    airplayLiveWatcherTimer = 0;
+  }
+}
+
+// Tahap 257 Pilar 2: Lightweight live disconnect detector strictly for active AirPlay H.264 sessions.
+// CoreDevice iOS 27+ sessions never spawn this timer (zero overhead). When iPhone sends full TEARDOWN
+// and backend reverts to phase="starting"/stage="waiting_airplay", this immediately clears the stale
+// canvas, restores the Control Center waiting overlay, and restarts watchScreen() for Reconnect #2!
+function startAirplayLiveStateWatcher() {
+  if (airplayLiveWatcherTimer) return;
+  airplayLiveWatcherTimer = window.setInterval(async () => {
+    try {
+      if (typeof window._isUserStopLatchActive === "function" && window._isUserStopLatchActive()) {
+        stopAirplayLiveStateWatcher();
+        return;
+      }
+      const scr = await getJson("/api/screen");
+      if (!scr || !scr.airplayActive || scr.phase === "idle" || scr.phase === "stopped") {
+        stopAirplayLiveStateWatcher();
+        if (scr) renderScreen(scr);
+        return;
+      }
+      if (scr.phase !== "running") {
+        stopAirplayLiveStateWatcher();
+        renderScreen(scr);
+        if (!screenTimer) {
+          watchScreen();
+        }
+      } else if (lastServerState?.screen) {
+        const prevAct = Boolean(lastServerState.screen.airplayAudioActive);
+        const prevMute = Boolean(lastServerState.screen.airplayAudioMuted);
+        const prevVol = Number(lastServerState.screen.airplayAudioVolume ?? 100);
+        const prevPre = String(lastServerState.screen.airplayAudioBufferPreset || "normal");
+        const prevLs = lastServerState.screen.airplayAudioLipSync !== false;
+        const nextAct = Boolean(scr.airplayAudioActive);
+        const nextMute = Boolean(scr.airplayAudioMuted);
+        const nextVol = Number(scr.airplayAudioVolume ?? prevVol);
+        const nextPre = String(scr.airplayAudioBufferPreset || prevPre);
+        const nextLs = scr.airplayAudioLipSync !== undefined ? Boolean(scr.airplayAudioLipSync) : prevLs;
+        if (prevAct !== nextAct || prevMute !== nextMute || prevVol !== nextVol || prevPre !== nextPre || prevLs !== nextLs) {
+          lastServerState.screen.airplayAudioActive = nextAct;
+          lastServerState.screen.airplayAudioMuted = nextMute;
+          lastServerState.screen.airplayAudioVolume = nextVol;
+          lastServerState.screen.airplayAudioBufferPreset = nextPre;
+          lastServerState.screen.airplayAudioLipSync = nextLs;
+          lastServerState.screen.airplayAudioTargetMs = Number(scr.airplayAudioTargetMs || 0);
+          lastServerState.screen.airplayAudioBufferMs = Number(scr.airplayAudioBufferMs || 0);
+          renderAudio(Object.assign({}, currentAudioState, {
+            airplayActive: true,
+            airplayAudioActive: nextAct,
+            airplayAudioMuted: nextMute,
+            airplayAudioCodec: scr.airplayAudioCodec ?? null,
+            airplayAudioSampleRate: Number(scr.airplayAudioSampleRate || 0),
+            airplayAudioVolume: nextVol,
+            airplayAudioBufferPreset: nextPre,
+            airplayAudioLipSync: nextLs,
+            airplayAudioTargetMs: Number(scr.airplayAudioTargetMs || 0),
+            airplayAudioBufferMs: Number(scr.airplayAudioBufferMs || 0),
+          }));
+        }
+      }
+    } catch (_) {}
+  }, 750);
+}
+
 function renderScreen(screen) {
   if (!screen) return;
   if (
@@ -3673,9 +4559,18 @@ function renderScreen(screen) {
   if (typeof screen.stealth_dim === "boolean") {
     updateStealthDimUI(screen.stealth_dim);
   }
-  const mirroring = screen.phase === "running" || screen.phase === "waiting_airplay";
+  const isAirplayWaiting = Boolean(
+    screen.phase === "waiting_airplay"
+    || (screen.phase === "starting" && (isAirplayWaitingStage(screen.stage) || screen.airplayActive))
+  );
+  const mirroring = screen.phase === "running" && !isAirplayWaiting;
   const appContainer = document.querySelector(".app") || document.body;
   if (mirroring) {
+    if (screen.airplayActive) {
+      startAirplayLiveStateWatcher();
+    } else {
+      stopAirplayLiveStateWatcher();
+    }
     if (sequoiaStopCleanupTimer) {
       clearTimeout(sequoiaStopCleanupTimer);
       sequoiaStopCleanupTimer = 0;
@@ -3764,13 +4659,18 @@ function renderScreen(screen) {
     return;
   }
 
+  stopAirplayLiveStateWatcher();
+
   const wasSessionOrOverlay = Boolean(
     screen._sequoiaSpringEnter
     || sequoiaMirrorSessionActive
     || (sequoiaConnectOverlay && !sequoiaConnectOverlay.hidden)
   );
 
-  appContainer.classList.remove("is-streaming", "is-mirroring-active", "is-awaiting-first-frame", "has-first-frame");
+  appContainer.classList.remove("is-streaming", "is-mirroring-active", "is-mirroring", "is-awaiting-first-frame", "has-first-frame");
+  if (appRoot && appRoot !== appContainer) {
+    appRoot.classList.remove("is-streaming", "is-mirroring-active", "is-mirroring", "is-awaiting-first-frame", "has-first-frame");
+  }
   workspace.classList.remove("is-live");
   phoneShell.classList.remove("live");
   remotePanel.hidden = true;
@@ -3784,27 +4684,64 @@ function renderScreen(screen) {
   }
   kbToggle.hidden = true;
 
+  // Tahap 257 Pilar 2: When returning to waiting_airplay after iPhone TEARDOWN, cancel any dissolve
+  // and immediately halt & hide #screen-view so no stale dead frame ever remains behind the stage!
+  if (isAirplayWaiting) {
+    if (sequoiaStopCleanupTimer) {
+      clearTimeout(sequoiaStopCleanupTimer);
+      sequoiaStopCleanupTimer = 0;
+    }
+    sequoiaDissolveActiveUntil = 0;
+    appContainer.classList.remove("is-stopping-dissolve");
+    appRoot?.classList.remove("is-stopping-dissolve");
+    try {
+      if (screenView && screenView.contentWindow) {
+        screenView.contentWindow.postMessage({ type: "force-stop-stream" }, "*");
+      }
+    } catch (_) {}
+  }
+
   const hasActiveDissolve = Boolean(
-    (appContainer.classList.contains("is-stopping-dissolve") || appRoot?.classList.contains("is-stopping-dissolve"))
+    !isAirplayWaiting
+    && (appContainer.classList.contains("is-stopping-dissolve") || appRoot?.classList.contains("is-stopping-dissolve"))
     && Date.now() < sequoiaDissolveActiveUntil
   );
   if (!hasActiveDissolve) {
     // Sembunyikan iframe
     screenView.hidden = true;
+    screenView.setAttribute("hidden", "");
     screenView.style.display = "none";
     if (screenView.getAttribute("src") !== "about:blank") {
       screenView.src = "about:blank";
     }
   }
+  if (typeof window.__v4SyncMirroringState === "function") {
+    try { window.__v4SyncMirroringState(); } catch (_) {}
+  }
 
   showScreen.textContent = "Start mirroring";
   showScreen.classList.remove("is-disconnect");
-  showScreen.disabled = false;
+  showScreen.disabled = !isSelectedDeviceStartable(lastServerState);
 
-  // Tahap 204 / 208: Mode Windowed & Full Screen sama-sama memakai #sequoia-connect-overlay saat starting
+  // Tahap 204 / 208 / 251 / 256 / 257: Mode Windowed & Full Screen sama-sama memakai #sequoia-connect-overlay saat starting / waiting_airplay
   if (screen.phase === "starting" || screen.phase === "waiting_airplay") {
+    sequoiaMirrorSessionActive = false;
+    sequoiaFirstFrameReceived = false;
     hasFirstFrameReady = false;
     openSequoiaConnectOverlay();
+    if (sequoiaConnectOverlay) {
+      sequoiaConnectOverlay.style.removeProperty("display");
+    }
+    const ddiStageText = formatSequoiaConnectingStage(screen);
+    if (sequoiaConnectKicker) {
+      sequoiaConnectKicker.textContent = ddiStageText || t("connectingTo");
+    }
+    if (launchpadStageText && ddiStageText) {
+      launchpadStageText.textContent = ddiStageText;
+    }
+    if (isAirplayWaiting && typeof setPill === "function" && pillConnection && !isLockedScreen) {
+      setPill(pillConnection, "AirPlay Ready", "ok");
+    }
     setLaunchpadStartConnecting(false);
     if (screenNote) {
       screenNote.textContent = "";
@@ -3814,6 +4751,9 @@ function renderScreen(screen) {
     showScreen.textContent = "Connecting…";
     restartScreen.disabled = true;
     if (screenErrorBanner) screenErrorBanner.style.display = "none";
+    if (!screenTimer && (screen.airplayActive || isAirplayWaitingStage(screen.stage))) {
+      watchScreen();
+    }
     return;
   } else {
     const isStoppedOrIdle = !screen.phase || screen.phase === "idle" || screen.phase === "stopped";
@@ -3891,8 +4831,16 @@ async function showPhone() {
     launchpadError.textContent = "";
   }
 
-  // Tahap 140: Live pre-check for USB connection when transport === "usb"
-  if (transport === "usb") {
+  // Tahap 255 Pilar 1: Single source of truth between active UI pill & POST /api/screen payload.
+  const activeStreamPill = document.querySelector("#segmented-stream-mode [data-stream-mode].is-active");
+  const effectiveStreamMode = activeStreamPill
+    ? (activeStreamPill.dataset.streamMode === "airplay" ? "airplay" : "auto")
+    : ((window.currentStreamMode === "airplay" || currentStreamMode === "airplay") ? "airplay" : "auto");
+  currentStreamMode = effectiveStreamMode;
+  window.currentStreamMode = effectiveStreamMode;
+
+  // Tahap 140: Live pre-check for USB connection when transport === "usb" (bypassed when explicit AirPlay H.264 mode selected)
+  if (transport === "usb" && effectiveStreamMode !== "airplay") {
     try {
       const liveStatus = await getJson("/api/status");
       const hasCable = (liveStatus.devices || []).some(d => !d.wifiOnly && String(d.connection || "").toUpperCase() === "USB");
@@ -3924,7 +4872,7 @@ async function showPhone() {
   openSequoiaConnectOverlay();
 
   try {
-    renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport }));
+    renderScreen(await postJson("/api/screen", { udid: selectedUdid, transport, mode: effectiveStreamMode }));
     watchScreen();
     load();
   } catch (error) {
@@ -3966,6 +4914,7 @@ async function stopMirror() {
   showScreen.textContent = "Disconnecting…";
   window.clearInterval(screenTimer);
   screenTimer = 0;
+  stopAirplayLiveStateWatcher();
   clearSequoiaSafetyTimer();
   clearSequoiaDissolveTimers();
   if (_sequoiaFallbackTimer) {
@@ -4011,14 +4960,31 @@ async function stopMirror() {
     launchpadError.textContent = "";
   }
 
-  // Tahap 206 / 207 / 215: True Cross-Dissolve seketika pada t=0ms + latch idle (0ms layar hitam, zero auto-reconnect)
+  // Tahap 206 / 207 / 215 / 249: True Cross-Dissolve seketika pada t=0ms + latch idle (0ms layar hitam, zero auto-reconnect, zero iPhone Terputus flash)
   sequoiaMirrorSessionActive = false;
   sequoiaFirstFrameReceived = false;
   hasFirstFrameReady = false;
   appRoot?.classList.remove("is-awaiting-first-frame", "has-first-frame");
   setLaunchpadStartConnecting(false);
   closeSequoiaConnectOverlay(hasLiveIframe);
-  if (typeof setPill === "function" && pillConnection) {
+  if (lastServerState && typeof lastServerState === "object") {
+    const stoppedWifi = transport === "wifi" || lastServerState.screen?.transport === "wifi";
+    if (stoppedWifi && Array.isArray(lastServerState.devices)) {
+      const targetU = selectedUdid || lastServerState.selectedUdid || lastServerState.udid || "";
+      lastServerState.devices = lastServerState.devices.map((d) => {
+        if (d && (!targetU || d.udid === targetU)) {
+          return Object.assign({}, d, { wifiOnline: true, reachable: true });
+        }
+        return d;
+      });
+      if (lastServerState.wifi && typeof lastServerState.wifi === "object") {
+        lastServerState.wifi = Object.assign({}, lastServerState.wifi, { reachable: true });
+      }
+    }
+    lastServerState = Object.assign({}, lastServerState, { screen: { phase: "idle" } });
+    updateLaunchpadState(lastServerState);
+    renderPills(lastServerState);
+  } else if (typeof setPill === "function" && pillConnection) {
     setPill(pillConnection, t("ready") || "Ready", "ok");
   }
 
@@ -4066,6 +5032,8 @@ async function stopMirror() {
 
 function watchScreen() {
   window.clearInterval(screenTimer);
+  _connectingWatchStartedAt = Date.now();
+  _connectingLastStageKey = "";
   screenTimer = window.setInterval(async () => {
     try {
       const screen = await getJson("/api/screen");
@@ -4074,9 +5042,23 @@ function watchScreen() {
         screenTimer = 0;
         return;
       }
+      if (screen.phase === "starting") {
+        const stageKey = `${screen.stage || ""}:${screen.stageProgress || 0}`;
+        if (stageKey !== _connectingLastStageKey) {
+          _connectingLastStageKey = stageKey;
+          if (isDdiActiveStage(screen.stage)) {
+            _connectingWatchStartedAt = Date.now();
+          }
+        }
+        const maxWaitMs = resolveConnectingTimeoutMs(screen);
+        if (_connectingWatchStartedAt > 0 && (Date.now() - _connectingWatchStartedAt) > maxWaitMs && !isDdiActiveStage(screen.stage)) {
+          // Allow backend to finish naturally; do not kill active DDI download/mount stages
+        }
+      }
       renderScreen(screen);
       if (screen.phase !== "starting" && screen.phase !== "waiting_airplay") {
         window.clearInterval(screenTimer);
+        screenTimer = 0;
         const lastErr = screen.error;
         await load();
         if (lastErr) {
@@ -4098,6 +5080,7 @@ function watchScreen() {
         screenErrorBanner.style.display = "block";
       }
       window.clearInterval(screenTimer);
+      screenTimer = 0;
     }
   }, 180);
 }
@@ -4541,7 +5524,12 @@ function handleDeviceDimensions(width, height, meta) {
 }
 
 window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "mirror-first-frame") {
+    appRoot?.classList.add("has-first-frame");
+    completeSequoiaHandshake(null);
+  }
   if (e.data && e.data.type === "mirror-first-frame-ready") {
+    appRoot?.classList.add("has-first-frame");
     completeSequoiaHandshake(e.data.thumbDataUrl || null);
   }
   if (e.data && e.data.type === "video-dimensions") {
@@ -4558,6 +5546,9 @@ window.addEventListener("message", (e) => {
   }
   if (e.data && e.data.type === "trigger-clear-copy-cache") {
     window.triggerClearCopyCacheWithFeedback();
+  }
+  if (e.data && e.data.type === "switch-to-airplay-h264") {
+    switchToAirplayH264Mode();
   }
   if (e.data && e.data.type === "auto-rotate-request" && autoRotateEnabled) {
     const targetLandscape = Boolean(e.data.landscape);
@@ -4585,6 +5576,14 @@ window.addEventListener("resize", () => {
 // Tahap 63: Unified Bulletproof Binding for Display Fit, Auto-Rotate & Crop Controls
 function bindDisplayFitAndAutoRotateControls() {
   initAutoRotateControls();
+
+  document.querySelectorAll("[data-stream-mode]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      applyStreamModeChoice(btn.dataset.streamMode || "auto", true);
+    };
+  });
+  applyStreamModeChoice(currentStreamMode, false);
 
   document.querySelectorAll("[data-fit-choice]").forEach((btn) => {
     btn.onclick = (e) => {
@@ -5213,7 +6212,16 @@ function bootstrapApp() {
   try { applyCrop(currentCrop, true); } catch (e) { console.error("applyCrop error:", e); }
   try { applyTrackpadSpeed(currentTrackpadSpeed, true); } catch (e) { console.error("applyTrackpadSpeed error:", e); }
   try { applyKeyboardSettings(currentKeyboardSettings, true); } catch (e) { console.error("applyKeyboardSettings error:", e); }
-  try { setTransport(transport, false); } catch (e) { console.error("setTransport error:", e); }
+  try {
+    const initTr = resolveInitialTransport();
+    hasSavedExplicitTransport = Boolean(
+      window.__V4_INITIAL_SETTINGS__?.hasUserSettingsFile
+      && _normalizeTransportPref(window.__V4_INITIAL_SETTINGS__?.transport)
+    );
+    _hasExplicitTransportPref = initTr.explicit;
+    _syncTransportTabDom(initTr.value);
+    if (transport === "wifi") syncLaunchpadSwitchWifiButton(false, false, false, currentLang === "en");
+  } catch (e) { console.error("initTransport sync error:", e); }
   try { startPureJsScreenParallax(); } catch (e) { console.error("startPureJsScreenParallax error:", e); }
   try { startWallpaperSigWatcher(); } catch (e) { console.error("startWallpaperSigWatcher error:", e); }
   try { fetchUserSettings(); } catch (e) { console.error("fetchUserSettings error:", e); }

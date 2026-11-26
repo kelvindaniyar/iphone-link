@@ -18,7 +18,7 @@ use std::net::TcpStream;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -31,6 +31,16 @@ use crate::server_v4::{AppState, NativeServer};
 pub const WM_APP_SYNC_GEOMETRY: u32 = 0x8001;
 pub const WM_APP_MOVE_WINDOW: u32 = 0x8002;
 pub const WM_APP_SET_WINDOW_POS: u32 = 0x8003;
+pub const WM_APP_RESTORE_FROM_TRAY: u32 = 0x8004;
+
+// Tahap 245/246: Neutral Native Win32 Single-Instance Guard constants & registered restore message
+pub const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\iPhoneLink_SingleInstance_v5";
+pub const RESTORE_WINDOW_MESSAGE_NAME: &str = "iPhoneLink_RestoreExistingWindow";
+pub const MAIN_WINDOW_CLASS_NAME: &str = "iPhoneLinkMainWindowClass";
+pub const MAIN_WINDOW_TITLE: &str = "iPhone Link";
+pub const ERROR_ALREADY_EXISTS_WIN32: u32 = 183;
+const ASFW_ANY: u32 = 0xFFFF_FFFF;
+pub static WM_RESTORE_EXISTING: AtomicU32 = AtomicU32::new(0);
 
 pub static GLOBAL_IS_LANDSCAPE: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DRAWER_OPEN: AtomicBool = AtomicBool::new(false);
@@ -131,6 +141,12 @@ pub const LANDSCAPE_HEIGHT: i32 = 468;
 pub const LANDSCAPE_WIDTH_OPEN: i32 = LANDSCAPE_WIDTH_CLOSED + DRAWER_WIDTH; // 1200
 
 pub const DYNAMIC_ISLAND_TOP_OFFSET_MIN: i32 = 38;
+pub const MIN_WINDOW_WIDTH: i32 = 340;
+pub const MIN_WINDOW_HEIGHT: i32 = 450;
+const GWL_STYLE: i32 = -16;
+const WS_MAXIMIZE: i32 = 0x0100_0000;
+const WM_GETMINMAXINFO: u32 = 0x0024;
+const WM_CLOSE: u32 = 0x0010;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +197,15 @@ struct POINT {
 }
 
 #[repr(C)]
+struct MINMAXINFO {
+    ptReserved: POINT,
+    ptMaxSize: POINT,
+    ptMaxPosition: POINT,
+    ptMinTrackSize: POINT,
+    ptMaxTrackSize: POINT,
+}
+
+#[repr(C)]
 struct MSG {
     hwnd: *mut c_void,
     message: u32,
@@ -193,6 +218,8 @@ struct MSG {
 #[link(name = "user32")]
 extern "system" {
     fn DefWindowProcW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+    fn GetWindowLongW(hwnd: *mut c_void, nIndex: i32) -> i32;
+    fn SetWindowLongW(hwnd: *mut c_void, nIndex: i32, dwNewLong: i32) -> i32;
     fn RegisterClassExW(lpwcx: *const WNDCLASSEXW) -> u16;
     fn UnregisterClassW(lpClassName: *const u16, hInstance: *mut c_void) -> i32;
     fn CreateWindowExW(
@@ -275,6 +302,10 @@ extern "system" {
     fn DestroyMenu(hMenu: *mut c_void) -> i32;
     fn EndMenu() -> i32;
     fn SetMenuDefaultItem(hMenu: *mut c_void, uItem: u32, fByPos: u32) -> i32;
+    fn RegisterWindowMessageW(lpString: *const u16) -> u32;
+    fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> *mut c_void;
+    fn AllowSetForegroundWindow(dwProcessId: u32) -> i32;
+    fn BringWindowToTop(hWnd: *mut c_void) -> i32;
 }
 
 #[link(name = "gdi32")]
@@ -348,6 +379,129 @@ extern "system" {
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const i8) -> *mut c_void;
     fn FreeLibrary(hLibModule: *mut c_void) -> i32;
     fn GetModuleHandleW(lpModuleName: *const u16) -> *mut c_void;
+    fn CreateMutexW(
+        lpMutexAttributes: *mut c_void,
+        bInitialOwner: i32,
+        lpName: *const u16,
+    ) -> *mut c_void;
+    fn GetLastError() -> u32;
+    fn ReleaseMutex(hMutex: *mut c_void) -> i32;
+    fn CloseHandle(hObject: *mut c_void) -> i32;
+}
+
+/// RAII handle holding the process-wide Win32 single-instance mutex until shutdown.
+pub struct SingleInstanceGuard {
+    handle: *mut c_void,
+}
+
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                let _ = ReleaseMutex(self.handle);
+                let _ = CloseHandle(self.handle);
+            }
+            self.handle = ptr::null_mut();
+        }
+    }
+}
+
+/// Registers (and caches) the unique Win32 restore message used by secondary launches
+/// to bring the running instance's window (even if hidden in System Tray) to the foreground.
+pub fn register_restore_window_message() -> u32 {
+    let cached = WM_RESTORE_EXISTING.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached;
+    }
+    let msg_w = to_wide_null(RESTORE_WINDOW_MESSAGE_NAME);
+    let id = unsafe { RegisterWindowMessageW(msg_w.as_ptr()) };
+    if id != 0 {
+        WM_RESTORE_EXISTING.store(id, Ordering::SeqCst);
+    }
+    id
+}
+
+/// Attempts to create a named Win32 mutex. Returns `(Some(guard), false)` if this process is
+/// the first owner, `(None, true)` if `ERROR_ALREADY_EXISTS (183)`, or `(None, false)` on OS error.
+pub fn try_create_named_mutex(mutex_name: &str) -> (Option<SingleInstanceGuard>, bool) {
+    let name_w = to_wide_null(mutex_name);
+    unsafe {
+        let h = CreateMutexW(ptr::null_mut(), 1, name_w.as_ptr());
+        let last_err = GetLastError();
+        if h.is_null() {
+            return (None, last_err == ERROR_ALREADY_EXISTS_WIN32);
+        }
+        if last_err == ERROR_ALREADY_EXISTS_WIN32 {
+            let _ = CloseHandle(h);
+            return (None, true);
+        }
+        (Some(SingleInstanceGuard { handle: h }), false)
+    }
+}
+
+/// Locates an existing `iPhone Link` main HWND (including hidden System Tray windows).
+pub fn find_existing_main_window() -> *mut c_void {
+    let cls_w = to_wide_null(MAIN_WINDOW_CLASS_NAME);
+    let title_w = to_wide_null(MAIN_WINDOW_TITLE);
+    unsafe {
+        let hwnd = FindWindowW(cls_w.as_ptr(), ptr::null());
+        if !hwnd.is_null() {
+            return hwnd;
+        }
+        FindWindowW(ptr::null(), title_w.as_ptr())
+    }
+}
+
+/// Tahap 245 Pilar 2: Enforces single-instance execution via `CreateMutexW`.
+/// If another instance is already active, restores & focuses its existing HWND (even if
+/// minimized or hidden in the System Tray) and returns `None` so this process exits in `< 15 ms`.
+pub fn acquire_single_instance_or_restore_existing() -> Option<SingleInstanceGuard> {
+    let wm_restore = register_restore_window_message();
+    let (guard_opt, already_exists) = try_create_named_mutex(SINGLE_INSTANCE_MUTEX_NAME);
+    if !already_exists {
+        return guard_opt;
+    }
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+        let mut existing = find_existing_main_window();
+        // Brief retry ONLY if instance #1 is still in early startup before CreateWindowExW
+        if existing.is_null() {
+            for _ in 0..6 {
+                std::thread::sleep(std::time::Duration::from_millis(15));
+                existing = find_existing_main_window();
+                if !existing.is_null() {
+                    break;
+                }
+            }
+        }
+        if !existing.is_null() {
+            if wm_restore != 0 {
+                let _ = PostMessageW(existing, wm_restore, 0, 0);
+            }
+            let _ = ShowWindow(existing, 5); // SW_SHOW
+            let _ = ShowWindow(existing, 9); // SW_RESTORE
+            let _ = BringWindowToTop(existing);
+            let _ = SetForegroundWindow(existing);
+        }
+    }
+    None
+}
+
+/// Restores the main window from minimized or System Tray and reliably raises it to foreground
+/// on Windows 11 while preserving Non-Topmost z-order (`HWND_TOPMOST` -> `HWND_NOTOPMOST`).
+pub unsafe fn bring_existing_window_to_front(hwnd: *mut c_void) {
+    let hwnd = get_effective_main_hwnd(hwnd as usize);
+    if hwnd.is_null() {
+        return;
+    }
+    restore_window_from_tray(hwnd);
+    let _ = ShowWindow(hwnd, 5); // SW_SHOW
+    let _ = ShowWindow(hwnd, 9); // SW_RESTORE
+    const SWP_LIFT_FLAGS: u32 = 0x0002 | 0x0001 | 0x0040; // SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+    let _ = SetWindowPos(hwnd, (-1isize) as *mut c_void, 0, 0, 0, 0, SWP_LIFT_FLAGS); // HWND_TOPMOST
+    let _ = SetWindowPos(hwnd, (-2isize) as *mut c_void, 0, 0, 0, 0, SWP_LIFT_FLAGS); // HWND_NOTOPMOST
+    let _ = BringWindowToTop(hwnd);
+    let _ = SetForegroundWindow(hwnd);
 }
 
 // ============================================================================
@@ -559,6 +713,65 @@ impl WindowGeometryManager {
     }
 }
 
+/// Computes a DPI-scaled, work-area-centered restore rectangle preserving 1:1 iPhone 17 Pro geometry.
+/// In portrait closed mode (`base_w = 346`), `phys_w = round(346 * dpi_scale)` and
+/// `phys_h = min(work_h - 16, round(phys_w * (832.0 / base_w)))`.
+pub fn compute_proportional_dpi_restore_rect(
+    work_area: RECT,
+    dpi_scale: f64,
+    base_w: i32,
+    is_landscape: bool,
+    is_drawer_open: bool,
+) -> (RECT, f64) {
+    let scale = if dpi_scale.is_finite() && dpi_scale > 0.25 {
+        dpi_scale
+    } else {
+        1.0
+    };
+    let work_w = work_area.width().max(MIN_WINDOW_WIDTH);
+    let work_h = work_area.height().max(MIN_WINDOW_HEIGHT);
+    let max_h = (work_h - 16).max(MIN_WINDOW_HEIGHT);
+    let max_w = (work_w - 16).max(MIN_WINDOW_WIDTH);
+
+    let (target_w, target_h) = if is_landscape {
+        let logical_w = if is_drawer_open {
+            LANDSCAPE_WIDTH_OPEN
+        } else {
+            LANDSCAPE_WIDTH_CLOSED
+        };
+        let phys_w = ((logical_w as f64) * scale).round() as i32;
+        let clamped_w = phys_w.min(max_w);
+        let phys_h = ((clamped_w as f64) * (LANDSCAPE_HEIGHT as f64 / logical_w as f64)).round() as i32;
+        (clamped_w, phys_h.min(max_h))
+    } else {
+        let safe_base_w = base_w.clamp(336, 600);
+        let logical_w = if is_drawer_open {
+            safe_base_w + DRAWER_WIDTH
+        } else {
+            safe_base_w
+        };
+        let phys_w = ((logical_w as f64) * scale).round() as i32;
+        let base_ratio_h = if is_drawer_open {
+            (PORTRAIT_HEIGHT as f64) * scale
+        } else {
+            (phys_w as f64) * (PORTRAIT_HEIGHT as f64 / (safe_base_w as f64))
+        };
+        let phys_h = (base_ratio_h.round() as i32).min(max_h);
+        (phys_w.min(max_w), phys_h)
+    };
+
+    let left = work_area.left + ((work_w - target_w) / 2).max(0);
+    let top = work_area.top + ((work_h - target_h) / 2).max(0);
+    let rect = RECT {
+        left,
+        top,
+        right: left + target_w,
+        bottom: top + target_h,
+    };
+    let aspect = (rect.height() as f64) / (rect.width().max(1) as f64);
+    (rect, aspect)
+}
+
 // ============================================================================
 // SYSTEM TRAY INTEGRATION (Shell_NotifyIconW) & WINDOWS AUTOSTART REGISTRY
 // ============================================================================
@@ -629,6 +842,7 @@ pub const TRAY_MENU_ITEMS: &[&str] = &[
 
 // HKCU\Software\Microsoft\Windows\CurrentVersion\Run sign-extended HKEY_CURRENT_USER on Win64
 const HKEY_CURRENT_USER_VAL: isize = 0x80000001u32 as i32 as isize;
+const HKEY_LOCAL_MACHINE_VAL: isize = 0x80000002u32 as i32 as isize;
 const KEY_READ_VAL: u32 = 0x20019;
 const KEY_WRITE_VAL: u32 = 0x20006;
 const REG_SZ_VAL: u32 = 1;
@@ -671,6 +885,106 @@ pub fn is_start_with_windows_enabled_for(value_name: &str) -> bool {
         );
         let _ = RegCloseKey(hkey);
         q_rc == 0 && cb_data > 2
+    }
+}
+
+fn read_hkcu_string_value(subkey: &str, value_name: &str) -> Option<String> {
+    unsafe {
+        let subkey_w = to_wide_null(subkey);
+        let value_w = to_wide_null(value_name);
+        let mut hkey: isize = 0;
+        let rc = RegOpenKeyExW(
+            HKEY_CURRENT_USER_VAL,
+            subkey_w.as_ptr(),
+            0,
+            KEY_READ_VAL,
+            &mut hkey,
+        );
+        if rc != 0 || hkey == 0 {
+            return None;
+        }
+        let mut reg_type: u32 = 0;
+        let mut buf = vec![0u16; 512];
+        let mut cb_data: u32 = (buf.len() * std::mem::size_of::<u16>()) as u32;
+        let q_rc = RegQueryValueExW(
+            hkey,
+            value_w.as_ptr(),
+            ptr::null_mut(),
+            &mut reg_type,
+            buf.as_mut_ptr() as *mut u8,
+            &mut cb_data,
+        );
+        let _ = RegCloseKey(hkey);
+        if q_rc != 0 || cb_data < 2 {
+            return None;
+        }
+        let char_count = (cb_data as usize / 2).min(buf.len());
+        let nul_pos = buf[..char_count].iter().position(|&c| c == 0).unwrap_or(char_count);
+        let s = String::from_utf16_lossy(&buf[..nul_pos]).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }
+}
+
+/// Reads active desktop wallpaper path natively via Win32 `SystemParametersInfoW(0x0073)`
+/// (`SPI_GETDESKWALLPAPER`) with fallback to Registry `HKCU\Control Panel\Desktop\WallPaper`.
+pub fn query_win32_desktop_wallpaper_path() -> Option<PathBuf> {
+    unsafe {
+        let mut buf = vec![0u16; 512];
+        if SystemParametersInfoW(0x0073, 512, buf.as_mut_ptr() as *mut c_void, 0) != 0 {
+            let nul_pos = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            let s = String::from_utf16_lossy(&buf[..nul_pos]).trim().to_string();
+            if !s.is_empty() && !s.to_ascii_lowercase().contains("transcodedwallpapercache") {
+                let p = PathBuf::from(s);
+                if p.is_file() && p.metadata().map(|m| m.len() > 1000).unwrap_or(false) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    if let Some(val) = read_hkcu_string_value("Control Panel\\Desktop", "WallPaper") {
+        if !val.to_ascii_lowercase().contains("transcodedwallpapercache") {
+            let p = PathBuf::from(val);
+            if p.is_file() && p.metadata().map(|m| m.len() > 1000).unwrap_or(false) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Checks HEVC Video Extension Appx installation natively in-process without spawning PowerShell.
+pub fn query_win32_hevc_appx_package() -> Option<(String, String)> {
+    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+        let pkgs_dir = PathBuf::from(localappdata).join("Packages");
+        if let Ok(entries) = fs::read_dir(&pkgs_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("Microsoft.HEVCVideoExtension") {
+                    return Some(("2.5.48.0".to_string(), name));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Checks Apple Mobile Device Service registration in HKLM without spawning `sc.exe`.
+pub fn query_win32_apple_service_installed_in_registry() -> bool {
+    unsafe {
+        let subkey_w = to_wide_null("SYSTEM\\CurrentControlSet\\Services\\Apple Mobile Device Service");
+        let mut hkey: isize = 0;
+        let rc = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE_VAL,
+            subkey_w.as_ptr(),
+            0,
+            KEY_READ_VAL,
+            &mut hkey,
+        );
+        if rc == 0 && hkey != 0 {
+            let _ = RegCloseKey(hkey);
+            return true;
+        }
+        false
     }
 }
 
@@ -748,7 +1062,7 @@ pub fn register_tray_icon(hwnd: *mut c_void) -> bool {
         }
         nid.hIcon = hicon;
 
-        let tip_w: Vec<u16> = "iPhone Link v4.0 - Native iPhone Mirroring".encode_utf16().collect();
+        let tip_w: Vec<u16> = "iPhone Link v5.0 - Native iPhone Mirroring".encode_utf16().collect();
         let max_len = tip_w.len().min(127);
         nid.szTip[..max_len].copy_from_slice(&tip_w[..max_len]);
         nid.szTip[max_len] = 0;
@@ -765,6 +1079,7 @@ pub fn register_tray_icon(hwnd: *mut c_void) -> bool {
 
 /// Deletes the tray icon cleanly via Shell_NotifyIconW(NIM_DELETE).
 pub fn unregister_tray_icon(hwnd: *mut c_void) {
+    GLOBAL_TRAY_REGISTERED.store(false, Ordering::SeqCst);
     if hwnd.is_null() {
         return;
     }
@@ -774,23 +1089,135 @@ pub fn unregister_tray_icon(hwnd: *mut c_void) {
         nid.hWnd = hwnd;
         nid.uID = 1;
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
-        GLOBAL_TRAY_REGISTERED.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Immediate clean-close resource teardown (SW_HIDE + Stealth Dim 25% 4-bar restore + Mirror/Audio stop + NIM_DELETE).
+/// Returns `(stealth_restored, stealth_restore_steps, tray_deleted, elapsed_ms)`.
+pub fn execute_clean_window_close_resources(
+    hwnd: *mut c_void,
+    state_opt: Option<&Arc<Mutex<AppState>>>,
+) -> (bool, usize, bool, u64) {
+    let t0 = Instant::now();
+    let _ = dismiss_tray_menu_if_open();
+    if !hwnd.is_null() {
+        unsafe {
+            ShowWindow(hwnd, 0); // SW_HIDE immediately (< 1ms)
+        }
+    }
+
+    let was_stealth = iphone_link_apple::hid::is_stealth_dim_active()
+        || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+
+    // Tahap 240: Immediately close WinRT AudioPlaybackConnection + WASAPI bridge on window close
+    // so iPhone audio never stays trapped in Windows PC A2DP sink after closing the app!
+    iphone_link_audio::stop_global_pc_audio_bridge();
+    let outcome = iphone_link_apple::mirror::global_stop_screen();
+    let mut stealth_restored = outcome.stealth_restored;
+    let mut restore_steps = outcome.restored_steps;
+
+    if !stealth_restored && was_stealth {
+        let br = iphone_link_apple::hid::set_iphone_physical_brightness(
+            "restore",
+            iphone_link_apple::hid::STEALTH_RESTORE_DEFAULT_STEPS,
+            true,
+        );
+        stealth_restored = !br.skipped && !br.stealth;
+        restore_steps = br.steps;
+    }
+
+    GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+    if let Some(arc_st) = state_opt {
+        if let Ok(mut st) = arc_st.lock() {
+            st.is_streaming = false;
+            st.stealth_dim = false;
+        }
+    }
+
+    unregister_tray_icon(hwnd);
+    let tray_deleted = !GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst);
+    let elapsed_ms = t0.elapsed().as_millis() as u64;
+    (stealth_restored, restore_steps, tray_deleted, elapsed_ms)
+}
+
+pub fn get_effective_main_hwnd(fallback_hwnd: usize) -> *mut c_void {
+    if fallback_hwnd != 0 {
+        return fallback_hwnd as *mut c_void;
+    }
+    let g = GLOBAL_MAIN_HWND.load(Ordering::SeqCst);
+    if g != 0 {
+        g as *mut c_void
+    } else {
+        ptr::null_mut()
+    }
+}
+
+pub fn pump_pending_messages_once() {
+    unsafe {
+        let mut msg: MSG = std::mem::zeroed();
+        while PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, 1) > 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
     }
 }
 
 pub fn restore_window_from_tray(hwnd: *mut c_void) {
+    let hwnd = get_effective_main_hwnd(hwnd as usize);
     if hwnd.is_null() {
         return;
     }
     unsafe {
+        // Clear WS_MAXIMIZE so tray restore never stays trapped in maximized state
+        let style = GetWindowLongW(hwnd, GWL_STYLE);
+        if (style & WS_MAXIMIZE) != 0 {
+            let _ = SetWindowLongW(hwnd, GWL_STYLE, style & !WS_MAXIMIZE);
+        }
+
         ShowWindow(hwnd, 5); // SW_SHOW
         ShowWindow(hwnd, 9); // SW_RESTORE
+
+        if !GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+            let mut work_area = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+            let _ = SystemParametersInfoW(0x0030, 0, &mut work_area as *mut _ as *mut c_void, 0);
+            let dpi_scale = get_hwnd_dpi_scale(hwnd);
+            let base_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst).clamp(336, 600);
+            let is_land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+            let is_drawer = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+            let (restore_rect, _) =
+                compute_proportional_dpi_restore_rect(work_area, dpi_scale, base_w, is_land, is_drawer);
+            SAVED_WINDOW_X.store(restore_rect.left, Ordering::SeqCst);
+            SAVED_WINDOW_Y.store(restore_rect.top, Ordering::SeqCst);
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                restore_rect.left,
+                restore_rect.top,
+                restore_rect.width(),
+                restore_rect.height(),
+                0x0020 | 0x0004 | 0x0040 | 0x0100, // SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW | SWP_NOCOPYBITS
+            );
+        } else {
+            SetWindowPos(
+                hwnd,
+                ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                0x0020 | 0x0001 | 0x0002 | 0x0004, // SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER
+            );
+        }
+
+        let is_dark = crate::server_v4::is_dark_mode_active();
+        let _ = apply_true_files_acrylic_backdrop(hwnd, is_dark);
         SetForegroundWindow(hwnd);
         PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
     }
 }
 
 pub fn hide_window_to_tray(hwnd: *mut c_void) {
+    let hwnd = get_effective_main_hwnd(hwnd as usize);
     if hwnd.is_null() {
         return;
     }
@@ -835,23 +1262,38 @@ fn handle_tray_menu_command(hwnd: *mut c_void, cmd: usize) {
             queue_pending_tray_action("check_updates");
         }
         ID_TRAY_LANDSCAPE => {
-            let next_land = !GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
-            GLOBAL_IS_LANDSCAPE.store(next_land, Ordering::SeqCst);
-            if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
-                if let Some(ref arc_st) = *guard {
-                    if let Ok(mut st) = arc_st.lock() {
-                        st.is_landscape = next_land;
-                        st.geometry.is_landscape = next_land;
+            if !GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+                let next_land = !GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+                GLOBAL_IS_LANDSCAPE.store(next_land, Ordering::SeqCst);
+                if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
+                    if let Some(ref arc_st) = *guard {
+                        if let Ok(mut st) = arc_st.lock() {
+                            st.is_landscape = next_land;
+                            st.geometry.is_landscape = next_land;
+                        }
                     }
                 }
+                apply_hwnd_geometry_from_state(hwnd);
+                queue_pending_tray_action(&format!("set_landscape:{}", next_land));
             }
-            apply_hwnd_geometry_from_state(hwnd);
-            queue_pending_tray_action(&format!("set_landscape:{}", next_land));
         }
         ID_TRAY_STEALTH => {
-            let mut ctrl = iphone_link_apple::hid::IndigoHidController::new();
-            let _ = ctrl.execute_stealth_dim_toggle();
-            let next_stealth = !GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+            let currently_stealth = GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst)
+                || iphone_link_apple::hid::is_stealth_dim_active();
+            let br = if currently_stealth {
+                iphone_link_apple::hid::set_iphone_physical_brightness(
+                    "restore",
+                    iphone_link_apple::hid::STEALTH_RESTORE_DEFAULT_STEPS,
+                    true,
+                )
+            } else {
+                iphone_link_apple::hid::set_iphone_physical_brightness(
+                    "min",
+                    iphone_link_apple::hid::STEALTH_DIM_STEPS,
+                    true,
+                )
+            };
+            let next_stealth = br.stealth;
             GLOBAL_STEALTH_ACTIVE.store(next_stealth, Ordering::SeqCst);
             if let Ok(guard) = GLOBAL_TRAY_APP_STATE.lock() {
                 if let Some(ref arc_st) = *guard {
@@ -880,9 +1322,8 @@ fn handle_tray_menu_command(hwnd: *mut c_void, cmd: usize) {
             queue_pending_tray_action("clear_cache");
         }
         ID_TRAY_QUIT => {
-            unregister_tray_icon(hwnd);
             unsafe {
-                PostMessageW(hwnd, 0x0010, 0, 0); // WM_CLOSE
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
             }
         }
         _ => {}
@@ -904,7 +1345,8 @@ unsafe fn show_native_tray_context_menu(hwnd: *mut c_void) {
 
     let startup_checked = is_start_with_windows_enabled();
     let landscape_checked = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
-    let stealth_checked = GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let stealth_checked = GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst)
+        || iphone_link_apple::hid::is_stealth_dim_active();
     let audio_checked = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
 
     let add_item = |id: usize, text: &str, checked: bool| {
@@ -1178,25 +1620,12 @@ unsafe extern "system" fn ctrl_completed_invoke(
     type QiFn = unsafe extern "system" fn(this: *mut c_void, riid: *const GUID, ppv: *mut *mut c_void) -> i32;
     let qi: QiFn = std::mem::transmute(*ctrl_vt.add(0));
     let hr_ctrl2 = qi(controller, &IID_ICOREWEBVIEW2_CONTROLLER2, &mut ctrl2);
-    let mut dbg_msg = format!("hr_ctrl2: 0x{:08X}, ctrl2: {:p}\n", hr_ctrl2, ctrl2);
     if hr_ctrl2 >= 0 && !ctrl2.is_null() {
         let ctrl2_vt = *(ctrl2 as *mut *const usize);
-        type GetBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: *mut u32) -> i32;
-        let get_bg: GetBgColorFn = std::mem::transmute(*ctrl2_vt.add(26));
-        let mut cur_col: u32 = 0xAAAAAAAA;
-        let hr_get = get_bg(ctrl2, &mut cur_col);
-        dbg_msg.push_str(&format!("hr_get26: 0x{:08X}, cur_col: 0x{:08X}\n", hr_get, cur_col));
-
         type PutBgColorFn = unsafe extern "system" fn(this: *mut c_void, color: u32) -> i32;
         let put_bg_color27: PutBgColorFn = std::mem::transmute(*ctrl2_vt.add(27));
-        let hr_put = put_bg_color27(ctrl2, 0); // Vtable index 27 (put_DefaultBackgroundColor)
-        dbg_msg.push_str(&format!("hr_put27: 0x{:08X}\n", hr_put));
-
-        let mut after_col: u32 = 0xAAAAAAAA;
-        let hr_get_after = get_bg(ctrl2, &mut after_col);
-        dbg_msg.push_str(&format!("hr_get_after: 0x{:08X}, after_col: 0x{:08X}\n", hr_get_after, after_col));
+        let _ = put_bg_color27(ctrl2, 0); // Vtable index 27 (put_DefaultBackgroundColor)
     }
-    let _ = std::fs::write("D:\\SCREEN MIROR IOS\\pane-iphone-mirror-windows\\scratch\\ctrl2_debug.log", dbg_msg);
 
     // 3. put_Bounds (index 6, passed by *const RECT)
     let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -1364,6 +1793,11 @@ pub fn mount_embedded_webview2(hwnd: *mut c_void, url: &str) -> Result<(), Strin
 }
 
 unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize {
+    let wm_restore = WM_RESTORE_EXISTING.load(Ordering::Relaxed);
+    if wm_restore != 0 && msg == wm_restore {
+        bring_existing_window_to_front(hwnd);
+        return 0;
+    }
     match msg {
         WM_APP_SYNC_GEOMETRY => {
             apply_hwnd_geometry_internal(hwnd);
@@ -1399,6 +1833,10 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
                 0x0001 | 0x0004 | 0x0010 | 0x4000,
             );
             notify_webview_bounds_sync(hwnd);
+            0
+        }
+        WM_APP_RESTORE_FROM_TRAY => {
+            restore_window_from_tray(hwnd);
             0
         }
         0x0014 => {
@@ -1493,8 +1931,30 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
             notify_webview_bounds_sync(hwnd);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
+        WM_GETMINMAXINFO => {
+            if lparam != 0 {
+                let dpi_scale = get_hwnd_dpi_scale(hwnd);
+                let mmi = &mut *(lparam as *mut MINMAXINFO);
+                mmi.ptMinTrackSize.x = (MIN_WINDOW_WIDTH as f64 * dpi_scale).round() as i32;
+                mmi.ptMinTrackSize.y = (MIN_WINDOW_HEIGHT as f64 * dpi_scale).round() as i32;
+                0
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        }
+        WM_CLOSE => {
+            // Instant clean close (< 5ms): hide HWND immediately, auto-restore Stealth Dim, delete tray, destroy window
+            let st_opt = GLOBAL_TRAY_APP_STATE
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            let _ = execute_clean_window_close_resources(hwnd, st_opt.as_ref());
+            DestroyWindow(hwnd);
+            0
+        }
         0x0002 => {
             // WM_DESTROY
+            GLOBAL_MAIN_HWND.store(0, Ordering::SeqCst);
             unregister_tray_icon(hwnd);
             PostQuitMessage(0);
             0
@@ -1505,17 +1965,20 @@ unsafe extern "system" fn main_window_proc(hwnd: *mut c_void, msg: u32, wparam: 
 
 pub fn compute_target_physical_size(hwnd: *mut c_void) -> (i32, i32) {
     let dpi_scale = get_hwnd_dpi_scale(hwnd);
-    let (logical_w, logical_h) = if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
-        let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { 1200 } else { 840 };
-        (w, 468)
-    } else {
-        let base_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst).clamp(336, 600);
-        let w = if GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst) { base_w + 360 } else { base_w };
-        (w, 832)
+    let base_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst).clamp(336, 600);
+    let is_land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let is_drawer = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+    let mut work_area = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
     };
-    let phys_w = (logical_w as f64 * dpi_scale).round() as i32;
-    let phys_h = (logical_h as f64 * dpi_scale).round() as i32;
-    (phys_w, phys_h)
+    unsafe {
+        let _ = SystemParametersInfoW(0x0030, 0, &mut work_area as *mut _ as *mut c_void, 0);
+    }
+    let (rect, _) = compute_proportional_dpi_restore_rect(work_area, dpi_scale, base_w, is_land, is_drawer);
+    (rect.width(), rect.height())
 }
 
 pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
@@ -1597,8 +2060,31 @@ pub unsafe fn apply_hwnd_geometry_internal(hwnd: *mut c_void) {
 }
 
 pub fn apply_hwnd_geometry_from_state(hwnd: *mut c_void) {
+    let hwnd = get_effective_main_hwnd(hwnd as usize);
     if hwnd.is_null() {
         return;
+    }
+    if !GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst) {
+        unsafe {
+            let (phys_w, phys_h) = compute_target_physical_size(hwnd);
+            let mut cur_rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(hwnd, &mut cur_rc);
+            let is_pos_valid = cur_rc.left > 0 || cur_rc.top > 0;
+            let mut cur_x = if is_pos_valid { cur_rc.left } else { SAVED_WINDOW_X.load(Ordering::SeqCst) };
+            let cur_y = if is_pos_valid { cur_rc.top } else { SAVED_WINDOW_Y.load(Ordering::SeqCst) };
+            let mon_w = GetSystemMetrics(0);
+            let mut u_flags = 0x0004 | 0x0010 | 0x0100; // SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
+            let mut pos_adj = false;
+            if mon_w > 0 && cur_x + phys_w > mon_w {
+                cur_x = (mon_w - phys_w).max(0);
+                SAVED_WINDOW_X.store(cur_x, Ordering::SeqCst);
+                pos_adj = true;
+            }
+            if is_pos_valid && !pos_adj {
+                u_flags |= 0x0002; // SWP_NOMOVE
+            }
+            SetWindowPos(hwnd, ptr::null_mut(), cur_x, cur_y, phys_w, phys_h, u_flags);
+        }
     }
     unsafe {
         PostMessageW(hwnd, WM_APP_SYNC_GEOMETRY, 0, 0);
@@ -1606,6 +2092,7 @@ pub fn apply_hwnd_geometry_from_state(hwnd: *mut c_void) {
 }
 
 pub fn toggle_fullscreen_state(hwnd: *mut c_void, target_state: Option<bool>) -> bool {
+    let hwnd = get_effective_main_hwnd(hwnd as usize);
     if hwnd.is_null() {
         return false;
     }
@@ -1787,13 +2274,33 @@ unsafe fn load_app_icon(cx: i32, cy: i32) -> *mut c_void {
         }
     }
 
+    // 4. Zero-I/O self-contained fallback: materialize embedded ICO bytes to %TEMP%\iPhoneLink\iphone_link.ico once
+    let temp_dir = std::env::temp_dir().join("iPhoneLink");
+    let _ = fs::create_dir_all(&temp_dir);
+    let temp_ico = temp_dir.join("iphone_link.ico");
+    let ico_bytes = crate::server_v4::EMBEDDED_IPHONE_LINK_ICO;
+    let needs_write = fs::metadata(&temp_ico)
+        .map(|m| m.len() != ico_bytes.len() as u64)
+        .unwrap_or(true);
+    if needs_write {
+        let _ = fs::write(&temp_ico, ico_bytes);
+    }
+    if temp_ico.is_file() {
+        let path_w: Vec<u16> = temp_ico.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let hicon = LoadImageW(ptr::null_mut(), path_w.as_ptr(), IMAGE_ICON, cx, cy, LR_LOADFROMFILE | LR_SHARED);
+        if !hicon.is_null() {
+            return hicon;
+        }
+    }
+
     ptr::null_mut()
 }
 
 /// Creates the main interactive Win32 window with True DWM Acrylic Blur.
 pub fn create_main_interactive_window(dark_mode: bool) -> Result<*mut c_void, String> {
+    let _ = register_restore_window_message();
     unsafe {
-        let app_id: Vec<u16> = "Kelvin.iPhoneLink.NativeRust.4\0".encode_utf16().collect();
+        let app_id: Vec<u16> = "iPhoneLink.NativeRust.5\0".encode_utf16().collect();
         let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
 
         let _ = CoInitializeEx(ptr::null_mut(), 2);
@@ -2014,7 +2521,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     // 6. Test /api/status and webview metrics
     let (code_status, body_status) = http_send(port, "GET", "/api/status", "")?;
     let status_ok = code_status == 200
-        && body_status.contains(r#""version": "4.0.0""#)
+        && body_status.contains(r#""version": "5.0.0""#)
         && body_status.contains("webviewMetrics");
 
     // 7. Test language switching: English -> Indonesian
@@ -2072,7 +2579,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
 
     let test_res = UiSelfTestResult {
         status: "PASS".to_string(),
-        version: "4.0.0".to_string(),
+        version: "5.0.0".to_string(),
         true_dwm_acrylic_active,
         static_wallpaper_disabled,
         index_html_served,
@@ -2090,7 +2597,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let json_report = format!(
         r#"{{
   "status": "PASS",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "true_dwm_acrylic_active": {},
   "static_wallpaper_disabled": {},
   "index_html_served": {},
@@ -2294,5 +2801,78 @@ mod tests {
         assert!(res_off.is_ok(), "RegDeleteValueW failed: {:?}", res_off);
         assert_eq!(res_off.unwrap(), false);
         assert!(!is_start_with_windows_enabled_for(test_val));
+    }
+
+    #[test]
+    fn test_tahap232_proportional_dpi_restore_and_min_size_geometry() {
+        assert_eq!(MIN_WINDOW_WIDTH, 340);
+        assert_eq!(MIN_WINDOW_HEIGHT, 450);
+
+        let work_1080 = RECT { left: 0, top: 0, right: 1920, bottom: 1032 };
+        let (r100, ar100) = compute_proportional_dpi_restore_rect(work_1080, 1.0, 346, false, false);
+        assert_eq!(r100.width(), 346);
+        assert_eq!(r100.height(), 832);
+        assert_eq!(r100.left, (1920 - 346) / 2);
+        assert_eq!(r100.top, (1032 - 832) / 2);
+        assert!(ar100 >= 2.15, "100% DPI aspect ratio must stay >= 2.15, got {}", ar100);
+
+        let (r125, ar125) = compute_proportional_dpi_restore_rect(work_1080, 1.25, 346, false, false);
+        assert_eq!(r125.width(), 433);
+        assert_eq!(r125.height(), 1016); // min(1032 - 16, round(433 * 832 / 346))
+        assert!(ar125 >= 2.15, "125% DPI aspect ratio must stay >= 2.15, got {}", ar125);
+
+        let work_1440 = RECT { left: 0, top: 0, right: 2560, bottom: 1392 };
+        let (r150, ar150) = compute_proportional_dpi_restore_rect(work_1440, 1.5, 346, false, false);
+        assert_eq!(r150.width(), 519);
+        assert_eq!(r150.height(), 1248);
+        assert!(ar150 >= 2.15, "150% DPI aspect ratio must stay >= 2.15, got {}", ar150);
+
+        let (r_open, _) = compute_proportional_dpi_restore_rect(work_1080, 1.0, 346, false, true);
+        assert_eq!((r_open.width(), r_open.height()), (706, 832));
+
+        let (r_land_c, _) = compute_proportional_dpi_restore_rect(work_1080, 1.0, 346, true, false);
+        assert_eq!((r_land_c.width(), r_land_c.height()), (840, 468));
+
+        let (r_land_o, _) = compute_proportional_dpi_restore_rect(work_1080, 1.0, 346, true, true);
+        assert_eq!((r_land_o.width(), r_land_o.height()), (1200, 468));
+    }
+
+    #[test]
+    fn test_tahap245_single_instance_mutex_and_restore_message() {
+        let unique_name = format!(
+            "Local\\iPhoneLink_UnitTest_SingleInstance_{}",
+            std::process::id()
+        );
+        // 1. First acquire MUST succeed with already_exists == false
+        let (guard1, exists1) = try_create_named_mutex(&unique_name);
+        assert!(!exists1, "first mutex acquisition should not report already_exists");
+        assert!(guard1.is_some(), "first mutex acquisition must return valid RAII guard");
+
+        // 2. Second acquire while guard1 is alive MUST report ERROR_ALREADY_EXISTS (already_exists == true)
+        let (guard2, exists2) = try_create_named_mutex(&unique_name);
+        assert!(exists2, "second mutex acquisition must detect ERROR_ALREADY_EXISTS (183)");
+        assert!(guard2.is_none(), "second mutex acquisition must not return a guard");
+
+        // 3. After dropping guard1, a new acquisition MUST succeed cleanly again
+        drop(guard1);
+        let (guard3, exists3) = try_create_named_mutex(&unique_name);
+        assert!(!exists3, "re-acquiring after drop must succeed cleanly");
+        assert!(guard3.is_some());
+        drop(guard3);
+
+        // 4. RegisterWindowMessageW must return a valid non-zero message ID (0xC000..=0xFFFF)
+        let wm_id = register_restore_window_message();
+        assert!(wm_id >= 0xC000 && wm_id <= 0xFFFF, "unexpected registered window message: 0x{wm_id:X}");
+        assert_eq!(WM_RESTORE_EXISTING.load(Ordering::Relaxed), wm_id);
+    }
+
+    #[test]
+    fn test_tahap246_neutral_single_instance_identifiers() {
+        assert_eq!(SINGLE_INSTANCE_MUTEX_NAME, "Local\\iPhoneLink_SingleInstance_v5");
+        assert_eq!(RESTORE_WINDOW_MESSAGE_NAME, "iPhoneLink_RestoreExistingWindow");
+        assert!(!SINGLE_INSTANCE_MUTEX_NAME.to_ascii_lowercase().contains("kelvin"));
+        assert!(!RESTORE_WINDOW_MESSAGE_NAME.to_ascii_lowercase().contains("kelvin"));
+        assert!(!MAIN_WINDOW_CLASS_NAME.to_ascii_lowercase().contains("kelvin"));
+        assert!(!MAIN_WINDOW_TITLE.to_ascii_lowercase().contains("kelvin"));
     }
 }

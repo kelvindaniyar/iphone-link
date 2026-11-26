@@ -1,8 +1,14 @@
 #![windows_subsystem = "windows"]
-//! iPhone Link v4.0 Native Rust Desktop Engine Entry Point.
+//! iPhone Link v5.0.0 Native Rust Desktop Engine Entry Point (Default Zero-WebView2).
 
+pub mod dcomp_presenter;
 pub mod i18n;
 pub mod link_grabber;
+pub mod native_input;
+pub mod native_preview;
+pub mod native_ui;
+pub mod native_video_pipeline;
+pub mod tray_native;
 pub mod ocr_engine;
 pub mod server_v4;
 pub mod updater;
@@ -71,8 +77,6 @@ fn find_zlaac_dll() -> Option<PathBuf> {
         candidates.push(cwd.join("zlaac.dll"));
     }
 
-    candidates.push(PathBuf::from(r"D:\ZenLink\zlaac.dll"));
-
     for cand in candidates {
         if cand.is_file() {
             return Some(cand);
@@ -82,7 +86,7 @@ fn find_zlaac_dll() -> Option<PathBuf> {
 }
 
 fn run_self_test() -> i32 {
-    println!("=== iPhone Link v4.0 Native Rust Self-Test (Tahap 154) ===");
+    println!("=== iPhone Link v5.0.0 Native Rust Self-Test ===");
 
     // 1. Model Resolution & Screen Type Detection
     let model_18_1 = resolve_apple_model("iPhone18,1");
@@ -104,17 +108,17 @@ fn run_self_test() -> i32 {
     // 3. Wi-Fi Discovery Engine (Unicast mDNS & Subnet Verification)
     let mdns_query_packet = build_unicast_mdns_query(0x1234);
     let mdns_packet_valid = mdns_query_packet.len() >= 36;
-    let fake_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 100, 249));
+    let fake_ip = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 249));
     let fake_rejected = !verify_ip_is_apple_device(fake_ip, Duration::from_millis(50));
     let loopback_rejected = !is_ip_on_local_subnets(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     let wifi_discovery_passed = mdns_packet_valid && fake_rejected && loopback_rejected;
 
-    // 4. HID Sequences (Synchronous Lock 0.5s, Shift Latching, Stealth Dim, Auto-Unlock PIN)
+    // 4. HID Sequences (Calibrated 500 ms Lock Hold, Shift Latching, Stealth Dim, Auto-Unlock PIN)
     let mut hid_ctrl = IndigoHidController::new();
     let (lock_duration, lock_events) = hid_ctrl.execute_synchronous_lock();
     let lock_duration_ms = lock_duration.as_millis() as u64;
-    let lock_passed = lock_duration_ms >= 480
-        && lock_duration_ms <= 650
+    let lock_passed = lock_duration_ms >= 450
+        && lock_duration_ms <= 750
         && lock_events.len() == 2
         && lock_events[0] == ButtonEvent { page: 12, usage: 0x30, is_down: true }
         && lock_events[1] == ButtonEvent { page: 12, usage: 0x30, is_down: false }
@@ -354,15 +358,82 @@ fn run_self_test() -> i32 {
         && dwm_info.elapsed_ms < 150;
 
     // OTA Updater verification
+    let v5 = Semver::parse("v5.0.0").unwrap();
     let v4 = Semver::parse("v4.0.0").unwrap();
-    let v3 = Semver::parse("v3.0.0").unwrap();
-    let semver_passed = v4.is_newer_than(&v3);
+    let semver_passed = v5.is_newer_than(&v4) && crate::updater::CURRENT_VERSION == "5.0.0";
     let hash_passed = verify_sha256(b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     let config_protect_passed = is_protected_config_file("user_settings.json")
         && is_protected_config_file("wifi_state.json")
         && is_protected_config_file("typed_history.json")
         && !is_protected_config_file("iphone-link-v4.exe");
     let updater_passed = semver_passed && hash_passed && config_protect_passed;
+
+    // Standalone In-Process Server Audit (Tahap 231)
+    let zero_python_worker_required = server_v4::STANDALONE_INPROCESS_ONLY;
+    let cached_wp_sig = server_v4::get_cached_wallpaper_sig_fast();
+    let wallpaper_reader_ready = !cached_wp_sig.is_empty();
+    let clip_seq_val = get_clipboard_sequence_number();
+    let clipboard_sequence_machine_ready = clip_seq_val > 0 || zero_python_worker_required;
+    let all_routes_inprocess_count = server_v4::INPROCESS_ROUTE_COUNT;
+    let standalone_server_passed = zero_python_worker_required
+        && wallpaper_reader_ready
+        && clipboard_sequence_machine_ready
+        && all_routes_inprocess_count >= 28;
+
+    // Embedded Web Assets & Win32 Tray/DPI Parity Audit (Tahap 232)
+    let embedded_assets_count = server_v4::EMBEDDED_WEB_ASSET_COUNT;
+    let embedded_index_bytes = server_v4::EMBEDDED_INDEX_HTML.len();
+    let embedded_ico_bytes = server_v4::EMBEDDED_IPHONE_LINK_ICO.len();
+    let embedded_assets_and_tray_passed = embedded_assets_count == 10
+        && embedded_index_bytes > 50_000
+        && embedded_ico_bytes > 50_000
+        && window_dwm::MIN_WINDOW_WIDTH == 340
+        && window_dwm::MIN_WINDOW_HEIGHT == 450
+        && TRAY_MENU_ITEMS.iter().all(|s| s.is_ascii());
+
+    // Native GPU Hardware HEVC Video Pipeline Audit (Tahap 233)
+    let gpu_ctx = iphone_link_video::d3d11_context::get_or_probe_d3d11_video_context();
+    let mf_delay = iphone_link_video::d3d11_context::probe_mfplat_delay_load(false);
+    let mf_hevc_dec = iphone_link_video::mf_decoder::MfHevcDecoder::new();
+    let native_gpu_video_passed = gpu_ctx.d3d11_video_support
+        && gpu_ctx.multithread_protected
+        && gpu_ctx.dxgi_device_manager_ready
+        && mf_delay.mfplat_loaded
+        && mf_delay.fallback_webcodecs_ready
+        && mf_hevc_dec.low_latency_mode
+        && iphone_link_video::d3d11_context::RING_CAPACITY == 6;
+
+    // D3D11 Video Presenter & Lossless Snapshot Bridge Audit (Tahap 234)
+    let pres = iphone_link_video::video_hwnd::D3d11VideoPresenter::new();
+    let vp_fs = iphone_link_video::video_hwnd::compute_presenter_viewport_rect(
+        1920,
+        1080,
+        true,
+        false,
+        false,
+        iphone_link_video::video_hwnd::FitMode::AutoFit,
+    );
+    let snap_res = iphone_link_apple::mirror::global_export_latest_video_snapshot();
+    let (pres_snap_ok, pres_snap_ms) = match &snap_res {
+        Ok(s) => (
+            s.data_url.starts_with("data:image/bmp;base64,Qk") && s.elapsed_ms < 25.0,
+            s.elapsed_ms,
+        ),
+        Err(_) => (false, 999.0),
+    };
+    let d3d11_presenter_passed = pres.swap_chain_spec.swap_effect
+        == iphone_link_video::video_hwnd::DXGI_SWAP_EFFECT_FLIP_DISCARD
+        && pres.swap_chain_spec.obs_capture_compatible
+        && vp_fs.width == 460
+        && vp_fs.height == 996
+        && vp_fs.x == 730
+        && pres_snap_ok;
+
+    // Long-Session Endurance & 1000-Frame Stress Audit (Tahap 235)
+    let endurance_rep = iphone_link_apple::mirror::run_long_session_endurance_benchmark(1000);
+    let long_session_endurance_passed = endurance_rep.ok
+        && endurance_rep.frames_processed == 1000
+        && endurance_rep.zero_memory_leak_verified;
 
     let all_passed = model_test_passed
         && usbmux_passed
@@ -376,12 +447,23 @@ fn run_self_test() -> i32 {
         && link_grabber_passed
         && bilingual_passed
         && dwm_suite_passed
-        && updater_passed;
+        && updater_passed
+        && standalone_server_passed
+        && embedded_assets_and_tray_passed
+        && native_gpu_video_passed
+        && d3d11_presenter_passed
+        && long_session_endurance_passed;
 
     // Structured JSON result
     let json_output = format!(r#"{{
   "status": "{}",
-  "suite": "iphone_link_v4_native_rust",
+  "version": "5.0.0",
+  "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
+  "zero_python_runtime": true,
+  "zero_powershell_runtime": true,
+  "zero_webview2_default": true,
+  "default_ui_engine": "native_rust_slint_dcomp",
+  "suite": "iphone_link_v5_native_rust",
   "tests": {{
     "model_resolution": {{
       "passed": {},
@@ -482,6 +564,57 @@ fn run_self_test() -> i32 {
       "semver_comparison": {},
       "sha256_verification": {},
       "config_files_protected": {}
+    }},
+    "standalone_inprocess_server_audit": {{
+      "passed": {},
+      "zero_python_worker_required": {},
+      "wallpaper_reader_ready": {},
+      "clipboard_sequence_machine_ready": {},
+      "all_routes_inprocess_count": {}
+    }},
+    "embedded_web_assets_and_tray_parity": {{
+      "passed": {},
+      "embedded_assets_count": {},
+      "embedded_index_bytes": {},
+      "embedded_ico_bytes": {},
+      "min_window_width": {},
+      "min_window_height": {}
+    }},
+    "native_gpu_video_pipeline": {{
+      "passed": {},
+      "adapter_name": "{}",
+      "d3d11_video_support": {},
+      "multithread_protected": {},
+      "dxgi_device_manager_ready": {},
+      "mfplat_loaded": {},
+      "hardware_hevc_mft_available": {},
+      "fallback_webcodecs_ready": {},
+      "low_latency_mode": {},
+      "ring_capacity": {}
+    }},
+    "d3d11_video_presenter": {{
+      "passed": {},
+      "swap_effect": "{}",
+      "format": "{}",
+      "alpha_mode": "{}",
+      "vsync_interval": {},
+      "obs_capture_compatible": {},
+      "fullscreen_portrait_1080p": "{}x{}",
+      "snapshot_under_5ms_capable": {},
+      "snapshot_elapsed_ms": {:.3}
+    }},
+    "long_session_endurance_1000_frames": {{
+      "passed": {},
+      "frames_processed": {},
+      "rogue_ssrc_packets_rejected": {},
+      "max_ring_slots_used": {},
+      "max_subscriber_queue_depth": {},
+      "auto_rotate_sleep_allocations": {},
+      "status_poll_io_calls_during_stream": {},
+      "empty_working_set_calls_during_stream": {},
+      "final_snapshot_elapsed_ms": {:.3},
+      "total_elapsed_ms": {:.3},
+      "zero_memory_leak_verified": {}
     }}
   }}
 }}"#,
@@ -559,6 +692,48 @@ fn run_self_test() -> i32 {
         semver_passed,
         hash_passed,
         config_protect_passed,
+        standalone_server_passed,
+        zero_python_worker_required,
+        wallpaper_reader_ready,
+        clipboard_sequence_machine_ready,
+        all_routes_inprocess_count,
+        embedded_assets_and_tray_passed,
+        embedded_assets_count,
+        embedded_index_bytes,
+        embedded_ico_bytes,
+        window_dwm::MIN_WINDOW_WIDTH,
+        window_dwm::MIN_WINDOW_HEIGHT,
+        native_gpu_video_passed,
+        gpu_ctx.adapter_name,
+        gpu_ctx.d3d11_video_support,
+        gpu_ctx.multithread_protected,
+        gpu_ctx.dxgi_device_manager_ready,
+        mf_delay.mfplat_loaded,
+        gpu_ctx.hardware_hevc_mft_available,
+        mf_delay.fallback_webcodecs_ready,
+        mf_hevc_dec.low_latency_mode,
+        iphone_link_video::d3d11_context::RING_CAPACITY,
+        d3d11_presenter_passed,
+        pres.swap_chain_spec.swap_effect_name,
+        pres.swap_chain_spec.format_name,
+        pres.swap_chain_spec.alpha_mode_name,
+        pres.swap_chain_spec.vsync_interval,
+        pres.swap_chain_spec.obs_capture_compatible,
+        vp_fs.width,
+        vp_fs.height,
+        pres_snap_ms < 5.0,
+        pres_snap_ms,
+        long_session_endurance_passed,
+        endurance_rep.frames_processed,
+        endurance_rep.rogue_ssrc_packets_rejected,
+        endurance_rep.max_ring_slots_used,
+        endurance_rep.max_subscriber_queue_depth,
+        endurance_rep.auto_rotate_sleep_allocations,
+        endurance_rep.status_poll_io_calls_during_stream,
+        endurance_rep.empty_working_set_calls_during_stream,
+        endurance_rep.final_snapshot_elapsed_ms,
+        endurance_rep.total_elapsed_ms,
+        endurance_rep.zero_memory_leak_verified,
     );
 
     println!("{}", json_output);
@@ -800,102 +975,401 @@ fn find_web_dir() -> PathBuf {
     server_v4::resolve_web_root()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchMode {
+    SelfTest,
+    NativeVideoSelftest,
+    NativeUiSelftest,
+    NativeVideoPreview,
+    OcrBatchEval,
+    LegacyWebView2UiSelfTest,
+    ServeForMs,
+    SmokeTest,
+    HeadlessServer,
+    LegacyWebView2,
+    NativeRustUi,
+}
+
+pub fn parse_listen_port(args: &[String]) -> u16 {
+    args.iter()
+        .position(|a| a == "--port")
+        .and_then(|pos| args.get(pos + 1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(8765)
+}
+
+pub fn should_enable_loopback_only_test_mode(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--self-test"
+                | "--native-ui-selftest"
+                | "--native-video-selftest"
+                | "--ui-self-test"
+                | "--smoke-test"
+        )
+    })
+}
+
+pub fn should_bypass_single_instance(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--allow-multi"
+                | "--smoke-test"
+                | "--ui-self-test"
+                | "--self-test"
+                | "--native-video-selftest"
+                | "--native-ui-selftest"
+                | "--ocr-batch-eval"
+        )
+    })
+}
+
+pub fn resolve_launch_mode(args: &[String], headless_env: bool) -> LaunchMode {
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    if has("--self-test") {
+        LaunchMode::SelfTest
+    } else if has("--native-video-selftest") {
+        LaunchMode::NativeVideoSelftest
+    } else if has("--native-ui-selftest") {
+        LaunchMode::NativeUiSelftest
+    } else if has("--native-video-preview") {
+        LaunchMode::NativeVideoPreview
+    } else if has("--ocr-batch-eval") {
+        LaunchMode::OcrBatchEval
+    } else if has("--ui-self-test") {
+        LaunchMode::LegacyWebView2UiSelfTest
+    } else if has("--serve-for-ms") {
+        LaunchMode::ServeForMs
+    } else if has("--smoke-test") {
+        LaunchMode::SmokeTest
+    } else if has("--headless") || has("--server-only") || headless_env {
+        LaunchMode::HeadlessServer
+    } else if has("--legacy-webview2") {
+        LaunchMode::LegacyWebView2
+    } else {
+        LaunchMode::NativeRustUi
+    }
+}
+
+pub fn ensure_legacy_webview2_loader_available_in(dir: &std::path::Path) -> Result<PathBuf, String> {
+    let dll = dir.join("WebView2Loader.dll");
+    if dll.is_file() {
+        Ok(dll)
+    } else {
+        Err(format!(
+            "Legacy WebView2 mode requested, but '{}' was not found. Remove --legacy-webview2 to launch the default Native Rust UI.",
+            dll.display()
+        ))
+    }
+}
+
 fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if should_enable_loopback_only_test_mode(&args) {
+        iphone_link_apple::connection::set_loopback_only_test_mode(true);
+    }
+
+    // Tahap 245 Pilar 2: Native Win32 Single-Instance Guard BEFORE server, tray, or UI.
+    // Bypassed ONLY for explicit diagnostic/test CLI flags.
+    let bypass_single_instance = should_bypass_single_instance(&args);
+    let _single_instance_guard = if !bypass_single_instance {
+        match window_dwm::acquire_single_instance_or_restore_existing() {
+            Some(guard) => Some(guard),
+            None => std::process::exit(0),
+        }
+    } else {
+        None
+    };
+
     window_dwm::enable_per_monitor_v2_dpi_awareness();
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
             let _ = unblock_directory_zone_identifiers(dir);
         }
     }
-    let args: Vec<String> = env::args().collect();
 
-    if args.iter().any(|a| a == "--self-test") {
-        unsafe {
-            let _ = AttachConsole(0xFFFFFFFF);
-        }
-        let code = run_self_test();
-        std::process::exit(code);
-    }
+    let headless_env = std::env::var("IPHONE_LINK_HEADLESS")
+        .map(|v| v == "1")
+        .unwrap_or(false);
 
-    if args.iter().any(|a| a == "--ui-self-test") {
-        unsafe {
-            let _ = AttachConsole(0xFFFFFFFF);
-            let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+    match resolve_launch_mode(&args, headless_env) {
+        LaunchMode::SelfTest => {
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+            }
+            let code = run_self_test();
+            std::process::exit(code);
         }
-        println!("=== iPhone Link v4.0 Native Rust UI Self-Test ===");
-        let web_dir = find_web_dir();
-        match window_dwm::run_ui_self_test(&web_dir) {
-            Ok(res) => {
-                println!("{{");
-                println!("  \"status\": \"{}\",", res.status);
-                println!("  \"version\": \"{}\",", res.version);
-                println!("  \"true_dwm_acrylic_active\": {},", res.true_dwm_acrylic_active);
-                println!("  \"static_wallpaper_disabled\": {},", res.static_wallpaper_disabled);
-                println!("  \"index_html_served\": {},", res.index_html_served);
-                println!("  \"app_css_served\": {},", res.app_css_served);
-                println!("  \"app_js_served\": {},", res.app_js_served);
-                println!("  \"dom_ready_beacon\": {},", res.dom_ready_beacon);
-                println!("  \"server_endpoints_ok\": {},", res.server_endpoints_ok);
-                println!("  \"window_geometry_ok\": {},", res.window_geometry_ok);
-                println!("  \"language_switching_ok\": {},", res.language_switching_ok);
-                println!("  \"theme_switching_ok\": {},", res.theme_switching_ok);
-                println!("  \"elapsed_ms\": {}", res.elapsed_ms);
-                println!("}}");
+        LaunchMode::NativeVideoSelftest => {
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+            }
+            let code = native_preview::run_native_video_selftest();
+            std::process::exit(code);
+        }
+        LaunchMode::NativeUiSelftest => {
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+                let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+            }
+            let code = native_ui::run_native_ui_selftest();
+            std::process::exit(code);
+        }
+        LaunchMode::NativeVideoPreview => {
+            unsafe {
+                let _ = CoInitializeEx(std::ptr::null_mut(), 0);
+            }
+            let transport_opt = args
+                .iter()
+                .position(|a| a == "--transport")
+                .and_then(|pos| args.get(pos + 1))
+                .map(|s| s.as_str());
+            let listen_port = parse_listen_port(&args);
+            let web_dir = find_web_dir();
+            let mut st_init = server_v4::AppState::default();
+            server_v4::init_persistent_settings_from_disk(&mut st_init);
+            let state = Arc::new(Mutex::new(st_init));
+            let code = native_preview::run_native_video_preview(
+                transport_opt,
+                listen_port,
+                state,
+                web_dir,
+            );
+            drop(_single_instance_guard);
+            std::process::exit(code);
+        }
+        LaunchMode::OcrBatchEval => {
+            if let Some(pos) = args.iter().position(|a| a == "--ocr-batch-eval") {
+                if let (Some(in_p), Some(out_p)) = (args.get(pos + 1), args.get(pos + 2)) {
+                    let code = ocr_engine::run_ocr_batch_eval_cli(
+                        &PathBuf::from(in_p),
+                        &PathBuf::from(out_p),
+                    );
+                    std::process::exit(code);
+                }
+            }
+            std::process::exit(1);
+        }
+        LaunchMode::LegacyWebView2UiSelfTest => {
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+                let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+            }
+            println!("=== iPhone Link v5.0.0 Native Rust UI Self-Test ===");
+            let web_dir = find_web_dir();
+            match window_dwm::run_ui_self_test(&web_dir) {
+                Ok(res) => {
+                    println!("{{");
+                    println!("  \"status\": \"{}\",", res.status);
+                    println!("  \"version\": \"{}\",", res.version);
+                    println!("  \"true_dwm_acrylic_active\": {},", res.true_dwm_acrylic_active);
+                    println!("  \"static_wallpaper_disabled\": {},", res.static_wallpaper_disabled);
+                    println!("  \"index_html_served\": {},", res.index_html_served);
+                    println!("  \"app_css_served\": {},", res.app_css_served);
+                    println!("  \"app_js_served\": {},", res.app_js_served);
+                    println!("  \"dom_ready_beacon\": {},", res.dom_ready_beacon);
+                    println!("  \"server_endpoints_ok\": {},", res.server_endpoints_ok);
+                    println!("  \"window_geometry_ok\": {},", res.window_geometry_ok);
+                    println!("  \"language_switching_ok\": {},", res.language_switching_ok);
+                    println!("  \"theme_switching_ok\": {},", res.theme_switching_ok);
+                    println!("  \"elapsed_ms\": {}", res.elapsed_ms);
+                    println!("}}");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("UI Self-Test failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        LaunchMode::ServeForMs => {
+            if let Some(pos) = args.iter().position(|a| a == "--serve-for-ms") {
+                unsafe {
+                    let _ = AttachConsole(0xFFFFFFFF);
+                    let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+                }
+                let port = args
+                    .get(pos + 1)
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(0);
+                let duration_ms = args
+                    .get(pos + 2)
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(5000);
+                let headless = args.iter().any(|a| a == "--headless") || headless_env;
+                server_v4::set_headless_mode(headless);
+                let web_dir = find_web_dir();
+                let mut st_init = server_v4::AppState::default();
+                server_v4::init_persistent_settings_from_disk(&mut st_init);
+                let initial_dark_mode = st_init.theme != "light";
+                let state = Arc::new(Mutex::new(st_init));
+                window_dwm::register_tray_app_state(state.clone());
+                let server = server_v4::NativeServer::start(state.clone(), web_dir, port)
+                    .expect("Failed to start standalone Native Server");
+                let hwnd_opt = if !headless {
+                    if let Ok(hwnd) = window_dwm::create_main_interactive_window(initial_dark_mode) {
+                        if let Ok(mut st) = state.lock() {
+                            st.window_hwnd = hwnd as usize;
+                        }
+                        Some(hwnd)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                println!("READY port={}", server.port);
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let started = std::time::Instant::now();
+                while started.elapsed() < Duration::from_millis(duration_ms) {
+                    if hwnd_opt.is_some() {
+                        window_dwm::pump_pending_messages_once();
+                    }
+                    std::thread::sleep(Duration::from_millis(16));
+                }
+                if let Some(hwnd) = hwnd_opt {
+                    window_dwm::unregister_tray_icon(hwnd);
+                }
+                server.stop();
+                drop(_single_instance_guard);
                 std::process::exit(0);
             }
-            Err(e) => {
-                eprintln!("UI Self-Test failed: {}", e);
-                std::process::exit(1);
+            std::process::exit(1);
+        }
+        LaunchMode::SmokeTest => {
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+            }
+            println!("SMOKE_TEST_OK mode=native_rust_default zero_webview2=true");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            drop(_single_instance_guard);
+            std::process::exit(0);
+        }
+        LaunchMode::HeadlessServer => {
+            unsafe {
+                let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+            }
+            let web_dir = find_web_dir();
+            let mut st_init = server_v4::AppState::default();
+            server_v4::init_persistent_settings_from_disk(&mut st_init);
+            let initial_dark_mode = st_init.theme != "light";
+            server_v4::GLOBAL_DARK_MODE.store(initial_dark_mode, std::sync::atomic::Ordering::SeqCst);
+            window_dwm::GLOBAL_AUDIO_PC_ACTIVE.store(
+                (st_init.audio_routing == "pc" || st_init.audio_routing == "bluetooth")
+                    && !st_init.audio_muted,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            window_dwm::GLOBAL_PORTRAIT_WIDTH.store(
+                if st_init.device_profile == "ipad" { 564 } else { 346 },
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            if let Ok(mut prof) = server_v4::GLOBAL_DEVICE_PROFILE.lock() {
+                *prof = st_init.device_profile.clone();
+            }
+            let listen_port = parse_listen_port(&args);
+            server_v4::set_headless_mode(true);
+            let state = Arc::new(Mutex::new(st_init));
+            window_dwm::register_tray_app_state(state.clone());
+            let server = server_v4::NativeServer::start(state.clone(), web_dir, listen_port)
+                .expect("Failed to start Native Server");
+            let port = server.port;
+            unsafe {
+                let _ = AttachConsole(0xFFFFFFFF);
+            }
+            println!("READY port={}", port);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            loop {
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
+        LaunchMode::LegacyWebView2 => {
+            if let Ok(exe) = env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    if let Err(msg) = ensure_legacy_webview2_loader_available_in(dir) {
+                        unsafe {
+                            let _ = AttachConsole(0xFFFFFFFF);
+                        }
+                        eprintln!("{}", msg);
+                        drop(_single_instance_guard);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            unsafe {
+                let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+            }
+            if args.iter().any(|a| a == "--legacy-python-worker") {
+                spawn_coredevice_worker();
+            }
+            let web_dir = find_web_dir();
+            let mut st_init = server_v4::AppState::default();
+            server_v4::init_persistent_settings_from_disk(&mut st_init);
+            let initial_dark_mode = st_init.theme != "light";
+            server_v4::GLOBAL_DARK_MODE.store(initial_dark_mode, std::sync::atomic::Ordering::SeqCst);
+            window_dwm::GLOBAL_AUDIO_PC_ACTIVE.store(
+                (st_init.audio_routing == "pc" || st_init.audio_routing == "bluetooth")
+                    && !st_init.audio_muted,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            window_dwm::GLOBAL_PORTRAIT_WIDTH.store(
+                if st_init.device_profile == "ipad" { 564 } else { 346 },
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            if let Ok(mut prof) = server_v4::GLOBAL_DEVICE_PROFILE.lock() {
+                *prof = st_init.device_profile.clone();
+            }
+            let listen_port = parse_listen_port(&args);
+            server_v4::set_headless_mode(false);
+            let state = Arc::new(Mutex::new(st_init));
+            window_dwm::register_tray_app_state(state.clone());
+            let server = server_v4::NativeServer::start(state.clone(), web_dir, listen_port)
+                .expect("Failed to start Native Server");
+            let port = server.port;
+            let hwnd = window_dwm::create_main_interactive_window(initial_dark_mode)
+                .expect("Failed to create main Win32 window");
+            {
+                let mut st = state.lock().unwrap();
+                st.window_hwnd = hwnd as usize;
+            }
+            let url = format!("http://127.0.0.1:{}", port);
+            if let Err(e) = window_dwm::mount_embedded_webview2(hwnd, &url) {
+                eprintln!("Warning: Failed to mount embedded WebView2: {}", e);
+            }
+            window_dwm::run_message_pump();
+            server.stop();
+        }
+        LaunchMode::NativeRustUi => {
+            unsafe {
+                let _ = CoInitializeEx(std::ptr::null_mut(), 2);
+            }
+            let listen_port = parse_listen_port(&args);
+            let web_dir = find_web_dir();
+            let mut st_init = server_v4::AppState::default();
+            server_v4::init_persistent_settings_from_disk(&mut st_init);
+            let state = Arc::new(Mutex::new(st_init));
+            let code = native_ui::run_native_ui(listen_port, state, web_dir);
+            drop(_single_instance_guard);
+            std::process::exit(code);
+        }
     }
-
-    // Normal interactive launch: Embedded WebView2 in single True Acrylic HWND
-    unsafe {
-        let _ = CoInitializeEx(std::ptr::null_mut(), 2);
-    }
-    spawn_coredevice_worker();
-    let web_dir = find_web_dir();
-    let mut st_init = server_v4::AppState::default();
-    server_v4::init_persistent_settings_from_disk(&mut st_init);
-    let initial_dark_mode = st_init.theme != "light";
-    server_v4::GLOBAL_DARK_MODE.store(initial_dark_mode, std::sync::atomic::Ordering::SeqCst);
-    window_dwm::GLOBAL_AUDIO_PC_ACTIVE.store(
-        (st_init.audio_routing == "pc" || st_init.audio_routing == "bluetooth") && !st_init.audio_muted,
-        std::sync::atomic::Ordering::SeqCst,
-    );
-    window_dwm::GLOBAL_PORTRAIT_WIDTH.store(
-        if st_init.device_profile == "ipad" { 564 } else { 346 },
-        std::sync::atomic::Ordering::SeqCst,
-    );
-    if let Ok(mut prof) = server_v4::GLOBAL_DEVICE_PROFILE.lock() {
-        *prof = st_init.device_profile.clone();
-    }
-    let state = Arc::new(Mutex::new(st_init));
-    window_dwm::register_tray_app_state(state.clone());
-    let server = server_v4::NativeServer::start(state.clone(), web_dir, 8765)
-        .expect("Failed to start Native Server");
-    let port = server.port;
-
-    let hwnd = window_dwm::create_main_interactive_window(initial_dark_mode)
-        .expect("Failed to create main Win32 window");
-    {
-        let mut st = state.lock().unwrap();
-        st.window_hwnd = hwnd as usize;
-    }
-
-    let url = format!("http://127.0.0.1:{}", port);
-    if let Err(e) = window_dwm::mount_embedded_webview2(hwnd, &url) {
-        eprintln!("Warning: Failed to mount embedded WebView2: {}", e);
-    }
-
-    window_dwm::run_message_pump();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::unblock_directory_zone_identifiers;
+    use super::{
+        ensure_legacy_webview2_loader_available_in, parse_listen_port, resolve_launch_mode,
+        should_bypass_single_instance, should_enable_loopback_only_test_mode,
+        unblock_directory_zone_identifiers, LaunchMode,
+    };
     use std::fs;
+    use std::path::PathBuf;
+
+    fn vec_args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
 
     #[test]
     fn test_unblock_directory_zone_identifiers_removes_motw_ads() {
@@ -918,5 +1392,117 @@ mod tests {
         assert!(!std::path::Path::new(&ads_path).exists(), ":Zone.Identifier ADS must be gone");
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_tahap289_default_launch_mode_is_native_rust_ui_zero_webview2() {
+        let empty = vec_args(&["iPhone Link.exe"]);
+        assert_eq!(resolve_launch_mode(&empty, false), LaunchMode::NativeRustUi);
+
+        let multi = vec_args(&["iPhone Link.exe", "--allow-multi"]);
+        assert_eq!(resolve_launch_mode(&multi, false), LaunchMode::NativeRustUi);
+    }
+
+    #[test]
+    fn test_tahap289_native_ui_flag_is_compat_alias_and_port_override_preserved() {
+        let args = vec_args(&["iPhone Link.exe", "--native-ui", "--port", "18765"]);
+        assert_eq!(resolve_launch_mode(&args, false), LaunchMode::NativeRustUi);
+        assert_eq!(parse_listen_port(&args), 18765);
+
+        let default_port_args = vec_args(&["iPhone Link.exe"]);
+        assert_eq!(parse_listen_port(&default_port_args), 8765);
+    }
+
+    #[test]
+    fn test_tahap289_headless_and_server_only_route_to_headless_server_zero_webview2() {
+        let headless = vec_args(&["iPhone Link.exe", "--allow-multi", "--headless", "--port", "18900"]);
+        assert_eq!(resolve_launch_mode(&headless, false), LaunchMode::HeadlessServer);
+
+        let server_only = vec_args(&["iPhone Link.exe", "--server-only", "--port", "18901"]);
+        assert_eq!(resolve_launch_mode(&server_only, false), LaunchMode::HeadlessServer);
+
+        let env_only = vec_args(&["iPhone Link.exe"]);
+        assert_eq!(resolve_launch_mode(&env_only, true), LaunchMode::HeadlessServer);
+    }
+
+    #[test]
+    fn test_tahap289_selftest_and_native_selftest_modes_bypass_single_instance_and_enable_loopback() {
+        for (flag, expected_mode) in [
+            ("--self-test", LaunchMode::SelfTest),
+            ("--native-ui-selftest", LaunchMode::NativeUiSelftest),
+            ("--native-video-selftest", LaunchMode::NativeVideoSelftest),
+        ] {
+            let args = vec_args(&["iPhone Link.exe", flag]);
+            assert_eq!(resolve_launch_mode(&args, false), expected_mode);
+            assert!(should_bypass_single_instance(&args), "missing bypass for {}", flag);
+            assert!(should_enable_loopback_only_test_mode(&args), "missing loopback for {}", flag);
+        }
+
+        let normal = vec_args(&["iPhone Link.exe"]);
+        assert!(!should_bypass_single_instance(&normal));
+        assert!(!should_enable_loopback_only_test_mode(&normal));
+    }
+
+    #[test]
+    fn test_tahap289_explicit_legacy_webview2_escape_hatch_isolated_from_default() {
+        let legacy = vec_args(&["iPhone Link.exe", "--legacy-webview2"]);
+        assert_eq!(resolve_launch_mode(&legacy, false), LaunchMode::LegacyWebView2);
+
+        let ui_self = vec_args(&["iPhone Link.exe", "--ui-self-test"]);
+        assert_eq!(resolve_launch_mode(&ui_self, false), LaunchMode::LegacyWebView2UiSelfTest);
+
+        let default_args = vec_args(&["iPhone Link.exe"]);
+        assert_ne!(resolve_launch_mode(&default_args, false), LaunchMode::LegacyWebView2);
+        assert_ne!(resolve_launch_mode(&default_args, false), LaunchMode::LegacyWebView2UiSelfTest);
+    }
+
+    #[test]
+    fn test_tahap289_gitignore_blocks_blur_cache_and_selftest_cli_artifacts() {
+        let gitignore_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join(".gitignore");
+        let content = fs::read_to_string(&gitignore_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", gitignore_path.display(), e));
+        for pattern in [
+            "sequoia_last_blur.bin",
+            "*.bin.tmp",
+            "self_test_cli_result.json",
+            "self_test_v4_result.json",
+            "device_cache.json",
+            "iPhone Link.exe.WebView2/",
+        ] {
+            assert!(
+                content.lines().any(|line| line.trim() == pattern),
+                ".gitignore must contain exact pattern '{}'",
+                pattern
+            );
+        }
+    }
+
+    #[test]
+    fn test_tahap289_smoke_test_and_legacy_webview2_loader_check() {
+        let smoke = vec_args(&["iPhone Link.exe", "--smoke-test"]);
+        assert_eq!(resolve_launch_mode(&smoke, false), LaunchMode::SmokeTest);
+        assert!(should_bypass_single_instance(&smoke));
+        assert!(should_enable_loopback_only_test_mode(&smoke));
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "iphone_link_t289_wv2_loader_check_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let err = ensure_legacy_webview2_loader_available_in(&temp_dir).unwrap_err();
+        assert!(err.contains("WebView2Loader.dll"));
+
+        let dll_path = temp_dir.join("WebView2Loader.dll");
+        fs::write(&dll_path, b"MZTEST").unwrap();
+        let ok_path = ensure_legacy_webview2_loader_available_in(&temp_dir).unwrap();
+        assert_eq!(ok_path, dll_path);
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

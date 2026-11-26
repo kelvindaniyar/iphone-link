@@ -2859,7 +2859,7 @@ def _run_ui_self_test() -> int:
                             ctx8.fillRect(0, 110, 120, 150);
                             const info8 = mWin.analyzeFrameOrientation(f8);
 
-                            // Skenario 9: Home Screen Kelvin (02:02, 02:42) & Folder iOS (02:05, 02:39)
+                            // Skenario 9: Home Screen User (02:02, 02:42) & Folder iOS (02:05, 02:39)
                             const f9 = document.createElement("canvas");
                             f9.width = 120; f9.height = 260;
                             const ctx9 = f9.getContext("2d");
@@ -3659,7 +3659,7 @@ def _run_ui_self_test() -> int:
                             // Evaluasi optRotation = 270 (sudah di Horizontal)
                             const info31_at270 = mWin.analyzeFrameOrientation(f31, 270);
 
-                            // Skenario 32A (BARU Tahap 93): iPhone 17 Pro Real Home Screen Kelvin (00:03 - 00:09, 00:26, 00:38, 01:23, 01:31)
+                            // Skenario 32A (BARU Tahap 93): iPhone 17 Pro Real Home Screen User (00:03 - 00:09, 00:26, 00:38, 01:23, 01:31)
                             const f32a = document.createElement("canvas");
                             f32a.width = 120; f32a.height = 260;
                             const ctx32a = f32a.getContext("2d");
@@ -3898,7 +3898,7 @@ def _run_ui_self_test() -> int:
                             const info108_2e_at0 = mWin.analyzeFrameOrientation(f108_2e, 0);
                             const info108_2e_at270 = mWin.analyzeFrameOrientation(f108_2e, 270);
 
-                            // --- Skenario 109 Sub-Test 2A: Home Screen iPhone 11 Pro Max Kelvin Resolusi 1216x2656 (Full Visual Traps) ---
+                            // --- Skenario 109 Sub-Test 2A: Home Screen iPhone 11 Pro Max User Resolusi 1216x2656 (Full Visual Traps) ---
                             const f109_2a = document.createElement("canvas");
                             f109_2a.width = 1216; f109_2a.height = 2656;
                             const ctx109_2a = f109_2a.getContext("2d");
@@ -4038,7 +4038,7 @@ def _run_ui_self_test() -> int:
                                     canExit: !!(info8 && info8.canPassiveExitToPortrait),
                                     isGame: !!(info8 && info8.isLandscapeGameFrame)
                                 },
-                                skenario9_HomeScreenKelvin: {
+                                skenario9_HomeScreenUser: {
                                     hasTrueStatusBar: !!(info9 && info9.hasTruePortraitStatusBar),
                                     canExit: !!(info9 && info9.canPassiveExitToPortrait),
                                     isGame: !!(info9 && info9.isLandscapeGameFrame)
@@ -4268,7 +4268,7 @@ def _run_ui_self_test() -> int:
                                     isGame_at270: !!(info31_at270 && info31_at270.isLandscapeGameFrame),
                                     canExit_at270: !!(info31_at270 && info31_at270.canPassiveExitToPortrait)
                                 },
-                                skenario32A_Iphone17ProHomeScreenKelvin: {
+                                skenario32A_Iphone17ProHomeScreenUser: {
                                     isNeonPoster: !!(info32a && info32a.isEfootballNeonPosterScreen),
                                     hasNakedIsland: !!(info32a && info32a.hasNakedDynamicIsland),
                                     hasTrueStatusBar: !!(info32a && info32a.hasTruePortraitStatusBar),
@@ -4324,7 +4324,7 @@ def _run_ui_self_test() -> int:
                                     isGame_at270: !!(info108_2e_at270 && info108_2e_at270.isLandscapeGameFrame),
                                     hasSideBar_at270: !!(info108_2e_at270 && info108_2e_at270.hasLandscapeSideBar)
                                 },
-                                skenario109_Sub2A_HomeScreenKelvinFullRes: {
+                                skenario109_Sub2A_HomeScreenUserFullRes: {
                                     hasIosDock: !!(info109_2a_at0 && info109_2a_at0.hasIosHomeScreenDock),
                                     hasLandscapeOsd: !!(info109_2a_at0 && info109_2a_at0.hasYouTubeLandscapeOsd),
                                     hasPrelimSideBar: !!(info109_2a_at0 && info109_2a_at0.hasLandscapeSideBar),
@@ -4406,9 +4406,9 @@ def _run_ui_self_test() -> int:
                             and tahap83_res.get("skenario8_MinimizeYouTubeToPortrait", {}).get("hasTrueStatusBar") is True
                             and tahap83_res.get("skenario8_MinimizeYouTubeToPortrait", {}).get("canExit") is True
                             and tahap83_res.get("skenario8_MinimizeYouTubeToPortrait", {}).get("isGame") is False
-                            and tahap83_res.get("skenario9_HomeScreenKelvin", {}).get("hasTrueStatusBar") is True
-                            and tahap83_res.get("skenario9_HomeScreenKelvin", {}).get("canExit") is True
-                            and tahap83_res.get("skenario9_HomeScreenKelvin", {}).get("isGame") is False
+                            and tahap83_res.get("skenario9_HomeScreenUser", {}).get("hasTrueStatusBar") is True
+                            and tahap83_res.get("skenario9_HomeScreenUser", {}).get("canExit") is True
+                            and tahap83_res.get("skenario9_HomeScreenUser", {}).get("isGame") is False
                             and tahap83_res.get("skenario10_ControlCenterHome", {}).get("isGame") is False
                             and tahap83_res.get("skenario10_ControlCenterHome", {}).get("hasSideBar") is False
                             and tahap83_res.get("skenario11_ThreadsApp", {}).get("hasLightAppChrome") is True
@@ -4762,8 +4762,8 @@ def _run_ui_self_test() -> int:
                             if not tahap92_ok:
                                 passed = False
 
-                            # Step H: Tahap 93 Verification (iPhone 17 Pro Real Home Screen Kelvin & Folder Social Stability)
-                            t93_s32a = tahap83_res.get("skenario32A_Iphone17ProHomeScreenKelvin", {})
+                            # Step H: Tahap 93 Verification (iPhone 17 Pro Real Home Screen User & Folder Social Stability)
+                            t93_s32a = tahap83_res.get("skenario32A_Iphone17ProHomeScreenUser", {})
                             t93_s32b = tahap83_res.get("skenario32B_Iphone17ProFolderSocial", {})
                             tahap93_ok = (
                                 tahap92_ok
@@ -5299,7 +5299,7 @@ def _run_ui_self_test() -> int:
                                                         get_windows_clipboard_text,
                                                     )
 
-                                                    # Sub-Test 2A: Kasus Nyata Video Kelvin Detik 00:14
+                                                    # Sub-Test 2A: Kasus Nyata Video User Detik 00:14
                                                     t99_target_url = "https://www.instagram.com/p/DVfE5d9kydZ/?igsh=MW81dmZra2htOTc2bA=="
                                                     t99_W, t99_H = 1216, 2656
                                                     try:
@@ -5309,8 +5309,8 @@ def _run_ui_self_test() -> int:
                                                         t99_font_lg = _PILFnt.load_default()
                                                         t99_font_bd = _PILFnt.load_default()
 
-                                                    im_kelvin_0014 = _PILImg.new("RGB", (t99_W, t99_H), (15, 15, 18))
-                                                    d_k = _PILDdr.Draw(im_kelvin_0014)
+                                                    im_sample_0014 = _PILImg.new("RGB", (t99_W, t99_H), (15, 15, 18))
+                                                    d_k = _PILDdr.Draw(im_sample_0014)
                                                     d_k.rounded_rectangle([60, 140, t99_W - 60, 420], radius=24, fill=(28, 30, 36), outline=(60, 62, 70), width=2)
                                                     d_k.text((90, 165), "https://www.instagram.com/p/", fill=(255, 255, 255), font=t99_font_lg)
                                                     d_k.text((90, 225), "DVfE5d9kydZ/?", fill=(255, 255, 255), font=t99_font_lg)
@@ -5325,15 +5325,15 @@ def _run_ui_self_test() -> int:
                                                     d_k.text((90, 710), "PRAMONO: 15 KONSER BESAR AKAN DIGELAR DI JKT, 2027", fill=(240, 240, 240), font=t99_font_bd)
                                                     d_k.text((90, 770), "Copy link", fill=(200, 200, 200), font=t99_font_bd)
 
-                                                    extracted_kelvin = extract_visible_url_from_frame(im_kelvin_0014)
-                                                    set_windows_clipboard_text(extracted_kelvin or "")
+                                                    extracted_sample = extract_visible_url_from_frame(im_sample_0014)
+                                                    set_windows_clipboard_text(extracted_sample or "")
                                                     clip_val_t99 = get_windows_clipboard_text()
 
                                                     t99_sub2a_ok = bool(
-                                                        extracted_kelvin == t99_target_url
+                                                        extracted_sample == t99_target_url
                                                         and clip_val_t99 == t99_target_url
-                                                        and extracted_kelvin != "https://www.instagram.com/p/"
-                                                        and extracted_kelvin != "https://www.apple.com"
+                                                        and extracted_sample != "https://www.instagram.com/p/"
+                                                        and extracted_sample != "https://www.apple.com"
                                                     )
 
                                                     # Sub-Test 2B: Reel Multi-line & TikTok Multi-line Assembler
@@ -5357,7 +5357,7 @@ def _run_ui_self_test() -> int:
                                                         "passed": tahap99_ok,
                                                         "sub2a": {
                                                             "target_url": t99_target_url,
-                                                            "extracted_url": extracted_kelvin,
+                                                            "extracted_url": extracted_sample,
                                                             "clipboard_url": clip_val_t99,
                                                             "passed": t99_sub2a_ok,
                                                         },
@@ -6077,7 +6077,7 @@ def _run_ui_self_test() -> int:
                                                                                         and res_t107_2c == "https://www.instagram.com/p/DVb7779Eybv/?igsh=b3llM2c3d291NWNv"
                                                                                     )
 
-                                                                                    # Sub-Test 2D: The 5 other test cases from Kelvin's video test evidence
+                                                                                    # Sub-Test 2D: The 5 other test cases from user's video test evidence
                                                                                     u_warta = clean_extracted_url("https://www.instagram.com/p/DPAvWKE2_Ds/?igsh=c2ZodHB6dnpkaWkx")
                                                                                     u_sparks = clean_extracted_url("https://www.instagram.com/p/DUYYS1xAWt8/?igsh=MW45dHNsZmxWNWhxYg==")
                                                                                     u_cino = clean_extracted_url("https://www.instagram.com/reel/DVCf09uD25k/?igsh=Znh3N3Fja2hqZGs=")
@@ -6179,7 +6179,7 @@ def _run_ui_self_test() -> int:
                                                                                         passed = False
 
                                                                                     # Step X: Tahap 109 Verification (iPhone 11 Pro Max Home Screen Dock Guard & Thin YouTube OSD Red Scrubber)
-                                                                                    t109_s2a = tahap83_res.get("skenario109_Sub2A_HomeScreenKelvinFullRes", {})
+                                                                                    t109_s2a = tahap83_res.get("skenario109_Sub2A_HomeScreenUserFullRes", {})
                                                                                     t109_s2b = tahap83_res.get("skenario109_Sub2B_HomeScreenYouTubePip", {})
                                                                                     t109_s2c = tahap83_res.get("skenario109_Sub2C_InstagramDarkAndFolder", {})
                                                                                     t109_s2d = tahap83_res.get("skenario109_Sub2D_YouTubeWatchPageAd", {})
@@ -6445,7 +6445,7 @@ def _run_ui_self_test() -> int:
                                 "skenario5_MessiYamal": {"isGame": True, "canExit": False},
                                 "skenario6_Beranda": {"isGame": True, "isMenuLayout": True, "canExit": False},
                                 "skenario7_YouTube": {"isGame": True, "isYouTubeFullscreen": True, "canExit": False},
-                                "skenario8_HomeScreenKelvin": {"hasTrueStatusBar": True, "canExit": True},
+                                "skenario8_HomeScreenUser": {"hasTrueStatusBar": True, "canExit": True},
                                 "skenario9_ToastCheck": {"toastHidden": True}
                             }
                         }
@@ -6458,7 +6458,7 @@ def _run_ui_self_test() -> int:
                                 "skenario4_Threads": {"hasSideBar": False, "hasTrueStatusBar": True, "isGame": False},
                                 "skenario5_YouTube": {"isGame": True, "isYouTubeFullscreen": True},
                                 "skenario6_HomeClick": {"graceActive": True},
-                                "skenario7_HomeScreenKelvin": {"hasTrueStatusBar": True, "canExit": True},
+                                "skenario7_HomeScreenUser": {"hasTrueStatusBar": True, "canExit": True},
                                 "skenario8_Folder": {"isFolder": True, "canExit": True}
                             }
                         }
@@ -6469,7 +6469,7 @@ def _run_ui_self_test() -> int:
                                 "skenario2_MessiYamal": {"isGame": True, "hasTrueStatusBar": False, "canExit": False},
                                 "skenario3_MainMenu": {"isGame": True, "hasSideBar": True, "canExit": False},
                                 "skenario4_YouTube": {"isGame": True, "isYouTubeFullscreen": True, "canExit": False},
-                                "skenario5_HomeScreenKelvin": {"hasTrueStatusBar": True, "canExit": True, "isGame": False},
+                                "skenario5_HomeScreenUser": {"hasTrueStatusBar": True, "canExit": True, "isGame": False},
                                 "skenario6_Folder": {"isFolder": True, "canExit": True, "isGame": False},
                                 "skenario7_HomeClick": {"graceActive": True}
                             }
@@ -6586,7 +6586,7 @@ def main() -> None:
     if sys.platform == "win32":
         try:
             # [Tahap 70] moved to module top-level
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Kelvin.iPhoneLink.Desktop.1")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("iPhoneLink.Desktop.App")
         except Exception:
             pass
 

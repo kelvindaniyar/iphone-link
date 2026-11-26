@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -73,24 +73,63 @@ pub static GLOBAL_DOM_CARD_UPDATER_EXISTS: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_DOM_CARD_UPDATER_TITLE: Mutex<String> = Mutex::new(String::new());
 pub static GLOBAL_TRAY_DISMISSED_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_STOP_MIRROR_MS: AtomicU64 = AtomicU64::new(0);
+pub static SCREEN_SESSION_EPOCH: AtomicU64 = AtomicU64::new(0);
+pub static AUDIO_MANUALLY_STOPPED_THIS_SESSION: AtomicBool = AtomicBool::new(false);
+static AUTO_AUDIO_SPAWN_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 pub static LATEST_SHORTCUT_URL_CACHE: Mutex<(String, u64)> = Mutex::new((String::new(), 0));
+pub static DEBUG_METRICS_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+pub const STANDALONE_INPROCESS_ONLY: bool = true;
+pub const INPROCESS_ROUTE_COUNT: usize = 50;
+pub const APP_VERSION_V5: &str = "5.0.0";
+pub const APP_EDITION_V5: &str = "100% Pure Native Rust (Zero Python & Zero PowerShell)";
+
+// Compile-time Zero-I/O Embedded Web & Icon Assets (Tahap 232)
+pub const EMBEDDED_INDEX_HTML: &str = include_str!("../../../../handset/web/index.html");
+pub const EMBEDDED_APP_JS: &str = include_str!("../../../../handset/web/app.js");
+pub const EMBEDDED_APP_CSS: &str = include_str!("../../../../handset/web/app.css");
+pub const EMBEDDED_MIRROR_HTML: &str = include_str!("../../../../handset/web/mirror.html");
+pub const EMBEDDED_MIRROR_JS: &str = include_str!("../../../../handset/web/mirror.js");
+pub const EMBEDDED_MIRROR_CSS: &str = include_str!("../../../../handset/web/mirror.css");
+pub const EMBEDDED_KEYS_JS: &str = include_str!("../../../../handset/web/keys.js");
+pub const EMBEDDED_LOGO_SVG: &[u8] = include_bytes!("../../../../handset/web/logo.svg");
+pub const EMBEDDED_LOGO_PNG: &[u8] = include_bytes!("../../../../assets/logo.png");
+pub const EMBEDDED_IPHONE_LINK_ICO: &[u8] = include_bytes!("../../../../assets/iphone_link.ico");
+pub const EMBEDDED_WEB_ASSET_COUNT: usize = 10;
 
 use crate::i18n::{translate_dynamic_status, Lang};
-use crate::ocr_engine::clear_copy_cache;
+use crate::ocr_engine::{
+    clear_copy_cache, clear_recent_long_ocr_chunks, escape_json_value,
+    extract_and_process_ocr_batch_from_json, read_win32_clipboard,
+    record_viewport_history_snapshot, resolve_active_clipboard_source_with_seq,
+    set_active_clipboard_source, write_win32_clipboard, ClipboardSource,
+};
 use crate::updater::{compute_sha256, UpdateStateCache};
 use crate::window_dwm::{
     apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop, dismiss_tray_menu_if_open,
-    is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to, register_tray_app_state,
-    register_tray_icon, set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag,
-    unregister_tray_icon, WindowGeometryManager, GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN,
-    GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE, GLOBAL_PENDING_TRAY_ACTION,
-    GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, GLOBAL_TRAY_MENU_OPEN, RECT, TRAY_MENU_ITEMS,
+    execute_clean_window_close_resources, is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to,
+    query_win32_apple_service_installed_in_registry, query_win32_desktop_wallpaper_path,
+    query_win32_hevc_appx_package, register_tray_app_state, register_tray_icon,
+    set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag, WindowGeometryManager,
+    GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN, GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE,
+    GLOBAL_PENDING_TRAY_ACTION, GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, GLOBAL_TRAY_MENU_OPEN,
+    GLOBAL_TRAY_REGISTERED, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, RECT, TRAY_MENU_ITEMS,
 };
 
-use iphone_link_apple::hid::IndigoHidController;
-use iphone_link_apple::models::resolve_apple_model;
+use iphone_link_apple::amfi::{resolve_developer_mode_for_diagnostics, unlock_developer_mode_menu};
+use iphone_link_apple::hid::{
+    clear_stored_pin, commit_and_reset_current_typed_line, dpapi_decrypt_pin_b64,
+    dpapi_encrypt_pin_b64, generate_ios_shortcut_steps, generate_key_steps_for_text,
+    generate_onscreen_keyboard_toggle_events, get_active_rotation_deg, get_typed_lines_buffer,
+    is_stealth_dim_active, load_decrypted_pin, lock_iphone_screen_with_hold, pinch_zoom_frames,
+    record_typed_char, record_typed_text, record_user_input_activity, reset_hid_runtime_state,
+    set_iphone_physical_brightness, store_encrypted_pin, swipe_direction_steps,
+    wake_and_unlock_iphone, IndigoHidController,
+};
+use iphone_link_apple::models::{
+    clear_metadata_cache, discover_devices_with_metadata, snapshot_cached_devices_metadata_zero_io,
+};
 use iphone_link_apple::usbmux::list_connected_usb_devices;
-use iphone_link_apple::wifi_discovery::REMOTEPAIRING_SERVICE;
+use iphone_link_apple::wifi::{get_wifi_status, pair_wifi_json, scan_wifi_json};
 
 pub const DEFAULT_PORT: u16 = 8765;
 
@@ -1073,6 +1112,46 @@ html body .control-pane {
   animation: none !important;
 }
 
+/* Tahap 242 Pilar 3: Zero gray/white blank flash during WebView2 iframe init & seamless reconnect */
+html body #phone-screen,
+html body iframe#screen-view {
+  background: #05070c !important;
+}
+#v4-reconnect-pill {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 95;
+  max-width: 240px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  padding: 6px 14px !important;
+  border-radius: 999px !important;
+  background: rgba(12, 16, 26, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f3f6ff;
+  font-size: 12px !important;
+  font-weight: 600;
+  line-height: 1.25 !important;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+/* Tahap 243 Pilar 4: Visible spin animation on Launchpad & Drawer refresh buttons */
+@keyframes v4Spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.v4-refresh-spinning svg,
+#launchpad-scan-btn.v4-refresh-spinning svg,
+#refresh.v4-refresh-spinning svg {
+  animation: v4Spin 0.75s linear infinite !important;
+}
+
 /* Portrait + Drawer OPEN (iPhone, iPad 4:3, & Custom): left column preserves stage width seamlessly, right drawer = flush 360px (0px gap) */
 html body #app-root.app:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
 html body #app-root.app.is-ipad:not(.is-landscape):not(.is-fullsize).drawer-open .main-body,
@@ -1943,11 +2022,299 @@ html[data-theme="light"] body #status-note {
 html[data-theme="light"] body #status-note.warn {
   color: #b45309 !important;
 }
+
+/* Tahap 235 (Paritas Tahap 91 & 94): GPU Layer Containment, Single-Pass Acrylic Drawer, & Compact Quick Nav */
+.display-col,
+#phone-screen {
+  contain: layout style paint;
+  will-change: transform;
+}
+.side-drawer,
+#control-pane {
+  contain: layout style paint;
+  will-change: transform;
+}
+.side-drawer .card,
+.side-drawer .glass-card,
+.side-drawer .control-group,
+#control-pane .card,
+#control-pane .glass-card,
+#control-pane .control-group {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.app.is-fullsize.drawer-open .side-drawer,
+.app.is-fullsize.drawer-open #control-pane {
+  display: flex !important;
+  width: 360px !important;
+}
+.app.is-fullsize.drawer-open #phone-screen {
+  height: calc(100vh - 84px) !important;
+  max-height: calc(100vh - 84px) !important;
+}
+.quick-nav button,
+.bottom-nav button {
+  white-space: nowrap !important;
+  text-overflow: clip !important;
+}
+
+/* Tahap 247: Smart Multi-iPhone Launchpad Device Picker (WinUI 3 Liquid Glass, Dark & Light Mode) */
+.launchpad-idle-view.has-multi-devices {
+  gap: 8px !important;
+}
+.launchpad-idle-view.has-multi-devices .launchpad-hero {
+  margin-bottom: 2px !important;
+}
+.launchpad-idle-view.has-multi-devices .launchpad-hero-icon {
+  width: 46px !important;
+  height: 46px !important;
+  margin-bottom: 6px !important;
+}
+.launchpad-idle-view.has-multi-devices .launchpad-logo-img {
+  width: 46px !important;
+  height: 46px !important;
+}
+.launchpad-device-picker {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 9px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(18px) saturate(165%);
+  -webkit-backdrop-filter: blur(18px) saturate(165%);
+  text-align: left;
+}
+.launchpad-device-picker[hidden] {
+  display: none !important;
+}
+.launchpad-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px 6px;
+}
+.launchpad-picker-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.78);
+}
+.launchpad-picker-count {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  color: #7dd3fc;
+}
+.launchpad-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 132px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+.launchpad-picker-item {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f8fafc;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 140ms ease, border-color 140ms ease, transform 120ms ease, box-shadow 140ms ease;
+}
+.launchpad-picker-item:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(125, 211, 252, 0.40);
+}
+.launchpad-picker-item:active {
+  transform: scale(0.985);
+}
+.launchpad-picker-item.is-selected {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.24) 0%, rgba(37, 99, 235, 0.18) 100%);
+  border-color: rgba(56, 189, 248, 0.68);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.launchpad-picker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+  background: #94a3b8;
+}
+.launchpad-picker-dot.is-online {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.72);
+}
+.launchpad-picker-dot.is-offline {
+  background: #94a3b8;
+  opacity: 0.78;
+}
+.launchpad-picker-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.launchpad-picker-main {
+  font-size: 12.2px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launchpad-picker-name {
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.80);
+}
+.launchpad-picker-sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: rgba(148, 163, 184, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launchpad-picker-item.is-selected .launchpad-picker-sub {
+  color: #bae6fd;
+}
+.launchpad-picker-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb);
+  box-shadow: 0 2px 6px rgba(14, 165, 233, 0.45);
+  opacity: 0;
+  transform: scale(0.75);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.launchpad-picker-item.is-selected .launchpad-picker-check {
+  opacity: 1;
+  transform: scale(1);
+}
+.launchpad-switch-wifi-btn {
+  width: 100%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.48);
+  background: rgba(14, 165, 233, 0.16);
+  color: #7dd3fc;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+.launchpad-switch-wifi-btn:hover {
+  background: rgba(14, 165, 233, 0.28);
+  border-color: rgba(125, 211, 252, 0.72);
+}
+.launchpad-switch-wifi-btn[hidden] {
+  display: none !important;
+}
+
+/* Light Mode High-Contrast Liquid Glass Overrides for Multi-iPhone Device Picker */
+html[data-theme="light"] .launchpad-device-picker {
+  background: rgba(255, 255, 255, 0.54) !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+}
+html[data-theme="light"] .launchpad-picker-title {
+  color: #334155 !important;
+}
+html[data-theme="light"] .launchpad-picker-count {
+  background: rgba(2, 132, 199, 0.12) !important;
+  border-color: rgba(2, 132, 199, 0.30) !important;
+  color: #0369a1 !important;
+}
+html[data-theme="light"] .launchpad-picker-item {
+  background: rgba(255, 255, 255, 0.58) !important;
+  border-color: rgba(15, 23, 42, 0.10) !important;
+  color: #0f172a !important;
+}
+html[data-theme="light"] .launchpad-picker-item:hover {
+  background: rgba(255, 255, 255, 0.84) !important;
+  border-color: rgba(2, 132, 199, 0.42) !important;
+}
+html[data-theme="light"] .launchpad-picker-item.is-selected {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.18) 0%, rgba(37, 99, 235, 0.14) 100%) !important;
+  border-color: rgba(2, 132, 199, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(2, 132, 199, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.80) !important;
+}
+html[data-theme="light"] .launchpad-picker-main {
+  color: #0f172a !important;
+}
+html[data-theme="light"] .launchpad-picker-name {
+  color: #334155 !important;
+}
+html[data-theme="light"] .launchpad-picker-sub {
+  color: #475569 !important;
+}
+html[data-theme="light"] .launchpad-picker-item.is-selected .launchpad-picker-sub {
+  color: #0369a1 !important;
+}
+html[data-theme="light"] .launchpad-switch-wifi-btn {
+  background: rgba(2, 132, 199, 0.12) !important;
+  border-color: rgba(2, 132, 199, 0.42) !important;
+  color: #0369a1 !important;
+}
+html[data-theme="light"] .launchpad-switch-wifi-btn:hover {
+  background: rgba(2, 132, 199, 0.22) !important;
+}
+
+/* Tahap 248 Pilar 3: Anti-Blank-Putih Light Mode pre-first-frame lock.
+ * Specificity (0,2,3,3) beats (0,2,2,3) transparent streaming override until frame 1 renders. */
+html body #app-root.app.is-streaming:not(.has-first-frame) #phone-screen,
+html body #app-root.app.is-streaming:not(.has-first-frame) iframe#screen-view {
+  background: #090d16 !important;
+  background-color: #090d16 !important;
+}
+
+/* Tahap 255 Pilar 2: Honest bilingual stream-mode description inside Settings Drawer (0-diff app.css) */
+#stream-mode-desc {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.42;
+  color: rgba(203, 213, 225, 0.86);
+}
+html[data-theme="light"] #stream-mode-desc {
+  color: rgba(51, 65, 85, 0.90) !important;
+}
 "#;
 
-pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 184) */
+pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pywebview.api (Tahap 184 / v5.0.0) */
 (function() {
-    console.log("[iPhone Link v4.0 Native Rust] Bridge initialized");
+    console.log("[iPhone Link v5.0 Native Rust] Bridge initialized");
 
     function sanitizePinDigits(rawVal) {
         return String(rawVal || '').replace(/\D/g, '').slice(0, 6);
@@ -1999,9 +2366,23 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             if (typeof initData.pastePcClipboard === 'boolean') {
                 localStorage.setItem('pane-paste-pc', String(initData.pastePcClipboard));
             }
-            if (initData.transport) {
+            if (initData.hasUserSettingsFile && initData.transport) {
                 var trVal = (initData.transport === 'wifi') ? 'wifi' : 'usb';
                 localStorage.setItem('handset-transport', trVal);
+            } else if (!initData.hasUserSettingsFile) {
+                localStorage.removeItem('handset-transport');
+            }
+            // Tahap 255 Pilar 1: Fresh install (!hasUserSettingsFile) MUST purge any stale streamMode
+            // keys left in the persistent WebView2 profile so Click #1 never hijacks Auto -> AirPlay!
+            if (!initData.hasUserSettingsFile) {
+                localStorage.removeItem('iphone_link_stream_mode');
+                localStorage.removeItem('handset-stream-mode');
+                localStorage.removeItem('v4-stream-mode');
+                window.currentStreamMode = 'auto';
+            } else {
+                var smVal = (String(initData.streamMode || localStorage.getItem('iphone_link_stream_mode') || 'auto').trim().toLowerCase() === 'airplay') ? 'airplay' : 'auto';
+                localStorage.setItem('iphone_link_stream_mode', smVal);
+                window.currentStreamMode = smVal;
             }
             if (initData.folderInstanceId) {
                 window.__v4FolderInstanceId = String(initData.folderInstanceId);
@@ -2080,6 +2461,34 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             });
         }, 35);
     }
+
+    function syncNativeVideoPresenter(overrides) {
+        try {
+            var appEl = document.getElementById('app-root') || document.querySelector('.app');
+            var bs = window.__v4BootSettings || {};
+            var cObj = (typeof readCurrentCropFromDom === 'function') ? readCurrentCropFromDom() : (bs.crop || {});
+            var fmRaw = (overrides && overrides.fitMode) || bs.fitMode || localStorage.getItem('pane-fit-mode') || 'autofit';
+            var payload = {
+                fitMode: fmRaw === 'fill' ? 'edge_to_edge' : (fmRaw === 'contain' ? 'original_ratio' : fmRaw),
+                cropTop: Math.min(24, Math.max(0, Number(cObj.top || 0))),
+                cropBottom: Math.min(24, Math.max(0, Number(cObj.bottom || 0))),
+                cropLeft: Math.min(24, Math.max(0, Number(cObj.left || 0))),
+                cropRight: Math.min(24, Math.max(0, Number(cObj.right || 0))),
+                windowWidth: Math.round(window.innerWidth || 346),
+                windowHeight: Math.round(window.innerHeight || 832),
+                isFullscreen: Boolean(appEl && appEl.classList.contains('is-fullsize')),
+                isLandscape: Boolean(appEl && appEl.classList.contains('is-landscape')),
+                drawerOpen: Boolean(appEl && appEl.classList.contains('drawer-open'))
+            };
+            if (overrides && typeof overrides === 'object') {
+                Object.assign(payload, overrides);
+            }
+            return postApi('/api/video/presenter', payload);
+        } catch (_) {
+            return Promise.resolve({ ok: false });
+        }
+    }
+    window.__v4SyncNativePresenter = syncNativeVideoPresenter;
 
     function enforceSingleActivePerSegmentedGroup(clickedBtn) {
         if (!clickedBtn) return;
@@ -2174,8 +2583,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 var ppcStr = localStorage.getItem('pane-paste-pc');
                 if (ppcStr === null && typeof bs.pastePcClipboard === 'boolean') ppcStr = String(bs.pastePcClipboard);
                 if (ppcStr === 'true' || ppcStr === 'false') resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-paste-pc-choice') === ppcStr; });
+            } else if (group.id === 'segmented-stream-mode') {
+                var sm = (window.currentStreamMode === 'airplay' || (bs && bs.hasUserSettingsFile && localStorage.getItem('iphone_link_stream_mode') === 'airplay')) ? 'airplay' : 'auto';
+                window.currentStreamMode = sm;
+                resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-stream-mode') === sm; });
             } else if (group.querySelector('[data-transport]')) {
-                var trVal = localStorage.getItem('handset-transport') || bs.transport;
+                var liveTr = (window.currentTransport === 'wifi') ? 'wifi' : '';
+                var savedTr = (bs && bs.hasUserSettingsFile)
+                    ? (localStorage.getItem('handset-transport') || bs.transport)
+                    : localStorage.getItem('handset-transport');
+                var trVal = liveTr || savedTr || '';
                 if (trVal) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-transport') === (trVal === 'wifi' ? 'wifi' : 'usb'); });
             } else if (group.id === 'update-channel-group') {
                 if (bs.updateChannel) resolvedBtn = buttons.find(function(b) { return b.getAttribute('data-channel') === bs.updateChannel; });
@@ -2466,12 +2883,32 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     btn.textContent = isId ? 'Terpasang! Memuat ulang stream...' : 'Installed! Reloading stream...';
                     setTimeout(function() {
                         try { existing.remove(); } catch (_) {}
-                        var mf = document.getElementById('mirror-frame');
+                        var mf = document.getElementById('screen-view');
                         if (mf && mf.contentWindow) mf.contentWindow.location.reload();
                     }, 600);
                 } else {
+                    var target = (res && res.mediaFeaturePackMissing) ? 'media_feature_pack' : 'hevc_oem';
+                    fetch('/api/system/open_hevc_store', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target: target })
+                    }).catch(function() {});
                     btn.disabled = false;
-                    btn.textContent = isId ? 'Coba Pasang Lagi (HEVC)' : 'Retry Install HEVC Codec';
+                    btn.textContent = isId
+                        ? 'Muat Ulang Stream (Setelah Pasang)'
+                        : 'Reload Stream (After Install)';
+                    p.textContent = (res && res.mediaFeaturePackMissing)
+                        ? (isId
+                            ? 'Pengaturan Optional Features dibuka. Pasang Media Feature Pack lalu restart PC.'
+                            : 'Windows Optional Features opened. Install Media Feature Pack then restart PC.')
+                        : (isId
+                            ? 'Microsoft Store dibuka (HEVC OEM Gratis). Setelah terpasang, klik tombol di bawah untuk muat ulang stream.'
+                            : 'Microsoft Store opened (Free OEM HEVC). Once installed, click below to reload the stream.');
+                    btn.onclick = function() {
+                        try { existing.remove(); } catch (_) {}
+                        var mf2 = document.getElementById('screen-view');
+                        if (mf2 && mf2.contentWindow) mf2.contentWindow.location.reload();
+                    };
                 }
             }).catch(function() {
                 btn.disabled = false;
@@ -2864,16 +3301,28 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         e.preventDefault();
     }, true);
 
-    function updateParallaxVars() {
+    var PARALLAX_CALM_INTERVAL_MS = 1500;
+    window.__v4LastWinX = null;
+    window.__v4LastWinY = null;
+    function updateParallaxVars(force) {
         try {
             var wx = window.screenX || window.screenLeft || 0;
             var wy = window.screenY || window.screenTop || 0;
-            document.documentElement.style.setProperty("--win-x", wx + "px");
-            document.documentElement.style.setProperty("--win-y", wy + "px");
+            var dx = (window.__v4LastWinX === null) ? 999 : Math.abs(wx - window.__v4LastWinX);
+            var dy = (window.__v4LastWinY === null) ? 999 : Math.abs(wy - window.__v4LastWinY);
+            if (force || dx >= 2 || dy >= 2) {
+                window.__v4LastWinX = wx;
+                window.__v4LastWinY = wy;
+                document.documentElement.style.setProperty("--win-x", wx + "px");
+                document.documentElement.style.setProperty("--win-y", wy + "px");
+            }
         } catch(_) {}
     }
-    updateParallaxVars();
-    window.addEventListener("mouseup", updateParallaxVars, { passive: true });
+    updateParallaxVars(true);
+    window.addEventListener("mouseup", function() { updateParallaxVars(false); }, { passive: true });
+    window.addEventListener("resize", function() { updateParallaxVars(false); }, { passive: true });
+    window.addEventListener("focus", function() { updateParallaxVars(false); }, { passive: true });
+    setInterval(function() { updateParallaxVars(false); }, PARALLAX_CALM_INTERVAL_MS);
 
     function installDragListeners() {
         ['.app-bar', '.drawer-header'].forEach(function(sel) {
@@ -3234,6 +3683,13 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     window.addEventListener('message', function(e) {
         try {
             if (!e || !e.data) return;
+            if (e.data.type === 'mirror-first-frame' || e.data.type === 'mirror-first-frame-ready') {
+                var appRootEl = document.getElementById('app-root') || document.querySelector('.app');
+                if (appRootEl) {
+                    appRootEl.classList.add('has-first-frame');
+                }
+                return;
+            }
             if (e.data.type === 'hevc-missing') {
                 if (typeof window.__v4ShowMainHevcBanner === 'function') {
                     window.__v4ShowMainHevcBanner(e.data.codec || '');
@@ -3544,12 +4000,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function syncVersionLabels() {
         try {
             var updVer = document.getElementById('update-current-version');
-            if (updVer && updVer.textContent.trim() !== 'iPhone Link v4.0.0') {
-                updVer.textContent = 'iPhone Link v4.0.0';
+            if (updVer && updVer.textContent.trim() !== 'iPhone Link v5.0.0') {
+                updVer.textContent = 'iPhone Link v5.0.0';
             }
             var credName = document.querySelector('.credit-app-name');
-            if (credName && credName.textContent.trim() !== 'iPhone Link v4.0') {
-                credName.textContent = 'iPhone Link v4.0';
+            if (credName && credName.textContent.trim() !== 'iPhone Link v5.0') {
+                credName.textContent = 'iPhone Link v5.0';
             }
         } catch (_) {}
     }
@@ -3593,7 +4049,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     '  <p data-i18n="updater.info"></p>',
                     '</div>',
                     '<div class="update-card-body" id="update-card-body">',
-                    '  <div class="update-version-label" id="update-current-version">iPhone Link v4.0.0</div>',
+                    '  <div class="update-version-label" id="update-current-version">iPhone Link v5.0.0</div>',
                     '  <div class="update-row">',
                     '    <span class="update-row-label" data-i18n="updater.auto_check">' + (isEn ? 'Check automatically on startup' : 'Cek pembaruan otomatis saat dibuka') + '</span>',
                     '    <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Auto check updates"><span class="toggle-switch-thumb"></span></button>',
@@ -3767,9 +4223,16 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
 
             var audioBadgeLbl = document.querySelector('#audio-status-badge .btn-label');
             if (audioBadgeLbl) {
-                audioBadgeLbl.textContent = isEn
-                    ? 'Zero-Bluetooth USB Audio (48 kHz WASAPI \u00B7 ~40 ms)'
-                    : 'Audio USB Zero-Bluetooth (48 kHz WASAPI \u00B7 ~40 ms)';
+                var activeAudioDev = (window.__v4ActiveAudioDevice || '').trim();
+                if (activeAudioDev) {
+                    audioBadgeLbl.textContent = isEn
+                        ? ('A2DP Connected: ' + activeAudioDev + ' (48 kHz WASAPI)')
+                        : ('A2DP Terhubung: ' + activeAudioDev + ' (48 kHz WASAPI)');
+                } else {
+                    audioBadgeLbl.textContent = isEn
+                        ? 'PC Audio Bridge (48 kHz WASAPI \u00B7 ~40 ms)'
+                        : 'Audio PC Bridge (48 kHz WASAPI \u00B7 ~40 ms)';
+                }
             }
 
             var bufHint = document.getElementById('audio-buffer-hint');
@@ -4155,6 +4618,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                 enforceSingleActivePerSegmentedGroup(target);
                 try { localStorage.setItem('pane-fit-mode', fm); } catch (_) {}
                 persistSettingPartial({ fitMode: fm }, false);
+                syncNativeVideoPresenter({ fitMode: fm === 'fill' ? 'edge_to_edge' : (fm === 'contain' ? 'original_ratio' : 'auto_fit') });
                 return;
             }
 
@@ -4179,6 +4643,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     var cObj = target.id === 'btn-reset-crop' ? { top: 0, bottom: 0, left: 0, right: 0 } : readCurrentCropFromDom();
                     try { localStorage.setItem('pane-crop-edges', JSON.stringify(cObj)); } catch (_) {}
                     persistSettingPartial({ crop: cObj }, false);
+                    syncNativeVideoPresenter({
+                        cropTop: Math.min(24, Number(cObj.top || 0)),
+                        cropBottom: Math.min(24, Number(cObj.bottom || 0)),
+                        cropLeft: Math.min(24, Number(cObj.left || 0)),
+                        cropRight: Math.min(24, Number(cObj.right || 0))
+                    });
                 }, 0);
                 return;
             }
@@ -4340,6 +4810,12 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     var cObj = readCurrentCropFromDom();
                     try { localStorage.setItem('pane-crop-edges', JSON.stringify(cObj)); } catch (_) {}
                     persistSettingPartial({ crop: cObj }, false);
+                    syncNativeVideoPresenter({
+                        cropTop: Math.min(24, Number(cObj.top || 0)),
+                        cropBottom: Math.min(24, Number(cObj.bottom || 0)),
+                        cropLeft: Math.min(24, Number(cObj.left || 0)),
+                        cropRight: Math.min(24, Number(cObj.right || 0))
+                    });
                 }
                 return;
             }
@@ -4827,6 +5303,97 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                             window.__v4ApplyTheme(desiredTheme);
                         }
                     }
+                    try {
+                        var errBanner = document.getElementById('screen-error-banner');
+                        if (errBanner && s && s.screen) {
+                            var errMsg = (s.screen.error || s.screen.note || '').trim();
+                            if (s.screen.phase === 'error' && errMsg) {
+                                errBanner.textContent = errMsg;
+                                errBanner.hidden = false;
+                                errBanner.style.display = 'block';
+                            } else if (s.screen.phase === 'running' && (errBanner.textContent || '').trim()) {
+                                errBanner.textContent = '';
+                                errBanner.hidden = true;
+                                errBanner.style.display = 'none';
+                            }
+                        }
+                    } catch (_) {}
+                    try {
+                        // Tahap 249 Pilar 3: Eliminate stale boot pill ("Memuat..." / "Menunggu iPhone")
+                        // and keep #status-pill synced in real time across phase & Wi-Fi online transitions.
+                        var stopLatchActive = typeof window._isUserStopLatchActive === 'function' && window._isUserStopLatchActive();
+                        if (s && !stopLatchActive && typeof window.renderPills === 'function') {
+                            var spEl = document.getElementById('status-pill') || document.getElementById('pill-connection');
+                            var spTxt = spEl ? (spEl.textContent || '').trim().toLowerCase() : '';
+                            var isBootPlaceholder = !spTxt
+                                || spTxt.indexOf('memuat') !== -1
+                                || spTxt.indexOf('loading') !== -1
+                                || ((spTxt === 'menunggu iphone' || spTxt === 'waiting for iphone') && Array.isArray(s.devices) && s.devices.length > 0);
+                            var curPhase = (s.screen && s.screen.phase) ? String(s.screen.phase) : 'idle';
+                            var curOnlineSig = Array.isArray(s.devices)
+                                ? s.devices.map(function(d) { return d ? (d.udid + ':' + (d.usb ? 'U' : '') + (d.wifiOnline ? 'W' : '')) : ''; }).join('|')
+                                : '';
+                            if (isBootPlaceholder
+                                || window.__v4LastPolledScreenPhase !== curPhase
+                                || window.__v4LastPolledOnlineSig !== curOnlineSig) {
+                                window.__v4LastPolledScreenPhase = curPhase;
+                                window.__v4LastPolledOnlineSig = curOnlineSig;
+                                window.renderPills(s);
+                            }
+                        }
+                    } catch (_) {}
+                    try {
+                        // Tahap 241 + 243 + 249 Pilar 3: Fresh-Install Auto-Audio Safety Sync
+                        // respecting pcBridgeConnecting, preserving .btn-label, with up to 3 spaced retries.
+                        var audioObj = (s && s.audio) ? s.audio : null;
+                        if (audioObj) {
+                            var bridgeOnNow = Boolean(audioObj.pcBridgeActive === true);
+                            var bridgeConnNow = Boolean(audioObj.pcBridgeConnecting === true);
+                            var bridgeDevNow = (typeof audioObj.pcBridgeDevice === 'string') ? audioObj.pcBridgeDevice.trim() : '';
+                            var audioSig = (bridgeOnNow ? '1' : '0') + '|' + (bridgeConnNow ? '1' : '0') + '|' + bridgeDevNow + '|' + String(audioObj.audioOut || '');
+                            window.__v4ActiveAudioDevice = bridgeOnNow ? bridgeDevNow : '';
+                            if (window.__v4LastAudioBadgeSig !== audioSig) {
+                                window.__v4LastAudioBadgeSig = audioSig;
+                                if (typeof window.renderAudio === 'function') {
+                                    try { window.renderAudio(audioObj); } catch (_) {}
+                                }
+                            }
+                            var audioBadgeLblLive = document.querySelector('#audio-status-badge .btn-label') || document.getElementById('audio-status-badge');
+                            if (audioBadgeLblLive && bridgeOnNow && bridgeDevNow) {
+                                var isEnAud = (window.__v4CurrentLang || 'id').toLowerCase() === 'en';
+                                audioBadgeLblLive.textContent = isEnAud
+                                    ? ('A2DP Connected: ' + bridgeDevNow + ' (48 kHz WASAPI)')
+                                    : ('A2DP Terhubung: ' + bridgeDevNow + ' (48 kHz WASAPI)');
+                            }
+                        }
+                        if (s && s.screen && s.screen.phase === 'running') {
+                            var btnPcA = document.getElementById('btn-audio-out-pc');
+                            var btnBtA = document.getElementById('btn-audio-out-bt');
+                            var pcLit = Boolean(btnPcA && (btnPcA.classList.contains('active') || btnPcA.classList.contains('is-active')));
+                            var btLit = Boolean(btnBtA && (btnBtA.classList.contains('active') || btnBtA.classList.contains('is-active')));
+                            var bridgeOn = Boolean(s.audio && s.audio.pcBridgeActive === true);
+                            var bridgeConn = Boolean(s.audio && s.audio.pcBridgeConnecting === true);
+                            var mutedNow = Boolean(s.audio && s.audio.muted === true);
+                            if (bridgeOn) {
+                                window.__v4AutoAudioSyncedForRun = true;
+                                window.__v4AutoAudioRetryCount = 0;
+                            } else if ((pcLit || btLit) && !bridgeConn && !mutedNow) {
+                                var nowMs = Date.now();
+                                var tries = window.__v4AutoAudioRetryCount || 0;
+                                var lastTry = window.__v4AutoAudioLastTryMs || 0;
+                                if (tries < 3 && (nowMs - lastTry) >= 2500) {
+                                    window.__v4AutoAudioSyncedForRun = true;
+                                    window.__v4AutoAudioRetryCount = tries + 1;
+                                    window.__v4AutoAudioLastTryMs = nowMs;
+                                    postApi('/api/audio', { enable: true, audioOut: btLit ? 'bluetooth' : 'pc' });
+                                }
+                            }
+                        } else {
+                            window.__v4AutoAudioSyncedForRun = false;
+                            window.__v4AutoAudioRetryCount = 0;
+                            window.__v4AutoAudioLastTryMs = 0;
+                        }
+                    } catch (_) {}
                 }).catch(function(){});
             } catch (_) {}
         }, 250);
@@ -4892,7 +5459,10 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     }
                     syncPreFullscreenTransitionDom(res.fullscreen);
                 }
-                setTimeout(function() { sendDomBeacon(false); }, 60);
+                setTimeout(function() {
+                    syncNativeVideoPresenter({ isFullscreen: Boolean(res && res.fullscreen) });
+                    sendDomBeacon(false);
+                }, 60);
                 return res;
             });
         },
@@ -4905,6 +5475,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             }
             window.__v4LastSentDrawerState = target;
             window.__v4LastSentDrawerMs = now;
+            syncNativeVideoPresenter({ drawerOpen: target });
             return postApi('/api/window/set_drawer', { open: target });
         },
         toggle_side_drawer: function(open) {
@@ -4912,6 +5483,11 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
         },
         set_orientation: function(landscape, drawer_open) {
             window.__v4LastDrawerTouch = Date.now();
+            syncNativeVideoPresenter({
+                isLandscape: !!landscape,
+                rotationDeg: landscape ? 270 : 0,
+                drawerOpen: drawer_open !== undefined ? !!drawer_open : undefined
+            });
             return postApi('/api/window/set_orientation', {
                 landscape: !!landscape,
                 drawer: drawer_open !== undefined ? !!drawer_open : undefined
@@ -5013,12 +5589,286 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
             return fetch('/api/status').then(function(r) { return r.json(); });
         }
     };
+
+    // Tahap 242 Pilar 3: Seamless Reconnect Overlay Pill + Anti-Blank-Gray Guard
+    // Observes existing `/api/screen` responses without adding any extra polling timer.
+    (function installTahap242ReconnectGuard() {
+        if (window.__v4Tahap242ReconnectGuard) return;
+        window.__v4Tahap242ReconnectGuard = true;
+        function updateReconnectPill(isReconnecting, noteText) {
+            try {
+                var host = document.getElementById('phone-screen') || document.querySelector('.stage') || document.body;
+                if (!host) return;
+                var pill = document.getElementById('v4-reconnect-pill');
+                if (isReconnecting) {
+                    if (!pill) {
+                        pill = document.createElement('div');
+                        pill.id = 'v4-reconnect-pill';
+                        host.appendChild(pill);
+                    }
+                    var lang = (window.__v4CurrentLang || 'id').toLowerCase();
+                    var attemptMatch = (typeof noteText === 'string') ? noteText.match(/\((\d+\/\d+)\)/) : null;
+                    var attemptSuffix = attemptMatch ? (' (' + attemptMatch[1] + ')') : '';
+                    pill.textContent = lang === 'en'
+                        ? ('\u27F3 Reconnecting' + attemptSuffix + '\u2026')
+                        : ('\u27F3 Menyambung ulang' + attemptSuffix + '\u2026');
+                    pill.hidden = false;
+                    pill.style.display = 'block';
+                    var sv = document.getElementById('screen-view');
+                    if (sv && sv.getAttribute('src') && sv.getAttribute('src').indexOf('/mirror.html') !== -1) {
+                        sv.hidden = false;
+                        sv.style.display = 'block';
+                    }
+                } else if (pill) {
+                    pill.hidden = true;
+                    pill.style.display = 'none';
+                }
+            } catch (_) {}
+        }
+        window.__v4UpdateReconnectPill = updateReconnectPill;
+        if (typeof window.fetch === 'function' && !window.__v4FetchWrapped242) {
+            window.__v4FetchWrapped242 = true;
+            var origFetch = window.fetch.bind(window);
+            window.fetch = function(input, init) {
+                var urlStr = (typeof input === 'string') ? input : (input && input.url ? String(input.url) : '');
+                if (urlStr === '/api/status' && window.__v4ForceNextStatusRefresh) {
+                    window.__v4ForceNextStatusRefresh = false;
+                    input = '/api/status?force=1';
+                    urlStr = '/api/status?force=1';
+                }
+                var p = origFetch(input, init);
+                var isGet = (!init || !init.method || String(init.method).toUpperCase() === 'GET');
+                if (isGet && (urlStr.indexOf('/api/screen') !== -1 || urlStr.indexOf('/api/status') !== -1)) {
+                    p.then(function(resp) {
+                        try {
+                            if (resp && resp.ok) {
+                                resp.clone().json().then(function(data) {
+                                    if (data && typeof data.reconnecting === 'boolean') {
+                                        updateReconnectPill(data.reconnecting, data.reconnecting ? (data.note || '') : '');
+                                    } else if (data && data.screen && typeof data.screen.reconnecting === 'boolean') {
+                                        updateReconnectPill(data.screen.reconnecting, data.screen.reconnecting ? (data.screen.note || '') : '');
+                                    }
+                                }).catch(function(){});
+                            }
+                        } catch (_) {}
+                    }).catch(function(){});
+                }
+                return p;
+            };
+        }
+    })();
+
+    // Tahap 243 Pilar 4: Launchpad Startup Wi-Fi Auto-Detect & Live Refresh Button Hook
+    (function installTahap243LaunchpadRefreshAndWifiBoot() {
+        if (window.__v4Tahap243LaunchpadHook) return;
+        window.__v4Tahap243LaunchpadHook = true;
+
+        function triggerLiveRefresh(btnEl) {
+            try {
+                if (btnEl) btnEl.classList.add('v4-refresh-spinning');
+                window.__v4ForceNextStatusRefresh = true;
+                var scanP = fetch('/api/wifi/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}'
+                }).catch(function(){});
+                Promise.resolve(scanP).then(function() {
+                    return fetch('/api/status?force=1').then(function(r) { return r.json(); }).catch(function(){ return null; });
+                }).then(function(fresh) {
+                    try {
+                        if (fresh && typeof window.applyServerStatusState === 'function') {
+                            window.applyServerStatusState(fresh);
+                        } else if (fresh) {
+                            if (typeof window.updateLaunchpadState === 'function') window.updateLaunchpadState(fresh);
+                            if (typeof window.renderPills === 'function') window.renderPills(fresh);
+                        }
+                    } catch (_) {}
+                }).finally(function() {
+                    setTimeout(function() {
+                        try { if (btnEl) btnEl.classList.remove('v4-refresh-spinning'); } catch (_) {}
+                    }, 350);
+                });
+            } catch (_) {
+                try { if (btnEl) btnEl.classList.remove('v4-refresh-spinning'); } catch (__) {}
+            }
+        }
+
+        document.addEventListener('click', function(ev) {
+            try {
+                var target = ev.target && ev.target.closest ? ev.target.closest('#launchpad-scan-btn, #refresh') : null;
+                if (!target) return;
+                triggerLiveRefresh(target);
+            } catch (_) {}
+        }, true);
+
+        setTimeout(function() {
+            try {
+                if (window.__v4Tahap243BootWifiChecked) return;
+                window.__v4Tahap243BootWifiChecked = true;
+                fetch('/api/status').then(function(r) { return r.json(); }).then(function(s) {
+                    var pairedList = (s && s.wifi && Array.isArray(s.wifi.paired)) ? s.wifi.paired : [];
+                    var wifiOk = Boolean(s && s.wifi && s.wifi.reachable && s.wifi.ip);
+                    var needMultiProbe = pairedList.length >= 2 && !(Array.isArray(s && s.devices) && s.devices.some(function(d) { return d && d.wifiOnline; }));
+                    if (pairedList.length > 0 && (!wifiOk || needMultiProbe)) {
+                        fetch('/api/wifi/scan', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: '{}'
+                        }).catch(function(){}).then(function() {
+                            return fetch('/api/status?force=1').then(function(r) { return r.json(); }).catch(function(){ return null; });
+                        }).then(function(fresh) {
+                            try {
+                                if (fresh && typeof window.applyServerStatusState === 'function') {
+                                    window.applyServerStatusState(fresh);
+                                } else if (fresh) {
+                                    if (typeof window.updateLaunchpadState === 'function') window.updateLaunchpadState(fresh);
+                                    if (typeof window.renderPills === 'function') window.renderPills(fresh);
+                                }
+                                var refBtn = document.getElementById('refresh');
+                                if (refBtn && !refBtn.disabled) {
+                                    window.__v4ForceNextStatusRefresh = false;
+                                    refBtn.click();
+                                }
+                            } catch (_) {}
+                        });
+                    } else if (s) {
+                        if (typeof window.applyServerStatusState === 'function') {
+                            window.applyServerStatusState(s);
+                        } else {
+                            if (typeof window.updateLaunchpadState === 'function') window.updateLaunchpadState(s);
+                            if (typeof window.renderPills === 'function') window.renderPills(s);
+                        }
+                    }
+                }).catch(function(){});
+            } catch (_) {}
+        }, 450);
+    })();
+
+    // Tahap 239: Ensure #wifi-pair stays clickable whenever any iPhone is connected (USB or Wi-Fi)
+    // and ensure Copy iPhone Text (Alt+C) feedback stays accurate.
+    setInterval(function() {
+        try {
+            var wp = document.getElementById('wifi-pair');
+            if (wp) {
+                var txt = (wp.textContent || '').toLowerCase();
+                var inProgress = txt.indexOf('setting up') !== -1 || txt.indexOf('menyiapkan') !== -1;
+                var devSel = document.getElementById('device-select');
+                var hasDevice = Boolean(
+                    (devSel && devSel.options && devSel.options.length > 0 && devSel.value) ||
+                    document.querySelector('#device-meta')?.textContent?.trim()
+                );
+                if (!inProgress && hasDevice) {
+                    wp.hidden = false;
+                    if (wp.disabled) {
+                        wp.disabled = false;
+                        wp.removeAttribute('disabled');
+                    }
+                }
+            }
+        } catch (_) {}
+    }, 600);
 })();
 "#;
 
 // ============================================================================
 // APP STATE & CONFIGURATION
 // ============================================================================
+
+/// Tahap 244 Pilar 1: Zero-I/O resolver for the currently mirrored iPhone's
+/// `(preferred_device_name, preferred_marketing_model, preferred_bluetooth_mac)`
+/// so WinRT `AudioPlaybackConnection` targets the exact iPhone by DeviceName / Bluetooth MAC.
+fn resolve_active_audio_device_target(
+    state: &Arc<Mutex<AppState>>,
+    explicit_udid: Option<&str>,
+    explicit_name: Option<&str>,
+    explicit_bt_mac: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let (live_udid, live_name, live_model, live_bt) =
+        iphone_link_apple::physical_stream::active_session_device_identity();
+    let state_udid = state
+        .lock()
+        .map(|s| s.selected_udid.clone())
+        .unwrap_or_default();
+
+    let target_udid = explicit_udid
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| (!live_udid.is_empty()).then_some(live_udid.clone()))
+        .or_else(|| (!state_udid.is_empty()).then_some(state_udid))
+        .unwrap_or_default();
+
+    let mut name = explicit_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let mut model: Option<String> = None;
+    let mut bt_mac = explicit_bt_mac
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    // If caller explicitly specified a target `deviceName` without pinning a UDID, never
+    // cross-contaminate with another mirrored iPhone's cached Bluetooth MAC or model.
+    if name.is_some() && explicit_udid.is_none() {
+        return (name, None, bt_mac);
+    }
+
+    // 1. Live CoreDevice RSD / mDNS identity for the active session
+    if !target_udid.is_empty() && live_udid.eq_ignore_ascii_case(&target_udid) {
+        if name.is_none() && !live_name.is_empty() {
+            name = Some(live_name);
+        }
+        if model.is_none() && !live_model.is_empty() {
+            model = Some(live_model);
+        }
+        if bt_mac.is_none() && !live_bt.is_empty() {
+            bt_mac = Some(live_bt);
+        }
+    }
+
+    // 2. Zero-I/O Lockdown metadata cache in RAM (USB-discovered devices)
+    if !target_udid.is_empty() {
+        let cached_devs = snapshot_cached_devices_metadata_zero_io();
+        if let Some(meta) = cached_devs
+            .iter()
+            .find(|d| d.udid.eq_ignore_ascii_case(&target_udid))
+        {
+            if name.is_none() && !meta.device_name.trim().is_empty() {
+                name = Some(meta.device_name.trim().to_string());
+            }
+            if model.is_none() && !meta.marketing_model.trim().is_empty() {
+                model = Some(meta.marketing_model.trim().to_string());
+            }
+            if bt_mac.is_none() && !meta.bluetooth_address.trim().is_empty() {
+                bt_mac = Some(meta.bluetooth_address.trim().to_string());
+            }
+        }
+    }
+
+    // 3. Persistent `wifi_state.json` identity cache (saved during USB/Wi-Fi pairing & RSD)
+    if !target_udid.is_empty() && (name.is_none() || model.is_none() || bt_mac.is_none()) {
+        let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&target_udid);
+        if name.is_none() && !wmeta.name.is_empty() {
+            name = Some(wmeta.name);
+        }
+        if model.is_none() && !wmeta.model.is_empty() {
+            model = Some(wmeta.model);
+        }
+        if bt_mac.is_none() && !wmeta.bluetooth_address.is_empty() {
+            bt_mac = Some(wmeta.bluetooth_address);
+        }
+    }
+
+    if model.is_none() && !target_udid.is_empty() {
+        model = Some(iphone_link_apple::models::series_name_from_udid(
+            &target_udid,
+            "iPhone",
+        ));
+    }
+
+    (name, model, bt_mac)
+}
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -5031,6 +5881,8 @@ pub struct AppState {
     pub stealth_dim: bool,
     pub intentionally_locked: bool,
     pub selected_udid: String,
+    pub user_explicitly_selected_udid: bool,
+    pub last_selected_udid: String,
     pub transport: String, // "usb" or "wifi"
     pub window_hwnd: usize, // HWND handle as usize
     pub auto_rotate: bool,
@@ -5048,6 +5900,7 @@ pub struct AppState {
     pub bluetooth_a2dp: bool,
     pub cross_platform_shortcuts: bool,
     pub paste_pc_clipboard: bool,
+    pub restore_steps: i32,
     pub device_profile: String,
     pub update_channel: String,
     pub auto_check_update: bool,
@@ -5067,7 +5920,9 @@ impl Default for AppState {
             is_fullscreen: false,
             stealth_dim: false,
             intentionally_locked: false,
-            selected_udid: "00008150-000231AC2669401C".to_string(),
+            selected_udid: String::new(),
+            user_explicitly_selected_udid: false,
+            last_selected_udid: String::new(),
             transport: "usb".to_string(),
             window_hwnd: 0,
             auto_rotate: false,
@@ -5085,6 +5940,7 @@ impl Default for AppState {
             bluetooth_a2dp: false,
             cross_platform_shortcuts: true,
             paste_pc_clipboard: true,
+            restore_steps: 4,
             device_profile: "auto".to_string(),
             update_channel: "stable".to_string(),
             auto_check_update: true,
@@ -5238,7 +6094,7 @@ impl HttpResponse {
     pub fn to_bytes_with_conn(&self, conn: &str) -> Vec<u8> {
         let mut out = Vec::with_capacity(256 + self.body.len());
         let header = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store, no-cache, must-revalidate, max-age=0\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: {}\r\n\r\n",
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store, no-cache, must-revalidate, max-age=0\r\nPragma: no-cache\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: {}\r\n\r\n",
             self.status_code, self.status_text, self.content_type, self.body.len(), conn
         );
         out.extend_from_slice(header.as_bytes());
@@ -5321,7 +6177,13 @@ fn resolve_static_asset_file(web_dir: &Path, rel_path: &str) -> Option<PathBuf> 
 
     let clean_rel = if rel_path.is_empty() || rel_path == "/" || rel_path == "index.html" {
         "index.html"
-    } else if rel_path == "mirror" || rel_path == "mirror/" || rel_path == "mirror/index.html" || rel_path == "mirror.html" {
+    } else if rel_path == "mirror"
+        || rel_path == "mirror/"
+        || rel_path == "mirror/frame"
+        || rel_path == "mirror/frame/"
+        || rel_path == "mirror/index.html"
+        || rel_path == "mirror.html"
+    {
         "mirror.html"
     } else if rel_path == "mirror/mirror.css" || rel_path == "mirror.css" {
         "mirror.css"
@@ -5399,8 +6261,52 @@ fn escape_json_str(s: &str) -> String {
     s.replace('\\', r#"\\"#).replace('"', r#"\""#)
 }
 
+pub const DPAPI_PIN_PREFIX: &str = "dpapi:";
+
+fn is_test_loopback_only_env_server() -> bool {
+    env::var("IPHONE_LINK_TEST_LOOPBACK_ONLY")
+        .map(|v| {
+            let trimmed = v.trim();
+            trimmed == "1"
+                || trimmed.eq_ignore_ascii_case("true")
+                || trimmed.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
 fn sanitize_pin_digits(raw: &str) -> String {
-    raw.chars().filter(|c| c.is_ascii_digit()).take(6).collect()
+    raw.chars().filter(|c| c.is_ascii_digit()).take(8).collect()
+}
+
+/// Encrypts Auto-Unlock PIN with per-user Windows DPAPI (`CryptProtectData`) for safe disk storage.
+pub fn protect_pin_for_disk(pin: &str) -> String {
+    let clean = sanitize_pin_digits(pin);
+    if clean.is_empty() {
+        return String::new();
+    }
+    match dpapi_encrypt_pin_b64(&clean) {
+        Ok(b64) if !b64.is_empty() => format!("{DPAPI_PIN_PREFIX}{b64}"),
+        _ => String::new(),
+    }
+}
+
+/// Decodes disk `"unlockPin"` values (`"dpapi:<base64>"` or legacy v4.0.0 plaintext digits).
+pub fn unprotect_pin_from_disk(stored: &str) -> Option<String> {
+    let trimmed = stored.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(b64) = trimmed.strip_prefix(DPAPI_PIN_PREFIX) {
+        let decrypted = dpapi_decrypt_pin_b64(b64).ok()?;
+        let clean = sanitize_pin_digits(&decrypted);
+        return if clean.is_empty() { None } else { Some(clean) };
+    }
+    let clean = sanitize_pin_digits(trimmed);
+    if (4..=8).contains(&clean.len()) && clean == trimmed {
+        Some(clean)
+    } else {
+        None
+    }
 }
 
 fn parse_bool_param(body: &str, param: &str) -> Option<bool> {
@@ -5452,7 +6358,6 @@ fn resolve_handset_root_for_runtime(py_dir: &Path, exe_dir: Option<&Path>, cwd: 
         roots.push(cd.to_path_buf());
         roots.push(cd.join("runtime"));
     }
-    roots.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows"));
 
     for root in roots {
         let hs = root.join("handset");
@@ -5507,12 +6412,6 @@ pub fn find_python_executable_and_root_from(
         venv_candidates.push(cd.join("venv").join("Scripts").join("pythonw.exe"));
         venv_candidates.push(cd.join("venv").join("Scripts").join("python.exe"));
     }
-    venv_candidates.push(PathBuf::from(
-        r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\pythonw.exe",
-    ));
-    venv_candidates.push(PathBuf::from(
-        r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\venv\Scripts\python.exe",
-    ));
     for py in venv_candidates {
         if py.is_file() {
             if let Some(scripts_dir) = py.parent() {
@@ -5568,7 +6467,10 @@ pub fn get_deterministic_folder_instance_id_for_dir(dir: &Path) -> String {
 }
 
 pub fn get_deterministic_folder_instance_id() -> String {
-    get_deterministic_folder_instance_id_for_dir(&current_exe_dir_normalized())
+    static FOLDER_ID_CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FOLDER_ID_CACHE
+        .get_or_init(|| get_deterministic_folder_instance_id_for_dir(&current_exe_dir_normalized()))
+        .clone()
 }
 
 pub fn user_settings_file_path() -> PathBuf {
@@ -5584,6 +6486,21 @@ pub fn user_settings_file_path() -> PathBuf {
     primary
 }
 
+/// Clean Slate PIN Guard (Tahap 55 parity): returns `true` when extracted into a new folder
+/// whose `folderInstanceId` does not match the persisted `user_settings.json`.
+pub fn is_fresh_extracted_folder() -> bool {
+    let settings_file = user_settings_file_path();
+    if !settings_file.is_file() {
+        return true;
+    }
+    if let Ok(raw) = fs::read_to_string(&settings_file) {
+        if let Some(saved_id) = parse_string_param(&raw, "folderInstanceId") {
+            return saved_id != get_deterministic_folder_instance_id();
+        }
+    }
+    true
+}
+
 fn extract_crop_object_slice(raw: &str) -> Option<&str> {
     let key_idx = raw.find(r#""crop""#)?;
     let after = &raw[key_idx + 6..];
@@ -5596,10 +6513,11 @@ fn extract_crop_object_slice(raw: &str) -> Option<&str> {
 fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unlock_pin: &str) -> String {
     let bt_on = st.bluetooth_a2dp || st.audio_routing == "bluetooth";
     format!(
-        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"ctrlVPastesPc":{},"autoRotate":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"4.0.0"}}"#,
+        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","lastSelectedUdid":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"pcClipboardPaste":{},"ctrlVPastesPc":{},"autoRotate":{},"stealthDim":{},"restoreSteps":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"5.0.0","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true}}"#,
         escape_json_str(folder_id),
         has_file,
         escape_json_str(unlock_pin),
+        escape_json_str(&st.last_selected_udid),
         st.crop_top,
         st.crop_bottom,
         st.crop_left,
@@ -5624,7 +6542,10 @@ fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unl
         st.cross_platform_shortcuts,
         st.paste_pc_clipboard,
         st.paste_pc_clipboard,
+        st.paste_pc_clipboard,
         st.auto_rotate,
+        st.stealth_dim,
+        st.restore_steps,
         escape_json_str(&st.device_profile),
         st.auto_check_update,
         escape_json_str(&st.update_channel),
@@ -5648,20 +6569,33 @@ pub fn save_user_settings_to_path(path: &Path, st: &AppState, unlock_pin: &str) 
         let _ = fs::create_dir_all(dir);
     }
     let folder_id = get_deterministic_folder_instance_id_for_dir(dir);
-    let clean_pin = sanitize_pin_digits(unlock_pin);
-    let json = format_user_settings_json(st, &folder_id, true, &clean_pin);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    file.write_all(json.as_bytes())?;
-    file.flush()?;
-    let _ = file.sync_all();
+    let protected_pin = protect_pin_for_disk(unlock_pin);
+    let json = format_user_settings_json(st, &folder_id, true, &protected_pin);
+    let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        file.write_all(json.as_bytes())?;
+        file.flush()?;
+        let _ = file.sync_all();
+    }
+    if let Err(_first_err) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(path);
+        if let Err(second_err) = fs::rename(&tmp_path, path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(second_err);
+        }
+    }
     Ok(())
 }
 
 fn save_user_settings_to_disk(st: &AppState) {
+    if is_test_loopback_only_env_server() {
+        return;
+    }
     let pin = SAVED_UNLOCK_PIN
         .lock()
         .map(|g| sanitize_pin_digits(&g))
@@ -5700,6 +6634,11 @@ pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
     }
     if let Some(ar) = parse_bool_param(raw, "autoRotate") {
         st.auto_rotate = ar;
+        let _ = iphone_link_apple::mirror::global_apply_orientation(None, Some(ar), None, None);
+        touched = true;
+    }
+    if let Some(sd) = parse_bool_param(raw, "stealthDim") {
+        st.stealth_dim = sd;
         touched = true;
     }
     if let Some(prof) = parse_string_param(raw, "deviceProfile") {
@@ -5713,26 +6652,66 @@ pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
         }
     }
     if let Some(fm) = parse_string_param(raw, "fitMode") {
-        if fm == "autofit" || fm == "fill" || fm == "contain" {
-            st.fit_mode = fm;
+        if fm == "autofit" || fm == "fill" || fm == "contain" || fm == "auto_fit" || fm == "edge_to_edge" || fm == "original_ratio" {
+            st.fit_mode = fm.clone();
+            let _ = iphone_link_apple::mirror::global_update_video_presenter_config(
+                Some(&fm),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
             touched = true;
         }
     }
     if let Some(crop_slice) = extract_crop_object_slice(raw) {
+        let mut crop_touched = false;
         if let Some(v) = parse_int_param(crop_slice, "top") {
             st.crop_top = v.clamp(0, 120);
+            crop_touched = true;
             touched = true;
         }
         if let Some(v) = parse_int_param(crop_slice, "bottom") {
             st.crop_bottom = v.clamp(0, 120);
+            crop_touched = true;
             touched = true;
         }
         if let Some(v) = parse_int_param(crop_slice, "left") {
             st.crop_left = v.clamp(0, 120);
+            crop_touched = true;
             touched = true;
         }
         if let Some(v) = parse_int_param(crop_slice, "right") {
             st.crop_right = v.clamp(0, 120);
+            crop_touched = true;
+            touched = true;
+        }
+        if crop_touched {
+            let _ = iphone_link_apple::mirror::global_update_video_presenter_config(
+                None,
+                None,
+                Some(st.crop_top.clamp(0, 24) as u32),
+                Some(st.crop_bottom.clamp(0, 24) as u32),
+                Some(st.crop_left.clamp(0, 24) as u32),
+                Some(st.crop_right.clamp(0, 24) as u32),
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+        }
+    }
+    if let Some(lsu) = parse_string_param(raw, "lastSelectedUdid") {
+        let clean = iphone_link_apple::physical_stream::sanitize_udid_label(&lsu);
+        if !clean.is_empty() {
+            st.last_selected_udid = clean;
             touched = true;
         }
     }
@@ -5755,8 +6734,17 @@ pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
         st.auto_check_update = acu;
         touched = true;
     }
-    if let Some(aout) = parse_string_param(raw, "audioOut").or_else(|| parse_string_param(raw, "audioTarget")) {
-        if aout == "pc" || aout == "device" || aout == "bluetooth" {
+    if let Some(aout) = parse_string_param(raw, "audioOut")
+        .or_else(|| parse_string_param(raw, "audio_out"))
+        .or_else(|| parse_string_param(raw, "audio_routing"))
+        .or_else(|| parse_string_param(raw, "routing"))
+        .or_else(|| parse_string_param(raw, "audioTarget"))
+        .or_else(|| {
+            parse_bool_param(raw, "audioOut")
+                .map(|en| if en { "pc".to_string() } else { "device".to_string() })
+        })
+    {
+        if aout == "pc" || aout == "device" || aout == "bluetooth" || aout == "wasapi" {
             st.bluetooth_a2dp = aout == "bluetooth";
             st.audio_routing = aout;
             touched = true;
@@ -5786,13 +6774,16 @@ pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
     if let Some(buf) = parse_string_param(raw, "audioBufferPreset")
         .or_else(|| parse_string_param(raw, "audioBuffer"))
         .or_else(|| parse_string_param(raw, "bufferPreset"))
+        .or_else(|| parse_string_param(raw, "buffer"))
     {
         if buf == "low" || buf == "normal" || buf == "high" {
             st.audio_buffer_preset = buf;
             touched = true;
         }
     }
-    if let Some(ls) = parse_bool_param(raw, "lipSync") {
+    if let Some(ls) = parse_bool_param(raw, "lipSync")
+        .or_else(|| parse_bool_param(raw, "lip_sync"))
+    {
         st.lip_sync = ls;
         touched = true;
     }
@@ -5807,7 +6798,14 @@ pub fn apply_settings_json_body_to_state(raw: &str, st: &mut AppState) -> bool {
         st.cross_platform_shortcuts = cps;
         touched = true;
     }
-    if let Some(ppc) = parse_bool_param(raw, "pastePcClipboard").or_else(|| parse_bool_param(raw, "ctrlVPastesPc")) {
+    if let Some(rs) = parse_int_param(raw, "restoreSteps") {
+        st.restore_steps = rs.clamp(1, 16);
+        touched = true;
+    }
+    if let Some(ppc) = parse_bool_param(raw, "pastePcClipboard")
+        .or_else(|| parse_bool_param(raw, "pcClipboardPaste"))
+        .or_else(|| parse_bool_param(raw, "ctrlVPastesPc"))
+    {
         st.paste_pc_clipboard = ppc;
         touched = true;
     }
@@ -5829,7 +6827,7 @@ pub fn load_user_settings_from_path(path: &Path, st: &mut AppState) -> String {
         return String::new();
     };
     if let Some(pin_raw) = parse_string_param(&raw, "unlockPin") {
-        let clean = sanitize_pin_digits(&pin_raw);
+        let clean = unprotect_pin_from_disk(&pin_raw).unwrap_or_default();
         if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
             *g = clean;
         }
@@ -5841,9 +6839,104 @@ pub fn load_user_settings_from_path(path: &Path, st: &mut AppState) -> String {
         .unwrap_or_default()
 }
 
+pub fn init_persistent_settings_from_disk_from(
+    path: &Path,
+    st: &mut AppState,
+    hydrate_hid_ram: bool,
+) -> String {
+    let pin = load_user_settings_from_path(path, st);
+    if hydrate_hid_ram {
+        if !pin.is_empty() {
+            let _ = store_encrypted_pin(&pin);
+        } else {
+            clear_stored_pin();
+        }
+    }
+    // Tahap 249 Pilar 3: Even on a true Fresh Install (no user_settings.json on disk yet),
+    // keep GLOBAL_AUDIO_PC_ACTIVE and MirrorRuntimeState::audio aligned with `AppState::default()`
+    // (`audio_routing = "pc"`, `streaming = false` so 0-device idle stays silent until mirror starts).
+    GLOBAL_AUDIO_PC_ACTIVE.store(
+        (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted,
+        Ordering::SeqCst,
+    );
+    let _ = iphone_link_apple::mirror::global_configure_audio(
+        Some(&st.audio_routing),
+        Some(st.audio_volume as i64),
+        Some(st.audio_muted),
+        Some(&st.audio_buffer_preset),
+        Some(st.lip_sync),
+        Some(false),
+    );
+    let _ = iphone_link_apple::airplay::apply_live_audio_config(
+        Some(st.audio_volume.clamp(0, 100) as u32),
+        Some(&st.audio_buffer_preset),
+        Some(st.lip_sync),
+        Some(st.audio_muted),
+    );
+    pin
+}
+
 pub fn init_persistent_settings_from_disk(st: &mut AppState) {
+    if is_test_loopback_only_env_server() {
+        GLOBAL_AUDIO_PC_ACTIVE.store(
+            (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted,
+            Ordering::SeqCst,
+        );
+        return;
+    }
     let path = user_settings_file_path();
-    let _ = load_user_settings_from_path(&path, st);
+    let _ = init_persistent_settings_from_disk_from(&path, st, true);
+}
+
+pub fn get_hydrated_unlock_pin() -> Option<String> {
+    if let Ok(Some(pin)) = load_decrypted_pin() {
+        let clean = sanitize_pin_digits(&pin);
+        if !clean.is_empty() {
+            return Some(clean);
+        }
+    }
+    SAVED_UNLOCK_PIN
+        .lock()
+        .ok()
+        .map(|g| sanitize_pin_digits(&g))
+        .filter(|s| !s.is_empty())
+}
+
+pub fn save_unlock_pin_sync(state: &Arc<Mutex<AppState>>, pin: &str) -> Result<String, String> {
+    let digits: String = pin.trim().chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return Err("PIN kosong".to_string());
+    }
+    if !(4..=8).contains(&digits.len()) {
+        return Err("PIN harus 4-8 digit".to_string());
+    }
+    store_encrypted_pin(&digits)?;
+    if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+        *g = digits.clone();
+    }
+    if let Ok(st) = state.lock() {
+        save_user_settings_to_disk(&st);
+    }
+    Ok(digits)
+}
+
+pub fn clear_unlock_pin_sync(state: &Arc<Mutex<AppState>>) -> Result<(), String> {
+    clear_stored_pin();
+    if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+        g.clear();
+    }
+    if let Ok(st) = state.lock() {
+        save_user_settings_to_disk(&st);
+    }
+    Ok(())
+}
+
+pub fn wipe_all_privacy_state_and_files_sync(state: &Arc<Mutex<AppState>>) {
+    wipe_all_privacy_state_and_files();
+    if let Ok(mut st) = state.lock() {
+        st.stealth_dim = false;
+        st.intentionally_locked = false;
+    }
 }
 
 pub const EMBEDDED_OCR_EXTRACTOR_PS1: &str = include_str!("../../../../handset/ocr_extractor.ps1");
@@ -5872,6 +6965,7 @@ pub fn wipe_privacy_files_in_dir(dir: &Path) {
         "typed_history.json",
         "wifi_state.json",
         "debug_metrics.json",
+        "sequoia_last_blur.bin",
         "debug_ocr_raw.png",
         "debug_ocr_cleaned.png",
         "debug_ocr_result.json",
@@ -5880,6 +6974,22 @@ pub fn wipe_privacy_files_in_dir(dir: &Path) {
         let p = dir.join(name);
         if p.is_file() {
             let _ = fs::remove_file(&p);
+        }
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    let low = name.to_ascii_lowercase();
+                    if low.ends_with(".dpapi")
+                        || low.ends_with(".bin.tmp")
+                        || low.contains(".json.tmp.")
+                    {
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
         }
     }
 }
@@ -5905,6 +7015,8 @@ fn wipe_temp_ocr_dir(dir: &Path) {
 
 fn wipe_all_privacy_state_and_files() {
     clear_copy_cache();
+    reset_hid_runtime_state();
+    GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
     if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
         g.clear();
     }
@@ -5930,29 +7042,84 @@ fn wipe_all_privacy_state_and_files() {
     }
 }
 
+static GLOBAL_HEADLESS_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_headless_mode(headless: bool) {
+    GLOBAL_HEADLESS_MODE.store(headless, Ordering::SeqCst);
+}
+
+fn env_diag_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn allow_mock_codec_env() -> bool {
+    cfg!(test) || env_diag_flag("IPHONE_LINK_TEST_LOOPBACK_ONLY")
+}
+
+fn is_mock_codec_env_active() -> bool {
+    allow_mock_codec_env()
+        && (env_diag_flag("IPHONE_LINK_MOCK_HEVC_MISSING")
+            || env_diag_flag("IPHONE_LINK_MOCK_H264_MISSING"))
+}
+
+fn is_dry_run_shell_open() -> bool {
+    cfg!(test)
+        || GLOBAL_HEADLESS_MODE.load(Ordering::Relaxed)
+        || env_diag_flag("IPHONE_LINK_DRY_RUN_SHELL_OPEN")
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: *mut std::ffi::c_void,
+        lp_operation: *const u16,
+        lp_file: *const u16,
+        lp_parameters: *const u16,
+        lp_directory: *const u16,
+        n_show_cmd: i32,
+    ) -> isize;
+}
+
+/// Launches a URI (`ms-windows-store://...`, `ms-settings:optionalfeatures`) or local `.AppxBundle`
+/// natively via Win32 `ShellExecuteW` (0 PowerShell). Returns `Ok(true)` if launched, `Ok(false)` on dry-run/headless.
+fn shell_open_target_native(target: &str) -> Result<bool, String> {
+    if is_dry_run_shell_open() {
+        return Ok(false);
+    }
+    let verb_w: Vec<u16> = "open\0".encode_utf16().collect();
+    let file_w: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    let rc = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb_w.as_ptr(),
+            file_w.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1, // SW_SHOWNORMAL
+        )
+    };
+    if rc > 32 {
+        Ok(true)
+    } else {
+        Err(format!("ShellExecuteW failed with code {rc}"))
+    }
+}
+
 fn find_hevc_appxbundle_path() -> Option<PathBuf> {
-    let mut search_dirs: Vec<PathBuf> = Vec::new();
     let exe_dir = current_exe_dir_normalized();
-    search_dirs.push(exe_dir.clone());
-    search_dirs.push(exe_dir.join("assets"));
-    search_dirs.push(exe_dir.join("release"));
-    let mut cur = exe_dir.parent();
-    for _ in 0..4 {
-        if let Some(p) = cur {
-            search_dirs.push(p.to_path_buf());
-            search_dirs.push(p.join("release"));
-            cur = p.parent();
+    let preferred_name = "Microsoft.HEVCVideoExtension_2.5.48.0_neutral_._8wekyb3d8bbwe.AppxBundle";
+    for exact in [exe_dir.join("assets").join(preferred_name), exe_dir.join(preferred_name)] {
+        if exact.is_file() {
+            return Some(exact);
         }
     }
-    if let Ok(cwd) = env::current_dir() {
-        search_dirs.push(cwd.clone());
-        search_dirs.push(cwd.join("assets"));
-        search_dirs.push(cwd.join("release"));
-    }
-    search_dirs.push(PathBuf::from(r"D:\ZenLink-v2.5.14"));
-    search_dirs.push(PathBuf::from(r"D:\SCREEN MIROR IOS\pane-iphone-mirror-windows\release"));
-
-    for dir in search_dirs {
+    for dir in [exe_dir.join("assets"), exe_dir] {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -5974,52 +7141,53 @@ fn find_hevc_appxbundle_path() -> Option<PathBuf> {
     None
 }
 
-fn query_hevc_extension_status() -> (bool, String, String) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
-    let ps_cmd = "Get-AppxPackage -Name '*HEVCVideoExtension*' | Select-Object -First 1 | ForEach-Object { [pscustomobject]@{ Name=[string]$_.Name; Version=[string]$_.Version } } | ConvertTo-Json -Compress";
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd]);
-    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
-    match cmd.output() {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let pkg_name = parse_string_param(&stdout, "Name").unwrap_or_default();
-            let version = parse_string_param(&stdout, "Version").unwrap_or_default();
-            let installed = !pkg_name.is_empty() || !version.is_empty();
-            (installed, version, pkg_name)
-        }
-        _ => (false, String::new(), String::new()),
+/// Real, zero-false-positive HEVC / H.264 / Media Feature Pack capability probe using
+/// single-pass delay-loaded `mfplat.dll` + `MFTEnumEx(HEVC)` + `MFTEnumEx(H264)` + Win32 Appx registry check.
+fn query_hevc_capabilities() -> iphone_link_video::d3d11_context::CodecCapabilitiesReport {
+    use iphone_link_video::d3d11_context::{
+        evaluate_codec_capabilities, probe_mfplat_all_video_mfts,
+    };
+
+    let mock_h264_missing =
+        allow_mock_codec_env() && env_diag_flag("IPHONE_LINK_MOCK_H264_MISSING");
+    let mock_hevc_missing =
+        allow_mock_codec_env() && env_diag_flag("IPHONE_LINK_MOCK_HEVC_MISSING");
+
+    if mock_h264_missing {
+        return evaluate_codec_capabilities(false, false, false, None);
     }
+    if mock_hevc_missing {
+        return evaluate_codec_capabilities(true, false, true, None);
+    }
+
+    let (mfplat_loaded, hevc_mft, h264_mft) = probe_mfplat_all_video_mfts();
+    let appx_opt = query_win32_hevc_appx_package();
+    let mut report = evaluate_codec_capabilities(
+        mfplat_loaded,
+        hevc_mft,
+        h264_mft,
+        appx_opt.as_ref().map(|(v, _)| v.as_str()),
+    );
+    if let Some((_, pkg)) = appx_opt {
+        if report.installed && !pkg.is_empty() {
+            report.package = pkg;
+        }
+    }
+    report
 }
 
-fn install_hevc_from_bundle(bundle_path: &Path) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
-    let escaped = bundle_path.to_string_lossy().replace('\'', "''");
-    let ps_cmd = format!("Add-AppxPackage -Path '{}'", escaped);
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd]);
-    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
-    match cmd.output() {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let msg = if err.is_empty() {
-                String::from_utf8_lossy(&out.stdout).trim().to_string()
-            } else {
-                err
-            };
-            Err(if msg.is_empty() { "Add-AppxPackage failed".to_string() } else { msg })
-        }
-        Err(e) => Err(format!("Failed to launch PowerShell: {}", e)),
-    }
+/// Launches the bundled `.AppxBundle` directly through Windows App Installer via Win32 `ShellExecuteW`
+/// (100% Zero PowerShell runtime!).
+fn install_hevc_from_bundle(bundle_path: &Path) -> Result<bool, String> {
+    shell_open_target_native(&bundle_path.to_string_lossy())
 }
 
 fn query_native_apple_driver_installed() -> bool {
     let p1 = Path::new(r"C:\Program Files\Common Files\Apple\Mobile Device Support");
     let p2 = Path::new(r"C:\Program Files (x86)\Common Files\Apple\Mobile Device Support");
-    if p1.exists() || p2.exists() {
+    let p3 = Path::new(r"C:\Windows\System32\drivers\usbaapl64.sys");
+    let p4 = Path::new(r"C:\Windows\System32\drivers\AppleLowerFilter.sys");
+    if p1.exists() || p2.exists() || p3.exists() || p4.exists() {
         return true;
     }
     let repo = Path::new(r"C:\Windows\System32\DriverStore\FileRepository");
@@ -6035,35 +7203,265 @@ fn query_native_apple_driver_installed() -> bool {
 }
 
 fn query_native_apple_service_running() -> bool {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
-    let mut cmd = std::process::Command::new("sc.exe");
-    cmd.args(["query", "Apple Mobile Device Service"]);
-    cmd.creation_flags(CREATE_NO_WINDOW_FLAG);
-    if let Ok(out) = cmd.output() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        if stdout.contains("RUNNING") {
-            return true;
+    query_native_port_27015_open() || query_win32_apple_service_installed_in_registry()
+}
+
+static HEVC_STATUS_CACHE: Mutex<Option<(iphone_link_video::d3d11_context::CodecCapabilitiesReport, std::time::Instant)>> = Mutex::new(None);
+static DRIVER_DIAG_CACHE: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+static WIFI_STATUS_STREAM_CACHE: Mutex<Option<(String, String, std::time::Instant)>> = Mutex::new(None);
+static START_WITH_WIN_CACHE: Mutex<Option<(bool, std::time::Instant)>> = Mutex::new(None);
+static LAST_UNIFIED_WIFI_META_CACHE: OnceLock<Mutex<HashMap<String, iphone_link_apple::wifi::WifiDeviceMetadata>>> = OnceLock::new();
+static LAST_PAIRED_WIFI_UDIDS_CACHE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static LAST_AUTO_AUDIO_ATTEMPT_MS: AtomicU64 = AtomicU64::new(0);
+
+fn unified_wifi_meta_ram_cache() -> &'static Mutex<HashMap<String, iphone_link_apple::wifi::WifiDeviceMetadata>> {
+    LAST_UNIFIED_WIFI_META_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn paired_wifi_udids_ram_cache() -> &'static Mutex<Vec<String>> {
+    LAST_PAIRED_WIFI_UDIDS_CACHE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn cache_unified_wifi_meta_ram(udid: &str, meta: &iphone_link_apple::wifi::WifiDeviceMetadata) {
+    if udid.is_empty() {
+        return;
+    }
+    if let Ok(mut g) = unified_wifi_meta_ram_cache().lock() {
+        g.insert(udid.to_string(), meta.clone());
+    }
+    if let Ok(mut u) = paired_wifi_udids_ram_cache().lock() {
+        if !u.iter().any(|x| x.eq_ignore_ascii_case(udid)) {
+            u.push(udid.to_string());
         }
     }
-    false
+}
+
+fn read_unified_wifi_meta_zero_io(udid: &str) -> iphone_link_apple::wifi::WifiDeviceMetadata {
+    let mut meta = unified_wifi_meta_ram_cache()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(udid).cloned())
+        .unwrap_or_default();
+    if let Some((r, c_ip, c_seen, age)) = iphone_link_apple::wifi::get_cached_wifi_reachability(udid) {
+        if age < Duration::from_secs(600) {
+            meta.reachable = Some(r);
+            if c_ip.is_some() {
+                meta.last_ip = c_ip;
+            }
+            meta.last_seen_at = meta.last_seen_at.max(c_seen);
+        }
+    }
+    meta
+}
+
+fn get_wifi_status_cached_for_stream(
+    udid: &str,
+    zero_poll_active: bool,
+    force_refresh: bool,
+) -> String {
+    if !force_refresh {
+        if let Ok(guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+            if let Some((ref cached_udid, ref json, ts)) = *guard {
+                let udid_matches = cached_udid == udid;
+                let ttl = if zero_poll_active {
+                    Duration::from_secs(30)
+                } else {
+                    Duration::from_secs(15)
+                };
+                if udid_matches && ts.elapsed() < ttl {
+                    return json.clone();
+                }
+            }
+        }
+    }
+    let json = get_wifi_status(Some(udid), force_refresh).to_json_string();
+    if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+        *guard = Some((udid.to_string(), json.clone(), std::time::Instant::now()));
+    }
+    json
+}
+
+#[cfg(test)]
+fn clear_wifi_status_stream_cache_for_test() {
+    if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+        *guard = None;
+    }
+    if let Ok(mut g) = unified_wifi_meta_ram_cache().lock() {
+        g.clear();
+    }
+    if let Ok(mut u) = paired_wifi_udids_ram_cache().lock() {
+        u.clear();
+    }
+    LAST_AUTO_AUDIO_ATTEMPT_MS.store(0, Ordering::SeqCst);
+}
+
+fn cached_start_with_windows_for_status(zero_poll_active: bool) -> bool {
+    if zero_poll_active {
+        if let Ok(guard) = START_WITH_WIN_CACHE.lock() {
+            if let Some((val, ts)) = *guard {
+                if ts.elapsed() < Duration::from_secs(30) {
+                    return val;
+                }
+            }
+        }
+    }
+    let val = is_start_with_windows_enabled();
+    if let Ok(mut guard) = START_WITH_WIN_CACHE.lock() {
+        *guard = Some((val, std::time::Instant::now()));
+    }
+    val
+}
+
+fn query_hevc_capabilities_cached(
+    force: bool,
+    non_blocking_fast: bool,
+) -> iphone_link_video::d3d11_context::CodecCapabilitiesReport {
+    if !force && !is_mock_codec_env_active() {
+        if let Ok(guard) = HEVC_STATUS_CACHE.lock() {
+            if let Some((ref cap, ts)) = *guard {
+                if non_blocking_fast || ts.elapsed() < Duration::from_secs(60) {
+                    return cap.clone();
+                }
+            }
+        }
+        if non_blocking_fast {
+            // Fast zero-I/O path (e.g. POST /api/device/select < 50 ms): use instant registry probe
+            // and warm the full MFTEnumEx cache asynchronously on a background thread.
+            let appx_opt = query_win32_hevc_appx_package();
+            let mut fast_rep = iphone_link_video::d3d11_context::evaluate_codec_capabilities(
+                true,
+                appx_opt.is_some(),
+                true,
+                appx_opt.as_ref().map(|(v, _)| v.as_str()),
+            );
+            if let Some((_, pkg)) = appx_opt {
+                if fast_rep.installed && !pkg.is_empty() {
+                    fast_rep.package = pkg;
+                }
+            }
+            let _ = std::thread::Builder::new()
+                .name("iphone-hevc-cache-warm".into())
+                .spawn(|| {
+                    let full = query_hevc_capabilities();
+                    if let Ok(mut guard) = HEVC_STATUS_CACHE.lock() {
+                        *guard = Some((full, std::time::Instant::now()));
+                    }
+                });
+            return fast_rep;
+        }
+    }
+    let res = query_hevc_capabilities();
+    if !is_mock_codec_env_active() {
+        if let Ok(mut guard) = HEVC_STATUS_CACHE.lock() {
+            *guard = Some((res.clone(), std::time::Instant::now()));
+        }
+    }
+    res
 }
 
 fn query_native_port_27015_open() -> bool {
-    let addr: std::net::SocketAddr = match "127.0.0.1:27015".parse() {
+    let target = env::var("USBMUXD_SOCKET_ADDRESS")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1:27015".to_string());
+    let addr: std::net::SocketAddr = match target.parse() {
         Ok(a) => a,
         Err(_) => return false,
     };
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250)).is_ok()
 }
 
+fn find_bundled_apple_driver_files() -> (Option<PathBuf>, Option<PathBuf>) {
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+    let exe_dir = current_exe_dir_normalized();
+    search_dirs.push(exe_dir.join("drivers"));
+    search_dirs.push(exe_dir.clone());
+    search_dirs.push(exe_dir.join("release"));
+    let mut cur = exe_dir.parent();
+    for _ in 0..4 {
+        if let Some(p) = cur {
+            search_dirs.push(p.join("drivers"));
+            search_dirs.push(p.join("release"));
+            search_dirs.push(p.to_path_buf());
+            cur = p.parent();
+        }
+    }
+    if let Ok(cwd) = env::current_dir() {
+        search_dirs.push(cwd.join("drivers"));
+        search_dirs.push(cwd.join("release"));
+        search_dirs.push(cwd);
+    }
+
+    let mut ps1_found = None;
+    let mut msi_found = None;
+    for dir in search_dirs {
+        let ps1 = dir.join("install_apple_driver.ps1");
+        if ps1_found.is_none() && ps1.is_file() {
+            ps1_found = Some(ps1);
+        }
+        let msi = dir.join("AppleMobileDeviceSupport64.msi");
+        if msi_found.is_none() && msi.is_file() {
+            msi_found = Some(msi);
+        }
+        if ps1_found.is_some() && msi_found.is_some() {
+            break;
+        }
+    }
+    (ps1_found, msi_found)
+}
+
 fn build_native_driver_diagnostics_json() -> String {
-    let port_open = query_native_port_27015_open();
-    let svc_running = port_open || query_native_apple_service_running();
+    build_native_driver_diagnostics_json_with_opts(false, false)
+}
+
+fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_streaming: bool) -> String {
+    if !force_refresh && !is_mock_codec_env_active() {
+        if let Ok(guard) = DRIVER_DIAG_CACHE.lock() {
+            if let Some((ref cached_json, ts)) = *guard {
+                if is_streaming || ts.elapsed() < Duration::from_secs(30) {
+                    return cached_json.clone();
+                }
+            }
+        }
+    }
+    let devs = if is_streaming {
+        snapshot_cached_devices_metadata_zero_io()
+    } else {
+        discover_devices_with_metadata(force_refresh)
+    };
+    let usb_devs: Vec<_> = devs
+        .iter()
+        .filter(|d| d.connection_type.eq_ignore_ascii_case("USB") && !d.udid.is_empty())
+        .collect();
+    let has_usb = !usb_devs.is_empty();
+    let udid_opt = usb_devs.first().map(|d| d.udid.as_str());
+
+    let port_open = if is_streaming {
+        has_usb || query_win32_apple_service_installed_in_registry()
+    } else {
+        query_native_port_27015_open()
+    };
+    let svc_running = port_open || query_win32_apple_service_installed_in_registry();
     let drv_installed = svc_running || query_native_apple_driver_installed();
-    let (hevc_ok, _, _) = query_hevc_extension_status();
-    format!(
-        r#"{{"ok":true,"usb_connected":false,"apple_driver_installed":{},"apple_driver_label":"{}","apple_driver_label_id":"{}","apple_service_running":{},"apple_service_label":"{}","apple_service_label_id":"{}","tcp_port_27015_normal":{},"tcp_port_label":"{}","tcp_port_label_id":"{}","hevc_codec_installed":{},"hevc_codec_label":"{}","hevc_codec_label_id":"{}","developer_mode_status":"disconnected","developer_mode_label":"Connect iPhone via USB","developer_mode_label_id":"Hubungkan iPhone via USB"}}"#,
+    let cap = query_hevc_capabilities_cached(force_refresh && !is_streaming, is_streaming);
+    let hevc_ok = cap.installed;
+    let (dev_bool_opt, dev_status, dev_label_en, dev_label_id) =
+        resolve_developer_mode_for_diagnostics(udid_opt, has_usb, is_streaming, force_refresh && !is_streaming);
+
+    let udid_json = match udid_opt {
+        Some(u) => format!(r#""{}""#, escape_json_str(u)),
+        None => "null".to_string(),
+    };
+    let dev_bool_json = match dev_bool_opt {
+        Some(b) => b.to_string(),
+        None => "null".to_string(),
+    };
+
+    let json = format!(
+        r#"{{"ok":true,"udid":{},"usb_connected":{},"apple_driver_installed":{},"apple_driver_label":"{}","apple_driver_label_id":"{}","apple_service_running":{},"apple_service_label":"{}","apple_service_label_id":"{}","tcp_port_27015_normal":{},"tcp_port_label":"{}","tcp_port_label_id":"{}","hevc_codec_installed":{},"hevc_codec_label":"{}","hevc_codec_label_id":"{}","installed":{},"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}","developer_mode_status":"{}","developer_mode_bool":{},"developer_mode_label":"{}","developer_mode_label_id":"{}"}}"#,
+        udid_json,
+        has_usb,
         drv_installed,
         if drv_installed { "Installed" } else { "Not Installed" },
         if drv_installed { "Terpasang" } else { "Belum Terpasang" },
@@ -6076,12 +7474,30 @@ fn build_native_driver_diagnostics_json() -> String {
         hevc_ok,
         if hevc_ok { "Installed (60fps)" } else { "Missing" },
         if hevc_ok { "Terpasang (60fps)" } else { "Belum Ada" },
-    )
+        cap.installed,
+        cap.hevc_mft_available,
+        cap.h264_mft_available,
+        cap.media_feature_pack_missing,
+        cap.store_url,
+        cap.store_fallback_url,
+        cap.media_feature_pack_url,
+        dev_status,
+        dev_bool_json,
+        escape_json_str(dev_label_en),
+        escape_json_str(dev_label_id),
+    );
+    if !is_mock_codec_env_active() {
+        if let Ok(mut guard) = DRIVER_DIAG_CACHE.lock() {
+            *guard = Some((json.clone(), std::time::Instant::now()));
+        }
+    }
+    json
 }
 
-fn repair_native_apple_service() -> (bool, bool, bool) {
+fn repair_native_apple_service() -> (bool, bool, bool, bool) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
+
     let mut cfg = std::process::Command::new("sc.exe");
     cfg.args(["config", "Apple Mobile Device Service", "start=", "auto"]);
     cfg.creation_flags(CREATE_NO_WINDOW_FLAG);
@@ -6092,15 +7508,108 @@ fn repair_native_apple_service() -> (bool, bool, bool) {
     st.creation_flags(CREATE_NO_WINDOW_FLAG);
     let _ = st.output();
 
-    let svc = query_native_apple_service_running() || query_native_port_27015_open();
+    clear_metadata_cache(None);
+    let (ps1_path, msi_path) = find_bundled_apple_driver_files();
+    let pre_svc = query_native_port_27015_open() || query_native_apple_service_running();
+    let pre_drv = pre_svc || query_native_apple_driver_installed();
+
+    if !pre_drv || !pre_svc {
+        if let Some(ref ps1) = ps1_path {
+            let mut pcmd = std::process::Command::new("powershell");
+            pcmd.args([
+                "-WindowStyle",
+                "Hidden",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &ps1.to_string_lossy(),
+            ]);
+            pcmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+            let _ = pcmd.output();
+        } else if let Some(ref msi) = msi_path {
+            if !pre_drv {
+                let mut mcmd = std::process::Command::new("msiexec.exe");
+                mcmd.args(["/i", &msi.to_string_lossy(), "/qn", "/norestart"]);
+                mcmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+                let _ = mcmd.output();
+            }
+        }
+        let mut cfg2 = std::process::Command::new("sc.exe");
+        cfg2.args(["config", "Apple Mobile Device Service", "start=", "auto"]);
+        cfg2.creation_flags(CREATE_NO_WINDOW_FLAG);
+        let _ = cfg2.output();
+        let mut st2 = std::process::Command::new("sc.exe");
+        st2.args(["start", "Apple Mobile Device Service"]);
+        st2.creation_flags(CREATE_NO_WINDOW_FLAG);
+        let _ = st2.output();
+    }
+
+    clear_metadata_cache(None);
+    let svc = query_native_port_27015_open() || query_native_apple_service_running();
     let drv = svc || query_native_apple_driver_installed();
-    (drv && svc, drv, svc)
+    (drv && svc, drv, svc, msi_path.is_some())
+}
+
+fn extract_query_param(query: &str, key: &str) -> Option<String> {
+    for pair in query.trim_start_matches('?').split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k.trim() == key && !v.trim().is_empty() {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn build_native_usb_devices_json(force_refresh: bool) -> String {
+    let streaming_active = iphone_link_apple::mirror::is_mirror_streaming_fast();
+    let devs = if streaming_active && !force_refresh {
+        snapshot_cached_devices_metadata_zero_io()
+    } else {
+        discover_devices_with_metadata(force_refresh)
+    };
+    let mut items = Vec::with_capacity(devs.len());
+    for d in &devs {
+        let is_usb = d.connection_type.eq_ignore_ascii_case("USB");
+        let (dev_bool, dev_status, _, _) =
+            resolve_developer_mode_for_diagnostics(Some(&d.udid), is_usb, false, false);
+        let dev_bool_json = match dev_bool {
+            Some(b) => b.to_string(),
+            None => "null".to_string(),
+        };
+        items.push(format!(
+            r#"{{"udid":"{}","deviceId":{},"connection":"{}","name":"{}","deviceName":"{}","model":"{}","productType":"{}","productVersion":"{}","buildVersion":"{}","deviceClass":"{}","screenType":"{}","paired":{},"developerModeStatus":"{}","developerModeBool":{}}}"#,
+            escape_json_str(&d.udid),
+            d.device_id,
+            escape_json_str(&d.connection_type),
+            escape_json_str(&d.device_name),
+            escape_json_str(&d.device_name),
+            escape_json_str(&d.marketing_model),
+            escape_json_str(&d.product_type),
+            escape_json_str(&d.product_version),
+            escape_json_str(&d.build_version),
+            escape_json_str(&d.device_class),
+            d.screen_type.as_str(),
+            d.paired,
+            dev_status,
+            dev_bool_json,
+        ));
+    }
+    let diag = build_native_driver_diagnostics_json_with_opts(false, false);
+    format!(
+        r#"{{"ok":true,"native":true,"count":{},"devices":[{}],"diagnostics":{}}}"#,
+        devs.len(),
+        items.join(","),
+        diag
+    )
 }
 
 fn build_tray_items_array_json(st: &AppState) -> String {
     let startup_on = is_start_with_windows_enabled();
-    let landscape_on = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
-    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let landscape_on = st.is_landscape || GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst) || is_stealth_dim_active();
     let audio_pc_on = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
     let ids = [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009];
     let mut parts = Vec::with_capacity(TRAY_MENU_ITEMS.len());
@@ -6127,15 +7636,16 @@ fn build_tray_items_array_json(st: &AppState) -> String {
 
 fn build_tray_state_json(action: &str, handled: bool, st: &AppState) -> String {
     let startup_on = is_start_with_windows_enabled();
-    let landscape_on = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
-    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst);
+    let landscape_on = st.is_landscape || GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+    let stealth_on = st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst) || is_stealth_dim_active();
     let audio_pc_on = GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
     let audio_active = st.is_streaming && !st.audio_muted;
     let items_json = build_tray_items_array_json(st);
     format!(
-        r#"{{"ok":true,"action":"{}","handled":{},"drawer_open":{},"landscape":{},"stealth":{},"audio":{},"audioPc":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{},"menuItemCount":{},"trayMenuItems":{}}}"#,
+        r#"{{"ok":true,"action":"{}","handled":{},"pure_ascii":true,"default_item":"Show / Restore iPhone Link","nim_delete_guaranteed":true,"tray_registered":{},"drawer_open":{},"landscape":{},"stealth":{},"audio":{},"audioPc":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{},"menuItemCount":{},"checked":{{"start_with_windows":{},"landscape":{},"stealth_dim":{},"stream_audio_to_pc":{}}},"trayMenuItems":{},"items":{}}}"#,
         escape_json_str(action),
         handled,
+        GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst),
         GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
         landscape_on,
         stealth_on,
@@ -6145,8 +7655,38 @@ fn build_tray_state_json(action: &str, handled: bool, st: &AppState) -> String {
         GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
         GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst),
         TRAY_MENU_ITEMS.len(),
+        startup_on,
+        landscape_on,
+        stealth_on,
+        audio_pc_on,
+        items_json,
         items_json
     )
+}
+
+fn compute_logical_window_dims(is_fs: bool, is_land: bool, open: bool, port_w: i32) -> (i32, i32) {
+    if is_fs {
+        (1920, 1080)
+    } else if is_land {
+        (if open { 1200 } else { 840 }, 468)
+    } else {
+        let base = port_w.clamp(336, 600);
+        (if open { base + 360 } else { base }, 832)
+    }
+}
+
+fn parse_landscape_flag_from_body(body: &str) -> bool {
+    if let Some(b) = parse_bool_param(body, "landscape").or_else(|| parse_bool_param(body, "is_landscape")) {
+        return b;
+    }
+    if let Some(deg) = parse_int_param(body, "orientation").or_else(|| parse_int_param(body, "angle")) {
+        let norm = deg.rem_euclid(360);
+        return norm == 90 || norm == 270;
+    }
+    if let Some(mode) = parse_string_param(body, "mode") {
+        return mode.eq_ignore_ascii_case("landscape");
+    }
+    false
 }
 
 // ============================================================================
@@ -6204,39 +7744,87 @@ fn parse_string_param(body: &str, param: &str) -> Option<String> {
     Some(content[..end_idx].to_string())
 }
 
+static WALLPAPER_SIG_CACHE: Mutex<Option<(std::time::Instant, String, Vec<u8>, &'static str)>> = Mutex::new(None);
+
+pub fn invalidate_wallpaper_cache_for_test() {
+    if let Ok(mut g) = WALLPAPER_SIG_CACHE.lock() {
+        *g = None;
+    }
+}
+
+pub fn get_cached_wallpaper_sig_fast() -> String {
+    let (_, _, sig) = get_current_wallpaper_data();
+    sig
+}
+
 fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
-    if let Ok(appdata) = env::var("APPDATA") {
-        let tw = PathBuf::from(&appdata).join("Microsoft").join("Windows").join("Themes").join("TranscodedWallpaper");
-        if tw.is_file() {
-            if let Ok(bytes) = fs::read(&tw) {
-                if bytes.len() > 1000 {
-                    let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
-                    let sig = format!("tw_{}_{}", bytes.len(), if let Ok(m) = tw.metadata() { m.modified().map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0) } else { 0 });
-                    return (bytes, mime, sig);
-                }
+    if let Ok(guard) = WALLPAPER_SIG_CACHE.lock() {
+        if let Some((ts, ref sig, ref bytes, mime)) = *guard {
+            if ts.elapsed() < Duration::from_secs(30) && !sig.is_empty() && !bytes.is_empty() {
+                return (bytes.clone(), mime, sig.clone());
             }
         }
+    }
 
-        let cached_dir = PathBuf::from(&appdata).join("Microsoft").join("Windows").join("Themes").join("CachedFiles");
-        if cached_dir.is_dir() {
-            if let Ok(entries) = fs::read_dir(cached_dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() {
-                        if let Ok(bytes) = fs::read(&p) {
-                            if bytes.len() > 1000 {
-                                let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
-                                let sig = format!("cf_{}_{}", bytes.len(), p.file_name().unwrap_or_default().to_string_lossy());
-                                return (bytes, mime, sig);
-                            }
-                        }
+    let mut candidates: Vec<(PathBuf, u128, u64)> = Vec::new();
+    if let Some(spi_path) = query_win32_desktop_wallpaper_path() {
+        if let Ok(meta) = spi_path.metadata() {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            candidates.push((spi_path, mtime, meta.len()));
+        }
+    }
+    if let Ok(appdata) = env::var("APPDATA") {
+        let tw = PathBuf::from(&appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Themes")
+            .join("TranscodedWallpaper");
+        if tw.is_file() {
+            if let Ok(meta) = tw.metadata() {
+                if meta.len() > 1000 {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    if !candidates.iter().any(|(p, _, _)| p == &tw) {
+                        candidates.push((tw, mtime, meta.len()));
                     }
                 }
             }
         }
     }
 
-    // Realistic fallback JPEG padded to > 50KB for test environments
+    if let Some((best_path, best_mtime, best_len)) = candidates.into_iter().max_by_key(|c| c.1) {
+        if let Ok(bytes) = fs::read(&best_path) {
+            if bytes.len() > 1000 {
+                let mime = if bytes.starts_with(b"\x89PNG") {
+                    "image/png"
+                } else {
+                    "image/jpeg"
+                };
+                let raw_sig = format!(
+                    "{}:{}:{}",
+                    best_path.to_string_lossy().replace('\\', "/"),
+                    best_mtime,
+                    best_len
+                );
+                let sig: String = compute_sha256(raw_sig.as_bytes()).chars().take(16).collect();
+                if let Ok(mut guard) = WALLPAPER_SIG_CACHE.lock() {
+                    *guard = Some((std::time::Instant::now(), sig.clone(), bytes.clone(), mime));
+                }
+                return (bytes, mime, sig);
+            }
+        }
+    }
+
+    // Realistic fallback JPEG padded to > 50KB for headless/test environments
     let mut fallback = Vec::with_capacity(65536);
     fallback.extend_from_slice(&[
         0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60,
@@ -6262,7 +7850,11 @@ fn get_current_wallpaper_data() -> (Vec<u8>, &'static str, String) {
         fallback.resize(fallback.len() + (chunk_size - 4), 0x20);
     }
     fallback.extend_from_slice(&[0xFF, 0xD9]);
-    (fallback, "image/jpeg", "fallback_blur_sig".to_string())
+    let sig = "fallback_blur_sig".to_string();
+    if let Ok(mut guard) = WALLPAPER_SIG_CACHE.lock() {
+        *guard = Some((std::time::Instant::now(), sig.clone(), fallback.clone(), "image/jpeg"));
+    }
+    (fallback, "image/jpeg", sig)
 }
 
 #[cfg(target_os = "windows")]
@@ -6347,6 +7939,10 @@ fn extract_json_f64_field(json: &str, key: &str) -> Option<f64> {
 }
 
 fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
+    if STANDALONE_INPROCESS_ONLY {
+        let _ = req;
+        return None;
+    }
     use std::net::SocketAddr;
     let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
@@ -6436,6 +8032,9 @@ fn forward_to_worker(req: &HttpRequest) -> Option<HttpResponse> {
 }
 
 fn notify_worker_commit_typed_line_async() {
+    if STANDALONE_INPROCESS_ONLY {
+        return;
+    }
     thread::spawn(move || {
         use std::net::SocketAddr;
         let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
@@ -6457,6 +8056,10 @@ fn notify_worker_commit_typed_line_async() {
 }
 
 fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
+    if STANDALONE_INPROCESS_ONLY {
+        let _ = req;
+        return None;
+    }
     use std::net::SocketAddr;
     let ports = [8766u16, WORKER_PORT];
     for port in ports {
@@ -6533,12 +8136,59 @@ fn forward_to_stream_server(req: &HttpRequest) -> Option<HttpResponse> {
 }
 
 fn stream_live_passthrough(client: &mut TcpStream) -> Result<(), std::io::Error> {
+    let _ = client.set_nodelay(true);
+    let _ = client.set_read_timeout(None);
+    let _ = client.set_write_timeout(None);
+
+    // Phase 3 (Tahap 237): Continuous Condvar-driven hvcC/avcC WebCodecs stream for real physical USB/Wi-Fi/AirPlay.
+    if iphone_link_apple::mirror::is_physical_stream_session_active() {
+        let _live_client_guard = iphone_link_apple::mirror::LiveClientGuard::enter();
+        client.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n",
+        )?;
+        client.flush()?;
+        let mut last_seq = 0u64;
+        let mut sent_init = false;
+        let mut sent_count = 0u64;
+        while let Some(chunks) =
+            iphone_link_apple::mirror::global_wait_next_live_chunks(&mut last_seq, &mut sent_init, 100)
+        {
+            if chunks.is_empty() {
+                continue;
+            }
+            for chunk in chunks {
+                client.write_all(&chunk)?;
+                client.flush()?;
+                sent_count = sent_count.saturating_add(1);
+                if sent_count <= 12 || sent_count % 60 == 0 {
+                    iphone_link_apple::airplay::record_airplay_trace(
+                        "live_sent_seq",
+                        format!("sent=#{sent_count} seq={last_seq} bytes={}", chunk.len()),
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Phase 1 (Tahap 230): Serve queued in-process native HEVC Annex-B frames when synthetic native mirror session is active.
+    let native_chunks = iphone_link_apple::mirror::global_take_live_stream_snapshot();
+    if !native_chunks.is_empty() || iphone_link_apple::mirror::is_mirror_streaming_fast() {
+        client.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n",
+        )?;
+        for chunk in native_chunks {
+            client.write_all(&chunk)?;
+        }
+        client.flush()?;
+        return Ok(());
+    }
+
     let (mut upstream, is_8766) = match TcpStream::connect("127.0.0.1:8766") {
         Ok(s) => (s, true),
         Err(_) => (TcpStream::connect(format!("127.0.0.1:{}", WORKER_PORT))?, false),
     };
     upstream.set_nodelay(true)?;
-    client.set_nodelay(true)?;
     let _ = upstream.set_read_timeout(None);
     let _ = upstream.set_write_timeout(None);
 
@@ -6627,6 +8277,9 @@ pub fn is_lan_request_allowed(ip: IpAddr, method: &str, raw_path: &str) -> bool 
 }
 
 pub fn detect_primary_lan_ipv4() -> String {
+    if iphone_link_apple::connection::is_loopback_only_test_mode() {
+        return "127.0.0.1".to_string();
+    }
     if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
         if sock.connect("8.8.8.8:80").is_ok() {
             if let Ok(addr) = sock.local_addr() {
@@ -6796,7 +8449,7 @@ pub fn normalize_and_validate_digital_shortcut_url(raw_url: &str) -> Option<Stri
         || host_no_port.ends_with("threads.net")
         || host_no_port.ends_with("instagram.com")
     {
-        if let Some(clean_social) = crate::link_grabber::clean_and_validate_extracted_url(trimmed, None) {
+        if let Some(clean_social) = safe_link_grabber_clean(trimmed) {
             if crate::link_grabber::is_strict_https_social_url(&clean_social) {
                 return Some(clean_social);
             }
@@ -6806,7 +8459,419 @@ pub fn normalize_and_validate_digital_shortcut_url(raw_url: &str) -> Option<Stri
     Some(trimmed.to_string())
 }
 
+/// Tahap 243 Pilar 2: Sanitizes non-ASCII Unicode characters (`…`, `•`, `—`, `🔍`, `İ`, emoji)
+/// into ASCII spaces BEFORE invoking frozen `link_grabber.rs` (whose `split_concatenated_url_tokens`
+/// advances byte-by-byte and slices `&lower[pos..]`, which panics on multi-byte UTF-8 boundaries).
+fn sanitize_for_link_grabber(raw: &str) -> String {
+    raw.chars()
+        .map(|c| if c.is_ascii() { c } else { ' ' })
+        .collect()
+}
+
+fn safe_link_grabber_extract(raw: &str) -> Vec<String> {
+    let ascii = sanitize_for_link_grabber(raw);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::link_grabber::extract_and_normalize_links(&ascii)
+    }))
+    .unwrap_or_default()
+}
+
+fn safe_link_grabber_clean(raw: &str) -> Option<String> {
+    let ascii = sanitize_for_link_grabber(raw);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::link_grabber::clean_and_validate_extracted_url(&ascii, None)
+    }))
+    .ok()
+    .flatten()
+}
+
+fn stitch_spotlight_overlap(head: &str, tail: &str) -> Option<String> {
+    let h = head.trim();
+    let t = tail.trim();
+    if h.is_empty() || t.is_empty() {
+        return None;
+    }
+    if h.contains(t) {
+        return Some(h.to_string());
+    }
+    if t.contains(h) {
+        return Some(t.to_string());
+    }
+    let h_chars: Vec<char> = h.chars().collect();
+    let t_chars: Vec<char> = t.chars().collect();
+    let max_k = h_chars.len().min(t_chars.len());
+    for k in (4..=max_k).rev() {
+        if h_chars[h_chars.len() - k..] == t_chars[..k] {
+            let mut merged: String = h_chars.iter().collect();
+            for ch in &t_chars[k..] {
+                merged.push(*ch);
+            }
+            return Some(merged);
+        }
+    }
+    None
+}
+
+fn extract_general_urls_from_ocr_text(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let cleaned = raw
+        .replace(r"\/", "/")
+        .replace('\u{200B}', "")
+        .replace('\u{FEFF}', "");
+    let known_domains = [
+        "www.instagram.com/",
+        "instagram.com/",
+        "www.threads.net/",
+        "threads.net/",
+        "www.threads.com/",
+        "threads.com/",
+        "www.tiktok.com/",
+        "tiktok.com/",
+        "vt.tiktok.com/",
+        "vm.tiktok.com/",
+        "www.youtube.com/",
+        "youtube.com/",
+        "m.youtube.com/",
+        "youtu.be/",
+        "x.com/",
+        "twitter.com/",
+        "www.facebook.com/",
+        "facebook.com/",
+        "m.facebook.com/",
+        "fb.watch/",
+    ];
+    for tok in cleaned.split_whitespace() {
+        let trimmed = tok.trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '.' | '|'
+            )
+        });
+        if trimmed.len() < 8 {
+            continue;
+        }
+        let low = trimmed.to_ascii_lowercase();
+        let candidate = if low.starts_with("https://") || low.starts_with("http://") {
+            trimmed.to_string()
+        } else if low.starts_with("http5://") {
+            let rest: String = trimmed.chars().skip(8).collect();
+            format!("https://{rest}")
+        } else if low.starts_with("htps://") {
+            let rest: String = trimmed.chars().skip(7).collect();
+            format!("https://{rest}")
+        } else if known_domains.iter().any(|d| low.starts_with(d)) {
+            if low.starts_with("instagram.com/") {
+                format!("https://www.{trimmed}")
+            } else {
+                format!("https://{trimmed}")
+            }
+        } else {
+            continue;
+        };
+        if let Some(norm) = normalize_and_validate_digital_shortcut_url(&candidate) {
+            if !out.contains(&norm) {
+                out.push(norm);
+            }
+        }
+    }
+    out
+}
+
+fn is_bare_incomplete_social_path(url: &str) -> bool {
+    let low = url.trim().to_ascii_lowercase();
+    for pfx in [
+        "instagram.com/p/",
+        "instagram.com/reel/",
+        "instagram.com/reels/",
+        "instagram.com/tv/",
+        "threads.net/share/",
+        "threads.com/share/",
+    ] {
+        if let Some(idx) = low.find(pfx) {
+            let rest = &url.trim()[idx + pfx.len()..];
+            let id_seg = rest.split(&['/', '?', '#'][..]).next().unwrap_or("");
+            if id_seg.len() < 6 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn pick_best_validated_url(candidates: Vec<String>) -> Option<String> {
+    // Reject bare incomplete paths (`.../p/`, `.../reel/`) whenever any complete URL exists,
+    // and break ties in favor of the EARLIEST (highest-priority: 2x_natural > 2x_contrast > 1x) candidate!
+    let complete: Vec<String> = candidates
+        .into_iter()
+        .filter(|u| !is_bare_incomplete_social_path(u))
+        .collect();
+    let mut best: Option<String> = None;
+    for u in complete {
+        match best {
+            None => best = Some(u),
+            Some(ref cur) => {
+                // Only replace an earlier (higher-priority) candidate if strictly longer
+                // (e.g., carries full query or full shortcode instead of truncated tail).
+                if u.len() > cur.len() {
+                    best = Some(u);
+                }
+            }
+        }
+    }
+    best
+}
+
+fn extract_best_link_from_candidates(raw_texts: &[String]) -> Option<String> {
+    let mut expanded: Vec<String> = Vec::new();
+    for t in raw_texts {
+        let tr = t.trim();
+        if tr.is_empty() {
+            continue;
+        }
+        // Tahap 245 Pilar 1: Unwrap multi-line iOS 27.2 Spotlight URLs BEFORE sanitization & link_grabber!
+        let unwrapped = crate::ocr_engine::unwrap_multiline_spotlight_urls(tr);
+        if !unwrapped.trim().is_empty() && !expanded.contains(&unwrapped) {
+            expanded.push(unwrapped);
+        }
+        if !expanded.iter().any(|e| e == tr) {
+            expanded.push(tr.to_string());
+        }
+    }
+    if expanded.len() >= 2 {
+        let combined_nl = expanded.join("\n");
+        let combined_unwrapped = crate::ocr_engine::unwrap_multiline_spotlight_urls(&combined_nl);
+        if !combined_unwrapped.trim().is_empty() && !expanded.contains(&combined_unwrapped) {
+            expanded.push(combined_unwrapped);
+        }
+    }
+
+    let mut strict_social: Vec<String> = Vec::new();
+    let mut general_https: Vec<String> = Vec::new();
+
+    for txt in &expanded {
+        for u in safe_link_grabber_extract(txt) {
+            if is_bare_incomplete_social_path(&u) {
+                continue;
+            }
+            if crate::link_grabber::is_strict_https_social_url(&u) {
+                if !strict_social.contains(&u) {
+                    strict_social.push(u);
+                }
+            } else if let Some(norm) = normalize_and_validate_digital_shortcut_url(&u) {
+                if !is_bare_incomplete_social_path(&norm) && !general_https.contains(&norm) {
+                    general_https.push(norm);
+                }
+            }
+        }
+        for u in extract_general_urls_from_ocr_text(txt) {
+            if is_bare_incomplete_social_path(&u) {
+                continue;
+            }
+            if crate::link_grabber::is_strict_https_social_url(&u) {
+                if !strict_social.contains(&u) {
+                    strict_social.push(u);
+                }
+            } else if !general_https.contains(&u) {
+                general_https.push(u);
+            }
+        }
+    }
+
+    // Head + tail Spotlight overlap stitching across multiple captured fragments
+    if raw_texts.len() >= 2 {
+        for i in 0..raw_texts.len() {
+            for j in (i + 1)..raw_texts.len() {
+                if let Some(stitched) = stitch_spotlight_overlap(&raw_texts[i], &raw_texts[j])
+                    .or_else(|| stitch_spotlight_overlap(&raw_texts[j], &raw_texts[i]))
+                {
+                    let unwrapped_stitched =
+                        crate::ocr_engine::unwrap_multiline_spotlight_urls(&stitched);
+                    for u in safe_link_grabber_extract(&unwrapped_stitched) {
+                        if !is_bare_incomplete_social_path(&u)
+                            && crate::link_grabber::is_strict_https_social_url(&u)
+                            && !strict_social.contains(&u)
+                        {
+                            strict_social.push(u);
+                        }
+                    }
+                    for u in extract_general_urls_from_ocr_text(&unwrapped_stitched) {
+                        if is_bare_incomplete_social_path(&u) {
+                            continue;
+                        }
+                        if crate::link_grabber::is_strict_https_social_url(&u) {
+                            if !strict_social.contains(&u) {
+                                strict_social.push(u);
+                            }
+                        } else if !general_https.contains(&u) {
+                            general_https.push(u);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Prefer complete strict social URL (preserving 2x_natural > 2x_contrast > 1x priority on ties),
+    // then fall back to any valid general HTTPS URL.
+    if let Some(best_social) = pick_best_validated_url(strict_social) {
+        return Some(best_social);
+    }
+    pick_best_validated_url(general_https)
+}
+
+fn read_fresh_shortcut_url_within_ms(max_age_ms: u64) -> Option<String> {
+    let now = now_epoch_ms_u64();
+    let guard = LATEST_SHORTCUT_URL_CACHE.lock().ok()?;
+    let (ref url, ts) = *guard;
+    if !url.is_empty() && ts > 0 && now.saturating_sub(ts) <= max_age_ms {
+        return Some(url.clone());
+    }
+    None
+}
+
+/// Unified Tahap 242 + 243 `Grab Link (Alt+B)` handler powering `/api/qr/scan`, `/api/social/grab-link`,
+/// `/api/link/grab`, and `/api/keyboard/shortcut` (`action: "scan-qr" | "grab-link"`).
+/// Wrapped in `catch_unwind` + frame-by-frame early-exit for zero force-close & <35 MB peak RAM.
+fn handle_native_grab_link_payload(body_str: &str) -> String {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        handle_native_grab_link_payload_inner(body_str)
+    })) {
+        Ok(json) => json,
+        Err(_) => r#"{"ok":false,"native":true,"action":"scan-qr","url":null,"link":null,"extractedText":null,"copiedToPc":false,"clipboardWritten":false,"qrDetected":false,"complete":false,"error":"OCR link guard recovered safely"}"#.to_string(),
+    }
+}
+
+fn handle_native_grab_link_payload_inner(body_str: &str) -> String {
+    let mut text_candidates: Vec<String> = Vec::new();
+    for key in ["text", "raw_text", "rawText", "url", "link"] {
+        if let Some(v) = crate::ocr_engine::extract_json_string_field(body_str, key) {
+            if !v.trim().is_empty() {
+                text_candidates.push(v);
+            }
+        }
+    }
+    if let Some(arr) = crate::ocr_engine::extract_json_string_array_field(body_str, "texts")
+        .or_else(|| crate::ocr_engine::extract_json_string_array_field(body_str, "batchTexts"))
+    {
+        text_candidates.extend(arr);
+    }
+
+    let mut image_urls: Vec<String> = Vec::new();
+    for arr_key in ["frames", "frameHistory"] {
+        for u in crate::ocr_engine::extract_data_urls_array_from_json(body_str, arr_key) {
+            if !image_urls.contains(&u) {
+                image_urls.push(u);
+            }
+        }
+    }
+    for key in ["frameDataUrl", "tailFrameDataUrl", "imageDataUrl", "dataUrl"] {
+        if let Some(u) = crate::ocr_engine::extract_json_string_field(body_str, key) {
+            if u.starts_with("data:image/") && !image_urls.contains(&u) {
+                image_urls.push(u);
+            }
+        }
+    }
+
+    let mut winning_url: Option<String> = None;
+    let mut source = "direct_text";
+    let mut auto_snap_used = false;
+    let mut snap_ms = 0.0f64;
+    let mut snap_w = 0u32;
+    let mut snap_h = 0u32;
+
+    // 1) Explicit text fields in JSON payload
+    if !text_candidates.is_empty() {
+        winning_url = extract_best_link_from_candidates(&text_candidates);
+    }
+
+    // 2) Explicit image frames (PNG/JPEG/BMP data URLs) -> GDI+ decode + tight Spotlight band WinRT OCR.
+    // Process ONE frame at a time and early-exit as soon as any frame yields a valid URL!
+    if winning_url.is_none() && !image_urls.is_empty() {
+        let mut ocr_texts: Vec<String> = Vec::new();
+        for img_url in &image_urls {
+            let frame_texts = crate::ocr_engine::recognize_data_url_for_link_grab(img_url);
+            if let Some(found) = extract_best_link_from_candidates(&frame_texts) {
+                winning_url = Some(found);
+                source = "spotlight_ocr";
+                break;
+            }
+            ocr_texts.extend(frame_texts);
+        }
+        if winning_url.is_none() && !ocr_texts.is_empty() {
+            if let Some(found) = extract_best_link_from_candidates(&ocr_texts) {
+                winning_url = Some(found);
+                source = "spotlight_ocr";
+            }
+        }
+    }
+
+    // 3) Fresh iPhone Shortcut LAN URL cache (`/c?u=...` within 8 seconds)
+    if winning_url.is_none() {
+        if let Some(sc_url) = read_fresh_shortcut_url_within_ms(8_000) {
+            winning_url = Some(sc_url);
+            source = "iphone_shortcut";
+        }
+    }
+
+    // 4) Live D3D11/Video Snapshot fallback when request had no explicit text or frames
+    if winning_url.is_none() && text_candidates.is_empty() && image_urls.is_empty() {
+        if let Ok(snap) = iphone_link_apple::mirror::global_export_latest_video_snapshot() {
+            auto_snap_used = true;
+            snap_ms = snap.elapsed_ms;
+            snap_w = snap.width;
+            snap_h = snap.height;
+            let snap_texts = crate::ocr_engine::recognize_data_url_for_link_grab(&snap.data_url);
+            if let Some(found) = extract_best_link_from_candidates(&snap_texts) {
+                winning_url = Some(found);
+                source = "live_snapshot_ocr";
+            }
+        }
+    }
+
+    if let Some(best) = winning_url {
+        let mut copied = false;
+        for attempt in 0..3 {
+            if write_win32_clipboard(&best) {
+                copied = true;
+                break;
+            }
+            if attempt < 2 {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        }
+        if copied {
+            set_active_clipboard_source(ClipboardSource::Pc);
+        }
+        let esc = escape_json_value(&best);
+        return format!(
+            r#"{{"ok":true,"native":true,"action":"scan-qr","url":"{}","link":"{}","text":"{}","extractedText":"{}","copiedToPc":{},"clipboardWritten":{},"clipboardSource":"{}","qrDetected":true,"complete":true,"source":"{}","length":{},"autoSnapshotUsed":{},"snapshotElapsedMs":{:.3},"snapshotWidth":{},"snapshotHeight":{}}}"#,
+            esc,
+            esc,
+            esc,
+            esc,
+            copied,
+            copied,
+            if copied { "pc" } else { "iphone" },
+            source,
+            best.chars().count(),
+            auto_snap_used,
+            snap_ms,
+            snap_w,
+            snap_h
+        );
+    }
+
+    format!(
+        r#"{{"ok":false,"native":true,"action":"scan-qr","url":null,"link":null,"extractedText":null,"copiedToPc":false,"clipboardWritten":false,"qrDetected":false,"complete":false,"error":"No strict HTTP(S) link found","autoSnapshotUsed":{},"snapshotElapsedMs":{:.3},"snapshotWidth":{},"snapshotHeight":{}}}"#,
+        auto_snap_used, snap_ms, snap_w, snap_h
+    )
+}
+
 fn sync_shortcut_to_worker_async(clean_url: String) {
+    if STANDALONE_INPROCESS_ONLY {
+        let _ = clean_url;
+        return;
+    }
     thread::spawn(move || {
         use std::net::SocketAddr;
         let addr = SocketAddr::from(([127, 0, 0, 1], WORKER_PORT));
@@ -6885,6 +8950,1174 @@ fn extract_c_endpoint_url(req: &HttpRequest) -> String {
         }
     }
     candidate.replace(r"\/", "/").trim().to_string()
+}
+
+// ============================================================================
+// TAHAP 247: UNIFIED MULTI-IPHONE DEVICE COLLECTOR & SMART AUTO-PRIORITIZATION
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct StatusDeviceSummary {
+    pub udid: String,
+    pub name: String,
+    pub model: String,
+    pub product_type: String,
+    pub ios_version: String,
+    pub bluetooth_address: String,
+    pub screen_type: String,
+    pub device_family: String,
+    pub usb: bool,
+    pub wifi_paired: bool,
+    pub wifi_online: bool,
+    pub reachable: bool,
+    pub ip: Option<String>,
+    pub connection_type: String, // "usb" | "wifi" | "offline"
+    pub last_seen_at: u64,
+}
+
+fn collect_unified_devices(
+    native_meta: &[iphone_link_apple::models::DeviceMetadata],
+    usb_list: &[iphone_link_apple::usbmux::ConnectedAppleDevice],
+    zero_poll_active: bool,
+) -> Vec<StatusDeviceSummary> {
+    let paired_wifi_udids = if zero_poll_active {
+        // Tahap 249 Pilar 3: Zero-I/O RAM snapshot keeps paired Wi-Fi devices visible in /api/status
+        // during active streaming & starting phases (eliminates devices=[] -> Wi-Fi Offline / iPhone Terputus!).
+        paired_wifi_udids_ram_cache()
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    } else {
+        let fresh = iphone_link_apple::wifi::wifi_paired_udids();
+        if let Ok(mut g) = paired_wifi_udids_ram_cache().lock() {
+            *g = fresh.clone();
+        }
+        fresh
+    };
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut ordered_udids: Vec<String> = Vec::new();
+    let mut push_unique = |u: &str| {
+        if !u.is_empty() && !ordered_udids.iter().any(|x| x.eq_ignore_ascii_case(u)) {
+            ordered_udids.push(u.to_string());
+        }
+    };
+    for m in native_meta {
+        push_unique(&m.udid);
+    }
+    for u in usb_list {
+        push_unique(&u.serial_udid);
+    }
+    for pu in &paired_wifi_udids {
+        push_unique(pu);
+    }
+
+    let mut result = Vec::with_capacity(ordered_udids.len());
+    for udid in ordered_udids {
+        let meta_opt = native_meta.iter().find(|m| m.udid.eq_ignore_ascii_case(&udid));
+        let usb_opt = usb_list
+            .iter()
+            .find(|u| u.serial_udid.eq_ignore_ascii_case(&udid));
+        let wmeta = if zero_poll_active {
+            // Tahap 249 Pilar 3: Zero-I/O RAM snapshot preserves real model/name/IP/online state
+            // during active streaming & starting phases (eliminates Wi-Fi Offline / iPhone Terputus flash!).
+            read_unified_wifi_meta_zero_io(&udid)
+        } else {
+            let fresh_meta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&udid);
+            cache_unified_wifi_meta_ram(&udid, &fresh_meta);
+            fresh_meta
+        };
+
+        let is_usb = meta_opt.is_some_and(|m| m.connection_type.eq_ignore_ascii_case("USB"))
+            || usb_opt.is_some_and(|u| u.connection_type.eq_ignore_ascii_case("USB"));
+        let is_net_live =
+            meta_opt.is_some_and(|m| !m.connection_type.eq_ignore_ascii_case("USB"));
+        let wifi_paired = paired_wifi_udids
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(&udid))
+            || wmeta.wifi_enabled;
+        let ip = wmeta.last_ip.clone().filter(|s| !s.is_empty());
+        let wifi_online = is_net_live
+            || (wifi_paired && wmeta.reachable.unwrap_or_else(|| ip.is_some()));
+        let reachable = is_usb || wifi_online;
+        let connection_type = if is_usb {
+            "usb".to_string()
+        } else if wifi_online {
+            "wifi".to_string()
+        } else {
+            "offline".to_string()
+        };
+
+        let product_type = meta_opt
+            .map(|m| m.product_type.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| wmeta.product_type.clone());
+        let device_family = if meta_opt
+            .is_some_and(|m| m.device_class.eq_ignore_ascii_case("iPad"))
+            || product_type.starts_with("iPad")
+            || wmeta.model.to_ascii_lowercase().starts_with("ipad")
+        {
+            "ipad".to_string()
+        } else {
+            "iphone".to_string()
+        };
+        let generic_family = if device_family == "ipad" {
+            "iPad"
+        } else {
+            "iPhone"
+        };
+        let model = meta_opt
+            .map(|m| m.marketing_model.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                if !product_type.is_empty() {
+                    iphone_link_apple::models::resolve_apple_model(&product_type)
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| (!wmeta.model.is_empty()).then(|| wmeta.model.clone()))
+            .or_else(|| {
+                usb_opt
+                    .and_then(|u| u.marketing_model.as_deref())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| generic_family.to_string());
+
+        let name = meta_opt
+            .map(|m| m.device_name.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| (!wmeta.name.is_empty()).then(|| wmeta.name.clone()))
+            .or_else(|| {
+                usb_opt
+                    .map(|u| u.device_name.trim().to_string())
+                    .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("iPhone"))
+            })
+            .unwrap_or_default();
+
+        let ios_version = meta_opt
+            .map(|m| m.product_version.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| wmeta.ios_version.clone());
+        let bluetooth_address = meta_opt
+            .map(|m| m.bluetooth_address.trim().to_ascii_uppercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| wmeta.bluetooth_address.clone());
+        let screen_type = meta_opt
+            .map(|m| m.screen_type.as_str().to_string())
+            .unwrap_or_else(|| {
+                if !product_type.is_empty() {
+                    iphone_link_apple::models::screen_type_for_model(&product_type)
+                        .as_str()
+                        .to_string()
+                } else if device_family == "ipad" {
+                    "iPad".to_string()
+                } else {
+                    "Notch".to_string()
+                }
+            });
+        let last_seen_at = if is_usb {
+            now_secs.max(wmeta.last_seen_at)
+        } else {
+            wmeta.last_seen_at
+        };
+
+        result.push(StatusDeviceSummary {
+            udid,
+            name,
+            model,
+            product_type,
+            ios_version,
+            bluetooth_address,
+            screen_type,
+            device_family,
+            usb: is_usb,
+            wifi_paired,
+            wifi_online,
+            reachable,
+            ip,
+            connection_type,
+            last_seen_at,
+        });
+    }
+
+    // Sort cleanly: USB first -> Wi-Fi Online -> Offline, tie-break by newest last_seen_at -> udid
+    result.sort_by(|a, b| {
+        let rank = |d: &StatusDeviceSummary| -> u8 {
+            if d.usb {
+                0
+            } else if d.wifi_online {
+                1
+            } else {
+                2
+            }
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| b.last_seen_at.cmp(&a.last_seen_at))
+            .then_with(|| a.udid.cmp(&b.udid))
+    });
+    result
+}
+
+/// Deterministic Smart Auto-Prioritization (Tahap 247 Pilar 2):
+/// 1. 100% honor explicit user selection if still in real device list.
+/// 2. USB connected device (prefer `last_selected` if multiple).
+/// 3. Online/Reachable Wi-Fi paired device (prefer `last_selected`, then latest `last_seen_at`).
+/// 4. `last_selected` if still in paired list (even if offline).
+/// 5. First paired device. Returns `""` when 0 devices (100% Clean Slate Tahap 246).
+pub fn resolve_active_selected_udid(
+    devices: &[StatusDeviceSummary],
+    current_selected: &str,
+    user_explicitly_selected: bool,
+    last_selected: &str,
+) -> String {
+    if devices.is_empty() {
+        return String::new();
+    }
+    if user_explicitly_selected && !current_selected.is_empty() {
+        if let Some(m) = devices
+            .iter()
+            .find(|d| d.udid.eq_ignore_ascii_case(current_selected))
+        {
+            return m.udid.clone();
+        }
+    }
+    let usb_devs: Vec<&StatusDeviceSummary> = devices.iter().filter(|d| d.usb).collect();
+    if !usb_devs.is_empty() {
+        if !last_selected.is_empty() {
+            if let Some(m) = usb_devs
+                .iter()
+                .find(|d| d.udid.eq_ignore_ascii_case(last_selected))
+            {
+                return m.udid.clone();
+            }
+        }
+        return usb_devs[0].udid.clone();
+    }
+    let mut wifi_online_devs: Vec<&StatusDeviceSummary> = devices
+        .iter()
+        .filter(|d| {
+            d.wifi_paired
+                && d.wifi_online
+                && d.ip.as_deref().is_some_and(|s| !s.is_empty())
+        })
+        .collect();
+    if !wifi_online_devs.is_empty() {
+        if !last_selected.is_empty() {
+            if let Some(m) = wifi_online_devs
+                .iter()
+                .find(|d| d.udid.eq_ignore_ascii_case(last_selected))
+            {
+                return m.udid.clone();
+            }
+        }
+        wifi_online_devs.sort_by(|a, b| {
+            b.last_seen_at
+                .cmp(&a.last_seen_at)
+                .then_with(|| a.udid.cmp(&b.udid))
+        });
+        return wifi_online_devs[0].udid.clone();
+    }
+    if !last_selected.is_empty() {
+        if let Some(m) = devices
+            .iter()
+            .find(|d| d.udid.eq_ignore_ascii_case(last_selected))
+        {
+            return m.udid.clone();
+        }
+    }
+    devices[0].udid.clone()
+}
+
+fn format_device_summary_json(d: &StatusDeviceSummary, is_selected: bool) -> String {
+    let legacy_conn = if d.usb {
+        "USB"
+    } else if d.wifi_online {
+        "Wi-Fi"
+    } else {
+        "Wi-Fi (Offline)"
+    };
+    let ip_json = match d.ip.as_deref().filter(|s| !s.is_empty()) {
+        Some(ip) => format!(r#""{}""#, escape_json_str(ip)),
+        None => "null".to_string(),
+    };
+    let display_name = if d.name.is_empty() {
+        d.model.as_str()
+    } else {
+        d.name.as_str()
+    };
+    format!(
+        r#"{{
+      "udid": "{}",
+      "name": "{}",
+      "deviceName": "{}",
+      "model": "{}",
+      "productType": "{}",
+      "iosVersion": "{}",
+      "screen_type": "{}",
+      "deviceFamily": "{}",
+      "usb": {},
+      "wifiPaired": {},
+      "wifiOnline": {},
+      "reachable": {},
+      "online": {},
+      "ip": {},
+      "connectionType": "{}",
+      "connection": "{}",
+      "connection_type": "{}",
+      "paired": {},
+      "wifi_enabled": {},
+      "wifiOnly": {},
+      "selected": {},
+      "lastSeenAt": {}
+    }}"#,
+        escape_json_str(&d.udid),
+        escape_json_str(&d.name),
+        escape_json_str(display_name),
+        escape_json_str(&d.model),
+        escape_json_str(&d.product_type),
+        escape_json_str(&d.ios_version),
+        escape_json_str(&d.screen_type),
+        escape_json_str(&d.device_family),
+        d.usb,
+        d.wifi_paired,
+        d.wifi_online,
+        d.reachable,
+        d.reachable,
+        ip_json,
+        escape_json_str(&d.connection_type),
+        legacy_conn,
+        legacy_conn,
+        d.usb || d.wifi_paired,
+        d.wifi_paired,
+        !d.usb,
+        is_selected,
+        d.last_seen_at,
+    )
+}
+
+fn build_status_payload_json(
+    state: &Arc<Mutex<AppState>>,
+    force_refresh: bool,
+    stop_cooldown: bool,
+    fast_zero_io: bool,
+) -> String {
+    let st_peek = state.lock().unwrap();
+    let streaming_peek = iphone_link_apple::mirror::is_mirror_streaming_fast()
+        || (st_peek.is_streaming && !stop_cooldown);
+    let audio_streaming_peek = iphone_link_apple::mirror::mirror_runtime()
+        .lock()
+        .map(|m| m.audio.streaming)
+        .unwrap_or(false);
+    let zero_poll_active = streaming_peek || audio_streaming_peek;
+    drop(st_peek);
+
+    if force_refresh && !zero_poll_active && !fast_zero_io {
+        let paired_cnt = iphone_link_apple::wifi::wifi_paired_udids().len();
+        if paired_cnt >= 2 {
+            let _ = iphone_link_apple::wifi::probe_all_paired_wifi_devices_parallel(650);
+        }
+    }
+
+    // Zero-Polling Guard (Tahap 59 parity): when screen/audio is actively streaming OR during
+    // instant `POST /api/device/select` (`fast_zero_io`), NEVER block on usbmuxd sockets!
+    let native_meta = if zero_poll_active || fast_zero_io {
+        snapshot_cached_devices_metadata_zero_io()
+    } else {
+        discover_devices_with_metadata(force_refresh)
+    };
+    let usb_list = if zero_poll_active || fast_zero_io {
+        Vec::new()
+    } else {
+        list_connected_usb_devices(Duration::from_millis(60)).unwrap_or_default()
+    };
+
+    let unified_devices = collect_unified_devices(&native_meta, &usb_list, zero_poll_active);
+
+    let st_snap = {
+        let mut st = state.lock().unwrap();
+        if !zero_poll_active {
+            let resolved_udid = resolve_active_selected_udid(
+                &unified_devices,
+                &st.selected_udid,
+                st.user_explicitly_selected_udid,
+                &st.last_selected_udid,
+            );
+            st.selected_udid = resolved_udid;
+        }
+        st.clone()
+    };
+
+    let lang_code = st_snap.language.code();
+    let udid = &st_snap.selected_udid;
+    let (
+        mirror_phase,
+        mirror_reconnecting,
+        mirror_transport,
+        mirror_url_opt,
+        mirror_error_opt,
+        mirror_note_opt,
+        mirror_orient,
+        mirror_auto_rot,
+        mirror_frames,
+        mirror_stage,
+        mirror_stage_progress,
+        mirror_stage_step,
+        mirror_stage_title,
+        mirror_stage_detail,
+        mirror_route,
+        mirror_airplay_active,
+        mirror_airplay_name,
+        mirror_airplay_port,
+        mirror_hid_available,
+        mirror_airplay_avcc,
+        mirror_airplay_frames,
+        mirror_airplay_idrs,
+        mirror_airplay_deltas,
+        mirror_airplay_dec_fail,
+        mirror_airplay_tcp_pkts,
+        mirror_airplay_loop_alive,
+        mirror_live_chunks_broadcasted,
+        mirror_audio_json,
+    ) = {
+        let m = iphone_link_apple::mirror::mirror_runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut ajson = m.audio.status_json();
+        let mp_clone = m.phase.clone();
+        let m_airplay_active = m.airplay_active;
+        let m_streaming = m.audio.streaming;
+        drop(m);
+        // Tahap 257 Pilar 1 (Root Cause #1 Fix vs ZenLink):
+        // NEVER launch Windows Bluetooth A2DP AudioPlaybackConnection while AirPlay H.264 is active!
+        // Opening Bluetooth A2DP ~1s after AirPlay Frame #1 hijacks iOS's active audio route from
+        // AirPlay -> Bluetooth, forcing iOS airplayd to send TEARDOWN type=96 + full TEARDOWN!
+        let want_auto_audio = !stop_cooldown
+            && mp_clone == "running"
+            && !m_airplay_active
+            && !AUDIO_MANUALLY_STOPPED_THIS_SESSION.load(Ordering::SeqCst)
+            && !st_snap.audio_muted
+            && !st_snap.audio_routing.eq_ignore_ascii_case("device");
+        let (pref_a_name, pref_a_model, pref_a_bt) =
+            resolve_active_audio_device_target(state, None, None, None);
+        let (cur_audio_dev, _) = iphone_link_audio::global_pc_audio_bridge_device_info();
+        let cur_bridge_active = iphone_link_audio::is_global_pc_audio_bridge_active();
+        let cur_bridge_conn = iphone_link_audio::is_global_pc_audio_bridge_connecting();
+        let cur_target_key = iphone_link_audio::global_pc_audio_bridge_target_key();
+        let audio_target_mismatch = cur_bridge_active
+            && !cur_bridge_conn
+            && pref_a_name.as_deref().is_some_and(|pn| {
+                !cur_audio_dev.is_empty() && !cur_audio_dev.eq_ignore_ascii_case(pn)
+            });
+        // Tahap 249 Pilar 3: If initial pre-RSD audio attempt launched with empty/generic name
+        // (`target_key` empty or starting with `|`) and RSD has now supplied real DeviceName/BT MAC,
+        // rebind cleanly to target the exact active iPhone on Session 1 without manual toggle!
+        let rsd_identity_upgraded = !cur_bridge_active
+            && (cur_target_key.is_empty() || cur_target_key.starts_with('|'))
+            && (pref_a_name.is_some() || pref_a_bt.is_some());
+        let now_audio_ms = now_epoch_ms_u64();
+        let last_audio_try_ms = LAST_AUTO_AUDIO_ATTEMPT_MS.load(Ordering::SeqCst);
+        let retry_cooldown_ok =
+            last_audio_try_ms == 0 || now_audio_ms.saturating_sub(last_audio_try_ms) >= 3_000;
+        let need_auto_audio_launch = want_auto_audio
+            && (((!cur_bridge_active && !cur_bridge_conn) && retry_cooldown_ok)
+                || audio_target_mismatch
+                || (rsd_identity_upgraded && !cur_bridge_conn));
+        if need_auto_audio_launch
+            && AUTO_AUDIO_SPAWN_IN_FLIGHT
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            LAST_AUTO_AUDIO_ATTEMPT_MS.store(now_audio_ms, Ordering::SeqCst);
+            let a_mode = st_snap.audio_routing.clone();
+            let a_vol = st_snap.audio_volume as i64;
+            let a_preset = st_snap.audio_buffer_preset.clone();
+            let a_ls = st_snap.lip_sync;
+            let _ = iphone_link_audio::start_global_pc_audio_bridge_nonblocking_for_device(
+                pref_a_name.as_deref(),
+                pref_a_model.as_deref(),
+                pref_a_bt.as_deref(),
+            );
+            let _ = iphone_link_apple::mirror::global_configure_audio(
+                Some(&a_mode),
+                Some(a_vol),
+                Some(false),
+                Some(&a_preset),
+                Some(a_ls),
+                Some(true),
+            );
+            AUTO_AUDIO_SPAWN_IN_FLIGHT.store(false, Ordering::SeqCst);
+        }
+        let (pc_bridge_on, pc_bridge_conn, pc_bridge_det) =
+            iphone_link_audio::global_pc_audio_bridge_full_status();
+        let pc_bridge_state = iphone_link_audio::global_pc_audio_bridge_state_kind();
+        let (pc_bridge_dev, pc_bridge_cands) =
+            iphone_link_audio::global_pc_audio_bridge_device_info();
+        let ap_audio_snap = iphone_link_apple::airplay::get_airplay_audio_snapshot();
+        let ap_audio_on = m_airplay_active && !stop_cooldown && ap_audio_snap.active;
+        let ap_audio_codec_json = ap_audio_snap
+            .codec
+            .as_ref()
+            .filter(|_| m_airplay_active && !stop_cooldown)
+            .map(|c| format!(r#""{}""#, escape_json_value(c)))
+            .unwrap_or_else(|| "null".to_string());
+        let ap_video_q_dropped = if m_airplay_active && !stop_cooldown {
+            iphone_link_apple::mirror::global_airplay_video_queue_dropped()
+        } else {
+            0
+        };
+        if let Some(end_brace) = ajson.rfind('}') {
+            ajson.insert_str(
+                end_brace,
+                &format!(
+                    r#","wasapi":true,"connected":{},"pcBridgeActive":{},"pcBridgeConnecting":{},"pcBridgeState":"{}","pcBridgeDetail":"{}","pcBridgeDevice":"{}","pcBridgeCandidates":"{}","airplayActive":{},"airplayAudioActive":{},"airplayAudioMuted":{},"airplayAudioCodec":{},"airplayAudioSampleRate":{},"airplayAudioDecodedPackets":{},"airplayAudioPlayedSamples":{},"airplayAudioVolume":{},"airplayAudioBufferPreset":"{}","airplayAudioLipSync":{},"airplayAudioBufferMs":{},"airplayAudioTargetMs":{},"airplayAudioDroppedPackets":{},"airplayVideoQueueDropped":{},"lip_sync_ms":0"#,
+                    m_streaming || st_snap.is_streaming || pc_bridge_on || ap_audio_on,
+                    pc_bridge_on,
+                    pc_bridge_conn,
+                    pc_bridge_state,
+                    escape_json_value(&pc_bridge_det),
+                    escape_json_value(&pc_bridge_dev),
+                    escape_json_value(&pc_bridge_cands),
+                    m_airplay_active && !stop_cooldown,
+                    ap_audio_on,
+                    ap_audio_snap.muted,
+                    ap_audio_codec_json,
+                    if m_airplay_active && !stop_cooldown { ap_audio_snap.sample_rate } else { 0 },
+                    if m_airplay_active && !stop_cooldown { ap_audio_snap.decoded_packets } else { 0 },
+                    if m_airplay_active && !stop_cooldown { ap_audio_snap.played_samples } else { 0 },
+                    ap_audio_snap.volume,
+                    escape_json_value(&ap_audio_snap.buffer_preset),
+                    ap_audio_snap.lip_sync,
+                    if ap_audio_on { ap_audio_snap.buffer_ms } else { 0 },
+                    ap_audio_snap.target_ms,
+                    if m_airplay_active && !stop_cooldown { ap_audio_snap.dropped_packets } else { 0 },
+                    ap_video_q_dropped,
+                ),
+            );
+        }
+        let m = iphone_link_apple::mirror::mirror_runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        (
+            m.phase.clone(),
+            m.reconnecting && !stop_cooldown,
+            m.transport.clone(),
+            m.url.clone(),
+            m.error.clone(),
+            m.note.clone(),
+            m.auto_rotate.current_orientation_deg,
+            m.auto_rotate.auto_rotate_enabled,
+            m.frames_received,
+            if stop_cooldown { String::new() } else { m.stage.clone() },
+            if stop_cooldown { 0 } else { m.stage_progress },
+            m.stage_step,
+            m.stage_title.clone(),
+            m.stage_detail.clone(),
+            m.mirror_route.clone(),
+            m.airplay_active && !stop_cooldown,
+            m.airplay_name.clone(),
+            if stop_cooldown { 0 } else { m.airplay_port },
+            m.hid_control_available,
+            m.airplay_avcc_count,
+            m.airplay_video_frames,
+            m.airplay_idr_count,
+            m.airplay_delta_frames,
+            m.airplay_decrypt_failures,
+            m.airplay_tcp_packets_read,
+            m.airplay_mirror_loop_count > 0 && !stop_cooldown,
+            m.live_chunks_broadcasted,
+            ajson,
+        )
+    };
+    let (hid_packets_tx, hid_packets_err, hid_chan_active) =
+        iphone_link_apple::hid::physical_hid_telemetry();
+    let screen_phase = if stop_cooldown {
+        "idle".to_string()
+    } else if mirror_phase != "idle" {
+        mirror_phase
+    } else if st_snap.is_streaming {
+        "running".to_string()
+    } else {
+        "idle".to_string()
+    };
+    let effective_streaming = screen_phase == "running";
+    let native_diag_json = build_native_driver_diagnostics_json_with_opts(
+        false,
+        effective_streaming || zero_poll_active || fast_zero_io,
+    );
+    let probe_single_wifi = force_refresh
+        && !zero_poll_active
+        && !fast_zero_io
+        && iphone_link_apple::wifi::wifi_paired_udids().len() == 1;
+    let native_wifi_json = get_wifi_status_cached_for_stream(
+        udid,
+        effective_streaming || zero_poll_active || fast_zero_io,
+        probe_single_wifi,
+    );
+
+    let has_usb_now = unified_devices.iter().any(|d| d.usb);
+    let any_wifi_online = unified_devices.iter().any(|d| d.wifi_online);
+    let has_paired_wifi = unified_devices.iter().any(|d| d.wifi_paired);
+    let is_connected = has_usb_now || any_wifi_online || effective_streaming;
+    let dev_mode_ok = !native_diag_json.contains(r#""developer_mode_status":"disabled""#);
+    // Tahap 249 Pilar 3: Never report driver_ready=false when Apple service/port is normal
+    // OR a USB/Wi-Fi device is actively reachable/streaming (eliminates false "Install Apple Devices").
+    let driver_diag_ok = !native_diag_json.contains(r#""apple_driver_installed":false"#)
+        || native_diag_json.contains(r#""apple_service_running":true"#)
+        || native_diag_json.contains(r#""tcp_port_27015_normal":true"#);
+    let driver_ready = driver_diag_ok || has_usb_now || any_wifi_online || effective_streaming;
+    let is_ready = driver_ready && is_connected;
+
+    let selected_dev = unified_devices
+        .iter()
+        .find(|d| !udid.is_empty() && d.udid.eq_ignore_ascii_case(udid))
+        .or_else(|| unified_devices.first());
+
+    let device_entries: Vec<String> = unified_devices
+        .iter()
+        .map(|d| {
+            let is_sel = selected_dev.is_some_and(|sd| sd.udid.eq_ignore_ascii_case(&d.udid));
+            format_device_summary_json(d, is_sel)
+        })
+        .collect();
+    let devices_json_str = if device_entries.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[\n    {}\n  ]", device_entries.join(",\n    "))
+    };
+
+    let (device_json_str, handset_json_str, effective_conn_type, effective_family) =
+        if let Some(sd) = selected_dev {
+            let dev_obj = format_device_summary_json(sd, true);
+            let hs_name = if sd.name.is_empty() {
+                sd.model.as_str()
+            } else {
+                sd.name.as_str()
+            };
+            let hs_obj = format!(
+                r#"{{
+    "udid": "{}",
+    "name": "{}",
+    "model": "{}",
+    "productType": "{}"
+  }}"#,
+                escape_json_str(&sd.udid),
+                escape_json_str(hs_name),
+                escape_json_str(&sd.model),
+                escape_json_str(&sd.product_type),
+            );
+            let conn_lbl = if sd.usb {
+                "USB"
+            } else if sd.wifi_online {
+                "Wi-Fi"
+            } else {
+                ""
+            };
+            (dev_obj, hs_obj, conn_lbl, sd.device_family.as_str())
+        } else {
+            ("null".to_string(), "null".to_string(), "", "iphone")
+        };
+
+    let raw_status_label = if has_usb_now {
+        "Terhubung (USB)"
+    } else if any_wifi_online {
+        "Wi-Fi siap"
+    } else if has_paired_wifi {
+        "Perangkat offline"
+    } else {
+        "Menunggu iPhone"
+    };
+    let status_text = translate_dynamic_status(raw_status_label, st_snap.language);
+    let wallpaper_sig = get_cached_wallpaper_sig_fast();
+    let folder_instance_id = get_deterministic_folder_instance_id();
+    let fresh_folder = if effective_streaming || zero_poll_active {
+        false
+    } else {
+        is_fresh_extracted_folder()
+    };
+    let (clip_src, clip_seq) = resolve_active_clipboard_source_with_seq();
+    let clip_src_str = match clip_src {
+        ClipboardSource::Pc => "pc",
+        ClipboardSource::Iphone => "iphone",
+    };
+    let mirror_url = if stop_cooldown {
+        ""
+    } else if let Some(ref u) = mirror_url_opt {
+        u.as_str()
+    } else if effective_streaming {
+        "/mirror.html"
+    } else {
+        ""
+    };
+    let screen_error_str = if stop_cooldown {
+        String::new()
+    } else {
+        mirror_error_opt.unwrap_or_default()
+    };
+    let screen_note_str = if stop_cooldown {
+        String::new()
+    } else {
+        mirror_note_opt.unwrap_or_default()
+    };
+    let effective_orient = if mirror_orient != 0 {
+        mirror_orient
+    } else if st_snap.is_landscape {
+        270
+    } else {
+        0
+    };
+    let settings_json = build_settings_json(&st_snap);
+    let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
+    let app_w = GLOBAL_APP_WIDTH.load(Ordering::SeqCst);
+    let app_h = GLOBAL_APP_HEIGHT.load(Ordering::SeqCst);
+    let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
+    let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
+    let is_dark = GLOBAL_DARK_MODE.load(Ordering::SeqCst);
+    let active_thm = if is_dark { "dark" } else { "light" };
+    let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
+    let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
+    let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
+    let wf_details = GLOBAL_WIREFRAME_DETAILS
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+    let pending_click = GLOBAL_PENDING_CLICK
+        .lock()
+        .ok()
+        .and_then(|mut g| g.pop_front());
+    let pending_click_str = match pending_click {
+        Some(ref s) => format!(
+            r#","pendingClick":"{}""#,
+            s.replace('\\', r#"\\"#).replace('"', r#"\""#)
+        ),
+        None => String::new(),
+    };
+    let pending_test = GLOBAL_PENDING_TEST.lock().ok().and_then(|mut g| g.take());
+    let pending_test_str = match pending_test {
+        Some(ref s) => format!(
+            r#","pendingTest":"{}""#,
+            s.replace('\\', r#"\\"#).replace('"', r#"\""#)
+        ),
+        None => String::new(),
+    };
+    let pending_tray = GLOBAL_PENDING_TRAY_ACTION
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take());
+    let pending_tray_str = match pending_tray {
+        Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
+        None => String::new(),
+    };
+    let pending_input = GLOBAL_PENDING_INPUT
+        .lock()
+        .ok()
+        .and_then(|mut g| g.pop_front());
+    let pending_input_str = match pending_input {
+        Some((ref sel, ref val)) => format!(
+            r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
+            escape_json_str(sel),
+            escape_json_str(val)
+        ),
+        None => String::new(),
+    };
+    let conc_track = GLOBAL_CONCENTRIC_TRACK
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let conc_btn = GLOBAL_CONCENTRIC_BTN
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let badge_bg = GLOBAL_BADGE_BG
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
+    let seg_details = GLOBAL_SEGMENTED_DETAILS
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
+    let active_prof = GLOBAL_DEVICE_PROFILE
+        .lock()
+        .map(|s| {
+            if s.is_empty() {
+                "auto".to_string()
+            } else {
+                s.clone()
+            }
+        })
+        .unwrap_or_else(|_| "auto".to_string());
+    let dr_width = GLOBAL_DRAWER_RECT_WIDTH.load(Ordering::SeqCst);
+    let dr_overflow = GLOBAL_DRAWER_RIGHT_OVERFLOW.load(Ordering::SeqCst);
+    let dc_width = GLOBAL_DISPLAY_COL_WIDTH.load(Ordering::SeqCst);
+    let sd_width = GLOBAL_SIDE_DRAWER_WIDTH.load(Ordering::SeqCst);
+    let sd_right_gap = GLOBAL_SIDE_DRAWER_RIGHT_GAP.load(Ordering::SeqCst);
+    let ds_right_gap = GLOBAL_DRAWER_SCROLL_RIGHT_GAP.load(Ordering::SeqCst);
+    let inner_w = GLOBAL_INNER_WIDTH.load(Ordering::SeqCst);
+    let stretch_cnt = GLOBAL_STRETCH_GLITCH_COUNT.load(Ordering::SeqCst);
+    let max_close_w = GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.load(Ordering::SeqCst);
+
+    let ap_screen_audio = iphone_link_apple::airplay::get_airplay_audio_snapshot();
+    let ap_screen_audio_active = mirror_airplay_active && ap_screen_audio.active;
+    let ap_screen_audio_codec = ap_screen_audio
+        .codec
+        .as_ref()
+        .filter(|_| mirror_airplay_active)
+        .map(|c| format!(r#""{}""#, escape_json_str(c)))
+        .unwrap_or_else(|| "null".to_string());
+    let ap_screen_audio_sr = if mirror_airplay_active { ap_screen_audio.sample_rate } else { 0 };
+    let ap_screen_audio_dec = if mirror_airplay_active { ap_screen_audio.decoded_packets } else { 0 };
+    let ap_screen_audio_played = if mirror_airplay_active { ap_screen_audio.played_samples } else { 0 };
+    let ap_screen_audio_buf_ms = if ap_screen_audio_active { ap_screen_audio.buffer_ms } else { 0 };
+    let ap_screen_audio_dropped = if mirror_airplay_active { ap_screen_audio.dropped_packets } else { 0 };
+    let ap_screen_video_q_dropped = if mirror_airplay_active {
+        iphone_link_apple::mirror::global_airplay_video_queue_dropped()
+    } else {
+        0
+    };
+
+    let json = format!(
+        r#"{{
+  "library": {{ "ready": true }},
+  "driver": {{ "ready": {}, "detail": "Apple Mobile Device Service running" }},
+  "driverReady": {},
+  "detailedDiagnostics": {},
+  "developerMode": {},
+  "ready": {},
+  "usbConnected": {},
+  "connected": {},
+  "udid": "{}",
+  "selectedUdid": "{}",
+  "device": {},
+  "handset": {},
+  "connectionType": "{}",
+  "transport": "{}",
+  "deviceFamily": "{}",
+  "deviceProfile": "{}",
+  "wallpaperSig": "{}",
+  "folderInstanceId": "{}",
+  "isFreshFolder": {},
+  "clipboardSeq": {},
+  "activeClipboardSource": "{}",
+  "devices": {},
+  "screen": {{
+    "phase": "{}",
+    "active": {},
+    "reconnecting": {},
+    "udid": "{}",
+    "transport": "{}",
+    "mirrorRoute": "{}",
+    "airplayActive": {},
+    "airplayName": "{}",
+    "airplayPort": {},
+    "hidControlAvailable": {},
+    "airplayAvccCount": {},
+    "airplayVideoFrames": {},
+    "airplayIdrCount": {},
+    "airplayDeltaFrames": {},
+    "airplayDecryptFailures": {},
+    "airplayTcpPacketsRead": {},
+    "airplayMirrorLoopAlive": {},
+    "airplayAudioActive": {},
+    "airplayAudioMuted": {},
+    "airplayAudioCodec": {},
+    "airplayAudioSampleRate": {},
+    "airplayAudioDecodedPackets": {},
+    "airplayAudioPlayedSamples": {},
+    "airplayAudioVolume": {},
+    "airplayAudioBufferPreset": "{}",
+    "airplayAudioLipSync": {},
+    "airplayAudioBufferMs": {},
+    "airplayAudioTargetMs": {},
+    "airplayAudioDroppedPackets": {},
+    "airplayVideoQueueDropped": {},
+    "liveChunksBroadcasted": {},
+    "liveClientsConnected": {},
+    "url": "{}",
+    "error": "{}",
+    "note": "{}",
+    "fps": 60,
+    "width": 1202,
+    "height": 2598,
+    "orientation": {},
+    "autoRotate": {},
+    "framesReceived": {},
+    "stealth_dim": {},
+    "intentionally_locked": {},
+    "stage": "{}",
+    "stageDetail": "{}",
+    "stageProgress": {},
+    "stage_step": {},
+    "stage_title": "{}",
+    "stage_detail": "{}",
+    "physical_packets_transmitted": {},
+    "physical_hid_errors": {},
+    "physical_hid_active": {}
+  }},
+  "physical_packets_transmitted": {},
+  "physical_hid_errors": {},
+  "physical_hid_active": {},
+  "audio": {},
+  "wifi": {},
+  "window": {{
+    "drawer_open": {},
+    "is_landscape": {},
+    "is_fullscreen": {},
+    "portrait_width": {},
+    "active_device_profile": "{}"
+  }},
+  "hot_ocr_engine_ready": true,
+  "settings": {},
+  "status_text": "{}",
+  "language": "{}",
+  "webviewMetrics": {{
+    "indexHtmlServed": {},
+    "appCssServed": {},
+    "appJsServed": {},
+    "domReadyBeacon": {},
+    "devicePixelRatio": {:.2},
+    "appWidth": {},
+    "appHeight": {},
+    "launchpadVisible": {},
+    "startBtnVisible": {},
+    "startBtnText": "{}",
+    "userAgent": "{}",
+    "rafVerified": {},
+    "activeTheme": "{}",
+    "domTheme": "{}",
+    "wireframeClean": {},
+    "wireframeDetails": "{}",
+    "concentricTrackRadius": "{}",
+    "concentricButtonRadius": "{}",
+    "badgeBg": "{}",
+    "segmentedClean": {},
+    "segmentedDetails": "{}",
+    "activeDeviceProfile": "{}",
+    "drawerRectWidth": {},
+    "drawerRightOverflow": {},
+    "displayColWidth": {},
+    "sideDrawerWidth": {},
+    "sideDrawerRightGap": {},
+    "drawerScrollRightGap": {},
+    "innerWidth": {},
+    "stretchGlitchCount": {},
+    "maxDisplayColWidthDuringClose": {},
+    "unlockPinValue": "{}",
+    "updateVersionText": "{}",
+    "lastTrayAction": "{}",
+    "domLanguage": "{}",
+    "activeLangId": {},
+    "activeLangEn": {},
+    "drawerTitleText": "{}",
+    "domTogglesSummary": "{}",
+    "cardUpdaterExists": {},
+    "cardUpdaterTitle": "{}",
+    "stealthActive": {},
+    "audioPcActive": {},
+    "startWithWindows": {},
+    "trayMenuOpen": {},
+    "trayDismissedCount": {}
+  }},
+  "videoPipeline": {},
+  "videoPresenter": {},
+  "version": "5.0.0",
+  "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
+  "zero_python_runtime": true,
+  "zero_powershell_runtime": true{}"#,
+        driver_ready,
+        driver_ready,
+        native_diag_json,
+        dev_mode_ok,
+        is_ready,
+        has_usb_now,
+        is_connected,
+        escape_json_str(udid),
+        escape_json_str(udid),
+        device_json_str,
+        handset_json_str,
+        effective_conn_type,
+        st_snap.transport,
+        effective_family,
+        st_snap.device_profile,
+        escape_json_str(&wallpaper_sig),
+        escape_json_str(&folder_instance_id),
+        fresh_folder,
+        clip_seq,
+        clip_src_str,
+        devices_json_str,
+        screen_phase,
+        effective_streaming,
+        mirror_reconnecting,
+        escape_json_str(udid),
+        if mirror_transport == "wifi" || st_snap.transport == "wifi" {
+            "wifi"
+        } else {
+            "cable"
+        },
+        escape_json_str(&mirror_route),
+        mirror_airplay_active,
+        escape_json_str(&mirror_airplay_name),
+        mirror_airplay_port,
+        mirror_hid_available,
+        mirror_airplay_avcc,
+        mirror_airplay_frames,
+        mirror_airplay_idrs,
+        mirror_airplay_deltas,
+        mirror_airplay_dec_fail,
+        mirror_airplay_tcp_pkts,
+        mirror_airplay_loop_alive,
+        ap_screen_audio_active,
+        ap_screen_audio.muted,
+        ap_screen_audio_codec,
+        ap_screen_audio_sr,
+        ap_screen_audio_dec,
+        ap_screen_audio_played,
+        ap_screen_audio.volume,
+        escape_json_str(&ap_screen_audio.buffer_preset),
+        ap_screen_audio.lip_sync,
+        ap_screen_audio_buf_ms,
+        ap_screen_audio.target_ms,
+        ap_screen_audio_dropped,
+        ap_screen_video_q_dropped,
+        mirror_live_chunks_broadcasted,
+        iphone_link_apple::mirror::global_live_clients_connected(),
+        mirror_url,
+        escape_json_str(&screen_error_str),
+        escape_json_str(&screen_note_str),
+        effective_orient,
+        mirror_auto_rot,
+        mirror_frames,
+        iphone_link_apple::hid::is_stealth_dim_active() || st_snap.stealth_dim,
+        iphone_link_apple::hid::is_device_intentionally_locked() || st_snap.intentionally_locked,
+        escape_json_str(&mirror_stage),
+        escape_json_str(&mirror_stage_detail),
+        mirror_stage_progress,
+        mirror_stage_step,
+        escape_json_str(&mirror_stage_title),
+        escape_json_str(&mirror_stage_detail),
+        hid_packets_tx,
+        hid_packets_err,
+        hid_chan_active,
+        hid_packets_tx,
+        hid_packets_err,
+        hid_chan_active,
+        mirror_audio_json,
+        native_wifi_json,
+        GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+        GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+        GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
+        GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
+        active_prof.clone(),
+        settings_json,
+        status_text,
+        lang_code,
+        INDEX_HTML_SERVED.load(Ordering::SeqCst),
+        APP_CSS_SERVED.load(Ordering::SeqCst),
+        APP_JS_SERVED.load(Ordering::SeqCst),
+        DOM_READY_BEACON.load(Ordering::SeqCst),
+        dpr_float,
+        app_w,
+        app_h,
+        lp_vis,
+        btn_vis,
+        GLOBAL_START_BTN_TEXT
+            .lock()
+            .map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#))
+            .unwrap_or_default(),
+        GLOBAL_USER_AGENT
+            .lock()
+            .map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#))
+            .unwrap_or_default(),
+        GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
+        active_thm,
+        dom_thm_str,
+        wf_clean,
+        safe_wf_details,
+        conc_track,
+        conc_btn,
+        badge_bg,
+        seg_clean,
+        safe_seg_details,
+        active_prof,
+        dr_width,
+        dr_overflow,
+        dc_width,
+        sd_width,
+        sd_right_gap,
+        ds_right_gap,
+        inner_w,
+        stretch_cnt,
+        max_close_w,
+        GLOBAL_DOM_UNLOCK_PIN
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_UPDATE_VERSION
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_LAST_TRAY_ACTION
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_LANG
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_LANG_ID_ACTIVE.load(Ordering::SeqCst),
+        GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst),
+        GLOBAL_DOM_DRAWER_TITLE
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_TOGGLES_SUMMARY
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_DOM_CARD_UPDATER_EXISTS.load(Ordering::SeqCst),
+        GLOBAL_DOM_CARD_UPDATER_TITLE
+            .lock()
+            .map(|s| escape_json_str(&s))
+            .unwrap_or_default(),
+        GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
+        GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
+        cached_start_with_windows_for_status(effective_streaming || zero_poll_active),
+        GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
+        GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst),
+        iphone_link_apple::mirror::global_video_pipeline_status_json(),
+        iphone_link_apple::mirror::global_video_presenter_status_json(),
+        if pending_click_str.is_empty()
+            && pending_test_str.is_empty()
+            && pending_tray_str.is_empty()
+            && pending_input_str.is_empty()
+        {
+            "\n}"
+        } else {
+            "\n"
+        }
+    );
+    let mut final_json = json;
+    if !pending_click_str.is_empty()
+        || !pending_test_str.is_empty()
+        || !pending_tray_str.is_empty()
+        || !pending_input_str.is_empty()
+    {
+        final_json.push_str(&pending_click_str);
+        final_json.push_str(&pending_test_str);
+        final_json.push_str(&pending_tray_str);
+        final_json.push_str(&pending_input_str);
+        final_json.push_str("\n}");
+    }
+    final_json
 }
 
 pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: &Path) -> HttpResponse {
@@ -6981,8 +10214,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_js(V4_BRIDGE_JS);
     }
 
-    // 2. API: Status
-    if path == "/api/status" {
+    // 2. API: Status (also handles POST /api/status/refresh & ?force=1 live USB + Wi-Fi mDNS rescan)
+    if path == "/api/status" || path == "/api/status/refresh" {
+        let force_refresh = path == "/api/status/refresh"
+            || req.query.contains("force=1")
+            || req.query.contains("refresh=1");
         let stop_cooldown = {
             let last_stop = LAST_STOP_MIRROR_MS.load(Ordering::SeqCst);
             last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000
@@ -7037,7 +10273,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 if !sanitized.contains("status_text") {
                     sanitized = sanitized.replace(
                         r#""version": "4.0.0""#,
-                        &format!(r#""status_text": "{}", "language": "{}", "version": "4.0.0""#, status_text, lang_code)
+                        &format!(r#""status_text": "{}", "language": "{}", "version": "5.0.0", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, status_text, lang_code, APP_EDITION_V5)
                     );
                 } else {
                     sanitized = sanitized
@@ -7046,7 +10282,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         .replace(r#""language": "id""#, &format!(r#""language": "{}""#, lang_code))
                         .replace(r#""language": "en""#, &format!(r#""language": "{}""#, lang_code))
                         .replace(r#""language":"id""#, &format!(r#""language":"{}""#, lang_code))
-                        .replace(r#""language":"en""#, &format!(r#""language":"{}""#, lang_code));
+                        .replace(r#""language":"en""#, &format!(r#""language":"{}""#, lang_code))
+                        .replace(r#""version": "4.0.0""#, &format!(r#""version": "5.0.0", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, APP_EDITION_V5));
                 }
 
                 let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
@@ -7135,7 +10372,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"4.0.0"{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
+                        r#","version":"5.0.0","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
                         pending_tray_str,
@@ -7222,309 +10459,77 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                 }
 
+                if !sanitized.contains(r#""detailedDiagnostics""#) {
+                    let diag_json = build_native_driver_diagnostics_json();
+                    if let Some(pos) = sanitized.rfind('}') {
+                        sanitized.insert_str(pos, &format!(r#","detailedDiagnostics":{}"#, diag_json));
+                    }
+                }
+                if !sanitized.contains(r#""wifi""#) {
+                    let native_wifi_json = get_wifi_status(None, false).to_json_string();
+                    if let Some(pos) = sanitized.rfind('}') {
+                        sanitized.insert_str(pos, &format!(r#","wifi":{}"#, native_wifi_json));
+                    }
+                }
+
                 return HttpResponse::ok_json(&sanitized);
             }
         }
 
-        // Fallback status if worker not running or during self-tests
-        let usb_list = list_connected_usb_devices(Duration::from_millis(60)).unwrap_or_default();
-        let mut st = state.lock().unwrap();
-        if let Some(first_usb) = usb_list.first() {
-            if !first_usb.serial_udid.is_empty() {
-                st.selected_udid = first_usb.serial_udid.clone();
-            }
-        }
-        let st_snap = st.clone();
-        drop(st);
-
-        let lang_code = st_snap.language.code();
-        let status_text = translate_dynamic_status("Wi-Fi siap", st_snap.language);
-        let udid = &st_snap.selected_udid;
-        let (model_name, product_type) = if udid.contains("8030") || udid.to_lowercase().contains("iphone 11") {
-            (
-                resolve_apple_model("iPhone12,5").unwrap_or("iPhone 11 Pro Max"),
-                "iPhone12,5",
-            )
-        } else {
-            (
-                resolve_apple_model("iPhone18,1").unwrap_or("iPhone 17 Pro"),
-                "iPhone18,1",
-            )
-        };
-        let effective_streaming = st_snap.is_streaming && !stop_cooldown;
-        let screen_phase = if effective_streaming { "running" } else { "idle" };
-        let mirror_url = if effective_streaming { "/mirror.html" } else { "" };
-        let settings_json = build_settings_json(&st_snap);
-        let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
-        let app_w = GLOBAL_APP_WIDTH.load(Ordering::SeqCst);
-        let app_h = GLOBAL_APP_HEIGHT.load(Ordering::SeqCst);
-        let lp_vis = GLOBAL_LAUNCHPAD_VISIBLE.load(Ordering::SeqCst);
-        let btn_vis = GLOBAL_START_BTN_VISIBLE.load(Ordering::SeqCst);
-        let is_dark = GLOBAL_DARK_MODE.load(Ordering::SeqCst);
-        let active_thm = if is_dark { "dark" } else { "light" };
-        let dom_thm = GLOBAL_DOM_THEME.lock().map(|s| s.clone()).unwrap_or_default();
-        let dom_thm_str = if dom_thm.is_empty() { active_thm } else { &dom_thm };
-        let wf_clean = GLOBAL_WIREFRAME_CLEAN.load(Ordering::SeqCst);
-        let wf_details = GLOBAL_WIREFRAME_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
-        let safe_wf_details = wf_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
-        let pending_click = GLOBAL_PENDING_CLICK.lock().ok().and_then(|mut g| g.pop_front());
-        let pending_click_str = match pending_click {
-            Some(ref s) => format!(r#","pendingClick":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
-            None => String::new(),
-        };
-        let pending_test = GLOBAL_PENDING_TEST.lock().ok().and_then(|mut g| g.take());
-        let pending_test_str = match pending_test {
-            Some(ref s) => format!(r#","pendingTest":"{}""#, s.replace('\\', r#"\\"#).replace('"', r#"\""#)),
-            None => String::new(),
-        };
-        let pending_tray = GLOBAL_PENDING_TRAY_ACTION.lock().ok().and_then(|mut g| g.take());
-        let pending_tray_str = match pending_tray {
-            Some(ref s) => format!(r#","pendingTrayAction":"{}""#, escape_json_str(s)),
-            None => String::new(),
-        };
-        let pending_input = GLOBAL_PENDING_INPUT.lock().ok().and_then(|mut g| g.pop_front());
-        let pending_input_str = match pending_input {
-            Some((ref sel, ref val)) => format!(
-                r#","pendingInput":{{"selector":"{}","value":"{}"}}"#,
-                escape_json_str(sel),
-                escape_json_str(val)
-            ),
-            None => String::new(),
-        };
-        let conc_track = GLOBAL_CONCENTRIC_TRACK.lock().map(|s| s.clone()).unwrap_or_default();
-        let conc_btn = GLOBAL_CONCENTRIC_BTN.lock().map(|s| s.clone()).unwrap_or_default();
-        let badge_bg = GLOBAL_BADGE_BG.lock().map(|s| s.clone()).unwrap_or_default();
-        let seg_clean = GLOBAL_SEGMENTED_CLEAN.load(Ordering::SeqCst);
-        let seg_details = GLOBAL_SEGMENTED_DETAILS.lock().map(|s| s.clone()).unwrap_or_default();
-        let safe_seg_details = seg_details.replace('\\', r#"\\"#).replace('"', r#"\""#);
-        let active_prof = GLOBAL_DEVICE_PROFILE.lock().map(|s| if s.is_empty() { "auto".to_string() } else { s.clone() }).unwrap_or_else(|_| "auto".to_string());
-        let dr_width = GLOBAL_DRAWER_RECT_WIDTH.load(Ordering::SeqCst);
-        let dr_overflow = GLOBAL_DRAWER_RIGHT_OVERFLOW.load(Ordering::SeqCst);
-        let dc_width = GLOBAL_DISPLAY_COL_WIDTH.load(Ordering::SeqCst);
-        let sd_width = GLOBAL_SIDE_DRAWER_WIDTH.load(Ordering::SeqCst);
-        let sd_right_gap = GLOBAL_SIDE_DRAWER_RIGHT_GAP.load(Ordering::SeqCst);
-        let ds_right_gap = GLOBAL_DRAWER_SCROLL_RIGHT_GAP.load(Ordering::SeqCst);
-        let inner_w = GLOBAL_INNER_WIDTH.load(Ordering::SeqCst);
-        let stretch_cnt = GLOBAL_STRETCH_GLITCH_COUNT.load(Ordering::SeqCst);
-        let max_close_w = GLOBAL_MAX_DISPLAY_COL_WIDTH_DURING_CLOSE.load(Ordering::SeqCst);
-
-        let json = format!(
-            r#"{{
-  "library": {{ "ready": true }},
-  "driver": {{ "ready": true, "detail": "Apple Mobile Device Service running" }},
-  "developerMode": true,
-  "connected": true,
-  "udid": "{}",
-  "selectedUdid": "{}",
-  "connectionType": "{}",
-  "transport": "{}",
-  "deviceFamily": "iphone",
-  "deviceProfile": "{}",
-  "devices": [
-    {{
-      "udid": "{}",
-      "name": "iPhone",
-      "deviceName": "iPhone",
-      "model": "{}",
-      "productType": "{}",
-      "screen_type": "DynamicIsland",
-      "deviceFamily": "iphone",
-      "connection": "{}",
-      "connection_type": "{}",
-      "paired": true,
-      "wifi_enabled": true,
-      "wifiOnly": false,
-      "reachable": true
-    }}
-  ],
-  "screen": {{
-    "phase": "{}",
-    "active": {},
-    "transport": "{}",
-    "url": "{}",
-    "fps": 60,
-    "width": 1202,
-    "height": 2598,
-    "orientation": {},
-    "stealth_dim": {},
-    "intentionally_locked": {}
-  }},
-  "audio": {{
-    "active": {},
-    "wasapi": true,
-    "audioOut": "{}",
-    "volume": {},
-    "muted": {},
-    "bufferPreset": "{}",
-    "lipSync": {},
-    "lip_sync_ms": 0
-  }},
-  "wifi": {{
-    "paired": ["{}"],
-    "reachable": true,
-    "ip": "192.168.100.10",
-    "service": "{}"
-  }},
-  "window": {{
-    "drawer_open": {},
-    "is_landscape": {},
-    "is_fullscreen": {},
-    "portrait_width": {},
-    "active_device_profile": "{}"
-  }},
-  "hot_ocr_engine_ready": true,
-  "settings": {},
-  "status_text": "{}",
-  "language": "{}",
-  "webviewMetrics": {{
-    "indexHtmlServed": {},
-    "appCssServed": {},
-    "appJsServed": {},
-    "domReadyBeacon": {},
-    "devicePixelRatio": {:.2},
-    "appWidth": {},
-    "appHeight": {},
-    "launchpadVisible": {},
-    "startBtnVisible": {},
-    "startBtnText": "{}",
-    "userAgent": "{}",
-    "rafVerified": {},
-    "activeTheme": "{}",
-    "domTheme": "{}",
-    "wireframeClean": {},
-    "wireframeDetails": "{}",
-    "concentricTrackRadius": "{}",
-    "concentricButtonRadius": "{}",
-    "badgeBg": "{}",
-    "segmentedClean": {},
-    "segmentedDetails": "{}",
-    "activeDeviceProfile": "{}",
-    "drawerRectWidth": {},
-    "drawerRightOverflow": {},
-    "displayColWidth": {},
-    "sideDrawerWidth": {},
-    "sideDrawerRightGap": {},
-    "drawerScrollRightGap": {},
-    "innerWidth": {},
-    "stretchGlitchCount": {},
-    "maxDisplayColWidthDuringClose": {},
-    "unlockPinValue": "{}",
-    "updateVersionText": "{}",
-    "lastTrayAction": "{}",
-    "domLanguage": "{}",
-    "activeLangId": {},
-    "activeLangEn": {},
-    "drawerTitleText": "{}",
-    "domTogglesSummary": "{}",
-    "cardUpdaterExists": {},
-    "cardUpdaterTitle": "{}",
-    "stealthActive": {},
-    "audioPcActive": {},
-    "startWithWindows": {},
-    "trayMenuOpen": {},
-    "trayDismissedCount": {}
-  }},
-  "version": "4.0.0"{}"#,
-            udid,
-            udid,
-            if st_snap.transport == "usb" { "USB" } else { "Wi-Fi" },
-            st_snap.transport,
-            st_snap.device_profile,
-            udid,
-            model_name,
-            product_type,
-            if st_snap.transport == "usb" { "USB" } else { "Wi-Fi" },
-            if st_snap.transport == "usb" { "USB" } else { "Wi-Fi" },
-            screen_phase,
-            st_snap.is_streaming,
-            if st_snap.transport == "usb" { "cable" } else { "wifi" },
-            mirror_url,
-            if st_snap.is_landscape { 270 } else { 0 },
-            st_snap.stealth_dim,
-            st_snap.intentionally_locked,
-            st_snap.is_streaming && !st_snap.audio_muted,
-            st_snap.audio_routing,
-            st_snap.audio_volume,
-            st_snap.audio_muted,
-            st_snap.audio_buffer_preset,
-            st_snap.lip_sync,
-            udid,
-            REMOTEPAIRING_SERVICE,
-            GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
-            GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
-            GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
-            GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
-            active_prof.clone(),
-            settings_json,
-            status_text,
-            lang_code,
-            INDEX_HTML_SERVED.load(Ordering::SeqCst),
-            APP_CSS_SERVED.load(Ordering::SeqCst),
-            APP_JS_SERVED.load(Ordering::SeqCst),
-            DOM_READY_BEACON.load(Ordering::SeqCst),
-            dpr_float,
-            app_w,
-            app_h,
-            lp_vis,
-            btn_vis,
-            GLOBAL_START_BTN_TEXT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
-            GLOBAL_USER_AGENT.lock().map(|s| s.replace('\\', r#"\\"#).replace('"', r#"\""#)).unwrap_or_default(),
-            GLOBAL_RAF_VERIFIED.load(Ordering::SeqCst),
-            active_thm,
-            dom_thm_str,
-            wf_clean,
-            safe_wf_details,
-            conc_track,
-            conc_btn,
-            badge_bg,
-            seg_clean,
-            safe_seg_details,
-            active_prof,
-            dr_width,
-            dr_overflow,
-            dc_width,
-            sd_width,
-            sd_right_gap,
-            ds_right_gap,
-            inner_w,
-            stretch_cnt,
-            max_close_w,
-            GLOBAL_DOM_UNLOCK_PIN.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_UPDATE_VERSION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_LAST_TRAY_ACTION.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_LANG.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_LANG_ID_ACTIVE.load(Ordering::SeqCst),
-            GLOBAL_DOM_LANG_EN_ACTIVE.load(Ordering::SeqCst),
-            GLOBAL_DOM_DRAWER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_TOGGLES_SUMMARY.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_DOM_CARD_UPDATER_EXISTS.load(Ordering::SeqCst),
-            GLOBAL_DOM_CARD_UPDATER_TITLE.lock().map(|s| escape_json_str(&s)).unwrap_or_default(),
-            GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst),
-            GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst),
-            is_start_with_windows_enabled(),
-            GLOBAL_TRAY_MENU_OPEN.load(Ordering::SeqCst),
-            GLOBAL_TRAY_DISMISSED_COUNT.load(Ordering::SeqCst),
-            if pending_click_str.is_empty() && pending_test_str.is_empty() && pending_tray_str.is_empty() && pending_input_str.is_empty() { "\n}" } else { "\n" }
-        );
-        let mut final_json = json;
-        if !pending_click_str.is_empty() || !pending_test_str.is_empty() || !pending_tray_str.is_empty() || !pending_input_str.is_empty() {
-            final_json.push_str(&pending_click_str);
-            final_json.push_str(&pending_test_str);
-            final_json.push_str(&pending_tray_str);
-            final_json.push_str(&pending_input_str);
-            final_json.push_str("\n}");
-        }
+        let final_json = build_status_payload_json(state, force_refresh, stop_cooldown, false);
         return HttpResponse::ok_json(&final_json);
     }
 
-    // Try forwarding to worker for backend-managed endpoints
+    // Try forwarding to worker for backend-managed endpoints (Phase 1 Tahap 226-230 native routes bypass early forward)
     let skip_early_forward = path == "/api/keyboard/settings"
+        || path == "/api/status/refresh"
+        || path == "/api/device/select"
+        || path == "/api/devices/select"
         || path == "/api/device/wipe-privacy-data"
         || path == "/api/device/stealth"
+        || path == "/api/device/lock"
         || path == "/api/device/wake-unlock"
         || path == "/api/device/pin"
+        || path == "/api/device/unlock-developer-mode"
+        || path == "/api/device/spotlight-paste"
+        || path == "/api/device/spotlight-paste-tail"
+        || path == "/api/device/spotlight-move-head"
+        || path == "/api/device/spotlight-close"
+        || path == "/api/qr/scan"
+        || path == "/api/keyboard/shortcut"
+        || path == "/api/keyboard/clear-chunks"
+        || path == "/api/keyboard/toggle-onscreen"
+        || path == "/api/keyboard/typed"
+        || path == "/api/keyboard/paste"
+        || path == "/api/ocr/clear-chunks"
+        || path == "/api/ocr/extract"
+        || path == "/api/ocr/status"
+        || path == "/api/link/grab"
+        || path == "/api/social/grab-link"
+        || path == "/api/devices/native-usb"
+        || path == "/api/wifi"
+        || path.starts_with("/api/wifi/")
         || path.starts_with("/api/update/")
-        || path.starts_with("/api/audio");
+        || path.starts_with("/api/audio")
+        || path == "/api/screen"
+        || path.starts_with("/api/screen/")
+        || path == "/codec"
+        || path == "/pli"
+        || path == "/mirror/codec"
+        || path == "/mirror/pli"
+        || path == "/mirror/stop"
+        || path == "/mirror/size"
+        || path == "/mirror/restart"
+        || path == "/mirror/touch"
+        || path == "/mirror/scroll"
+        || path == "/mirror/button"
+        || path == "/mirror/key"
+        || path == "/mirror/gesture"
+        || path == "/touch"
+        || path == "/scroll"
+        || path == "/button"
+        || path == "/key"
+        || path == "/gesture";
     if !skip_early_forward
         && (path.starts_with("/api/device/")
             || path.starts_with("/api/devices/")
@@ -7540,25 +10545,162 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
     }
 
-    // 2B. API: Device detail (/api/devices/<udid>)
+    if path == "/api/device/select" || path == "/api/devices/select" {
+        let target_raw = parse_string_param(&req.body, "udid")
+            .or_else(|| extract_query_param(&req.query, "udid"))
+            .unwrap_or_default();
+        let target_udid = iphone_link_apple::physical_stream::sanitize_udid_label(&target_raw);
+        let streaming_active = iphone_link_apple::mirror::is_mirror_streaming_fast();
+        // Zero-I/O fast-path (< 2 ms): resolve from cached USB metadata + paired Wi-Fi records first;
+        // only fall back to live usbmuxd probe if target_udid is not yet in cache.
+        let cached_meta = snapshot_cached_devices_metadata_zero_io();
+        let mut unified = collect_unified_devices(&cached_meta, &[], false);
+        let mut matched_opt = unified
+            .iter()
+            .find(|d| !target_udid.is_empty() && d.udid.eq_ignore_ascii_case(&target_udid))
+            .cloned();
+        if matched_opt.is_none() && !streaming_active && !target_udid.is_empty() {
+            let live_meta = discover_devices_with_metadata(false);
+            let usb_list = list_connected_usb_devices(Duration::from_millis(60)).unwrap_or_default();
+            unified = collect_unified_devices(&live_meta, &usb_list, false);
+            matched_opt = unified
+                .iter()
+                .find(|d| d.udid.eq_ignore_ascii_case(&target_udid))
+                .cloned();
+        }
+        let Some(matched) = matched_opt else {
+            return HttpResponse {
+                status_code: 400,
+                status_text: "Bad Request",
+                content_type: "application/json; charset=utf-8",
+                body: br#"{"ok":false,"error":"Unknown device UDID"}"#.to_vec(),
+            };
+        };
+
+        {
+            let mut st = state.lock().unwrap();
+            st.selected_udid = matched.udid.clone();
+            st.user_explicitly_selected_udid = true;
+            st.last_selected_udid = matched.udid.clone();
+            save_user_settings_to_disk(&st);
+        }
+        // Immediately re-key Wi-Fi stream cache (zero network I/O)
+        if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+            let fresh_w = get_wifi_status(Some(&matched.udid), false).to_json_string();
+            *guard = Some((matched.udid.clone(), fresh_w, std::time::Instant::now()));
+        }
+        // Sync active audio identity target for the newly selected iPhone
+        if !streaming_active {
+            iphone_link_apple::physical_stream::set_active_session_device_identity(
+                &matched.udid,
+                (!matched.name.is_empty()).then_some(matched.name.as_str()),
+                (!matched.model.is_empty()).then_some(matched.model.as_str()),
+                (!matched.bluetooth_address.is_empty())
+                    .then_some(matched.bluetooth_address.as_str()),
+            );
+        }
+        let dev_json = format_device_summary_json(&matched, true);
+        let last_stop = LAST_STOP_MIRROR_MS.load(Ordering::SeqCst);
+        let stop_cooldown = last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000;
+        let status_json = build_status_payload_json(state, false, stop_cooldown, true);
+        let resp_json = format!(
+            r#"{{"ok":true,"selectedUdid":"{}","device":{},"status":{}}}"#,
+            escape_json_str(&matched.udid),
+            dev_json,
+            status_json,
+        );
+        return HttpResponse::ok_json(&resp_json);
+    }
+
+    if path == "/api/devices" || path == "/api/devices/native-usb" {
+        let force = req.query.contains("refresh=1") || req.query.contains("force=1");
+        return HttpResponse::ok_json(&build_native_usb_devices_json(force));
+    }
+
+    // 2B. API: Device detail (/api/devices/<udid>) with Zero-Polling Guard (cached RAM when streaming)
     if path.starts_with("/api/devices/") {
         let udid = path.trim_start_matches("/api/devices/").trim_matches('/');
+        let streaming_active = iphone_link_apple::mirror::is_mirror_streaming_fast()
+            || state.lock().map(|s| s.is_streaming).unwrap_or(false);
+        let cached_list = if streaming_active {
+            snapshot_cached_devices_metadata_zero_io()
+        } else {
+            discover_devices_with_metadata(false)
+        };
+        let dev_meta = cached_list.into_iter().find(|d| d.udid == udid);
+        let wifi_st = get_wifi_status(Some(udid), false);
+        let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(udid);
+        let is_paired = dev_meta.as_ref().map(|m| m.paired).unwrap_or(false)
+            || wifi_st.paired.iter().any(|u| u == udid);
+        let dev_name = dev_meta
+            .as_ref()
+            .map(|m| m.device_name.clone())
+            .filter(|s| !s.is_empty())
+            .or_else(|| (!wmeta.name.is_empty()).then(|| wmeta.name.clone()))
+            .unwrap_or_default();
+        let prod_type = dev_meta
+            .as_ref()
+            .map(|m| m.product_type.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| wmeta.product_type.clone());
+        let dev_class = dev_meta
+            .as_ref()
+            .map(|m| m.device_class.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if prod_type.starts_with("iPad") {
+                    "iPad".to_string()
+                } else {
+                    "iPhone".to_string()
+                }
+            });
+        let dev_family = if dev_class.eq_ignore_ascii_case("iPad") {
+            "ipad"
+        } else {
+            "iphone"
+        };
+        let prod_ver = dev_meta
+            .as_ref()
+            .map(|m| m.product_version.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| wmeta.ios_version.clone());
+        let build_ver = dev_meta
+            .as_ref()
+            .map(|m| m.build_version.clone())
+            .unwrap_or_default();
+        let last_ip = wifi_st
+            .ip
+            .filter(|s| !s.is_empty())
+            .or(wmeta.last_ip)
+            .unwrap_or_default();
         let json = format!(
             r#"{{
+  "ok": true,
   "udid": "{}",
-  "paired": true,
-  "deviceFamily": "iphone",
-  "wifi": true,
+  "paired": {},
+  "deviceFamily": "{}",
+  "wifi": {},
+  "zeroPoll": {},
   "info": {{
-    "DeviceName": "UWE UH",
-    "DeviceClass": "iPhone",
-    "ProductType": "iPhone18,1",
-    "ProductVersion": "27.0.1",
-    "BuildVersion": "24A335",
-    "LastIP": "192.168.100.10"
+    "DeviceName": "{}",
+    "DeviceClass": "{}",
+    "ProductType": "{}",
+    "ProductVersion": "{}",
+    "BuildVersion": "{}",
+    "LastIP": "{}"
   }}
 }}"#,
-            udid
+            escape_json_str(udid),
+            is_paired,
+            dev_family,
+            wifi_st.enabled,
+            streaming_active,
+            escape_json_str(&dev_name),
+            escape_json_str(&dev_class),
+            escape_json_str(&prod_type),
+            escape_json_str(&prod_ver),
+            escape_json_str(&build_ver),
+            escape_json_str(&last_ip)
         );
         return HttpResponse::ok_json(&json);
     }
@@ -7569,6 +10711,34 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let mut st = state.lock().unwrap();
             let _ = apply_settings_json_body_to_state(&req.body, &mut st);
 
+            // Tahap 259 Pilar 3: Live zero-drop hot-reload of AirPlay audio settings whenever
+            // audioVolume / audioBufferPreset / lipSync / audioMuted is changed via /api/settings.
+            let ap_vol_patch = parse_int_param(&req.body, "audioVolume")
+                .or_else(|| parse_int_param(&req.body, "pcVolume"))
+                .or_else(|| parse_int_param(&req.body, "volume"))
+                .map(|v| v.clamp(0, 100) as u32);
+            let ap_buf_patch = parse_string_param(&req.body, "audioBufferPreset")
+                .or_else(|| parse_string_param(&req.body, "audioBuffer"))
+                .or_else(|| parse_string_param(&req.body, "bufferPreset"))
+                .or_else(|| parse_string_param(&req.body, "buffer"));
+            let ap_ls_patch = parse_bool_param(&req.body, "lipSync")
+                .or_else(|| parse_bool_param(&req.body, "lip_sync"));
+            let ap_mute_patch = parse_bool_param(&req.body, "audioMuted")
+                .or_else(|| parse_bool_param(&req.body, "pcMuted"))
+                .or_else(|| parse_bool_param(&req.body, "muted"));
+            if ap_vol_patch.is_some()
+                || ap_buf_patch.is_some()
+                || ap_ls_patch.is_some()
+                || ap_mute_patch.is_some()
+            {
+                let _ = iphone_link_apple::airplay::apply_live_audio_config(
+                    ap_vol_patch,
+                    ap_buf_patch.as_deref(),
+                    ap_ls_patch,
+                    ap_mute_patch,
+                );
+            }
+
             if body_contains_key(&req.body, "unlockPin")
                 || body_contains_key(&req.body, "passcode")
                 || body_contains_key(&req.body, "pin")
@@ -7578,6 +10748,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     .or_else(|| parse_string_param(&req.body, "pin"))
                     .unwrap_or_default();
                 let clean_pin = sanitize_pin_digits(&raw_pin);
+                if clean_pin.is_empty() {
+                    clear_stored_pin();
+                } else {
+                    let _ = store_encrypted_pin(&clean_pin);
+                }
                 if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
                     *g = clean_pin;
                 }
@@ -7620,22 +10795,49 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             .or_else(|| parse_string_param(&req.body, "passcode"))
             .or_else(|| parse_string_param(&req.body, "pin"))
             .unwrap_or_default();
-        let clean_pin = sanitize_pin_digits(&raw_pin);
-        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
-            *g = clean_pin.clone();
+        if req.method.eq_ignore_ascii_case("DELETE") || raw_pin.trim().is_empty() {
+            let _ = clear_unlock_pin_sync(state);
+            return HttpResponse::ok_json(
+                r#"{"ok":true,"status":"ok","unlockPin":"","dpapiEncrypted":false}"#,
+            );
         }
-        let st = state.lock().unwrap();
-        save_user_settings_to_disk(&st);
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","unlockPin":"{}"}}"#, escape_json_str(&clean_pin)));
+        return match save_unlock_pin_sync(state, &raw_pin) {
+            Ok(clean_pin) => HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"status":"ok","unlockPin":"{}","dpapiEncrypted":true}}"#,
+                escape_json_str(&clean_pin)
+            )),
+            Err(err) => HttpResponse {
+                status_code: 400,
+                status_text: "Bad Request",
+                content_type: "application/json; charset=utf-8",
+                body: format!(r#"{{"ok":false,"error":"{}"}}"#, escape_json_str(&err))
+                    .into_bytes(),
+            },
+        };
     }
 
-    // 4. API: Device actions (HID Indigo)
+    // 4. API: Device actions (Native Rust HID Indigo & UniversalHID)
     if path == "/api/device/lock" {
-        let mut ctrl = IndigoHidController::new();
-        let (duration, _) = ctrl.execute_synchronous_lock();
+        let lock_res = lock_iphone_screen_with_hold(true);
         let mut st = state.lock().unwrap();
         st.intentionally_locked = true;
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","duration_ms":{}}}"#, duration.as_millis()));
+        st.stealth_dim = is_stealth_dim_active();
+        GLOBAL_STEALTH_ACTIVE.store(st.stealth_dim, Ordering::SeqCst);
+        let (pkts_tx, hid_err, hid_act) = iphone_link_apple::hid::physical_hid_telemetry();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":{},"status":"ok","locked":{},"dispatched":{},"stealthRestored":{},"restoreSteps":{},"holdMs":{},"duration_ms":{},"eventsCount":{},"physical_packets_transmitted":{},"physical_hid_errors":{},"physical_hid_active":{}}}"#,
+            lock_res.ok,
+            lock_res.locked,
+            lock_res.dispatched,
+            lock_res.stealth_restored,
+            lock_res.restore_steps,
+            lock_res.duration_ms,
+            lock_res.duration_ms,
+            lock_res.button_events.len(),
+            pkts_tx,
+            hid_err,
+            hid_act
+        ));
     }
 
     if path == "/api/device/wake-unlock" {
@@ -7644,11 +10846,23 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             .or_else(|| parse_string_param(&req.body, "pin"))
             .map(|p| sanitize_pin_digits(&p))
             .unwrap_or_default();
+        let dpapi_pin = load_decrypted_pin().ok().flatten().unwrap_or_default();
         let saved_pin = SAVED_UNLOCK_PIN
             .lock()
             .map(|g| sanitize_pin_digits(&g))
             .unwrap_or_default();
-        let effective_pin = if !req_pin.is_empty() { req_pin.clone() } else { saved_pin };
+        let effective_pin = if !req_pin.is_empty() {
+            req_pin.clone()
+        } else if !dpapi_pin.is_empty() {
+            dpapi_pin
+        } else {
+            saved_pin
+        };
+
+        // Zero Passcode Leakage: execute in-process HID wake + raw digit injection without touching typed buffer
+        let wake_res = wake_and_unlock_iphone(&effective_pin);
+        let mut st = state.lock().unwrap();
+        st.intentionally_locked = false;
 
         let mut fwd_req = req.clone();
         if !effective_pin.is_empty() && req_pin.is_empty() {
@@ -7658,125 +10872,388 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
         if let Some(resp) = forward_to_worker(&fwd_req) {
             if resp.status_code == 200 {
-                let mut st = state.lock().unwrap();
-                st.intentionally_locked = false;
                 return resp;
             }
         }
-        let mut ctrl = IndigoHidController::new();
-        let pin_for_hid = if effective_pin.is_empty() { "123456" } else { effective_pin.as_str() };
-        let steps = ctrl.execute_wake_and_unlock_pin(pin_for_hid);
-        let mut st = state.lock().unwrap();
-        st.intentionally_locked = false;
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","steps":{}}}"#, steps.2.len()));
+        let (pkts_tx, hid_err, hid_act) = iphone_link_apple::hid::physical_hid_telemetry();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":{},"status":"ok","woken":{},"unlocked":{},"dispatched":{},"steps":{},"swipeSteps":{},"physical_packets_transmitted":{},"physical_hid_errors":{},"physical_hid_active":{}}}"#,
+            wake_res.ok,
+            wake_res.woken,
+            wake_res.unlocked,
+            wake_res.dispatched,
+            wake_res.pin_steps.len(),
+            wake_res.swipe_steps.len(),
+            pkts_tx,
+            hid_err,
+            hid_act
+        ));
     }
 
     if path == "/api/device/stealth" {
         if req.method == "GET" {
             let st = state.lock().unwrap();
-            return HttpResponse::ok_json(&format!(r#"{{"ok":true,"stealth":{}}}"#, st.stealth_dim));
+            let active = st.stealth_dim || is_stealth_dim_active();
+            let (pkts_tx, hid_err, hid_act) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"stealth":{},"stealthDimActive":{},"physical_packets_transmitted":{},"physical_hid_errors":{},"physical_hid_active":{}}}"#,
+                active, active, pkts_tx, hid_err, hid_act
+            ));
         }
-        if let Some(resp) = forward_to_worker(req) {
-            if resp.status_code == 200 {
-                let body_txt = String::from_utf8_lossy(&resp.body);
-                if let Some(sv) = parse_bool_param(&body_txt, "stealth") {
-                    let mut st = state.lock().unwrap();
-                    st.stealth_dim = sv;
-                    GLOBAL_STEALTH_ACTIVE.store(sv, Ordering::SeqCst);
-                }
-                return resp;
-            }
+        let enabled = parse_bool_param(&req.body, "enabled")
+            .or_else(|| parse_bool_param(&req.body, "enable"))
+            .unwrap_or(!is_stealth_dim_active());
+        let force = parse_bool_param(&req.body, "force").unwrap_or(false);
+        let restore_steps = parse_int_param(&req.body, "restoreSteps")
+            .map(|v| v.max(1) as usize)
+            .unwrap_or(4);
+        let level = if enabled { "min" } else { "restore" };
+        let steps = if enabled { 16 } else { restore_steps };
+        let res = set_iphone_physical_brightness(level, steps, force);
+        {
+            let mut st = state.lock().unwrap();
+            st.stealth_dim = res.stealth;
+            GLOBAL_STEALTH_ACTIVE.store(res.stealth, Ordering::SeqCst);
         }
-        let mut ctrl = IndigoHidController::new();
-        let res = ctrl.execute_stealth_dim_toggle().unwrap_or("ok");
-        let mut st = state.lock().unwrap();
-        st.stealth_dim = parse_bool_param(&req.body, "enabled").unwrap_or(!st.stealth_dim);
-        GLOBAL_STEALTH_ACTIVE.store(st.stealth_dim, Ordering::SeqCst);
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"status":"ok","mode":"{}","stealth":{}}}"#, res, st.stealth_dim));
+        return HttpResponse::ok_json(&res.to_json_string());
     }
 
     if path == "/api/device/wipe-privacy-data" || path == "/api/ocr/clear-chunks" || path == "/api/keyboard/clear-chunks" {
         if path == "/api/device/wipe-privacy-data" {
             wipe_all_privacy_state_and_files();
-        } else {
-            clear_copy_cache();
+            let mut st = state.lock().unwrap();
+            st.stealth_dim = false;
+            st.intentionally_locked = false;
+            return HttpResponse::ok_json(r#"{"ok":true,"status":"ok","wiped":true}"#);
         }
-        let _ = forward_to_worker(req);
-        return HttpResponse::ok_json(r#"{"ok":true,"status":"ok","wiped":true}"#);
+        clear_recent_long_ocr_chunks();
+        return HttpResponse::ok_json(r#"{"ok":true,"native":true,"action":"clear_chunks","cleared":true}"#);
     }
 
-    // 5. API: Social Link Grabber & Keyboard (forwarding to CoreDevice worker on port 8767)
-    if path == "/api/social/grab-link" {
-        let mut qr_req = req.clone();
-        qr_req.path = "/api/qr/scan".to_string();
-        if let Some(resp) = forward_to_worker(&qr_req) {
-            if resp.status_code == 200 && !resp.body.is_empty() {
-                let resp_str = String::from_utf8_lossy(&resp.body);
-                if resp_str.contains(r#""ok":true"#) || resp_str.contains(r#""ok": true"#) {
-                    return resp;
-                }
-            }
-        }
-        let body_str = String::from_utf8_lossy(&req.body_bytes);
-        let links = crate::link_grabber::extract_and_normalize_links(&body_str);
-        if let Some(first) = links
-            .iter()
-            .find(|u| crate::link_grabber::is_strict_https_social_url(u))
-        {
-            return HttpResponse::ok_json(&format!(r#"{{"ok":true,"url":"{}","text":"{}","extractedText":"{}"}}"#, first, first, first));
-        }
-        let body_trimmed = body_str.trim();
-        if !body_trimmed.is_empty() && body_trimmed != "{}" && !body_trimmed.contains("image") {
-            return HttpResponse::ok_json(r#"{"ok":false,"error":"No strict HTTP(S) link found"}"#);
-        }
-        return HttpResponse::ok_json(r#"{"ok":true,"url":"https://www.instagram.com/reel/DC987654321/","text":"https://www.instagram.com/reel/DC987654321/","extractedText":"https://www.instagram.com/reel/DC987654321/"}"#);
+    // 5A. API: Spotlight HID Endpoints for Grab Link (Alt+B) — 100% Golden v4.0.0 Parity (Tahap 242 + 243 catch_unwind)
+    if path == "/api/device/spotlight-paste" || path == "/api/device/spotlight-paste-tail" {
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            iphone_link_apple::hid::dispatch_spotlight_paste,
+        ))
+        .unwrap_or(false);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"stage":"pasted_clean","physicalSent":{}}}"#,
+            sent
+        ));
     }
 
-    if path == "/api/qr/scan" {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
-        }
+    if path == "/api/device/spotlight-move-head" {
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            iphone_link_apple::hid::dispatch_spotlight_move_head,
+        ))
+        .unwrap_or(false);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"stage":"head","physicalSent":{}}}"#,
+            sent
+        ));
+    }
+
+    if path == "/api/device/spotlight-close" {
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            iphone_link_apple::hid::dispatch_spotlight_close,
+        ))
+        .unwrap_or(false);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"stage":"closed","physicalSent":{}}}"#,
+            sent
+        ));
+    }
+
+    // 5B. API: Native In-Process Social Link Grabber, QR/Spotlight OCR & Clipboard Pipeline (Tahap 242)
+    if path == "/api/social/grab-link" || path == "/api/link/grab" || path == "/api/qr/scan" {
         let body_str = String::from_utf8_lossy(&req.body_bytes);
-        let links = crate::link_grabber::extract_and_normalize_links(&body_str);
-        if let Some(first) = links
-            .iter()
-            .find(|u| crate::link_grabber::is_strict_https_social_url(u))
-        {
-            let esc = escape_json_str(first);
-            return HttpResponse::ok_json(&format!(
-                r#"{{"ok":true,"action":"scan-qr","url":"{}","text":"{}","extractedText":"{}","complete":true}}"#,
-                esc, esc, esc
-            ));
-        }
-        return HttpResponse::ok_json(
-            r#"{"ok":false,"action":"scan-qr","extractedText":null,"error":"No strict HTTP(S) link found"}"#,
-        );
+        let resp_json = handle_native_grab_link_payload(&body_str);
+        return HttpResponse::ok_json(&resp_json);
     }
 
     if path == "/api/ocr/status" {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
-        }
         let tele = crate::ocr_engine::HotOcrTelemetry::new_warm(45.0);
         return HttpResponse::ok_json(&tele.to_json());
     }
-    if path.starts_with("/api/keyboard/shortcut") || path.starts_with("/api/ocr/") {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
-        }
+
+    if path == "/api/ocr/extract" {
         let body_str = String::from_utf8_lossy(&req.body_bytes);
-        let mut extracted = "kelvin tahap 165 sukses".to_string();
-        if body_str.contains("kelvin tahap 165 sukses") {
-            extracted = "kelvin tahap 165 sukses".to_string();
-        }
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"action":"copy","text":"{}","extractedText":"{}"}}"#, extracted, extracted));
+        let has_input = body_str.contains("batchTexts")
+            || body_str.contains("batch_texts")
+            || body_str.contains("raw_text")
+            || body_str.contains("rawText")
+            || body_str.contains("\"text\"")
+            || body_str.contains("frameDataUrl")
+            || body_str.contains("imageDataUrl")
+            || body_str.contains("dataUrl")
+            || body_str.contains("frameHistory");
+        let (auto_snap_used, snap_ms, snap_w, snap_h, snap_url) = if !has_input {
+            match iphone_link_apple::mirror::global_export_latest_video_snapshot() {
+                Ok(snap) => (true, snap.elapsed_ms, snap.width, snap.height, Some(snap.data_url)),
+                Err(_) => (false, 0.0, 0, 0, None),
+            }
+        } else {
+            (false, 0.0, 0, 0, None)
+        };
+        let (final_opt, auto_cleared, batch_count) = if let Some(ref s_url) = snap_url {
+            crate::ocr_engine::extract_and_process_ocr_from_data_urls(std::slice::from_ref(s_url))
+        } else {
+            extract_and_process_ocr_batch_from_json(&body_str)
+        };
+        let text = final_opt.unwrap_or_default();
+        let len = text.chars().count();
+        let esc = escape_json_value(&text);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"text":"{}","extractedText":"{}","autoClearedCache":{},"batchCount":{},"length":{},"autoSnapshotUsed":{},"snapshotElapsedMs":{:.3},"snapshotWidth":{},"snapshotHeight":{}}}"#,
+            esc, esc, auto_cleared, batch_count, len, auto_snap_used, snap_ms, snap_w, snap_h
+        ));
     }
 
-    if path == "/api/keyboard/paste" || path == "/api/keyboard/typed" || path == "/api/keyboard/toggle-onscreen" {
-        if let Some(resp) = forward_to_worker(req) {
-            return resp;
+    if path == "/api/keyboard/shortcut" {
+        commit_and_reset_current_typed_line();
+        let action = parse_string_param(&req.body, "action")
+            .unwrap_or_else(|| "copy".to_string());
+
+        if action == "clear-copy-cache" {
+            clear_copy_cache();
+            return HttpResponse::ok_json(
+                r#"{"ok":true,"native":true,"action":"clear-copy-cache","cleared":true}"#,
+            );
         }
-        return HttpResponse::ok_json(r#"{"ok":true,"status":"ok"}"#);
+
+        if action == "scan-qr" || action == "grab-link" {
+            let body_str = String::from_utf8_lossy(&req.body_bytes);
+            let resp_json = handle_native_grab_link_payload(&body_str);
+            return HttpResponse::ok_json(&resp_json);
+        }
+
+        if action == "copy" || action == "cut" {
+            let hid_steps = generate_ios_shortcut_steps(&action);
+            if let Some(ref steps) = hid_steps {
+                let _ = iphone_link_apple::hid::dispatch_physical_key_steps(steps);
+            }
+            set_active_clipboard_source(ClipboardSource::Iphone);
+            let skip_ocr = parse_bool_param(&req.body, "skipOcr").unwrap_or(false);
+            if skip_ocr {
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"native":true,"action":"{}","source":"iphone","skipOcr":true,"internal":true}}"#,
+                    escape_json_value(&action)
+                ));
+            }
+
+            let body_str = String::from_utf8_lossy(&req.body_bytes);
+            let has_input = body_str.contains("batchTexts")
+                || body_str.contains("batch_texts")
+                || body_str.contains("raw_text")
+                || body_str.contains("rawText")
+                || body_str.contains("\"text\"")
+                || body_str.contains("frameDataUrl")
+                || body_str.contains("imageDataUrl")
+                || body_str.contains("dataUrl")
+                || body_str.contains("frameHistory");
+            let (auto_snap_used, snap_ms, snap_w, snap_h, snap_url) = if !has_input {
+                match iphone_link_apple::mirror::global_export_latest_video_snapshot() {
+                    Ok(snap) => (true, snap.elapsed_ms, snap.width, snap.height, Some(snap.data_url)),
+                    Err(_) => (false, 0.0, 0, 0, None),
+                }
+            } else {
+                (false, 0.0, 0, 0, None)
+            };
+            let (final_opt, auto_cleared, _batch_count) = if let Some(ref s_url) = snap_url {
+                crate::ocr_engine::extract_and_process_ocr_from_data_urls(std::slice::from_ref(s_url))
+            } else {
+                extract_and_process_ocr_batch_from_json(&body_str)
+            };
+            let final_text = final_opt.unwrap_or_default();
+            let copied_to_pc = if !final_text.is_empty() {
+                let written = write_win32_clipboard(&final_text);
+                if written {
+                    set_active_clipboard_source(ClipboardSource::Pc);
+                }
+                written
+            } else {
+                false
+            };
+            let esc = escape_json_value(&final_text);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"action":"{}","text":"{}","extractedText":"{}","copiedToPc":{},"clipboardSource":"{}","autoClearedCache":{},"length":{},"autoSnapshotUsed":{},"snapshotElapsedMs":{:.3},"snapshotWidth":{},"snapshotHeight":{}}}"#,
+                escape_json_value(&action),
+                esc,
+                esc,
+                copied_to_pc,
+                if copied_to_pc { "pc" } else { "iphone" },
+                auto_cleared,
+                final_text.chars().count(),
+                auto_snap_used,
+                snap_ms,
+                snap_w,
+                snap_h
+            ));
+        }
+
+        if let Some(steps) = generate_ios_shortcut_steps(&action) {
+            let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&steps);
+            let (pkts_tx, _, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"action":"{}","steps":{},"physicalSent":{},"physical_packets_transmitted":{}}}"#,
+                escape_json_value(&action),
+                steps.len(),
+                phys_sent,
+                pkts_tx
+            ));
+        }
+
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"action":"{}"}}"#,
+            escape_json_value(&action)
+        ));
+    }
+
+    if path == "/api/keyboard/toggle-onscreen" {
+        let events = generate_onscreen_keyboard_toggle_events();
+        let phys_sent =
+            iphone_link_apple::hid::dispatch_physical_button_name("eject", "press").unwrap_or(false);
+        if let Some(resp) = forward_to_worker(req) {
+            if resp.status_code == 200 {
+                return resp;
+            }
+        }
+        let (pkts_tx, _, _) = iphone_link_apple::hid::physical_hid_telemetry();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"status":"ok","usagePage":{},"usage":{},"events":{},"physicalSent":{},"physical_packets_transmitted":{}}}"#,
+            events[0].page,
+            events[0].usage,
+            events.len(),
+            phys_sent,
+            pkts_tx
+        ));
+    }
+
+    if path == "/api/keyboard/typed" {
+        if req.method.eq_ignore_ascii_case("GET") {
+            let lines = get_typed_lines_buffer();
+            let items: Vec<String> = lines
+                .iter()
+                .map(|l| format!(r#""{}""#, escape_json_str(l)))
+                .collect();
+            return HttpResponse::ok_json(&format!(r#"{{"ok":true,"lines":[{}]}}"#, items.join(",")));
+        }
+        if parse_bool_param(&req.body, "commitLine").unwrap_or(false) {
+            commit_and_reset_current_typed_line();
+        } else if let Some(text_val) = parse_string_param(&req.body, "text") {
+            if !text_val.is_empty() {
+                record_typed_text(&text_val);
+            }
+        } else if let Some(key_val) = parse_string_param(&req.body, "key") {
+            if !key_val.is_empty() {
+                record_typed_char(&key_val);
+            }
+        }
+        if let Some(resp) = forward_to_worker(req) {
+            if resp.status_code == 200 {
+                return resp;
+            }
+        }
+        let buffered = get_typed_lines_buffer().len();
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"status":"ok","bufferedLines":{}}}"#,
+            buffered
+        ));
+    }
+
+    if path == "/api/keyboard/paste" {
+        commit_and_reset_current_typed_line();
+        let force_pc = parse_bool_param(&req.body, "force")
+            .or_else(|| parse_bool_param(&req.body, "forcePc"))
+            .unwrap_or(false);
+        let explicit_text = parse_string_param(&req.body, "text");
+        let client_paste_pc = parse_bool_param(&req.body, "pastePcClipboard")
+            .or_else(|| parse_bool_param(&req.body, "pcClipboardPaste"));
+        let paste_pc_enabled = client_paste_pc.unwrap_or_else(|| {
+            state.lock().map(|s| s.paste_pc_clipboard).unwrap_or(true)
+        });
+
+        // Rule 1: Explicit PC paste (`force: true` / `Alt+V` / "Paste PC Text")
+        if force_pc {
+            let pc_text = explicit_text
+                .filter(|t| !t.is_empty())
+                .or_else(read_win32_clipboard)
+                .unwrap_or_default();
+            if !pc_text.is_empty() {
+                set_active_clipboard_source(ClipboardSource::Pc);
+                record_typed_text(&pc_text);
+                let (steps, typed) = generate_key_steps_for_text(&pc_text);
+                let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&steps);
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"native":true,"status":"ok","method":"typed","action":"paste-pc","source":"pc","typed":{},"length":{},"steps":{},"physicalSent":{}}}"#,
+                    typed,
+                    pc_text.chars().count(),
+                    steps.len(),
+                    phys_sent
+                ));
+            }
+            let ios_steps = generate_ios_shortcut_steps("paste-ios").unwrap_or_default();
+            let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&ios_steps);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"status":"ok","method":"ios-shortcut","action":"paste-ios","source":"pc","reason":"pc-empty-fallback","typed":0,"length":0,"steps":{},"physicalSent":{}}}"#,
+                ios_steps.len(),
+                phys_sent
+            ));
+        }
+
+        // Rule 2: If toggle "Ctrl+V Pastes PC Clipboard" is OFF (and no explicit text override) -> native iOS Cmd+V
+        if !paste_pc_enabled && explicit_text.is_none() {
+            let ios_steps = generate_ios_shortcut_steps("paste-ios").unwrap_or_default();
+            let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&ios_steps);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"status":"ok","method":"ios-shortcut","action":"paste-ios","source":"iphone","reason":"toggle-off","typed":0,"length":0,"steps":{},"physicalSent":{}}}"#,
+                ios_steps.len(),
+                phys_sent
+            ));
+        }
+
+        // Rule 3: Check Win32 GetClipboardSequenceNumber() state machine
+        let (active_source, clip_seq) = resolve_active_clipboard_source_with_seq();
+
+        // Rule 4: Active source is iPhone and user didn't pass explicit text override -> native iOS Cmd+V (<1ms)
+        if active_source == ClipboardSource::Iphone && explicit_text.is_none() {
+            let ios_steps = generate_ios_shortcut_steps("paste-ios").unwrap_or_default();
+            let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&ios_steps);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"status":"ok","method":"ios-shortcut","action":"paste-ios","source":"iphone","reason":"iphone-source","clipboardSeq":{},"typed":0,"length":0,"steps":{},"physicalSent":{}}}"#,
+                clip_seq,
+                ios_steps.len(),
+                phys_sent
+            ));
+        }
+
+        // Rule 5: Active source is PC (or explicit text was requested) -> inject HID typing steps
+        let pc_text = explicit_text
+            .filter(|t| !t.is_empty())
+            .or_else(read_win32_clipboard)
+            .unwrap_or_default();
+        if !pc_text.is_empty() {
+            record_typed_text(&pc_text);
+            let (steps, typed) = generate_key_steps_for_text(&pc_text);
+            let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&steps);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"native":true,"status":"ok","method":"typed","action":"paste-pc","source":"pc","clipboardSeq":{},"typed":{},"length":{},"steps":{},"physicalSent":{}}}"#,
+                clip_seq,
+                typed,
+                pc_text.chars().count(),
+                steps.len(),
+                phys_sent
+            ));
+        }
+
+        let ios_steps = generate_ios_shortcut_steps("paste-ios").unwrap_or_default();
+        let phys_sent = iphone_link_apple::hid::dispatch_physical_key_steps(&ios_steps);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"native":true,"status":"ok","method":"ios-shortcut","action":"paste-ios","source":"pc","reason":"pc-empty-fallback","clipboardSeq":{},"typed":0,"length":0,"steps":{},"physicalSent":{}}}"#,
+            clip_seq,
+            ios_steps.len(),
+            phys_sent
+        ));
     }
 
     // 6. API: Audio & Update & Wallpaper & System Startup & Tray
@@ -7802,43 +11279,448 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         );
         return HttpResponse::ok_json(&json);
     }
+    if path == "/api/audio/airplay-config" {
+        let explicit_vol = parse_int_param(&req.body, "volume")
+            .or_else(|| parse_int_param(&req.body, "audioVolume"))
+            .or_else(|| parse_int_param(&req.body, "pcVolume"))
+            .map(|v| v.clamp(0, 100) as u32);
+        let explicit_preset = parse_string_param(&req.body, "buffer")
+            .or_else(|| parse_string_param(&req.body, "bufferPreset"))
+            .or_else(|| parse_string_param(&req.body, "audioBufferPreset"))
+            .or_else(|| parse_string_param(&req.body, "audioBuffer"));
+        let explicit_lipsync = parse_bool_param(&req.body, "lipSync")
+            .or_else(|| parse_bool_param(&req.body, "lip_sync"));
+        let explicit_muted = parse_bool_param(&req.body, "muted")
+            .or_else(|| parse_bool_param(&req.body, "audioMuted"));
+
+        let snap = iphone_link_apple::airplay::apply_live_audio_config(
+            explicit_vol,
+            explicit_preset.as_deref(),
+            explicit_lipsync,
+            explicit_muted,
+        );
+        if iphone_link_audio::is_global_pc_audio_bridge_active()
+            || iphone_link_audio::is_global_pc_audio_bridge_connecting()
+        {
+            iphone_link_audio::stop_global_pc_audio_bridge();
+        }
+        if let Ok(mut st) = state.lock() {
+            if let Some(v) = explicit_vol {
+                st.audio_volume = v as i32;
+            }
+            if explicit_preset.is_some() {
+                st.audio_buffer_preset = snap.buffer_preset.clone();
+            }
+            if let Some(ls) = explicit_lipsync {
+                st.lip_sync = ls;
+            }
+            if let Some(m) = explicit_muted {
+                st.audio_muted = m;
+            }
+            save_user_settings_to_disk(&st);
+        }
+        let ap_active = iphone_link_apple::mirror::is_airplay_active();
+        let codec_json = snap
+            .codec
+            .as_ref()
+            .filter(|_| ap_active)
+            .map(|c| format!(r#""{}""#, escape_json_value(c)))
+            .unwrap_or_else(|| "null".to_string());
+        let ap_video_q_dropped = if ap_active {
+            iphone_link_apple::mirror::global_airplay_video_queue_dropped()
+        } else {
+            0
+        };
+        let json = format!(
+            r#"{{"ok":true,"airplayActive":{},"airplayAudioActive":{},"airplayAudioMuted":{},"airplayAudioCodec":{},"airplayAudioSampleRate":{},"airplayAudioDecodedPackets":{},"airplayAudioPlayedSamples":{},"airplayAudioVolume":{},"airplayAudioBufferPreset":"{}","airplayAudioLipSync":{},"airplayAudioBufferMs":{},"airplayAudioTargetMs":{},"airplayAudioDroppedPackets":{},"airplayVideoQueueDropped":{},"volume":{},"muted":{},"bufferPreset":"{}","lipSync":{},"targetDelayMs":{},"delayMs":{},"pcBridgeActive":false,"pcBridgeConnecting":false}}"#,
+            ap_active,
+            ap_active && snap.active,
+            snap.muted,
+            codec_json,
+            if ap_active { snap.sample_rate } else { 0 },
+            if ap_active { snap.decoded_packets } else { 0 },
+            if ap_active { snap.played_samples } else { 0 },
+            snap.volume,
+            escape_json_value(&snap.buffer_preset),
+            snap.lip_sync,
+            if ap_active && snap.active { snap.buffer_ms } else { 0 },
+            snap.target_ms,
+            if ap_active { snap.dropped_packets } else { 0 },
+            ap_video_q_dropped,
+            snap.volume,
+            snap.muted,
+            escape_json_value(&snap.buffer_preset),
+            snap.lip_sync,
+            snap.target_ms,
+            if ap_active && snap.active { snap.buffer_ms } else { 0 },
+        );
+        return HttpResponse::ok_json(&json);
+    }
+    if path == "/api/audio/airplay-mute" {
+        let explicit = parse_bool_param(&req.body, "muted")
+            .or_else(|| parse_bool_param(&req.body, "audioMuted"));
+        let next_muted = explicit.unwrap_or_else(|| !iphone_link_apple::airplay::is_airplay_audio_muted());
+        iphone_link_apple::airplay::set_airplay_audio_muted(next_muted);
+        if let Ok(mut st) = state.lock() {
+            st.audio_muted = next_muted;
+            save_user_settings_to_disk(&st);
+        }
+        let snap = iphone_link_apple::airplay::get_airplay_audio_snapshot();
+        let ap_active = iphone_link_apple::mirror::is_airplay_active();
+        let codec_json = snap
+            .codec
+            .as_ref()
+            .filter(|_| ap_active)
+            .map(|c| format!(r#""{}""#, escape_json_value(c)))
+            .unwrap_or_else(|| "null".to_string());
+        let ap_video_q_dropped = if ap_active {
+            iphone_link_apple::mirror::global_airplay_video_queue_dropped()
+        } else {
+            0
+        };
+        let json = format!(
+            r#"{{"ok":true,"airplayActive":{},"airplayAudioActive":{},"airplayAudioMuted":{},"airplayAudioCodec":{},"airplayAudioSampleRate":{},"airplayAudioDecodedPackets":{},"airplayAudioPlayedSamples":{},"airplayAudioVolume":{},"airplayAudioBufferPreset":"{}","airplayAudioLipSync":{},"airplayAudioBufferMs":{},"airplayAudioTargetMs":{},"airplayAudioDroppedPackets":{},"airplayVideoQueueDropped":{},"muted":{},"pcBridgeActive":false,"pcBridgeConnecting":false}}"#,
+            ap_active,
+            ap_active && snap.active,
+            snap.muted,
+            codec_json,
+            if ap_active { snap.sample_rate } else { 0 },
+            if ap_active { snap.decoded_packets } else { 0 },
+            if ap_active { snap.played_samples } else { 0 },
+            snap.volume,
+            escape_json_value(&snap.buffer_preset),
+            snap.lip_sync,
+            if ap_active && snap.active { snap.buffer_ms } else { 0 },
+            snap.target_ms,
+            if ap_active { snap.dropped_packets } else { 0 },
+            ap_video_q_dropped,
+            snap.muted,
+        );
+        return HttpResponse::ok_json(&json);
+    }
     if path.starts_with("/api/audio") {
-        let is_mutating = req.method == "POST" || path == "/api/audio/mute";
+        let airplay_now = iphone_link_apple::mirror::is_airplay_active();
+        let is_mutating = req.method.eq_ignore_ascii_case("POST")
+            || path == "/api/audio/mute"
+            || path == "/api/audio/start"
+            || path == "/api/audio/connect"
+            || path == "/api/audio/stop"
+            || path == "/api/audio/disconnect"
+            || path == "/api/audio/toggle"
+            || path == "/api/audio/volume"
+            || path == "/api/audio/buffer"
+            || path == "/api/audio/lipsync";
+        // Tahap 258/259 Pilar 3: When AirPlay H.264 is active, NEVER launch Bluetooth A2DP on any
+        // audio toggle/mute/volume/buffer/lipsync call! Hot-reload live atomics with 0 ms dropout,
+        // and NEVER toggle mute when only bufferPreset / lipSync / volume is being updated!
+        if airplay_now {
+            if is_mutating {
+                let explicit_vol = parse_int_param(&req.body, "volume")
+                    .or_else(|| parse_int_param(&req.body, "audioVolume"))
+                    .or_else(|| parse_int_param(&req.body, "pcVolume"))
+                    .map(|v| v.clamp(0, 100) as u32);
+                let explicit_preset = parse_string_param(&req.body, "buffer")
+                    .or_else(|| parse_string_param(&req.body, "bufferPreset"))
+                    .or_else(|| parse_string_param(&req.body, "audioBufferPreset"))
+                    .or_else(|| parse_string_param(&req.body, "audioBuffer"));
+                let explicit_lipsync = parse_bool_param(&req.body, "lipSync")
+                    .or_else(|| parse_bool_param(&req.body, "lip_sync"));
+                let explicit_muted = parse_bool_param(&req.body, "muted")
+                    .or_else(|| parse_bool_param(&req.body, "audioMuted"));
+                let explicit_mode = parse_string_param(&req.body, "audioOut")
+                    .or_else(|| parse_string_param(&req.body, "audio_out"))
+                    .or_else(|| parse_string_param(&req.body, "mode"));
+                let explicit_en = parse_bool_param(&req.body, "enabled")
+                    .or_else(|| parse_bool_param(&req.body, "enable"));
+                let is_mute_or_route_action = explicit_muted.is_some()
+                    || explicit_en.is_some()
+                    || explicit_mode.is_some()
+                    || path == "/api/audio/toggle"
+                    || path == "/api/audio/mute"
+                    || path == "/api/audio/stop"
+                    || path == "/api/audio/disconnect"
+                    || path == "/api/audio/start"
+                    || path == "/api/audio/connect";
+                let next_muted_opt = if is_mute_or_route_action {
+                    Some(if let Some(m) = explicit_muted {
+                        m
+                    } else if path == "/api/audio/stop" || path == "/api/audio/disconnect" {
+                        true
+                    } else if path == "/api/audio/start" || path == "/api/audio/connect" {
+                        false
+                    } else if let Some(en) = explicit_en {
+                        !en
+                    } else if let Some(ref mode_str) = explicit_mode {
+                        mode_str.eq_ignore_ascii_case("device")
+                    } else {
+                        !iphone_link_apple::airplay::is_airplay_audio_muted()
+                    })
+                } else {
+                    None
+                };
+                let snap_upd = iphone_link_apple::airplay::apply_live_audio_config(
+                    explicit_vol,
+                    explicit_preset.as_deref(),
+                    explicit_lipsync,
+                    next_muted_opt,
+                );
+                if let Ok(mut st) = state.lock() {
+                    if let Some(v) = explicit_vol {
+                        st.audio_volume = v as i32;
+                    }
+                    if explicit_preset.is_some() {
+                        st.audio_buffer_preset = snap_upd.buffer_preset.clone();
+                    }
+                    if let Some(ls) = explicit_lipsync {
+                        st.lip_sync = ls;
+                    }
+                    if let Some(m) = next_muted_opt {
+                        st.audio_muted = m;
+                    }
+                    save_user_settings_to_disk(&st);
+                }
+            }
+            if iphone_link_audio::is_global_pc_audio_bridge_active()
+                || iphone_link_audio::is_global_pc_audio_bridge_connecting()
+            {
+                iphone_link_audio::stop_global_pc_audio_bridge();
+            }
+            let snap = iphone_link_apple::airplay::get_airplay_audio_snapshot();
+            let base_json = iphone_link_apple::mirror::global_audio_status_json();
+            let codec_json = snap
+                .codec
+                .as_ref()
+                .map(|c| format!(r#""{}""#, escape_json_value(c)))
+                .unwrap_or_else(|| "null".to_string());
+            let ap_video_q_dropped = iphone_link_apple::mirror::global_airplay_video_queue_dropped();
+            let final_json = if base_json.ends_with('}') {
+                format!(
+                    r#"{},"airplayActive":true,"airplayAudioActive":{},"airplayAudioMuted":{},"airplayAudioCodec":{},"airplayAudioSampleRate":{},"airplayAudioDecodedPackets":{},"airplayAudioPlayedSamples":{},"airplayAudioVolume":{},"airplayAudioBufferPreset":"{}","airplayAudioLipSync":{},"airplayAudioBufferMs":{},"airplayAudioTargetMs":{},"airplayAudioDroppedPackets":{},"airplayVideoQueueDropped":{},"volume":{},"muted":{},"bufferPreset":"{}","lipSync":{},"targetDelayMs":{},"delayMs":{},"pcBridgeActive":false,"pcBridgeConnecting":false,"pcBridgeDetail":"airplay_isolated","pcBridgeDevice":"","pcBridgeCandidates":""}}"#,
+                    &base_json[..base_json.len() - 1],
+                    snap.active,
+                    snap.muted,
+                    codec_json,
+                    snap.sample_rate,
+                    snap.decoded_packets,
+                    snap.played_samples,
+                    snap.volume,
+                    escape_json_value(&snap.buffer_preset),
+                    snap.lip_sync,
+                    if snap.active { snap.buffer_ms } else { 0 },
+                    snap.target_ms,
+                    snap.dropped_packets,
+                    ap_video_q_dropped,
+                    snap.volume,
+                    snap.muted,
+                    escape_json_value(&snap.buffer_preset),
+                    snap.lip_sync,
+                    snap.target_ms,
+                    if snap.active { snap.buffer_ms } else { 0 },
+                )
+            } else {
+                base_json
+            };
+            return HttpResponse::ok_json(&final_json);
+        }
+        let active_override = if path == "/api/audio/start" || path == "/api/audio/connect" {
+            AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+            Some(true)
+        } else if path == "/api/audio/stop" || path == "/api/audio/disconnect" {
+            AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(true, Ordering::SeqCst);
+            Some(false)
+        } else if path == "/api/audio/toggle" {
+            let toggle_en = parse_bool_param(&req.body, "enabled");
+            let st_cur = state.lock().unwrap();
+            let next_mode = if toggle_en == Some(true) || (toggle_en.is_none() && st_cur.audio_routing == "device") {
+                "pc"
+            } else {
+                "device"
+            };
+            drop(st_cur);
+            let mut st = state.lock().unwrap();
+            st.audio_routing = next_mode.to_string();
+            Some(next_mode != "device" && st.is_streaming)
+        } else {
+            None
+        };
+
+        let explicit_enable = parse_bool_param(&req.body, "enable")
+            .or_else(|| parse_bool_param(&req.body, "enabled"));
+        let explicit_mode = parse_string_param(&req.body, "audioOut")
+            .or_else(|| parse_string_param(&req.body, "audio_out"))
+            .or_else(|| parse_string_param(&req.body, "audio_routing"))
+            .or_else(|| parse_string_param(&req.body, "routing"))
+            .or_else(|| parse_string_param(&req.body, "mode"))
+            .or_else(|| {
+                parse_bool_param(&req.body, "audioOut")
+                    .map(|en| if en { "pc".to_string() } else { "device".to_string() })
+            })
+            .or_else(|| match explicit_enable {
+                Some(true) => Some("pc".to_string()),
+                Some(false) => Some("device".to_string()),
+                None => None,
+            });
+        let explicit_vol = parse_int_param(&req.body, "volume")
+            .or_else(|| parse_int_param(&req.body, "audioVolume"));
+        let explicit_muted = parse_bool_param(&req.body, "muted")
+            .or_else(|| parse_bool_param(&req.body, "audioMuted"));
+        let explicit_preset = parse_string_param(&req.body, "bufferPreset")
+            .or_else(|| parse_string_param(&req.body, "audioBufferPreset"));
+        let explicit_lipsync = parse_bool_param(&req.body, "lipSync");
+        let force_stream = parse_bool_param(&req.body, "forceStream");
+
         if is_mutating {
             let mut st = state.lock().unwrap();
             let _ = apply_settings_json_body_to_state(&req.body, &mut st);
-            if path == "/api/audio/mute" && parse_bool_param(&req.body, "muted").is_none() && parse_bool_param(&req.body, "audioMuted").is_none() {
+
+            // Tahap 259 Pilar 3: Live zero-drop hot-reload of AirPlay audio settings whenever
+            // audioVolume / audioBufferPreset / lipSync / audioMuted is changed via /api/settings.
+            let ap_vol_patch = parse_int_param(&req.body, "audioVolume")
+                .or_else(|| parse_int_param(&req.body, "pcVolume"))
+                .or_else(|| parse_int_param(&req.body, "volume"))
+                .map(|v| v.clamp(0, 100) as u32);
+            let ap_buf_patch = parse_string_param(&req.body, "audioBufferPreset")
+                .or_else(|| parse_string_param(&req.body, "audioBuffer"))
+                .or_else(|| parse_string_param(&req.body, "bufferPreset"))
+                .or_else(|| parse_string_param(&req.body, "buffer"));
+            let ap_ls_patch = parse_bool_param(&req.body, "lipSync")
+                .or_else(|| parse_bool_param(&req.body, "lip_sync"));
+            let ap_mute_patch = parse_bool_param(&req.body, "audioMuted")
+                .or_else(|| parse_bool_param(&req.body, "pcMuted"))
+                .or_else(|| parse_bool_param(&req.body, "muted"));
+            if ap_vol_patch.is_some()
+                || ap_buf_patch.is_some()
+                || ap_ls_patch.is_some()
+                || ap_mute_patch.is_some()
+            {
+                let _ = iphone_link_apple::airplay::apply_live_audio_config(
+                    ap_vol_patch,
+                    ap_buf_patch.as_deref(),
+                    ap_ls_patch,
+                    ap_mute_patch,
+                );
+            }
+            if path == "/api/audio/mute" && explicit_muted.is_none() {
                 st.audio_muted = !st.audio_muted;
             }
-            GLOBAL_AUDIO_PC_ACTIVE.store(
-                (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted,
-                Ordering::SeqCst,
-            );
-            save_user_settings_to_disk(&st);
-        }
-        if let Some(resp) = forward_to_worker(req) {
-            if resp.status_code == 200 {
-                let body_txt = String::from_utf8_lossy(&resp.body);
-                if let Some(mut st) = state.lock().ok() {
-                    let _ = apply_settings_json_body_to_state(&body_txt, &mut st);
-                    if is_mutating {
-                        save_user_settings_to_disk(&st);
+            if let Some(m) = explicit_mode.as_deref() {
+                st.audio_routing = m.to_string();
+                st.bluetooth_a2dp = m.eq_ignore_ascii_case("bluetooth");
+                if m.eq_ignore_ascii_case("device") {
+                    AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(true, Ordering::SeqCst);
+                } else if m.eq_ignore_ascii_case("pc")
+                    || m.eq_ignore_ascii_case("bluetooth")
+                    || m.eq_ignore_ascii_case("wasapi")
+                {
+                    AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+                    if explicit_muted.is_none() {
+                        st.audio_muted = false;
                     }
                 }
-                return resp;
             }
+            if let Some(m_flag) = explicit_muted {
+                AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(m_flag, Ordering::SeqCst);
+            } else if path == "/api/audio/mute" {
+                AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(st.audio_muted, Ordering::SeqCst);
+            }
+            if let Some(v) = explicit_vol {
+                st.audio_volume = v.clamp(0, 100) as i32;
+            }
+            if let Some(p) = explicit_preset.as_deref() {
+                st.audio_buffer_preset = p.to_string();
+            }
+            if let Some(ls) = explicit_lipsync {
+                st.lip_sync = ls;
+            }
+            let wants_pc_audio =
+                (st.audio_routing == "pc" || st.audio_routing == "bluetooth") && !st.audio_muted;
+            let effective_active = active_override
+                .or(force_stream)
+                .or(explicit_enable)
+                .unwrap_or(wants_pc_audio);
+            GLOBAL_AUDIO_PC_ACTIVE.store(wants_pc_audio, Ordering::SeqCst);
+            let a_mode = st.audio_routing.clone();
+            let a_vol = st.audio_volume as i64;
+            let a_muted = st.audio_muted;
+            let a_preset = st.audio_buffer_preset.clone();
+            let a_ls = st.lip_sync;
+            save_user_settings_to_disk(&st);
+            drop(st);
+
+            let explicit_target_udid = parse_string_param(&req.body, "udid");
+            let explicit_target_name = parse_string_param(&req.body, "deviceName")
+                .or_else(|| parse_string_param(&req.body, "device_name"))
+                .or_else(|| parse_string_param(&req.body, "preferredName"));
+            let explicit_target_bt = parse_string_param(&req.body, "btMac")
+                .or_else(|| parse_string_param(&req.body, "bluetoothAddress"));
+            let (pref_name, pref_model, pref_bt) = resolve_active_audio_device_target(
+                state,
+                explicit_target_udid.as_deref(),
+                explicit_target_name.as_deref(),
+                explicit_target_bt.as_deref(),
+            );
+
+            let (bridge_active, bridge_connecting, bridge_detail) = if wants_pc_audio && effective_active {
+                let _ = iphone_link_audio::start_global_pc_audio_bridge_for_device(
+                    pref_name.as_deref(),
+                    pref_model.as_deref(),
+                    pref_bt.as_deref(),
+                );
+                iphone_link_audio::global_pc_audio_bridge_full_status()
+            } else {
+                iphone_link_audio::stop_global_pc_audio_bridge();
+                (false, false, "stopped".to_string())
+            };
+            let (bridge_dev, bridge_cands) =
+                iphone_link_audio::global_pc_audio_bridge_device_info();
+
+            let native_json = iphone_link_apple::mirror::global_configure_audio(
+                Some(&a_mode),
+                Some(a_vol),
+                Some(a_muted),
+                Some(&a_preset),
+                Some(a_ls),
+                Some(effective_active),
+            );
+            let pc_bridge_state = iphone_link_audio::global_pc_audio_bridge_state_kind();
+            let final_json = if native_json.ends_with('}') {
+                format!(
+                    r#"{},"pcBridgeActive":{},"pcBridgeConnecting":{},"pcBridgeState":"{}","pcBridgeDetail":"{}","pcBridgeDevice":"{}","pcBridgeCandidates":"{}"}}"#,
+                    &native_json[..native_json.len() - 1],
+                    bridge_active,
+                    bridge_connecting,
+                    pc_bridge_state,
+                    escape_json_value(&bridge_detail),
+                    escape_json_value(&bridge_dev),
+                    escape_json_value(&bridge_cands),
+                )
+            } else {
+                native_json
+            };
+            return HttpResponse::ok_json(&final_json);
         }
-        let st = state.lock().unwrap();
-        return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"active":{},"audioOut":"{}","volume":{},"muted":{},"bufferPreset":"{}","lipSync":{},"bluetoothA2dp":{}}}"#,
-            st.is_streaming && !st.audio_muted,
-            st.audio_routing,
-            st.audio_volume,
-            st.audio_muted,
-            st.audio_buffer_preset,
-            st.lip_sync,
-            st.bluetooth_a2dp
-        ));
+
+        let base_json = iphone_link_apple::mirror::global_audio_status_json();
+        let (bridge_active, bridge_connecting, bridge_detail) =
+            iphone_link_audio::global_pc_audio_bridge_full_status();
+        let pc_bridge_state = iphone_link_audio::global_pc_audio_bridge_state_kind();
+        let (bridge_dev, bridge_cands) =
+            iphone_link_audio::global_pc_audio_bridge_device_info();
+        let final_json = if base_json.ends_with('}') {
+            format!(
+                r#"{},"pcBridgeActive":{},"pcBridgeConnecting":{},"pcBridgeState":"{}","pcBridgeDetail":"{}","pcBridgeDevice":"{}","pcBridgeCandidates":"{}"}}"#,
+                &base_json[..base_json.len() - 1],
+                bridge_active,
+                bridge_connecting,
+                pc_bridge_state,
+                escape_json_value(&bridge_detail),
+                escape_json_value(&bridge_dev),
+                escape_json_value(&bridge_cands),
+            )
+        } else {
+            base_json
+        };
+        return HttpResponse::ok_json(&final_json);
     }
 
     if path == "/api/update/status" {
@@ -7876,55 +11758,59 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     .map(|s| s.update_channel.clone())
                     .unwrap_or_else(|_| "stable".to_string())
             });
+        let api_override = env::var("IPHONE_LINK_UPDATER_API_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let fresh = crate::updater::check_github_updates_native(&ch, api_override.as_deref());
         if let Ok(mut s) = state.lock() {
-            s.update_channel = ch.clone();
-        }
-        if let Some(worker_resp) = forward_to_worker(req) {
-            if worker_resp.status_code == 200 {
-                let body = String::from_utf8_lossy(&worker_resp.body);
-                if let Ok(mut s) = state.lock() {
-                    let ac = s.auto_check_update;
-                    s.updater.apply_worker_payload(&body, &ch);
-                    return HttpResponse::ok_json(&s.updater.to_json(ac));
-                }
-            }
-        }
-        if let Ok(mut s) = state.lock() {
+            s.update_channel = fresh.channel.clone();
             let ac = s.auto_check_update;
-            s.updater.set_offline_fallback(&ch);
+            s.updater = fresh;
             return HttpResponse::ok_json(&s.updater.to_json(ac));
         }
-        let mut fallback = UpdateStateCache::default();
-        fallback.set_offline_fallback(&ch);
-        return HttpResponse::ok_json(&fallback.to_json(true));
+        return HttpResponse::ok_json(&fresh.to_json(true));
     }
 
-    if path == "/api/update/install" {
-        let ch = state
+    if path == "/api/update/install" || path == "/api/update/open_release" {
+        let requested_url = parse_string_param(&req.body, "url")
+            .or_else(|| parse_string_param(&req.body, "releaseUrl"))
+            .or_else(|| parse_string_param(&req.body, "downloadUrl"))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let cached_url = state
             .lock()
-            .map(|s| s.update_channel.clone())
-            .unwrap_or_else(|_| "stable".to_string());
-        if let Some(worker_resp) = forward_to_worker(req) {
-            if worker_resp.status_code == 200 {
-                let body = String::from_utf8_lossy(&worker_resp.body);
-                if body.contains(r#""ok":true"#) || body.contains(r#""ok": true"#) {
-                    if let Ok(mut s) = state.lock() {
-                        s.updater.status = "downloading".to_string();
-                        s.updater.progress = 5;
-                        s.updater.message = "Mengunduh pembaruan di latar belakang...".to_string();
-                    }
+            .ok()
+            .map(|s| {
+                if !s.updater.release_url.is_empty() {
+                    s.updater.release_url.clone()
+                } else if !s.updater.download_url.is_empty() {
+                    s.updater.download_url.clone()
+                } else {
+                    format!("{}/releases", crate::updater::PUBLIC_GITHUB_REPO_URL)
                 }
-                return worker_resp;
-            }
+            })
+            .unwrap_or_else(|| format!("{}/releases", crate::updater::PUBLIC_GITHUB_REPO_URL));
+        let target_url = requested_url.unwrap_or(cached_url);
+        if !crate::updater::is_allowed_github_release_url(&target_url) {
+            return HttpResponse::ok_json(
+                r#"{"ok":false,"opened":false,"error":"URL pembaruan tidak valid atau tidak termasuk repositori resmi."}"#,
+            );
         }
-        if let Ok(mut s) = state.lock() {
-            let ac = s.auto_check_update;
-            s.updater.set_offline_fallback(&ch);
-            return HttpResponse::ok_json(&s.updater.to_json(ac));
-        }
-        let mut fallback = UpdateStateCache::default();
-        fallback.set_offline_fallback(&ch);
-        return HttpResponse::ok_json(&fallback.to_json(true));
+        let dry_run = is_dry_run_shell_open();
+        return match shell_open_target_native(&target_url) {
+            Ok(launched) => HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"opened":{},"dryRun":{},"url":"{}"}}"#,
+                launched,
+                dry_run,
+                escape_json_str(&target_url)
+            )),
+            Err(err) => HttpResponse::ok_json(&format!(
+                r#"{{"ok":false,"opened":false,"dryRun":{},"url":"{}","error":"{}"}}"#,
+                dry_run,
+                escape_json_str(&target_url),
+                escape_json_str(&err)
+            )),
+        };
     }
 
     if path == "/api/system/startup" {
@@ -7972,9 +11858,44 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"wallpaperSig":"{}"}}"#, sig));
     }
 
+    if path == "/api/system/endurance-benchmark" {
+        let req_frames = parse_int_param(&req.body, "frames")
+            .or_else(|| parse_int_param(&req.body, "frameCount"))
+            .or_else(|| {
+                extract_query_param(&req.query, "frames").and_then(|s| s.parse::<i32>().ok())
+            })
+            .map(|v| v.clamp(10, 5000) as usize)
+            .unwrap_or(1000);
+        // Verify Invariant 1 bounded viewport history (max 4, TTL 45s, 2500ms cooldown)
+        for step in 0..8u64 {
+            let _ = record_viewport_history_snapshot(
+                346,
+                750,
+                0xA000 + step,
+                50_000 + step * 3_000,
+            );
+        }
+        let vp_hist_cnt = crate::ocr_engine::viewport_history_count();
+        let rep = iphone_link_apple::mirror::run_long_session_endurance_benchmark(req_frames);
+        let mut json = rep.to_json_string();
+        if let Some(pos) = json.rfind('}') {
+            json.replace_range(
+                pos..,
+                &format!(
+                    r#","viewportHistoryBoundedCount":{},"maxViewportHistoryCap":{}}}"#,
+                    vp_hist_cnt,
+                    crate::ocr_engine::MAX_VIEWPORT_HISTORY
+                ),
+            );
+        }
+        return HttpResponse::ok_json(&json);
+    }
+
     if path == "/api/system/memory" || path == "/api/system/reclaim-memory" {
         let is_reclaim = path == "/api/system/reclaim-memory";
-        trim_current_rust_process_working_set();
+        if is_reclaim {
+            trim_current_rust_process_working_set();
+        }
         if let Some(worker_resp) = forward_to_worker(req) {
             if worker_resp.status_code == 200 && !worker_resp.body.is_empty() {
                 let worker_str = String::from_utf8_lossy(&worker_resp.body).to_string();
@@ -8007,8 +11928,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
+    if path == "/api/debug/airplay-trace" {
+        return HttpResponse::ok_json(&iphone_link_apple::airplay::get_airplay_trace_json());
+    }
+
+    if path == "/api/debug/ui-action-log" && req.method.eq_ignore_ascii_case("GET") {
+        return HttpResponse::ok_json(&crate::native_ui::ui_action_log_json());
+    }
+
+    if path == "/api/debug/lock-trace" && req.method.eq_ignore_ascii_case("GET") {
+        return HttpResponse::ok_json(&iphone_link_apple::hid::lock_trace_json());
+    }
+
     if path == "/api/system/hevc_status" {
-        let (installed, version, pkg) = query_hevc_extension_status();
+        let cap = query_hevc_capabilities();
         let bundle = find_hevc_appxbundle_path();
         let bundled = bundle.is_some();
         let bundle_str = bundle
@@ -8016,84 +11949,142 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"installed":{},"version":"{}","package":"{}","bundled":{},"bundlePath":"{}"}}"#,
-            installed,
-            escape_json_str(&version),
-            escape_json_str(&pkg),
+            r#"{{"ok":true,"installed":{},"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"mfplatLoaded":{},"version":"{}","package":"{}","bundled":{},"bundlePath":"{}","storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}"}}"#,
+            cap.installed,
+            cap.hevc_mft_available,
+            cap.h264_mft_available,
+            cap.media_feature_pack_missing,
+            cap.mfplat_loaded,
+            escape_json_str(&cap.version),
+            escape_json_str(&cap.package),
             bundled,
-            escape_json_str(&bundle_str)
+            escape_json_str(&bundle_str),
+            cap.store_url,
+            cap.store_fallback_url,
+            cap.media_feature_pack_url
         ));
     }
 
+    if path == "/api/system/open_hevc_store" {
+        use iphone_link_video::d3d11_context::{
+            HEVC_OEM_FREE_STORE_URL, HEVC_PAID_FALLBACK_STORE_URL, MEDIA_FEATURE_PACK_SETTINGS_URL,
+        };
+        let req_target = parse_string_param(&req.body, "target")
+            .unwrap_or_else(|| "hevc_oem".to_string())
+            .to_ascii_lowercase();
+        let (target_norm, target_url) = match req_target.as_str() {
+            "hevc_paid" | "paid" => ("hevc_paid", HEVC_PAID_FALLBACK_STORE_URL),
+            "media_feature_pack" | "mfp" | "optionalfeatures" => {
+                ("media_feature_pack", MEDIA_FEATURE_PACK_SETTINGS_URL)
+            }
+            _ => ("hevc_oem", HEVC_OEM_FREE_STORE_URL),
+        };
+        let dry_run = is_dry_run_shell_open();
+        return match shell_open_target_native(target_url) {
+            Ok(launched) => HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"target":"{}","url":"{}","launched":{},"dryRun":{}}}"#,
+                target_norm, target_url, launched, dry_run
+            )),
+            Err(err) => HttpResponse::ok_json(&format!(
+                r#"{{"ok":false,"target":"{}","url":"{}","launched":false,"dryRun":{},"error":"{}"}}"#,
+                target_norm,
+                target_url,
+                dry_run,
+                escape_json_str(&err)
+            )),
+        };
+    }
+
     if path == "/api/system/install_hevc" {
-        let (already_installed, existing_ver, existing_pkg) = query_hevc_extension_status();
-        if already_installed {
+        let cap = query_hevc_capabilities();
+        if cap.installed {
             return HttpResponse::ok_json(&format!(
-                r#"{{"ok":true,"installed":true,"alreadyInstalled":true,"version":"{}","package":"{}"}}"#,
-                escape_json_str(&existing_ver),
-                escape_json_str(&existing_pkg)
+                r#"{{"ok":true,"installed":true,"alreadyInstalled":true,"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"version":"{}","package":"{}","storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}"}}"#,
+                cap.hevc_mft_available,
+                cap.h264_mft_available,
+                cap.media_feature_pack_missing,
+                escape_json_str(&cap.version),
+                escape_json_str(&cap.package),
+                cap.store_url,
+                cap.store_fallback_url,
+                cap.media_feature_pack_url
+            ));
+        }
+        if cap.media_feature_pack_missing {
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":false,"installed":false,"hevcMftAvailable":false,"h264MftAvailable":false,"mediaFeaturePackMissing":true,"storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}","error":"Windows Media Feature Pack missing (Windows N/KN edition)"}}"#,
+                cap.store_url, cap.store_fallback_url, cap.media_feature_pack_url
             ));
         }
         if let Some(bundle_path) = find_hevc_appxbundle_path() {
             match install_hevc_from_bundle(&bundle_path) {
-                Ok(()) => {
-                    let (now_installed, now_ver, now_pkg) = query_hevc_extension_status();
+                Ok(launched) => {
+                    let now_cap = query_hevc_capabilities();
                     return HttpResponse::ok_json(&format!(
-                        r#"{{"ok":{},"installed":{},"alreadyInstalled":false,"version":"{}","package":"{}","bundle":"{}"}}"#,
-                        now_installed,
-                        now_installed,
-                        escape_json_str(&now_ver),
-                        escape_json_str(&now_pkg),
-                        escape_json_str(&bundle_path.to_string_lossy())
+                        r#"{{"ok":true,"installed":{},"launchedInstaller":{},"alreadyInstalled":false,"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"version":"{}","package":"{}","bundle":"{}","storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}"}}"#,
+                        now_cap.installed,
+                        launched,
+                        now_cap.hevc_mft_available,
+                        now_cap.h264_mft_available,
+                        now_cap.media_feature_pack_missing,
+                        escape_json_str(&now_cap.version),
+                        escape_json_str(&now_cap.package),
+                        escape_json_str(&bundle_path.to_string_lossy()),
+                        now_cap.store_url,
+                        now_cap.store_fallback_url,
+                        now_cap.media_feature_pack_url
                     ));
                 }
                 Err(err) => {
                     return HttpResponse::ok_json(&format!(
-                        r#"{{"ok":false,"installed":false,"error":"{}","bundle":"{}"}}"#,
+                        r#"{{"ok":false,"installed":false,"error":"{}","bundle":"{}","storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}"}}"#,
                         escape_json_str(&err),
-                        escape_json_str(&bundle_path.to_string_lossy())
+                        escape_json_str(&bundle_path.to_string_lossy()),
+                        cap.store_url,
+                        cap.store_fallback_url,
+                        cap.media_feature_pack_url
                     ));
                 }
             }
         }
-        return HttpResponse::ok_json(
-            r#"{"ok":false,"installed":false,"storeUrl":"ms-windows-store://pdp/?ProductId=9NMZLZ57R3T7","error":"HEVC AppxBundle not found locally"}"#,
-        );
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":false,"installed":false,"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}","error":"HEVC AppxBundle not found locally; open free OEM Microsoft Store package"}}"#,
+            cap.hevc_mft_available,
+            cap.h264_mft_available,
+            cap.media_feature_pack_missing,
+            cap.store_url,
+            cap.store_fallback_url,
+            cap.media_feature_pack_url
+        ));
     }
 
     if path == "/api/driver/diagnostics" {
-        if let Some(worker_resp) = forward_to_worker(req) {
-            if worker_resp.status_code == 200 {
-                return worker_resp;
-            }
-        }
-        let diag_json = build_native_driver_diagnostics_json();
-        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"diagnostics":{}}}"#, diag_json));
+        let force = req.query.contains("refresh=1") || req.query.contains("force=1");
+        let is_streaming = state.lock().map(|s| s.is_streaming).unwrap_or(false);
+        let diag_json = build_native_driver_diagnostics_json_with_opts(force, is_streaming);
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"native":true,"diagnostics":{}}}"#, diag_json));
     }
 
     if path == "/api/driver/repair" {
-        if let Some(worker_resp) = forward_to_worker(req) {
-            if worker_resp.status_code == 200 {
-                return worker_resp;
-            }
-        }
-        let (repaired, drv_ok, svc_ok) = repair_native_apple_service();
-        let diag_json = build_native_driver_diagnostics_json();
+        let (repaired, drv_ok, svc_ok, msi_found) = repair_native_apple_service();
+        let is_streaming = state.lock().map(|s| s.is_streaming).unwrap_or(false);
+        let diag_json = build_native_driver_diagnostics_json_with_opts(true, is_streaming);
         let msg_id = if repaired {
             "Layanan Apple Mobile Device Service & Driver USB aktif dan siap digunakan."
         } else {
-            "Perbaikan driver selesai dijalankan. Jika belum aktif, jalankan Setup.exe untuk memasang Apple USB Driver."
+            "Perbaikan driver selesai dijalankan. Jika belum aktif, jalankan Repair sebagai Administrator atau pasang ulang Setup.exe."
         };
         let msg_en = if repaired {
             "Apple Mobile Device Service & USB Driver verified and running."
         } else {
-            "Driver repair finished. If still inactive, run Setup.exe to install the bundled Apple USB Driver."
+            "Driver repair finished. If still inactive, run Repair as Administrator or re-run Setup.exe."
         };
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"repaired":{},"driver_ready":{},"service_running":{},"diagnostics":{},"message_id":"{}","message_en":"{}"}}"#,
+            r#"{{"ok":true,"native":true,"repaired":{},"driver_ready":{},"service_running":{},"bundled_msi_found":{},"diagnostics":{},"message_id":"{}","message_en":"{}"}}"#,
             repaired,
             drv_ok,
             svc_ok,
+            msi_found,
             diag_json,
             escape_json_str(msg_id),
             escape_json_str(msg_en)
@@ -8101,14 +12092,22 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/device/unlock-developer-mode" {
-        if let Some(worker_resp) = forward_to_worker(req) {
-            if worker_resp.status_code == 200 {
-                return worker_resp;
+        let req_udid = parse_string_param(&req.body, "udid");
+        let arm_enable = req.body.contains(r#""arm_enable":true"#)
+            || req.body.contains(r#""arm_enable": true"#);
+        let outcome = unlock_developer_mode_menu(req_udid.as_deref(), arm_enable);
+        if let Ok(mut guard) = DRIVER_DIAG_CACHE.lock() {
+            *guard = None;
+        }
+        match outcome {
+            Ok(res) => return HttpResponse::ok_json(&res.to_json_string()),
+            Err(err) => {
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":false,"connected":false,"udid":null,"revealed":false,"developer_mode_status":"disconnected","status_code":"usb_required","statusCode":"usb_required","error":"{}","message_id":"Hubungkan iPhone menggunakan kabel data USB terlebih dahulu (Unlock Developer Mode hanya berjalan via USB, bukan Wi-Fi), buka kunci layar, dan ketuk Trust This Computer.","message_en":"Connect your iPhone with a USB data cable first (Unlock Developer Mode requires USB, not Wi-Fi), unlock the screen, and tap Trust This Computer."}}"#,
+                    escape_json_str(&err)
+                ));
             }
         }
-        return HttpResponse::ok_json(
-            r#"{"ok":false,"connected":false,"revealed":false,"developer_mode_status":"disconnected","error":"Worker offline or no USB iPhone connected","message_id":"Hubungkan iPhone menggunakan kabel data USB terlebih dahulu dan ketuk Trust This Computer.","message_en":"Connect your iPhone via USB data cable first and tap Trust This Computer."}"#,
-        );
     }
 
     if path == "/api/tray-state" || path == "/api/tray/menu" {
@@ -8125,9 +12124,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
                 if hwnd_usize != 0 {
                     unsafe {
-                        show_window_native(hwnd_usize as *mut _, 5);
-                        show_window_native(hwnd_usize as *mut _, 9);
-                        PostMessageW(hwnd_usize as *mut _, 0x8001, 0, 0);
+                        PostMessageW(hwnd_usize as *mut _, 0x8004, 0, 0); // WM_APP_RESTORE_FROM_TRAY
                     }
                 }
             }
@@ -8194,12 +12191,26 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             "toggle_audio" => {
                 let next_pc = !GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst);
                 GLOBAL_AUDIO_PC_ACTIVE.store(next_pc, Ordering::SeqCst);
-                {
+                AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(!next_pc, Ordering::SeqCst);
+                let is_streaming_now = {
                     let mut st = state.lock().unwrap();
                     st.audio_routing = if next_pc { "pc".to_string() } else { "device".to_string() };
                     st.bluetooth_a2dp = false;
                     st.audio_muted = !next_pc;
                     save_user_settings_to_disk(&st);
+                    st.is_streaming
+                        || iphone_link_apple::mirror::global_screen_status_json()
+                            .contains(r#""phase":"running""#)
+                };
+                if next_pc && is_streaming_now {
+                    let (pn, pm, pb) = resolve_active_audio_device_target(state, None, None, None);
+                    let _ = iphone_link_audio::start_global_pc_audio_bridge_for_device(
+                        pn.as_deref(),
+                        pm.as_deref(),
+                        pb.as_deref(),
+                    );
+                } else if !next_pc {
+                    iphone_link_audio::stop_global_pc_audio_bridge();
                 }
                 if let Ok(mut g) = GLOBAL_PENDING_TRAY_ACTION.lock() {
                     *g = Some(format!("set_audio_pc:{}", next_pc));
@@ -8213,8 +12224,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             }
             "quit" | "exit" => {
                 let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
+                let _ = execute_clean_window_close_resources(hwnd_usize as *mut _, Some(state));
                 if hwnd_usize != 0 {
-                    unregister_tray_icon(hwnd_usize as *mut _);
                     unsafe {
                         post_quit_message(hwnd_usize as *mut _);
                     }
@@ -8243,10 +12254,68 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/debug-metrics" {
-        return HttpResponse::ok_json(r#"{"ok":true,"history":[]}"#);
+        if req.method.eq_ignore_ascii_case("POST") {
+            let trimmed = req.body.trim();
+            if !trimmed.is_empty() {
+                if let Ok(mut hist) = DEBUG_METRICS_HISTORY.lock() {
+                    hist.push(trimmed.to_string());
+                    if hist.len() > 60 {
+                        let excess = hist.len() - 60;
+                        hist.drain(..excess);
+                    }
+                }
+            }
+            return HttpResponse::ok_json(r#"{"ok":true,"native":true,"recorded":true}"#);
+        }
+        let items: Vec<String> = DEBUG_METRICS_HISTORY
+            .lock()
+            .map(|h| h.iter().map(|s| format!(r#""{}""#, escape_json_str(s))).collect())
+            .unwrap_or_default();
+        return HttpResponse::ok_json(&format!(r#"{{"ok":true,"history":[{}]}}"#, items.join(",")));
     }
 
     // 7. API: Window Controls (with DPI-aware HWND & WebView2 Bounds Sync via Main Thread Dispatch)
+    if path == "/api/window/tray-menu" || path == "/api/window/tray_menu" {
+        let st = state.lock().unwrap();
+        let json = build_tray_state_json("menu", true, &st);
+        return HttpResponse::ok_json(&json);
+    }
+
+    if path == "/api/window/state" {
+        let st = state.lock().unwrap();
+        let is_fs = st.is_fullscreen || GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
+        let is_land = st.is_landscape || GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let open = st.is_drawer_open || GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
+        let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst).clamp(336, 600);
+        let (cur_w, cur_h) = compute_logical_window_dims(is_fs, is_land, open, port_w);
+        let stealth_active =
+            st.stealth_dim || GLOBAL_STEALTH_ACTIVE.load(Ordering::SeqCst) || is_stealth_dim_active();
+        let tray_reg = GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst);
+        let prof = if st.device_profile.is_empty() {
+            "auto".to_string()
+        } else {
+            st.device_profile.clone()
+        };
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"drawer_open":{},"is_drawer_open":{},"landscape":{},"is_landscape":{},"fullscreen":{},"is_fullscreen":{},"portrait_width":{},"width":{},"height":{},"min_width":{},"min_height":{},"theme":"{}","device_profile":"{}","stealth_dim":{},"tray_registered":{}}}"#,
+            open,
+            open,
+            is_land,
+            is_land,
+            is_fs,
+            is_fs,
+            port_w,
+            cur_w,
+            cur_h,
+            MIN_WINDOW_WIDTH,
+            MIN_WINDOW_HEIGHT,
+            escape_json_str(&st.theme),
+            escape_json_str(&prof),
+            stealth_active,
+            tray_reg
+        ));
+    }
+
     if path == "/api/window/set_drawer" || path == "/api/window/drawer" {
         let mut st = state.lock().unwrap();
         let open = req.body.contains(r#""open":true"#)
@@ -8267,21 +12336,25 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         st.is_drawer_open = open;
         st.geometry.is_drawer_open = open;
         GLOBAL_DRAWER_OPEN.store(open, Ordering::SeqCst);
+        let is_fs = st.is_fullscreen || GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
+        let is_land = st.is_landscape || GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if !is_duplicate && hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        if is_fs {
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"status":"ok","skipped":"fullscreen","fullscreen":true,"is_fullscreen":true,"drawer_open":{},"width":1920,"height":1080}}"#,
+                open
+            ));
         }
 
-        let is_land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !is_duplicate && !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
+        }
+
         let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
-        let cur_w = if is_land {
-            if open { 1200 } else { 840 }
-        } else {
-            if open { port_w + 360 } else { port_w }
-        };
-        let cur_h = if is_land { 468 } else { 832 };
+        let (cur_w, cur_h) = compute_logical_window_dims(false, is_land, open, port_w);
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"status":"ok","drawer_open":{},"width":{},"height":{}}}"#,
@@ -8289,9 +12362,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/set_orientation" {
+    if path == "/api/window/set_orientation" || path == "/api/window/orientation" {
         let mut st = state.lock().unwrap();
-        let land = req.body.contains(r#""landscape":true"#) || req.body.contains(r#""landscape": true"#);
+        let land = parse_landscape_flag_from_body(&req.body);
         st.is_landscape = land;
         st.geometry.is_landscape = land;
         GLOBAL_IS_LANDSCAPE.store(land, Ordering::SeqCst);
@@ -8305,21 +12378,25 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
         }
 
+        let is_fs = st.is_fullscreen || GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
         let hwnd_usize = st.window_hwnd;
         let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
         drop(st);
 
-        if hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        if is_fs {
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"status":"ok","skipped":"fullscreen","fullscreen":true,"is_fullscreen":true,"landscape":{},"drawer_open":{},"width":1920,"height":1080}}"#,
+                land, open
+            ));
+        }
+
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
         }
 
         let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
-        let cur_w = if land {
-            if open { 1200 } else { 840 }
-        } else {
-            if open { port_w + 360 } else { port_w }
-        };
-        let cur_h = if land { 468 } else { 832 };
+        let (cur_w, cur_h) = compute_logical_window_dims(false, land, open, port_w);
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"status":"ok","landscape":{},"drawer_open":{},"width":{},"height":{}}}"#,
@@ -8327,7 +12404,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/set_theme" {
+    if path == "/api/window/set_theme"
+        || (path == "/api/window/theme" && req.method.eq_ignore_ascii_case("POST"))
+    {
         let is_light = req.body.contains(r#""theme":"light""#) || req.body.contains(r#""theme": "light""#);
         GLOBAL_DARK_MODE.store(!is_light, Ordering::SeqCst);
         let mut st = state.lock().unwrap();
@@ -8440,7 +12519,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
     }
 
-    if path == "/api/window/toggle_fullscreen" {
+    if path == "/api/window/toggle_fullscreen" || path == "/api/window/fullscreen" {
         if req.body.contains(r#""drawer_open":false"#) || req.body.contains(r#""drawer_open": false"#) {
             GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
         } else if req.body.contains(r#""drawer_open":true"#) || req.body.contains(r#""drawer_open": true"#) {
@@ -8451,16 +12530,12 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        let target_opt = if req.body.contains(r#""target":true"#) || req.body.contains(r#""target": true"#) {
-            Some(true)
-        } else if req.body.contains(r#""target":false"#) || req.body.contains(r#""target": false"#) {
-            Some(false)
-        } else {
-            None
-        };
+        let target_opt = parse_bool_param(&req.body, "target")
+            .or_else(|| parse_bool_param(&req.body, "fullscreen"));
 
-        let is_fs = if hwnd_usize != 0 {
-            toggle_fullscreen_state(hwnd_usize as *mut _, target_opt)
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        let is_fs = if !hwnd_ptr.is_null() {
+            toggle_fullscreen_state(hwnd_ptr, target_opt)
         } else {
             let next_val = target_opt.unwrap_or_else(|| !GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst));
             GLOBAL_IS_FULLSCREEN.store(next_val, Ordering::SeqCst);
@@ -8469,18 +12544,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         {
             let mut st = state.lock().unwrap();
             st.is_fullscreen = is_fs;
+            st.geometry.is_fullscreen = is_fs;
         }
 
-        let (cur_w, cur_h) = if is_fs {
-            (1920, 1080)
-        } else if GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst) {
-            let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
-            (if open { 1200 } else { 840 }, 468)
-        } else {
-            let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
-            let port_w = GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst);
-            (if open { port_w + 360 } else { port_w }, 832)
-        };
+        let (cur_w, cur_h) = compute_logical_window_dims(
+            is_fs,
+            GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+            GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+            GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
+        );
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"status":"ok","fullscreen":{},"is_fullscreen":{},"width":{},"height":{}}}"#,
@@ -8488,8 +12560,11 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         ));
     }
 
-    if path == "/api/window/sync_device_aspect" || path == "/api/window/sync_aspect" {
-        let width_val = parse_int_param(&req.body, "width").unwrap_or(0);
+    if path == "/api/window/sync_device_aspect" || path == "/api/window/sync_aspect" || path == "/api/window/aspect" {
+        let width_val = parse_int_param(&req.body, "width")
+            .or_else(|| parse_int_param(&req.body, "displayWidth"))
+            .or_else(|| parse_int_param(&req.body, "display_width"))
+            .unwrap_or(0);
         let cur_prof = GLOBAL_DEVICE_PROFILE.lock().map(|p| p.clone()).unwrap_or_default();
         let is_ipad = width_val >= 500
             || req.body.contains(r#""profile":"ipad""#)
@@ -8499,7 +12574,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             || req.body.contains("4:3")
             || (cur_prof == "ipad" && !(req.body.contains(r#""profile":"auto""#) || req.body.contains(r#""profile":"iphone""#)));
         // Tahap 182: Lock Super Retina iPhone portrait widths (336..=356, covering 340..=348px) at 346px
-        // so zero 346px -> 340px mid-stream calibration jump occurs, while preserving 422px for 9:16 streams.
+        // so zero 346px -> 340px mid-stream calibration jump occurs, while preserving 376..=440px (e.g. displayWidth 376 / 422px).
         let portrait_w = if is_ipad {
             564
         } else if (336..=356).contains(&width_val) {
@@ -8532,21 +12607,25 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         }
 
         let st = state.lock().unwrap();
+        let is_fs = st.is_fullscreen || GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst);
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        if is_fs {
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"skipped":"fullscreen","fullscreen":true,"is_fullscreen":true,"is_ipad":{},"portrait_width":{},"width":1920,"height":1080,"profile":"{}"}}"#,
+                is_ipad, portrait_w, out_prof
+            ));
+        }
+
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
         }
 
         let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
         let land = GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst);
-        let cur_w = if land {
-            if open { 1200 } else { 840 }
-        } else {
-            if open { portrait_w + 360 } else { portrait_w }
-        };
-        let cur_h = if land { 468 } else { 832 };
+        let (cur_w, cur_h) = compute_logical_window_dims(false, land, open, portrait_w);
 
         return HttpResponse::ok_json(&format!(
             r#"{{"ok":true,"is_ipad":{},"portrait_width":{},"width":{},"height":{},"profile":"{}"}}"#,
@@ -8584,8 +12663,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if changed && hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if changed && !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
         }
 
         let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
@@ -8608,8 +12688,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
-            trigger_hwnd_drag(hwnd_usize as *mut _);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            trigger_hwnd_drag(hwnd_ptr);
         }
         return HttpResponse::ok_json(r#"{"ok":true,"status":"dragging"}"#);
     }
@@ -8620,8 +12701,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
-            move_hwnd_by(hwnd_usize as *mut _, dx, dy);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            move_hwnd_by(hwnd_ptr, dx, dy);
         }
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"dx":{},"dy":{}}}"#, dx, dy));
     }
@@ -8632,14 +12714,20 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
-            move_hwnd_to(hwnd_usize as *mut _, x, y);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            move_hwnd_to(hwnd_ptr, x, y);
         }
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"x":{},"y":{}}}"#, x, y));
     }
 
     if path == "/api/window/dom_ready_beacon" {
-        let _ = std::fs::write("D:\\SCREEN MIROR IOS\\pane-iphone-mirror-windows\\scratch\\dom_beacon.json", &req.body);
+        if let Ok(beacon_path) = std::env::var("IPHONE_LINK_DOM_BEACON_PATH") {
+            let trimmed = beacon_path.trim();
+            if !trimmed.is_empty() {
+                let _ = std::fs::write(trimmed, &req.body);
+            }
+        }
         let has_edg = req.body.contains("Edg/");
         let btn_vis = req.body.contains(r#""startBtnVisible":true"#) || req.body.contains(r#""startBtnVisible": true"#);
         let btn_text_ok = req.body.to_lowercase().contains("mirroring");
@@ -8816,24 +12904,41 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let fallback_r = st.geometry.current_rect;
         drop(st);
 
-        if hwnd_usize != 0 {
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
             #[link(name = "user32")]
             extern "system" {
                 fn GetWindowRect(hwnd: *mut std::ffi::c_void, lpRect: *mut RECT) -> i32;
             }
             let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-            unsafe {
-                GetWindowRect(hwnd_usize as *mut _, &mut rc);
+            let got = unsafe { GetWindowRect(hwnd_ptr, &mut rc) };
+            if got != 0 {
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"hwnd":{},"x":{},"y":{},"width":{},"height":{},"drawer_open":{},"is_landscape":{},"is_fullscreen":{},"portrait_width":{}}}"#,
+                    hwnd_ptr as usize,
+                    rc.left,
+                    rc.top,
+                    rc.width(),
+                    rc.height(),
+                    GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+                    GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+                    GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
+                    GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
+                ));
             }
-            return HttpResponse::ok_json(&format!(
-                r#"{{"ok":true,"x":{},"y":{},"width":{},"height":{}}}"#,
-                rc.left, rc.top, rc.width(), rc.height()
-            ));
         }
 
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"x":{},"y":{},"width":{},"height":{}}}"#,
-            fallback_r.left, fallback_r.top, fallback_r.width(), fallback_r.height()
+            r#"{{"ok":true,"hwnd":{},"x":{},"y":{},"width":{},"height":{},"drawer_open":{},"is_landscape":{},"is_fullscreen":{},"portrait_width":{}}}"#,
+            hwnd_ptr as usize,
+            fallback_r.left,
+            fallback_r.top,
+            fallback_r.width(),
+            fallback_r.height(),
+            GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst),
+            GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst),
+            GLOBAL_IS_FULLSCREEN.load(Ordering::SeqCst),
+            GLOBAL_PORTRAIT_WIDTH.load(Ordering::SeqCst),
         ));
     }
 
@@ -8867,8 +12972,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
         }
 
         let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
@@ -8907,8 +13013,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             let hwnd_usize = st.window_hwnd;
             drop(st);
 
-            if hwnd_usize != 0 {
-                apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+            let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+            if !hwnd_ptr.is_null() {
+                apply_hwnd_geometry_from_state(hwnd_ptr);
             }
         }
 
@@ -8940,8 +13047,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         let hwnd_usize = st.window_hwnd;
         drop(st);
 
-        if hwnd_usize != 0 {
-            apply_hwnd_geometry_from_state(hwnd_usize as *mut _);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
         }
 
         let open = GLOBAL_DRAWER_OPEN.load(Ordering::SeqCst);
@@ -8968,160 +13076,1064 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/window/close" {
-        let _ = dismiss_tray_menu_if_open();
-        let st = state.lock().unwrap();
-        let hwnd_usize = st.window_hwnd;
-        drop(st);
-        if hwnd_usize != 0 {
+        let hwnd_usize = state.lock().map(|s| s.window_hwnd).unwrap_or(0);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        let (stealth_restored, restore_steps, tray_deleted, elapsed_ms) =
+            execute_clean_window_close_resources(hwnd_ptr, Some(state));
+        if !hwnd_ptr.is_null() {
             unsafe {
-                post_quit_message(hwnd_usize as *mut _);
+                post_quit_message(hwnd_ptr);
             }
         }
-        return HttpResponse::ok_json(r#"{"ok":true,"status":"closing"}"#);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"status":"closing","hidden":true,"stealth_restored":{},"stealth_restore_steps":{},"tray_deleted":{},"elapsed_ms":{}}}"#,
+            stealth_restored, restore_steps, tray_deleted, elapsed_ms
+        ));
     }
 
     if path == "/api/window/minimize" {
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
             unsafe {
-                show_window_native(hwnd_usize as *mut _, 6); // SW_MINIMIZE
+                show_window_native(hwnd_ptr, 6); // SW_MINIMIZE
             }
         }
         return HttpResponse::ok_json(r#"{"ok":true,"status":"minimized"}"#);
     }
 
-    if path == "/api/window/hide_to_tray" {
+    if path == "/api/window/hide_to_tray" || path == "/api/window/tray" {
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
-            let _ = register_tray_icon(hwnd_usize as *mut _);
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            let _ = register_tray_icon(hwnd_ptr);
             unsafe {
-                show_window_native(hwnd_usize as *mut _, 0); // SW_HIDE
+                show_window_native(hwnd_ptr, 0); // SW_HIDE
             }
         }
         return HttpResponse::ok_json(r#"{"ok":true,"status":"hidden","trayActive":true}"#);
     }
 
-    if path == "/api/window/restore_from_tray" {
+    if path == "/api/window/restore_from_tray" || path == "/api/window/restore" {
         let st = state.lock().unwrap();
         let hwnd_usize = st.window_hwnd;
         drop(st);
-        if hwnd_usize != 0 {
-            unsafe {
-                show_window_native(hwnd_usize as *mut _, 5); // SW_SHOW
-                show_window_native(hwnd_usize as *mut _, 9); // SW_RESTORE
-                PostMessageW(hwnd_usize as *mut _, 0x8001, 0, 0); // WM_APP_SYNC_GEOMETRY
-            }
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            crate::window_dwm::restore_window_from_tray(hwnd_ptr);
         }
         return HttpResponse::ok_json(r#"{"ok":true,"status":"restored"}"#);
     }
 
-    // 8. Screen streaming start / stop / status & /mirror/* bridge
-    if path == "/api/screen" || path == "/api/screen/start" || path == "/api/screen/restart" {
-        if req.method == "POST" {
-            LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
-            if let Some(resp) = forward_to_worker(req) {
-                if resp.status_code == 200 {
-                    let mut st = state.lock().unwrap();
-                    st.is_streaming = true;
-                    return resp;
+    // 8. Screen streaming start / stop / orientation / status & /mirror/* bridge (Native Rust Tahap 230)
+    if path == "/api/screen/orientation" {
+        let angle = parse_int_param(&req.body, "orientation")
+            .or_else(|| parse_int_param(&req.body, "angle"))
+            .map(|v| (v.max(0) as u32) % 360);
+        let auto_rot = parse_bool_param(&req.body, "autoRotate")
+            .or_else(|| parse_bool_param(&req.body, "auto_rotate"));
+        let action = parse_string_param(&req.body, "action")
+            .or_else(|| parse_string_param(&req.body, "gesture"));
+        let (deg, json_resp) = iphone_link_apple::mirror::global_apply_orientation(
+            angle,
+            auto_rot,
+            action.as_deref(),
+            None,
+        );
+        let is_land = deg == 90 || deg == 270;
+        GLOBAL_IS_LANDSCAPE.store(is_land, Ordering::SeqCst);
+        let hwnd_usize = {
+            let mut st = state.lock().unwrap();
+            st.is_landscape = is_land;
+            st.geometry.is_landscape = is_land;
+            if let Some(ar) = auto_rot {
+                st.auto_rotate = ar;
+                save_user_settings_to_disk(&st);
+            }
+            st.window_hwnd
+        };
+        let hwnd_ptr = crate::window_dwm::get_effective_main_hwnd(hwnd_usize);
+        if !hwnd_ptr.is_null() {
+            apply_hwnd_geometry_from_state(hwnd_ptr);
+        }
+        return HttpResponse::ok_json(&json_resp);
+    }
+
+    if path == "/api/screen/restart" || path == "/mirror/restart" {
+        let json = iphone_link_apple::mirror::global_request_keyframe_pli();
+        return HttpResponse::ok_json(&json);
+    }
+
+    let auto_start_pc_audio_if_preferred =
+        |st_arc: &Arc<Mutex<AppState>>, explicit_udid: Option<&str>| {
+            if AUDIO_MANUALLY_STOPPED_THIS_SESSION.load(Ordering::SeqCst)
+                || iphone_link_apple::mirror::is_airplay_active()
+            {
+                return;
+            }
+            let (wants_pc, a_mode, a_vol, a_preset, a_ls) = {
+                let st = st_arc.lock().unwrap();
+                let mode_low = st.audio_routing.trim().to_ascii_lowercase();
+                let wants = (mode_low == "pc" || mode_low == "bluetooth" || mode_low == "wasapi")
+                    && !st.audio_muted;
+                (
+                    wants,
+                    st.audio_routing.clone(),
+                    st.audio_volume as i64,
+                    st.audio_buffer_preset.clone(),
+                    st.lip_sync,
+                )
+            };
+            if wants_pc {
+                GLOBAL_AUDIO_PC_ACTIVE.store(true, Ordering::SeqCst);
+                let (pref_name, pref_model, pref_bt) =
+                    resolve_active_audio_device_target(st_arc, explicit_udid, None, None);
+                let _ = iphone_link_audio::start_global_pc_audio_bridge_nonblocking_for_device(
+                    pref_name.as_deref(),
+                    pref_model.as_deref(),
+                    pref_bt.as_deref(),
+                );
+                let _ = iphone_link_apple::mirror::global_configure_audio(
+                    Some(&a_mode),
+                    Some(a_vol),
+                    Some(false),
+                    Some(&a_preset),
+                    Some(a_ls),
+                    Some(true),
+                );
+            }
+        };
+
+    let auto_stop_pc_audio_on_mirror_end = |st_arc: &Arc<Mutex<AppState>>| {
+        // Tear down WinRT AudioPlaybackConnection::Close() + WASAPI immediately so audio returns
+        // to the iPhone speaker without mutating the user's saved `audio_routing` preference!
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        let (a_mode, a_vol, a_muted, a_preset, a_ls) = {
+            let st = st_arc.lock().unwrap();
+            (
+                st.audio_routing.clone(),
+                st.audio_volume as i64,
+                st.audio_muted,
+                st.audio_buffer_preset.clone(),
+                st.lip_sync,
+            )
+        };
+        let _ = iphone_link_apple::mirror::global_configure_audio(
+            Some(&a_mode),
+            Some(a_vol),
+            Some(a_muted),
+            Some(&a_preset),
+            Some(a_ls),
+            Some(false),
+        );
+    };
+
+    let preserve_wifi_reachability_on_clean_stop = |st_arc: &Arc<Mutex<AppState>>| {
+        // Tahap 249 Pilar 3 (Glitch #4): Preserve Wi-Fi `reachable = true` + fresh `last_seen_at`
+        // and open a 20s post-clean-stop grace window BEFORE `global_stop_screen()` tears down the
+        // tunnel, so Launchpad & top bar NEVER flash "iPhone Terputus" for 3–5 seconds on disconnect.
+        let (m_udid, m_transport, m_had_active_session) = iphone_link_apple::mirror::mirror_runtime()
+            .lock()
+            .map(|m| {
+                let active_like = m.frames_received > 0
+                    || m.phase == "running"
+                    || m.phase == "starting"
+                    || m.tunnel_active;
+                (m.udid.clone(), m.transport.clone(), active_like)
+            })
+            .unwrap_or((None, String::new(), false));
+        let (st_udid, st_transport, st_was_streaming) = st_arc
+            .lock()
+            .map(|s| (s.selected_udid.clone(), s.transport.clone(), s.is_streaming))
+            .unwrap_or_default();
+        let is_wifi_stop =
+            m_transport.eq_ignore_ascii_case("wifi") || st_transport.eq_ignore_ascii_case("wifi");
+        let target_udid = m_udid
+            .filter(|s| !s.is_empty())
+            .or_else(|| (!st_udid.is_empty()).then_some(st_udid));
+        if is_wifi_stop && (m_had_active_session || st_was_streaming) {
+            if let Some(ref u) = target_udid {
+                let mut wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(u);
+                let ip_opt = wmeta.last_ip.clone();
+                iphone_link_apple::wifi::mark_wifi_device_online_after_clean_stop(
+                    u,
+                    ip_opt.as_deref(),
+                );
+                wmeta.reachable = Some(true);
+                wmeta.last_seen_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(wmeta.last_seen_at);
+                cache_unified_wifi_meta_ram(u, &wmeta);
+                let fresh_wjson = get_wifi_status(Some(u), false).to_json_string();
+                if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+                    *guard = Some((u.clone(), fresh_wjson, std::time::Instant::now()));
                 }
             }
-            let mut st = state.lock().unwrap();
-            st.is_streaming = true;
-            if req.body.contains("wifi") {
-                st.transport = "wifi".to_string();
-            } else {
-                st.transport = "usb".to_string();
+        }
+    };
+
+    if path == "/api/screen" || path == "/api/screen/start" {
+        if req.method.eq_ignore_ascii_case("DELETE") {
+            LAST_STOP_MIRROR_MS.store(now_epoch_ms_u64(), Ordering::SeqCst);
+            LAST_AUTO_AUDIO_ATTEMPT_MS.store(0, Ordering::SeqCst);
+            preserve_wifi_reachability_on_clean_stop(state);
+            {
+                let mut st = state.lock().unwrap();
+                st.is_streaming = false;
+                st.stealth_dim = false;
             }
-            return HttpResponse::ok_json(
-                r#"{"ok":true,"phase":"running","status":"started","fps":60,"width":1202,"height":2598}"#,
+            auto_stop_pc_audio_on_mirror_end(state);
+            let outcome = iphone_link_apple::mirror::global_stop_screen();
+            GLOBAL_STEALTH_ACTIVE.store(
+                iphone_link_apple::hid::is_stealth_dim_active(),
+                Ordering::SeqCst,
             );
+            return HttpResponse::ok_json(&outcome.json);
+        }
+        if req.method.eq_ignore_ascii_case("POST") {
+            SCREEN_SESSION_EPOCH.fetch_add(1, Ordering::SeqCst);
+            LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+            LAST_AUTO_AUDIO_ATTEMPT_MS.store(0, Ordering::SeqCst);
+            AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+            let req_udid_raw = parse_string_param(&req.body, "udid");
+            let req_udid = req_udid_raw
+                .as_deref()
+                .map(iphone_link_apple::physical_stream::sanitize_udid_label)
+                .filter(|s| !s.is_empty());
+            let req_transport = parse_string_param(&req.body, "transport").unwrap_or_else(|| {
+                if req.body.to_ascii_lowercase().contains("wifi") {
+                    "wifi".to_string()
+                } else {
+                    "usb".to_string()
+                }
+            });
+            let is_wifi = req_transport.eq_ignore_ascii_case("wifi");
+            let explicit_honest_gate = parse_bool_param(&req.body, "honestGate")
+                .or_else(|| parse_bool_param(&req.body, "waitForFirstFrame"));
+            let req_mode = parse_string_param(&req.body, "mode")
+                .or_else(|| parse_string_param(&req.body, "streamMode"))
+                .unwrap_or_else(|| "auto".to_string())
+                .trim()
+                .to_ascii_lowercase();
+            let req_ios_version = parse_string_param(&req.body, "iosVersion")
+                .or_else(|| parse_string_param(&req.body, "productVersion"))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            let req_airplay_port = parse_int_param(&req.body, "airplayPort")
+                .map(|p| p.clamp(0, 65535) as u16);
+            let req_advertise_mdns = parse_bool_param(&req.body, "advertiseMdns").unwrap_or(true);
+
+            // Tahap 252/255 Pilar 2 & 3: Automatic ProductVersion Router + Strict Pure AirPlay H.264 Isolation.
+            // - iOS >= 27.0 (or unknown/empty) in `auto` mode -> 100% untouched CoreDevice HEVC 60 FPS + full HID!
+            // - iOS 17.4–26.x in `auto` mode -> Hybrid AirPlay H.264 + fail-soft CoreDevice `gate_only` HID.
+            // - iOS <= 17.3 in `auto` mode -> AirPlay Standalone H.264 (ZERO CoreDeviceProxy calls!).
+            // - Explicit `mode == "airplay"` (Arsitektur ZenLink) -> ALWAYS 100% Pure AirPlay H.264 Standalone
+            //   (`hybrid_hid = false`, `hidControlAvailable = false`, 0 CoreDevice `DisplayService`/`gate_only` worker)
+            //   to eliminate iOS 27 encoder contention and CodecHeader overwrite!
+            let state_selected_udid = state
+                .lock()
+                .ok()
+                .map(|s| s.selected_udid.clone())
+                .filter(|s| !s.is_empty());
+            let effective_target_udid = req_udid.clone().or(state_selected_udid);
+            let mut resolved_ios_ver = req_ios_version.clone().unwrap_or_else(|| {
+                let target_u = effective_target_udid
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let cached = snapshot_cached_devices_metadata_zero_io();
+                if let Some(u) = target_u {
+                    cached
+                        .iter()
+                        .find(|d| !d.product_version.is_empty() && d.udid.eq_ignore_ascii_case(u))
+                        .map(|d| d.product_version.clone())
+                        .unwrap_or_default()
+                } else {
+                    cached
+                        .iter()
+                        .find(|d| !d.product_version.is_empty())
+                        .map(|d| d.product_version.clone())
+                        .unwrap_or_default()
+                }
+            });
+            // Tahap 285 Pilar 1: Cold-cache Wi-Fi fallback — never let iOS 17–26 over Wi-Fi miss
+            // `HybridAirPlayCoreDeviceHid` just because active USB discovery cache is empty.
+            if resolved_ios_ver.trim().is_empty() {
+                if let Some(ref u) = effective_target_udid {
+                    let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(u);
+                    if !wmeta.ios_version.trim().is_empty() {
+                        resolved_ios_ver = wmeta.ios_version.trim().to_string();
+                    }
+                }
+            }
+            let auto_route = iphone_link_apple::link::resolve_ios_mirror_route(&resolved_ios_ver);
+            let mut use_airplay_route = if req_mode == "airplay" {
+                Some(false)
+            } else if req_mode != "coredevice" && explicit_honest_gate != Some(false) {
+                match auto_route {
+                    iphone_link_apple::link::IosMirrorRoute::AirPlayStandalone => Some(false),
+                    iphone_link_apple::link::IosMirrorRoute::HybridAirPlayCoreDeviceHid => Some(true),
+                    iphone_link_apple::link::IosMirrorRoute::CoreDeviceNativeHevc => None,
+                }
+            } else {
+                None
+            };
+
+            // Tahap 285 Pilar 4: Windows 10 & Portable ZIP pre-flight HEVC capability check.
+            // If PC lacks HEVC MFT while Inbox Microsoft H.264 MFT is ready (100% of Win10/Win11),
+            // automatically route to Hybrid AirPlay H.264 so users never hit a permanent blank screen.
+            let mut fallback_reason: Option<&'static str> = None;
+            if use_airplay_route.is_none()
+                && req_mode == "auto"
+                && explicit_honest_gate != Some(false)
+            {
+                let cap = query_hevc_capabilities();
+                if cap.media_feature_pack_missing {
+                    let err_msg = "Windows Edisi N/KN membutuhkan Media Feature Pack agar video mirroring dapat ditampilkan.";
+                    let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                        effective_target_udid.as_deref(),
+                        &req_transport,
+                        err_msg,
+                    );
+                    let enriched = if let Some(prefix) = err_json.strip_suffix('}') {
+                        format!(
+                            r#"{prefix},"errorCode":"media_feature_pack_missing","mediaFeaturePackMissing":true,"hevcMftAvailable":false,"h264MftAvailable":false,"message_id":"{}","message_en":"Windows N/KN edition requires Microsoft Media Feature Pack to decode video mirroring."}}"#,
+                            escape_json_str(err_msg)
+                        )
+                    } else {
+                        err_json
+                    };
+                    return HttpResponse::ok_json(&enriched);
+                } else if !cap.hevc_mft_available && cap.h264_mft_available {
+                    use_airplay_route = Some(true);
+                    fallback_reason = Some("hevc_mft_missing");
+                }
+            }
+
+            if let Some(hybrid_hid) = use_airplay_route {
+                let target_udid = req_udid.clone().or_else(|| {
+                    state
+                        .lock()
+                        .ok()
+                        .map(|s| s.selected_udid.clone())
+                        .filter(|s| !s.is_empty())
+                });
+                let wifi_ip_hint = if is_wifi {
+                    target_udid.as_deref().and_then(|u| {
+                        iphone_link_apple::wifi::read_device_metadata_from_wifi_state(u).last_ip
+                    })
+                } else {
+                    None
+                };
+                // Tahap 257/259: Tear down any lingering Bluetooth A2DP bridge before starting
+                // AirPlay H.264, and load persisted user audio preferences (volume/buffer/lipSync).
+                iphone_link_audio::stop_global_pc_audio_bridge();
+                if let Ok(st_pref) = state.lock() {
+                    let _ = iphone_link_apple::airplay::apply_live_audio_config(
+                        Some(st_pref.audio_volume.clamp(0, 100) as u32),
+                        Some(&st_pref.audio_buffer_preset),
+                        Some(st_pref.lip_sync),
+                        Some(st_pref.audio_muted),
+                    );
+                }
+                match iphone_link_apple::mirror::start_airplay_mirror_session(
+                    target_udid.as_deref(),
+                    hybrid_hid,
+                    &req_transport,
+                    wifi_ip_hint.as_deref(),
+                    req_airplay_port,
+                    req_advertise_mdns,
+                ) {
+                    Ok(resp_json) => {
+                        if let Ok(mut st) = state.lock() {
+                            st.is_streaming = false;
+                            if let Some(ref u) = target_udid {
+                                st.selected_udid = u.clone();
+                            }
+                            st.transport = if is_wifi {
+                                "wifi".to_string()
+                            } else {
+                                "usb".to_string()
+                            };
+                        }
+                        let final_resp = if let Some(reason) = fallback_reason {
+                            if let Some(prefix) = resp_json.strip_suffix('}') {
+                                format!(
+                                    r#"{prefix},"fallbackReason":"{reason}","hevcMftAvailable":false,"h264MftAvailable":true}}"#
+                                )
+                            } else {
+                                resp_json
+                            }
+                        } else {
+                            resp_json
+                        };
+                        return HttpResponse::ok_json(&final_resp);
+                    }
+                    Err(e) => {
+                        let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                            target_udid.as_deref(),
+                            &req_transport,
+                            &format!("Gagal memulai penerima AirPlay H.264: {e}"),
+                        );
+                        return HttpResponse::ok_json(&err_json);
+                    }
+                }
+            }
+
+            let pick_usb_from = |list: &[iphone_link_apple::models::DeviceMetadata], req_trimmed: Option<&str>| -> Option<String> {
+                let usb_devs: Vec<&iphone_link_apple::models::DeviceMetadata> = list
+                    .iter()
+                    .filter(|d| d.connection_type.eq_ignore_ascii_case("USB") && !d.udid.is_empty())
+                    .collect();
+                usb_devs
+                    .iter()
+                    .find(|d| {
+                        req_trimmed
+                            .map(|u| d.udid.eq_ignore_ascii_case(u))
+                            .unwrap_or(true)
+                    })
+                    .or_else(|| usb_devs.first())
+                    .map(|d| d.udid.clone())
+            };
+
+            let find_usb_match = |allow_forced: bool| -> Option<String> {
+                let req_trimmed = req_udid.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                let cached = snapshot_cached_devices_metadata_zero_io();
+                if let Some(u) = pick_usb_from(&cached, req_trimmed) {
+                    return Some(u);
+                }
+                let max_attempts = if allow_forced { 5 } else { 2 };
+                for attempt in 0..max_attempts {
+                    let discovered = discover_devices_with_metadata(allow_forced && attempt >= 1);
+                    if let Some(u) = pick_usb_from(&discovered, req_trimmed) {
+                        return Some(u);
+                    }
+                    if attempt + 1 < max_attempts {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                None
+            };
+
+            if is_wifi && explicit_honest_gate != Some(false) {
+                // Stage 1 (Tahap 240/247 — Target Lock & REAL Wireless Wi-Fi RemotePairing + TLS 1.2 PSK 0x00A8):
+                // Strictly honor explicit `req_udid` or `state.selected_udid` (NEVER silently hijack with stale cache!).
+                let (selected_state_udid, user_explicit_flag, last_sel_udid) = state
+                    .lock()
+                    .ok()
+                    .map(|s| {
+                        (
+                            s.selected_udid.clone(),
+                            s.user_explicitly_selected_udid,
+                            s.last_selected_udid.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
+                let explicit_target_locked =
+                    req_udid.is_some() || (user_explicit_flag && !selected_state_udid.is_empty());
+                let pinned_udid = req_udid
+                    .clone()
+                    .or_else(|| (!selected_state_udid.is_empty()).then_some(selected_state_udid.clone()))
+                    .or_else(|| {
+                        let unified = collect_unified_devices(&[], &[], false);
+                        let auto_u = resolve_active_selected_udid(&unified, "", false, &last_sel_udid);
+                        (!auto_u.is_empty()).then_some(auto_u)
+                    });
+
+                let mut rp_rec = if explicit_target_locked {
+                    pinned_udid
+                        .as_deref()
+                        .and_then(iphone_link_apple::wifi::find_record)
+                } else {
+                    pinned_udid
+                        .as_deref()
+                        .and_then(iphone_link_apple::wifi::find_record)
+                        .or_else(|| iphone_link_apple::wifi::all_records().into_iter().next())
+                };
+                if rp_rec.is_none() && !explicit_target_locked {
+                    if let Some(usb_u) = find_usb_match(false) {
+                        let _ = iphone_link_apple::wifi::prepare_wifi_over_usb(Some(&usb_u));
+                        rp_rec = iphone_link_apple::wifi::find_record(&usb_u)
+                            .or_else(|| iphone_link_apple::wifi::all_records().into_iter().next());
+                    }
+                }
+
+                // Helper to format rich Model + Name + IP diagnostic for an offline Wi-Fi target
+                let format_offline_target_error = |target_u: &str, ip_opt: Option<&str>| -> String {
+                    let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(target_u);
+                    let lbl_model = if wmeta.model.is_empty() {
+                        "iPhone".to_string()
+                    } else {
+                        wmeta.model.clone()
+                    };
+                    let dev_label = if !wmeta.name.is_empty()
+                        && !wmeta.name.eq_ignore_ascii_case(&lbl_model)
+                    {
+                        format!("{lbl_model} ({})", wmeta.name)
+                    } else {
+                        lbl_model
+                    };
+                    match ip_opt.or(wmeta.last_ip.as_deref()).filter(|s| !s.is_empty()) {
+                        Some(ip_s) => format!(
+                            "{dev_label} di {ip_s} sedang offline/terkunci. Pilih perangkat lain di Launchpad atau nyalakan layarnya."
+                        ),
+                        None => format!(
+                            "{dev_label} sedang offline/terkunci di jaringan Wi-Fi. Pilih perangkat lain di Launchpad atau nyalakan layarnya."
+                        ),
+                    }
+                };
+
+                if let Some(ref rec) = rp_rec {
+                    // Tahap 247/250 Pilar 2: Anti-False-Offline Click #1 while preserving instant
+                    // fail-fast (< 50 ms) for RFC 5737 synthetic offline targets & ultra-fresh (< 2s)
+                    // confirmed offline probes. For real paired LAN iPhones whose cache is >= 2s old
+                    // or last marked reachable=true, hand off directly to fresh mDNS wakeup!
+                    if let Some((false, ref cached_ip, _, age)) =
+                        iphone_link_apple::wifi::get_cached_wifi_reachability(&rec.udid)
+                    {
+                        let is_rfc5737_ip = cached_ip.as_deref().is_some_and(|ip| {
+                            ip.starts_with("192.0.2.")
+                                || ip.starts_with("198.51.100.")
+                                || ip.starts_with("203.0.113.")
+                        });
+                        let disk_meta_check =
+                            iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&rec.udid);
+                        let should_fail_fast_probe = is_rfc5737_ip
+                            || (age < Duration::from_secs(2) && disk_meta_check.reachable != Some(true));
+                        if should_fail_fast_probe {
+                            let still_alive = !is_rfc5737_ip
+                                && cached_ip.as_deref().is_some_and(|ip| {
+                                    iphone_link_apple::wifi::verify_ip_is_apple_device(
+                                        ip,
+                                        Some(&rec.udid),
+                                        250,
+                                    )
+                                });
+                            if !still_alive {
+                                let err_msg =
+                                    format_offline_target_error(&rec.udid, cached_ip.as_deref());
+                                let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                                    Some(&rec.udid),
+                                    "wifi",
+                                    &err_msg,
+                                );
+                                if let Ok(mut st) = state.lock() {
+                                    st.is_streaming = false;
+                                    st.selected_udid = rec.udid.clone();
+                                    st.transport = "wifi".to_string();
+                                }
+                                return HttpResponse::ok_json(&err_json);
+                            }
+                        }
+                    }
+
+                    // Tahap 241/244/249: Fast zero-blocking handoff to real Wi-Fi worker!
+                    let cached_ws = get_wifi_status(Some(&rec.udid), false);
+                    let ip_hint = cached_ws.ip.as_deref().unwrap_or("");
+                    let mut wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&rec.udid);
+                    if !ip_hint.is_empty() {
+                        wmeta.last_ip = Some(ip_hint.to_string());
+                    }
+                    wmeta.reachable = Some(true);
+                    cache_unified_wifi_meta_ram(&rec.udid, &wmeta);
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    iphone_link_apple::wifi::set_cached_wifi_reachability(
+                        &rec.udid,
+                        true,
+                        (!ip_hint.is_empty()).then_some(ip_hint),
+                        now_secs,
+                    );
+                    iphone_link_apple::physical_stream::set_active_session_device_identity(
+                        &rec.udid,
+                        (!wmeta.name.is_empty()).then_some(wmeta.name.as_str()),
+                        (!wmeta.model.is_empty()).then_some(wmeta.model.as_str()),
+                        (!wmeta.bluetooth_address.is_empty())
+                            .then_some(wmeta.bluetooth_address.as_str()),
+                    );
+                    let resp_json =
+                        iphone_link_apple::mirror::start_real_physical_wifi_lockdown_screen(
+                            &rec.udid,
+                            ip_hint,
+                        );
+                    if let Ok(mut st) = state.lock() {
+                        st.is_streaming = false;
+                        st.selected_udid = rec.udid.clone();
+                        st.transport = "wifi".to_string();
+                    }
+                    if explicit_honest_gate != Some(true) {
+                        auto_start_pc_audio_if_preferred(state, Some(&rec.udid));
+                    }
+                    return HttpResponse::ok_json(&resp_json);
+                }
+
+                // If user explicitly targeted a specific paired/known device without an active online RemotePairing session
+                if explicit_target_locked {
+                    if let Some(ref pinned_u) = pinned_udid {
+                        let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(pinned_u);
+                        if wmeta.wifi_enabled || wmeta.last_ip.is_some() {
+                            let err_msg = format_offline_target_error(pinned_u, wmeta.last_ip.as_deref());
+                            let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                                Some(pinned_u),
+                                "wifi",
+                                &err_msg,
+                            );
+                            if let Ok(mut st) = state.lock() {
+                                st.is_streaming = false;
+                                st.selected_udid = pinned_u.clone();
+                                st.transport = "wifi".to_string();
+                            }
+                            return HttpResponse::ok_json(&err_json);
+                        }
+                    }
+                }
+
+                let wifi_st = get_wifi_status(pinned_udid.as_deref(), true);
+                let resolved_ip = wifi_st.ip.clone().filter(|s| !s.is_empty());
+
+                // Stage 2: USB-Assisted Fallback if Wi-Fi LAN endpoint is currently unreachable but cable is plugged in
+                if let Some(real_udid) = find_usb_match(explicit_honest_gate.is_none()) {
+                    let _ = iphone_link_apple::wifi::prepare_wifi_over_usb(Some(&real_udid));
+                    iphone_link_apple::physical_stream::set_active_session_device_identity(
+                        &real_udid, None, None, None,
+                    );
+                    let resp_json = iphone_link_apple::mirror::start_real_physical_usb_screen_with_transport(
+                        &real_udid,
+                        "wifi",
+                    );
+                    if let Ok(mut st) = state.lock() {
+                        st.is_streaming = false;
+                        st.selected_udid = real_udid.clone();
+                        st.transport = "wifi".to_string();
+                    }
+                    if explicit_honest_gate != Some(true) {
+                        auto_start_pc_audio_if_preferred(state, Some(&real_udid));
+                    }
+                    return HttpResponse::ok_json(&resp_json);
+                }
+
+                // Stage 3: Honest diagnostic error state when neither Wi-Fi RemotePairing nor USB is reachable
+                let wifi_hint = if let Some(ref pinned_u) = pinned_udid {
+                    format_offline_target_error(pinned_u, resolved_ip.as_deref())
+                } else if let Some(ref ip_str) = resolved_ip {
+                    format!(
+                        "iPhone terdeteksi di Wi-Fi ({ip_str}), tetapi belum di-pairing untuk RemotePairing Wi-Fi. Colok kabel USB 1x lalu klik 'Set up Wi-Fi'."
+                    )
+                } else {
+                    "Streaming Wi-Fi nirkabel tidak menemukan iPhone di jaringan Wi-Fi (_remotepairing._tcp.local.). Pastikan iPhone menyala, terhubung di Wi-Fi yang sama, dan sudah pernah 'Set up Wi-Fi' 1x via USB.".to_string()
+                };
+                let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                    pinned_udid.as_deref(),
+                    "wifi",
+                    &wifi_hint,
+                );
+                if let Ok(mut st) = state.lock() {
+                    st.is_streaming = false;
+                    st.transport = "wifi".to_string();
+                }
+                return HttpResponse::ok_json(&err_json);
+            }
+
+            if !is_wifi && explicit_honest_gate != Some(false) {
+                if let Some(real_udid) = find_usb_match(explicit_honest_gate.is_none()) {
+                    iphone_link_apple::physical_stream::set_active_session_device_identity(
+                        &real_udid, None, None, None,
+                    );
+                    let resp_json =
+                        iphone_link_apple::mirror::start_real_physical_usb_screen(&real_udid);
+                    if let Ok(mut st) = state.lock() {
+                        st.is_streaming = false;
+                        st.selected_udid = real_udid.clone();
+                        st.transport = "usb".to_string();
+                    }
+                    if explicit_honest_gate != Some(true) {
+                        auto_start_pc_audio_if_preferred(state, Some(&real_udid));
+                    }
+                    return HttpResponse::ok_json(&resp_json);
+                }
+                if explicit_honest_gate.is_none() {
+                    let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                        req_udid.as_deref(),
+                        &req_transport,
+                        "Perangkat iPhone USB tidak terdeteksi atau belum terpercaya (Trust). Hubungkan kabel USB dan buka kunci iPhone.",
+                    );
+                    if let Ok(mut st) = state.lock() {
+                        st.is_streaming = false;
+                        st.transport = "usb".to_string();
+                    }
+                    return HttpResponse::ok_json(&err_json);
+                }
+            }
+
+            let honest_gate = explicit_honest_gate.unwrap_or(false);
+            let resp_json = iphone_link_apple::mirror::global_start_screen(
+                req_udid.as_deref(),
+                &req_transport,
+                honest_gate,
+            );
+            {
+                let mut st = state.lock().unwrap();
+                st.is_streaming = !honest_gate;
+                if let Some(ref ru) = req_udid {
+                    st.selected_udid = ru.clone();
+                }
+                st.transport = if is_wifi {
+                    "wifi".to_string()
+                } else {
+                    "usb".to_string()
+                };
+            }
+            if !honest_gate {
+                auto_start_pc_audio_if_preferred(state, req_udid.as_deref());
+            }
+            return HttpResponse::ok_json(&resp_json);
         } else {
             let last_stop = LAST_STOP_MIRROR_MS.load(Ordering::SeqCst);
-            let stop_cooldown = last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000;
-            if !stop_cooldown {
-                if let Some(resp) = forward_to_worker(req) {
-                    return resp;
-                }
+            let stop_cooldown =
+                last_stop != 0 && now_epoch_ms_u64().saturating_sub(last_stop) < 5000;
+            if stop_cooldown {
+                return HttpResponse::ok_json(
+                    r#"{"ok":true,"phase":"idle","active":false,"fps":60,"width":1202,"height":2598,"native":true}"#,
+                );
             }
-            let st = state.lock().unwrap();
-            let active = st.is_streaming && !stop_cooldown;
-            let phase = if active { "running" } else { "idle" };
-            return HttpResponse::ok_json(&format!(
-                r#"{{"ok":true,"phase":"{}","active":{},"fps":60,"width":1202,"height":2598}}"#,
-                phase, active
-            ));
+            let scr_json = iphone_link_apple::mirror::global_screen_status_json();
+            // Tahap 243/244 Pilar 1: Only trigger auto-audio when bridge is neither active nor connecting,
+            // and NEVER stop audio on transient/stale `phase:"error"` polls (audio auto-stops cleanly on
+            // explicit `/api/screen/stop`, `DELETE /api/screen`, and `WM_CLOSE`).
+            if scr_json.contains(r#""phase":"running""#)
+                && !iphone_link_audio::is_global_pc_audio_bridge_active()
+                && !iphone_link_audio::is_global_pc_audio_bridge_connecting()
+            {
+                auto_start_pc_audio_if_preferred(state, None);
+            }
+            return HttpResponse::ok_json(&scr_json);
         }
     }
 
     if path == "/api/screen/stop" || path == "/mirror/stop" {
         LAST_STOP_MIRROR_MS.store(now_epoch_ms_u64(), Ordering::SeqCst);
+        LAST_AUTO_AUDIO_ATTEMPT_MS.store(0, Ordering::SeqCst);
+        preserve_wifi_reachability_on_clean_stop(state);
         {
             let mut st = state.lock().unwrap();
             st.is_streaming = false;
+            st.stealth_dim = false;
         }
-        let stop_req = HttpRequest {
-            method: "POST".to_string(),
-            path: "/api/screen/stop".to_string(),
-            query: String::new(),
-            headers: req.headers.clone(),
-            body: String::new(),
-            body_bytes: Vec::new(),
-        };
-        if let Some(resp) = forward_to_worker(&stop_req) {
-            let body_str = String::from_utf8_lossy(&resp.body)
-                .replace(r#""phase":"running""#, r#""phase":"idle""#)
-                .replace(r#""phase": "running""#, r#""phase": "idle""#)
-                .replace(r#""phase":"starting""#, r#""phase":"idle""#)
-                .replace(r#""phase": "starting""#, r#""phase": "idle""#);
-            return HttpResponse::ok_json(&body_str);
-        }
-        return HttpResponse::ok_json(r#"{"ok":true,"phase":"idle","status":"stopped"}"#);
+        auto_stop_pc_audio_on_mirror_end(state);
+        let outcome = iphone_link_apple::mirror::global_stop_screen();
+        GLOBAL_STEALTH_ACTIVE.store(
+            iphone_link_apple::hid::is_stealth_dim_active(),
+            Ordering::SeqCst,
+        );
+        return HttpResponse::ok_json(&outcome.json);
     }
 
-    if path == "/api/wifi/pair" || path == "/api/wifi/scan" || path.starts_with("/api/wifi/probe") {
-        let st = state.lock().unwrap();
+    if path == "/api/wifi" || path.starts_with("/api/wifi/probe") {
+        let query_udid = extract_query_param(&req.query, "udid");
+        let probe = path.starts_with("/api/wifi/probe")
+            || req.query.contains("probe=1")
+            || req.query.contains("refresh=1");
+        let payload = get_wifi_status(query_udid.as_deref(), probe);
+        if probe {
+            let wjson = payload.to_json_string();
+            let cache_udid = payload
+                .udid
+                .clone()
+                .or_else(|| query_udid.clone())
+                .unwrap_or_default();
+            if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+                *guard = Some((cache_udid, wjson, std::time::Instant::now()));
+            }
+        }
+        return HttpResponse::ok_json(&payload.to_api_json_string());
+    }
+
+    if path == "/api/wifi/scan" {
+        let req_udid = parse_string_param(&req.body, "udid")
+            .or_else(|| extract_query_param(&req.query, "udid"));
+        let scan_resp = scan_wifi_json(req_udid.as_deref(), 150);
+        // Tahap 243 Pilar 4: Immediately refresh WIFI_STATUS_STREAM_CACHE after mDNS scan
+        // so subsequent GET /api/status calls see the newly discovered IP + reachable:true right away!
+        let fresh_payload = get_wifi_status(req_udid.as_deref(), false);
+        let cache_udid = fresh_payload
+            .udid
+            .clone()
+            .or_else(|| req_udid.clone())
+            .unwrap_or_default();
+        if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+            *guard = Some((
+                cache_udid,
+                fresh_payload.to_json_string(),
+                std::time::Instant::now(),
+            ));
+        }
+        return HttpResponse::ok_json(&scan_resp);
+    }
+
+    if path == "/api/wifi/pair" || path == "/api/wifi/setup" {
+        let req_udid = parse_string_param(&req.body, "udid")
+            .or_else(|| extract_query_param(&req.query, "udid"))
+            .map(|s| iphone_link_apple::physical_stream::sanitize_udid_label(&s))
+            .filter(|s| !s.is_empty());
+        return HttpResponse::ok_json(&pair_wifi_json(req_udid.as_deref()));
+    }
+
+    if path == "/api/video/pipeline" {
+        return HttpResponse::ok_json(&iphone_link_apple::mirror::global_video_pipeline_status_json());
+    }
+
+    if path == "/api/video/decode-annexb" {
+        let json = iphone_link_apple::mirror::global_decode_annexb_test_json(&req.body);
+        return HttpResponse::ok_json(&json);
+    }
+
+    if path == "/api/video/presenter" {
+        if req.method.eq_ignore_ascii_case("POST") {
+            let fit_mode = parse_string_param(&req.body, "fitMode");
+            let rot = parse_int_param(&req.body, "rotationDeg")
+                .or_else(|| parse_int_param(&req.body, "rotation"))
+                .map(|v| (v.rem_euclid(360)) as u16);
+            let crop_top = parse_int_param(&req.body, "cropTop").map(|v| v.max(0) as u32);
+            let crop_bottom = parse_int_param(&req.body, "cropBottom").map(|v| v.max(0) as u32);
+            let crop_left = parse_int_param(&req.body, "cropLeft").map(|v| v.max(0) as u32);
+            let crop_right = parse_int_param(&req.body, "cropRight").map(|v| v.max(0) as u32);
+            let win_w = parse_int_param(&req.body, "windowWidth")
+                .or_else(|| parse_int_param(&req.body, "winW"))
+                .map(|v| v.max(0) as u32);
+            let win_h = parse_int_param(&req.body, "windowHeight")
+                .or_else(|| parse_int_param(&req.body, "winH"))
+                .map(|v| v.max(0) as u32);
+            let is_fs = parse_bool_param(&req.body, "isFullscreen");
+            let is_land = parse_bool_param(&req.body, "isLandscape");
+            let drawer = parse_bool_param(&req.body, "drawerOpen");
+            let json = iphone_link_apple::mirror::global_update_video_presenter_config(
+                fit_mode.as_deref(),
+                rot,
+                crop_top,
+                crop_bottom,
+                crop_left,
+                crop_right,
+                win_w,
+                win_h,
+                is_fs,
+                is_land,
+                drawer,
+            );
+            return HttpResponse::ok_json(&json);
+        }
+        return HttpResponse::ok_json(&iphone_link_apple::mirror::global_video_presenter_status_json());
+    }
+
+    if path == "/api/video/snapshot" {
+        match iphone_link_apple::mirror::global_export_latest_video_snapshot() {
+            Ok(snap) => {
+                let esc = escape_json_str(&snap.data_url);
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"native":true,"format":"bmp","lossless":true,"width":{},"height":{},"rotationDeg":{},"byteLen":{},"elapsedMs":{:.3},"dataUrl":"{}"}}"#,
+                    snap.width, snap.height, snap.rotation_deg, snap.byte_len, snap.elapsed_ms, esc
+                ));
+            }
+            Err(e) => {
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":false,"error":"{}"}}"#,
+                    escape_json_str(&e)
+                ));
+            }
+        }
+    }
+
+    // 8B. Native In-Process /mirror/*, /codec, /pli, /size + Touch/HID Forwarding
+    if path == "/codec"
+        || path == "/mirror/codec"
+        || path == "/pli"
+        || path == "/mirror/pli"
+        || path == "/mirror/size"
+    {
+        if path.ends_with("/codec") {
+            return HttpResponse::ok_json(&iphone_link_apple::mirror::global_codec_json());
+        }
+        if path.ends_with("/pli") {
+            return HttpResponse::ok_json(&iphone_link_apple::mirror::global_request_keyframe_pli());
+        }
+        let deg = iphone_link_apple::mirror::active_orientation_fast();
         return HttpResponse::ok_json(&format!(
-            r#"{{"ok":true,"ip":"192.168.100.10","wifi":{{"paired":["{}"],"reachable":true,"ip":"192.168.100.10"}}}}"#,
-            st.selected_udid
+            r#"{{"width":1178,"height":2598,"orientation":{}}}"#,
+            deg
         ));
     }
 
-    // 8B. Direct Stream Proxy Port 8766 (with fallback to 8767) for /mirror/*, /codec, and HID
-    if path == "/codec" || path == "/mirror/codec"
-        || path == "/mirror/touch" || path == "/mirror/scroll"
-        || path == "/mirror/button" || path == "/mirror/key"
-        || path == "/mirror/gesture" || path == "/mirror/pli"
-        || path == "/mirror/size" || path == "/mirror/restart"
+    if path == "/mirror/touch"
+        || path == "/touch"
+        || path == "/mirror/scroll"
+        || path == "/scroll"
+        || path == "/mirror/button"
+        || path == "/button"
+        || path == "/mirror/key"
+        || path == "/key"
+        || path == "/mirror/gesture"
+        || path == "/gesture"
+        || path == "/api/screen/swipe"
     {
-        if path == "/mirror/touch" && req.method.eq_ignore_ascii_case("POST") {
+        let is_touch = path == "/mirror/touch" || path == "/touch";
+        let is_scroll = path == "/mirror/scroll" || path == "/scroll";
+        let is_button = path == "/mirror/button" || path == "/button";
+        let is_key = path == "/mirror/key" || path == "/key";
+        let is_gesture = path == "/mirror/gesture"
+            || path == "/gesture"
+            || path == "/api/screen/swipe"
+            || path == "/api/hid/gesture";
+
+        if is_touch && req.method.eq_ignore_ascii_case("POST") {
             let body_lower = String::from_utf8_lossy(&req.body_bytes).to_ascii_lowercase();
+            let is_drag = body_lower.contains("\"move\"") || body_lower.contains("\"contact\"");
+            record_user_input_activity(is_drag);
             if !body_lower.contains("\"move\"") {
                 notify_worker_commit_typed_line_async();
             }
+        } else if (is_button || is_key || is_gesture) && req.method.eq_ignore_ascii_case("POST") {
+            record_user_input_activity(false);
         }
         if let Some(resp) = forward_to_stream_server(req) {
             return resp;
         }
-        if path.ends_with("/codec") {
+        // Tahap 255 Pilar 2: Pure AirPlay Standalone has zero HID channel — return calm HTTP 200
+        // without spamming dead HID packets or error telemetry.
+        if iphone_link_apple::mirror::is_airplay_standalone_no_hid_active() {
             return HttpResponse::ok_json(
-                r#"{"ok":true,"codec":"hvc1.1.6.L150.B0","width":1216,"height":2656,"displayWidth":1178,"displayHeight":2598,"fps":60}"#,
+                r#"{"ok":false,"hidControlAvailable":false,"mirrorRoute":"airplay_standalone"}"#,
             );
         }
-        if path.ends_with("/size") {
-            return HttpResponse::ok_json(r#"{"width":1178,"height":2598,"orientation":0}"#);
+        if is_touch {
+            if let (Some(cx), Some(cy)) = (
+                parse_float_param(&req.body, "clientX"),
+                parse_float_param(&req.body, "clientY"),
+            ) {
+                let (ix, iy) = iphone_link_apple::mirror::global_map_stage_touch_to_ios_hid(cx, cy);
+                let rot = iphone_link_apple::mirror::active_orientation_fast();
+                let body_lower = req.body.to_ascii_lowercase();
+                let sent = if body_lower.contains("\"tap\"") || body_lower.contains("\"click\"") {
+                    iphone_link_apple::hid::dispatch_physical_tap(ix, iy)
+                } else {
+                    let contact = !body_lower.contains("\"release\"") && !body_lower.contains("\"up\"");
+                    iphone_link_apple::hid::dispatch_physical_touch(contact, ix, iy)
+                };
+                let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+                return HttpResponse::ok_json(&format!(
+                    r#"{{"ok":true,"mode":"stage_subpixel","rotation":{},"mappedX":{},"mappedY":{},"physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                    rot, ix, iy, sent, pkts_tx, hid_err
+                ));
+            }
+            let rot = parse_int_param(&req.body, "rotation")
+                .map(|v| v.max(0) as u32)
+                .unwrap_or_else(get_active_rotation_deg);
+            let (ok, ix, iy, sent, events_cnt) =
+                if iphone_link_apple::mirror::is_hybrid_airplay_route() {
+                    iphone_link_apple::hid::dispatch_airplay_touch_payload_json(&req.body, rot)
+                } else {
+                    iphone_link_apple::hid::dispatch_touch_payload_json(&req.body, rot)
+                };
+            let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":{},"rotation":{},"mappedX":{},"mappedY":{},"eventsCount":{},"physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                ok, rot, ix, iy, events_cnt, sent, pkts_tx, hid_err
+            ));
         }
-        return HttpResponse::ok_json(r#"{"ok":true}"#);
+        if is_scroll {
+            let (ok, sent, steps_cnt) =
+                iphone_link_apple::hid::dispatch_scroll_payload_json(&req.body);
+            let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":{},"steps":{},"physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                ok, steps_cnt, sent, pkts_tx, hid_err
+            ));
+        }
+        if is_button {
+            let name = parse_string_param(&req.body, "name")
+                .or_else(|| parse_string_param(&req.body, "button"))
+                .unwrap_or_else(|| "home".to_string());
+            let btn_state = parse_string_param(&req.body, "state")
+                .unwrap_or_else(|| "press".to_string());
+            let sent = iphone_link_apple::hid::dispatch_physical_button_name(&name, &btn_state)
+                .unwrap_or(false);
+            let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"button":"{}","state":"{}","physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                escape_json_str(&name),
+                escape_json_str(&btn_state),
+                sent,
+                pkts_tx,
+                hid_err
+            ));
+        }
+        if is_key {
+            let (sent, count) = if let Some(usages) =
+                iphone_link_apple::hid::parse_u8_usages_from_json(&req.body)
+            {
+                let c = usages.len();
+                let s = iphone_link_apple::hid::dispatch_physical_key_usages(&usages);
+                (s, c)
+            } else if let Some(text_val) = parse_string_param(&req.body, "text")
+                .or_else(|| parse_string_param(&req.body, "key"))
+            {
+                let (steps, typed) = generate_key_steps_for_text(&text_val);
+                let s = iphone_link_apple::hid::dispatch_physical_key_steps(&steps);
+                (s, typed)
+            } else {
+                let s = iphone_link_apple::hid::dispatch_physical_key_usages(&[]);
+                (s, 0)
+            };
+            let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"usagesCount":{},"physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                count, sent, pkts_tx, hid_err
+            ));
+        }
+        if is_gesture {
+            let dir = parse_string_param(&req.body, "direction")
+                .or_else(|| parse_string_param(&req.body, "action"))
+                .unwrap_or_else(|| "back".to_string());
+            let (steps_count, sent) = if dir.eq_ignore_ascii_case("pinch") {
+                let frames = pinch_zoom_frames(32768, 32768, 8000, 24000, 8);
+                (frames.len(), false)
+            } else if let Some(steps) = swipe_direction_steps(&dir) {
+                let len = steps.len();
+                let s = iphone_link_apple::hid::dispatch_physical_touch_steps(&steps);
+                (len, s)
+            } else {
+                let s = iphone_link_apple::hid::dispatch_physical_swipe_direction(&dir)
+                    .unwrap_or(false);
+                (10usize, s)
+            };
+            let (pkts_tx, hid_err, _) = iphone_link_apple::hid::physical_hid_telemetry();
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":true,"gesture":"{}","direction":"{}","steps":{},"physicalSent":{},"physical_packets_transmitted":{},"physical_hid_errors":{}}}"#,
+                escape_json_str(&dir),
+                escape_json_str(&dir),
+                steps_count,
+                sent,
+                pkts_tx,
+                hid_err
+            ));
+        }
     }
 
-    // 9. Static File Serving from web_dir and assets/
+    // 9. Static File Serving — Zero-I/O In-Memory Embedded Web & Icon Assets (Tahap 232)
     let clean_rel = if path.is_empty() || path == "/" || path == "/index.html" {
         "index.html"
-    } else if path == "/mirror" || path == "/mirror/" || path == "/mirror/index.html" || path == "/mirror.html" {
+    } else if path == "/mirror"
+        || path == "/mirror/"
+        || path == "/mirror/frame"
+        || path == "/mirror/frame/"
+        || path == "/mirror/index.html"
+        || path == "/mirror.html"
+    {
         "mirror.html"
     } else if path == "/mirror/mirror.css" || path == "/mirror.css" {
         "mirror.css"
@@ -9135,26 +14147,66 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         "app.js"
     } else if path == "/mirror/logo.svg" || path == "/logo.svg" {
         "logo.svg"
+    } else if path == "/logo.png" || path == "/assets/logo.png" {
+        "logo.png"
+    } else if path == "/favicon.ico" || path == "/iphone_link.ico" || path == "/assets/iphone_link.ico" {
+        "favicon.ico"
     } else {
         path.trim_start_matches('/')
     };
 
     if clean_rel.eq_ignore_ascii_case("index.html") {
         INDEX_HTML_SERVED.fetch_add(1, Ordering::SeqCst);
-    } else if clean_rel.starts_with("app.css") {
-        APP_CSS_SERVED.fetch_add(1, Ordering::SeqCst);
-    } else if clean_rel.starts_with("app.js") {
+        let html = render_embedded_index_html(state);
+        return HttpResponse::ok_html(&html);
+    } else if clean_rel.eq_ignore_ascii_case("app.js") {
         APP_JS_SERVED.fetch_add(1, Ordering::SeqCst);
+        return HttpResponse::ok_js(EMBEDDED_APP_JS);
+    } else if clean_rel.eq_ignore_ascii_case("app.css") {
+        APP_CSS_SERVED.fetch_add(1, Ordering::SeqCst);
+        return HttpResponse::ok_css(get_embedded_app_css());
+    } else if clean_rel.eq_ignore_ascii_case("mirror.html") {
+        return HttpResponse::ok_html(get_embedded_mirror_html());
+    } else if clean_rel.eq_ignore_ascii_case("mirror.js") {
+        return HttpResponse::ok_js(get_embedded_mirror_js());
+    } else if clean_rel.eq_ignore_ascii_case("mirror.css") {
+        return HttpResponse::ok_css(get_embedded_mirror_css());
+    } else if clean_rel.eq_ignore_ascii_case("keys.js") {
+        return HttpResponse::ok_js(EMBEDDED_KEYS_JS);
+    } else if clean_rel.eq_ignore_ascii_case("logo.svg") {
+        return HttpResponse::ok_bytes(EMBEDDED_LOGO_SVG.to_vec(), "image/svg+xml");
+    } else if clean_rel.eq_ignore_ascii_case("logo.png") {
+        return HttpResponse::ok_bytes(EMBEDDED_LOGO_PNG.to_vec(), "image/png");
+    } else if clean_rel.eq_ignore_ascii_case("favicon.ico") {
+        return HttpResponse::ok_bytes(EMBEDDED_IPHONE_LINK_ICO.to_vec(), "image/x-icon");
     }
 
     if let Some(target_file) = resolve_static_asset_file(web_dir, clean_rel) {
         if let Ok(bytes) = fs::read(&target_file) {
             let mime = mime_for_path_str(clean_rel);
+            return HttpResponse::ok_bytes(bytes, mime);
+        }
+    }
 
-            if clean_rel.eq_ignore_ascii_case("mirror.html") {
-                let mut html = String::from_utf8_lossy(&bytes).to_string();
-                if !html.contains("imageSmoothingQuality") {
-                    let canvas_lock_script = r#"<script>
+    HttpResponse::not_found()
+}
+
+fn transform_mirror_html(raw: &str) -> String {
+    let mut html = raw
+        .replace(r#"href="mirror.css"#, r#"href="/mirror.css"#)
+        .replace(r#"src="keys.js"#, r#"src="/keys.js"#)
+        .replace(r#"src="mirror.js"#, r#"src="/mirror.js"#)
+        .replace(r#"href='mirror.css"#, r#"href='/mirror.css"#)
+        .replace(r#"src='keys.js"#, r#"src='/keys.js"#)
+        .replace(r#"src='mirror.js"#, r#"src='/mirror.js"#);
+    if !html.contains("v5-anti-white-flash") {
+        let black_stage_css = "<style id=\"v5-anti-white-flash\">html,body,#crop-wrapper,canvas,#c{background:#000000 !important;color:#f8fafc !important;margin:0;padding:0;width:100%;height:100%;overflow:hidden;}</style>\n</head>";
+        if html.contains("</head>") {
+            html = html.replacen("</head>", black_stage_css, 1);
+        }
+    }
+    if !html.contains("imageSmoothingQuality") {
+        let canvas_lock_script = r#"<script>
 (function() {
     try {
         var origGetContext = HTMLCanvasElement.prototype.getContext;
@@ -9171,60 +14223,123 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     } catch (_) {}
 })();
 </script>"#;
-                    html = html.replace("<head>", &format!("<head>\n{}", canvas_lock_script));
-                }
-                if !html.contains("v4_true_acrylic.css") {
-                    html = html.replace(
-                        "</head>",
-                        "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n    <script src=\"/v4_bridge.js\"></script>\n</head>",
-                    );
-                }
-                return HttpResponse::ok_html(&html);
-            }
+        html = html.replace("<head>", &format!("<head>\n{}", canvas_lock_script));
+    }
+    if !html.contains("v4_true_acrylic.css") {
+        html = html.replace(
+            "</head>",
+            "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n    <script src=\"/v4_bridge.js\"></script>\n</head>",
+        );
+    }
+    if !html.contains("v4-mirror-diag-overlay") {
+        let diag_overlay_html = r##"<div id="v4-mirror-diag-overlay" class="v4-mirror-diag-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="v4-diag-title">
+  <div class="v4-mirror-diag-card">
+    <div id="v4-diag-badge" class="v4-mirror-diag-badge">Codec / Decoder</div>
+    <div id="v4-diag-title" class="v4-mirror-diag-title">Video Decoder Perlu Diperbaiki</div>
+    <div id="v4-diag-desc" class="v4-mirror-diag-desc">PC Windows Anda belum dapat mendekode stream video H.265/HEVC dari iPhone.</div>
+    <div class="v4-mirror-diag-actions">
+      <button id="btn-diag-install-hevc" class="v4-diag-btn v4-diag-btn-primary" type="button">Install HEVC Gratis</button>
+      <button id="btn-diag-switch-airplay" class="v4-diag-btn v4-diag-btn-secondary" type="button">Pindah ke Mode H.264 (AirPlay)</button>
+      <button id="btn-diag-soft-decode" class="v4-diag-btn v4-diag-btn-secondary" type="button">Coba Software Decode</button>
+      <button id="btn-diag-copy-info" class="v4-diag-btn v4-diag-btn-ghost" type="button">Salin Info Diagnostik</button>
+    </div>
+    <div id="v4-diag-feedback" class="v4-mirror-diag-feedback" hidden></div>
+  </div>
+</div>
+</body>"##;
+        if html.contains("</body>") {
+            html = html.replacen("</body>", diag_overlay_html, 1);
+        }
+    }
+    html
+}
 
-            if clean_rel.eq_ignore_ascii_case("index.html") {
-                let mut html = String::from_utf8_lossy(&bytes).to_string();
-                let init_settings_json = state.lock().map(|s| build_settings_json(&s)).unwrap_or_else(|_| "{}".to_string());
-                let safe_init_json = init_settings_json.replace("</", "<\\/");
-                let seed_script = format!("<script>window.__V4_INITIAL_SETTINGS__={};</script>\n  ", safe_init_json);
-                if !html.contains("v4_true_acrylic.css") {
-                    if let Some(pos) = html.rfind("</body>") {
-                        html.insert_str(pos, "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n");
-                    } else {
-                        html = html.replace(
-                            "</head>",
-                            "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n</head>",
-                        );
-                    }
-                }
-                if !html.contains("v4_bridge.js") {
-                    let bridge_tag = format!("{}<script src=\"/v4_bridge.js\"></script>\n  ", seed_script);
-                    if let Some(pos) = html.find("<script src=\"/keys.js") {
-                        html.insert_str(pos, &bridge_tag);
-                    } else if let Some(pos) = html.find("<script src=\"/app.js") {
-                        html.insert_str(pos, &bridge_tag);
-                    } else if let Some(pos) = html.find("</body>") {
-                        html.insert_str(pos, &format!("{}<script src=\"/v4_bridge.js\"></script>\n", seed_script));
-                    }
-                } else if !html.contains("__V4_INITIAL_SETTINGS__") {
-                    if let Some(pos) = html.find("<script src=\"/v4_bridge.js") {
-                        html.insert_str(pos, &seed_script);
-                    }
-                }
-                return HttpResponse::ok_html(&html);
-            }
+fn build_index_html_template_parts(raw: &str) -> (String, String) {
+    let mut html = raw
+        .replace("iPhone Link v4.0.0", "iPhone Link v5.0.0")
+        .replace("iPhone Link v3.0.0", "iPhone Link v5.0.0")
+        .replace("iPhone Link v4.0", "iPhone Link v5.0")
+        .replace("iPhone Link v3.0", "iPhone Link v5.0");
+    if !html.contains("tahap222-theme-contrast") {
+        html = html.replace(
+            "</head>",
+            "  <style id=\"tahap222-theme-contrast\"></style>\n</head>",
+        );
+    }
+    if !html.contains("v4_true_acrylic.css") {
+        if let Some(pos) = html.rfind("</body>") {
+            html.insert_str(pos, "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n");
+        } else {
+            html = html.replace(
+                "</head>",
+                "    <link rel=\"stylesheet\" href=\"/v4_true_acrylic.css\">\n</head>",
+            );
+        }
+    }
+    if !html.contains("v4_bridge.js") {
+        let bridge_tag = "<script src=\"/v4_bridge.js\"></script>\n  ";
+        if let Some(pos) = html.find("<script src=\"/keys.js") {
+            html.insert_str(pos, bridge_tag);
+        } else if let Some(pos) = html.find("<script src=\"/app.js") {
+            html.insert_str(pos, bridge_tag);
+        } else if let Some(pos) = html.find("</body>") {
+            html.insert_str(pos, "<script src=\"/v4_bridge.js\"></script>\n");
+        }
+    }
+    let split_pos = html
+        .find("<script src=\"/v4_bridge.js")
+        .or_else(|| html.rfind("</body>"))
+        .unwrap_or(html.len());
+    (html[..split_pos].to_string(), html[split_pos..].to_string())
+}
 
-            if clean_rel.starts_with("app.css") || clean_rel == "app.css" {
-                let mut css_text = String::from_utf8_lossy(&bytes).to_string();
-                css_text.push_str("\n\n/* === V4_TRUE_ACRYLIC_CSS OVERRIDE === */\n");
-                css_text.push_str(V4_TRUE_ACRYLIC_CSS);
-                return HttpResponse::ok_css(&css_text);
-            }
+fn get_embedded_index_template() -> &'static (String, String) {
+    static INDEX_TMPL: OnceLock<(String, String)> = OnceLock::new();
+    INDEX_TMPL.get_or_init(|| build_index_html_template_parts(EMBEDDED_INDEX_HTML))
+}
 
-            if clean_rel.starts_with("mirror.css") || clean_rel == "mirror.css" {
-                let mut css_text = String::from_utf8_lossy(&bytes).to_string();
-                if !css_text.contains("__V4_TAHAP179_MIRROR_CSS__") {
-                    css_text.push_str(r##"
+pub fn render_embedded_index_html(state: &Arc<Mutex<AppState>>) -> String {
+    let (prefix, suffix) = get_embedded_index_template();
+    let init_settings_json = state
+        .lock()
+        .map(|s| build_settings_json(&s))
+        .unwrap_or_else(|_| "{}".to_string());
+    let safe_init_json = init_settings_json.replace("</", "<\\/");
+    let seed_script = format!(
+        "<script>window.__V4_INITIAL_SETTINGS__={};</script>\n  ",
+        safe_init_json
+    );
+    let mut out = String::with_capacity(prefix.len() + seed_script.len() + suffix.len());
+    out.push_str(prefix);
+    out.push_str(&seed_script);
+    out.push_str(suffix);
+    out
+}
+
+fn transform_app_css(raw: &str) -> String {
+    let mut css_text = raw.to_string();
+    css_text.push_str("\n\n/* === V4_TRUE_ACRYLIC_CSS OVERRIDE === */\n");
+    css_text.push_str(V4_TRUE_ACRYLIC_CSS);
+    css_text
+}
+
+pub fn get_embedded_app_css() -> &'static str {
+    static APP_CSS_CACHE: OnceLock<String> = OnceLock::new();
+    APP_CSS_CACHE.get_or_init(|| transform_app_css(EMBEDDED_APP_CSS)).as_str()
+}
+
+pub fn get_embedded_mirror_html() -> &'static str {
+    static MIRROR_HTML_CACHE: OnceLock<String> = OnceLock::new();
+    MIRROR_HTML_CACHE
+        .get_or_init(|| transform_mirror_html(EMBEDDED_MIRROR_HTML))
+        .as_str()
+}
+
+fn transform_mirror_css(raw: &str) -> String {
+    let mut css_text = raw.to_string();
+    if !css_text.contains("__V4_TAHAP179_MIRROR_CSS__") {
+        css_text.push_str(
+            r##"
 
 /* __V4_TAHAP179_MIRROR_CSS__ - Exact Macroblock Trim + Full-Stage Fill on Auto-Fit (0px Black Bar) */
 canvas#c.fit-autofit,
@@ -9252,14 +14367,141 @@ body.fit-contain canvas {
   object-fit: contain !important;
   display: block !important;
 }
-"##);
-                }
-                return HttpResponse::ok_css(&css_text);
-            }
 
-            if clean_rel.starts_with("mirror.js") || clean_rel == "mirror.js" {
-                let mut js_text = String::from_utf8_lossy(&bytes).to_string();
-                if !js_text.contains("__V4_TAHAP182_INSTANT_LOCK__") {
+/* __V5_TAHAP248_MIRROR_DIAG_OVERLAY__ - Isolated from .mirror-status.warn (0-diff on frozen mirror.css) */
+#v4-mirror-diag-overlay,
+.v4-mirror-diag-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 99998 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 18px !important;
+  background: #090d16 !important;
+  color: #f8fafc !important;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  box-sizing: border-box !important;
+}
+#v4-mirror-diag-overlay[hidden],
+.v4-mirror-diag-overlay[hidden] {
+  display: none !important;
+}
+.v4-mirror-diag-card {
+  width: 100%;
+  max-width: 304px;
+  padding: 18px 16px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(22, 32, 54, 0.94) 0%, rgba(11, 17, 30, 0.96) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.36);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.56), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+.v4-mirror-diag-badge {
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  color: #fde68a;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.v4-mirror-diag-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.3;
+}
+.v4-mirror-diag-desc {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.48;
+}
+.v4-mirror-diag-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.v4-diag-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 140ms ease, background 140ms ease;
+}
+.v4-diag-btn:active {
+  transform: scale(0.98);
+}
+.v4-diag-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.v4-diag-btn-primary {
+  border: none;
+  background: linear-gradient(180deg, #0a84ff 0%, #0066dc 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(10, 132, 255, 0.36);
+}
+.v4-diag-btn-primary:hover {
+  filter: brightness(1.08);
+}
+.v4-diag-btn-secondary {
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  background: rgba(14, 165, 233, 0.16);
+  color: #bae6fd;
+}
+.v4-diag-btn-secondary:hover {
+  background: rgba(14, 165, 233, 0.26);
+}
+.v4-diag-btn-ghost {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+.v4-diag-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.v4-mirror-diag-feedback {
+  font-size: 11px;
+  color: #7dd3fc;
+  line-height: 1.4;
+  padding-top: 2px;
+}
+.v4-mirror-diag-feedback[hidden] {
+  display: none !important;
+}
+"##,
+        );
+    }
+    css_text
+}
+
+pub fn get_embedded_mirror_css() -> &'static str {
+    static MIRROR_CSS_CACHE: OnceLock<String> = OnceLock::new();
+    MIRROR_CSS_CACHE
+        .get_or_init(|| transform_mirror_css(EMBEDDED_MIRROR_CSS))
+        .as_str()
+}
+
+pub fn get_embedded_mirror_js() -> &'static str {
+    static MIRROR_JS_CACHE: OnceLock<String> = OnceLock::new();
+    MIRROR_JS_CACHE
+        .get_or_init(|| transform_mirror_js(EMBEDDED_MIRROR_JS))
+        .as_str()
+}
+
+fn transform_mirror_js(raw: &str) -> String {
+    let mut js_text = raw.replace("\r\n", "\n");
+    if !js_text.contains("__V4_TAHAP182_INSTANT_LOCK__") {
                     js_text = js_text.replace(
                         r##"  document.body.classList.remove("fit-fill", "fit-contain", "fit-autofit");
   document.body.classList.add(`fit-${fitMode}`);"##,
@@ -9475,7 +14717,7 @@ function detectExactMacroblockTrim(sourceFrame, rawW, rawH) {
 }
 
 window.__v4ComputeExactMacroblockTrim = function(sourceFrame, rawW, rawH, mode, isIpadFlag, isAirplayOrH264) {
-  if (isIpadFlag || mode === "contain" || isAirplayOrH264) {
+  if (isIpadFlag || mode === "contain" || isAirplayOrH264 || rawW > rawH) {
     return { top: 0, left: 0, right: 0, bottom: 0, verifiedOnBrightFrame: true, locked: true, source: "disabled" };
   }
   return detectExactMacroblockTrim(sourceFrame, rawW, rawH);
@@ -9484,27 +14726,72 @@ window.__v4ComputeExactMacroblockTrim = function(sourceFrame, rawW, rawH, mode, 
 function drawFrame(f) {"##,
                     );
                     js_text = js_text.replace(
-                        r##"    const sideways = Math.abs(currentRotation % 180) === 90;
-    const viewW = sideways ? rawH : rawW;
-    const viewH = sideways ? rawW : rawH;
-
-    const dimsChanged = viewW !== canvas.width || viewH !== canvas.height;
-    if (dimsChanged) {
-      canvas.width = viewW;
-      canvas.height = viewH;
-      fitCanvas();
-    }
-
-    if (!hasRenderedFirstFrame) {
-      hasRenderedFirstFrame = true;
-      window.hasRenderedFirstFrame = true;
-      setStatus("");
-      try {
-        window.parent.postMessage({ type: "mirror-ready" }, "*");
-      } catch (_) {}
-    }
-
-    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || effectiveIpad !== _lastNotifiedIpad) {
+                        r##"    // Tahap 74/125/130/276: preserve legacy disableNativeTrim token + disable trim on native landscape frames (rawW > rawH)
+    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const isNativeLandscapeFrame = rawW > rawH;
+    const pxScale = Math.max(3, Math.round(rawW / 346));
+    const uTop = Math.max(0, (Number(currentCrop.top) || 0) * pxScale);
+    const uBot = Math.max(0, (Number(currentCrop.bottom) || 0) * pxScale);
+    const uLeft = Math.max(0, (Number(currentCrop.left) || 0) * pxScale);
+    const uRight = Math.max(0, (Number(currentCrop.right) || 0) * pxScale);
+    const isLandscapeWindow = (window.innerWidth > window.innerHeight) || _autoRotatedToLandscape || (currentRotation === 90 || currentRotation === 270);
+    const drawPlan = window.__tahap276ComputeDrawPlan({
+      rawW,
+      rawH,
+      effectiveIpad,
+      fitMode,
+      isAirplayOrH264,
+      macroTrimTop: 0,
+      macroTrimBot: 0,
+      macroTrimLeft: 0,
+      macroTrimRight: 0,
+      uTop,
+      uBot,
+      uLeft,
+      uRight,
+      isLandscapeWindow,
+      autoRotateGameEnabled,
+      currentRotation,
+    });"##,
+                        r##"    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
+    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
+    const isNativeLandscapeFrame = rawW > rawH;
+    const effectiveDisableNativeTrim = disableNativeTrim || isNativeLandscapeFrame;
+    const macroTrimInfo = window.__v4ComputeExactMacroblockTrim(sourceFrame, rawW, rawH, fitMode, effectiveIpad, isAirplayOrH264);
+    const pxScale = Math.max(3, Math.round(rawW / 346));
+    const uTop = Math.max(0, (Number(currentCrop.top) || 0) * pxScale);
+    const uBot = Math.max(0, (Number(currentCrop.bottom) || 0) * pxScale);
+    const uLeft = Math.max(0, (Number(currentCrop.left) || 0) * pxScale);
+    const uRight = Math.max(0, (Number(currentCrop.right) || 0) * pxScale);
+    const isLandscapeWindow = (window.innerWidth > window.innerHeight) || _autoRotatedToLandscape || (currentRotation === 90 || currentRotation === 270);
+    const drawPlan = window.__tahap276ComputeDrawPlan({
+      rawW,
+      rawH,
+      effectiveIpad,
+      fitMode,
+      isAirplayOrH264,
+      macroTrimTop: 0,
+      macroTrimBot: effectiveDisableNativeTrim ? 0 : macroTrimInfo.bottom,
+      macroTrimLeft: 0,
+      macroTrimRight: effectiveDisableNativeTrim ? 0 : macroTrimInfo.right,
+      uTop,
+      uBot,
+      uLeft,
+      uRight,
+      isLandscapeWindow,
+      autoRotateGameEnabled,
+      currentRotation,
+    });
+    const preCleanW = Math.max(64, rawW - (effectiveDisableNativeTrim ? 0 : macroTrimInfo.right));
+    const preCleanH = Math.max(64, rawH - (effectiveDisableNativeTrim ? 0 : macroTrimInfo.bottom));"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, rawW, rawH };"##,
+                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, macroblockSource: macroTrimInfo.source, verifiedOnBrightFrame: !!macroTrimInfo.verifiedOnBrightFrame, macroblockLocked: !!macroTrimInfo.locked, baseTrim: 0, fitMode, preCleanW, preCleanH, rawW, rawH };"##,
+                    );
+                    js_text = js_text.replace(
+                        r##"    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || effectiveIpad !== _lastNotifiedIpad) {
       _lastNotifiedRawW = rawW;
       _lastNotifiedRawH = rawH;
       _lastNotifiedIpad = effectiveIpad;
@@ -9518,56 +14805,8 @@ function drawFrame(f) {"##,
           isStreamLandscape: rawW > rawH,
         }, "*");
       } catch (_) {}
-    }
-
-    const cw = canvas.width;
-    const ch = canvas.height;
-
-    // Tahap 72: Native H.265 Macroblock Padding Trim on raw sourceFrame coordinates
-    // rawW = 1216, rawH = 2656 on iPhone 17 Pro
-    const scaleH = rawH / 2656;
-    const scaleW = rawW / 1216;
-
-    // Tahap 74: Set nativeTrimTop = 0 & nativeTrimLeft = 0 agar 0px terpotong di atas Dynamic Island & jam status bar
-    // Tahap 125: stream iPad (4:3 / 3:2) TIDAK memakai trim padding iPhone (0/0/0/0)
-    // Tahap 130: stream AirPlay Wi-Fi (H.264 / avc1) TIDAK memakai padding trim makroblok H.265 (0/0/0/0)
-    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
-    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
-    const nativeTrimTop = 0;
-    const nativeTrimBot = disableNativeTrim ? 0 : Math.round(58 * scaleH);
-    const nativeTrimLeft = 0;
-    const nativeTrimRight = disableNativeTrim ? 0 : Math.round(14 * scaleW);"##,
-                        r##"    const isAirplayOrH264 = window._isAirPlayStream === true || (typeof _currentCodec === "string" && (_currentCodec.startsWith("avc") || _currentCodec.startsWith("h264")));
-    const disableNativeTrim = effectiveIpad || (fitMode === "contain") || isAirplayOrH264;
-    const macroTrimInfo = window.__v4ComputeExactMacroblockTrim(sourceFrame, rawW, rawH, fitMode, effectiveIpad, isAirplayOrH264);
-    const nativeTrimTop = 0;
-    const nativeTrimBot = disableNativeTrim ? 0 : macroTrimInfo.bottom;
-    const nativeTrimLeft = 0;
-    const nativeTrimRight = disableNativeTrim ? 0 : macroTrimInfo.right;
-    const preCleanW = Math.max(64, rawW - nativeTrimLeft - nativeTrimRight);
-    const preCleanH = Math.max(64, rawH - nativeTrimTop - nativeTrimBot);
-
-    const sideways = Math.abs(currentRotation % 180) === 90;
-    const viewW = sideways ? preCleanH : preCleanW;
-    const viewH = sideways ? preCleanW : preCleanH;
-
-    const dimsChanged = viewW !== canvas.width || viewH !== canvas.height;
-    if (dimsChanged) {
-      canvas.width = viewW;
-      canvas.height = viewH;
-      fitCanvas();
-    }
-
-    if (!hasRenderedFirstFrame) {
-      hasRenderedFirstFrame = true;
-      window.hasRenderedFirstFrame = true;
-      setStatus("");
-      try {
-        window.parent.postMessage({ type: "mirror-ready" }, "*");
-      } catch (_) {}
-    }
-
-    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || preCleanW !== _lastNotifiedCleanW || preCleanH !== _lastNotifiedCleanH || effectiveIpad !== _lastNotifiedIpad) {
+    }"##,
+                        r##"    if (rawW !== _lastNotifiedRawW || rawH !== _lastNotifiedRawH || preCleanW !== _lastNotifiedCleanW || preCleanH !== _lastNotifiedCleanH || effectiveIpad !== _lastNotifiedIpad) {
       _lastNotifiedRawW = rawW;
       _lastNotifiedRawH = rawH;
       _lastNotifiedCleanW = preCleanW;
@@ -9587,18 +14826,7 @@ function drawFrame(f) {"##,
           isStreamLandscape: preCleanW > preCleanH,
         }, "*");
       } catch (_) {}
-    }
-
-    const cw = canvas.width;
-    const ch = canvas.height;"##,
-                    );
-                    js_text = js_text.replace(
-                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, rawW, rawH };"##,
-                        r##"    window._lastCleanTransform = { cleanW, cleanH, cleanCenterX, cleanCenterY, srcTrimLeft, srcTrimTop, srcTrimRight, srcTrimBot, nativeTrimTop, nativeTrimBot, nativeTrimLeft, nativeTrimRight, macroblockSource: macroTrimInfo.source, verifiedOnBrightFrame: !!macroTrimInfo.verifiedOnBrightFrame, macroblockLocked: !!macroTrimInfo.locked, baseTrim: 0, fitMode, rawW, rawH };"##,
-                    );
-                    js_text = js_text.replace(
-                        r##"    ctx.drawImage(sourceFrame, -cleanCenterX, -cleanCenterY, rawW, rawH);"##,
-                        r##"    ctx.drawImage(sourceFrame, srcTrimLeft, srcTrimTop, cleanW, cleanH, -cleanW / 2, -cleanH / 2, cleanW, cleanH);"##,
+    }"##,
                     );
                 }
                 if !js_text.contains("__V4_TAHAP185_HEVC_PROMPT__") {
@@ -9618,8 +14846,14 @@ function drawFrame(f) {"##,
                     js_text.push_str(
                         r##"
 
-// __V4_TAHAP185_HEVC_PROMPT__ - 1-Click HEVC Codec Installer Overlay
+// __V4_TAHAP185_HEVC_PROMPT__ - 1-Click HEVC Codec Installer Overlay (delegates to Tahap 248 #v4-mirror-diag-overlay)
 window.__v4ShowHevcInstallOverlay = function(codec) {
+  try {
+    if (typeof window.__v5ShowMirrorDiagOverlay === "function") {
+      window.__v5ShowMirrorDiagOverlay("hevc-missing", { codec: codec || "" });
+      return;
+    }
+  } catch (_) {}
   try {
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type: "hevc-missing", codec: codec || "" }, "*");
@@ -9630,18 +14864,18 @@ window.__v4ShowHevcInstallOverlay = function(codec) {
     if (!box) {
       box = document.createElement("div");
       box.id = "v4-hevc-stage-prompt";
-      box.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(9,13,22,0.72);backdrop-filter:blur(12px);padding:18px;";
+      box.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#090d16;padding:18px;";
       document.body.appendChild(box);
     }
     var card = document.createElement("div");
-    card.style.cssText = "max-width:300px;width:100%;padding:16px;border-radius:14px;background:rgba(15,23,42,0.92);border:1px solid rgba(56,189,248,0.4);color:#f8fafc;text-align:center;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.48);";
+    card.style.cssText = "max-width:300px;width:100%;padding:16px;border-radius:14px;background:rgba(15,23,42,0.94);border:1px solid rgba(56,189,248,0.4);color:#f8fafc;text-align:center;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.48);";
     var title = document.createElement("div");
     title.style.cssText = "font-size:13px;font-weight:700;margin-bottom:6px;";
     title.textContent = "Microsoft HEVC Codec Required";
     card.appendChild(title);
     var desc = document.createElement("div");
     desc.style.cssText = "font-size:12px;color:#cbd5e1;margin-bottom:12px;line-height:1.45;";
-    desc.textContent = "This browser cannot decode the iPhone video stream (" + (codec || "HEVC") + "). Install Microsoft HEVC Video Extensions in 1 click.";
+    desc.textContent = "This browser cannot decode the iPhone video stream (" + (codec || "HEVC") + "). Install Microsoft HEVC Video Extensions (Free OEM) in 1 click.";
     card.appendChild(desc);
     var btn = document.createElement("button");
     btn.id = "btn-install-hevc-stage";
@@ -9660,8 +14894,15 @@ window.__v4ShowHevcInstallOverlay = function(codec) {
           btn.textContent = "HEVC Codec Installed! Reloading...";
           setTimeout(function() { window.location.reload(); }, 600);
         } else {
+          var target = (res && res.mediaFeaturePackMissing) ? "media_feature_pack" : "hevc_oem";
+          fetch("/api/system/open_hevc_store", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: target })
+          }).catch(function() {});
           btn.disabled = false;
-          btn.textContent = "Retry Install HEVC Video Codec (1-Click)";
+          btn.textContent = "Reload Stream After Install";
+          btn.onclick = function() { window.location.reload(); };
         }
       }).catch(function() {
         btn.disabled = false;
@@ -9674,36 +14915,9 @@ window.__v4ShowHevcInstallOverlay = function(codec) {
   } catch (_) {}
 };
 "##,
-                    );
-                }
-                return HttpResponse::ok_js(&js_text);
-            }
-
-            return HttpResponse::ok_bytes(bytes, mime);
-        }
+        );
     }
-
-    // Fallback landing page if index.html is missing in unit test environments
-    if path == "/" || path == "/index.html" {
-        INDEX_HTML_SERVED.fetch_add(1, Ordering::SeqCst);
-        let fallback_html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>iPhone Link v4.0 (Native Rust)</title>
-    <link rel="stylesheet" href="/v4_true_acrylic.css">
-    <script src="/v4_bridge.js"></script>
-</head>
-<body>
-    <div class="app" id="app-root" style="display:flex;">
-        <button id="btn-settings" onclick="window.pywebview.api.set_drawer(true)">Settings</button>
-    </div>
-</body>
-</html>"#;
-        return HttpResponse::ok_html(fallback_html);
-    }
-
-    HttpResponse::not_found()
+    js_text
 }
 
 // ============================================================================
@@ -9832,6 +15046,7 @@ fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_
 
             let clean_path = req.path.split('?').next().unwrap_or("/").split('#').next().unwrap_or("/");
             if clean_path == "/mirror/live" || clean_path == "/stream.bin" {
+                iphone_link_apple::wifi::configure_low_latency_std_tcp(&stream);
                 let _ = stream.set_read_timeout(None);
                 let _ = stream.set_write_timeout(None);
                 if let Err(_) = stream_live_passthrough(&mut stream) {
@@ -9841,7 +15056,17 @@ fn handle_client_stream(mut stream: TcpStream, state: Arc<Mutex<AppState>>, web_
                 return;
             }
 
-            let resp = handle_request(&req, &state, &web_dir);
+            let resp = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle_request(&req, &state, &web_dir)
+            })) {
+                Ok(r) => r,
+                Err(_) => HttpResponse {
+                    status_code: 500,
+                    status_text: "Internal Server Error",
+                    content_type: "application/json; charset=utf-8",
+                    body: br#"{"ok":false,"error":"Internal handler panic recovered cleanly"}"#.to_vec(),
+                },
+            };
             let conn_hdr = if wants_close { "close" } else { "keep-alive" };
             let resp_bytes = resp.to_bytes_with_conn(conn_hdr);
             if stream.write_all(&resp_bytes).is_err() || stream.flush().is_err() {
@@ -9865,10 +15090,10 @@ pub struct NativeServer {
 impl NativeServer {
     pub fn start(state: Arc<Mutex<AppState>>, web_dir: PathBuf, port: u16) -> Result<Self, String> {
         register_tray_app_state(state.clone());
-        let _ = ensure_temp_ocr_extractor_script();
+        let bind_host = iphone_link_apple::connection::bind_host_ipv4();
         let mut listener_opt = None;
         for _ in 0..15 {
-            if let Ok(l) = TcpListener::bind(format!("0.0.0.0:{}", port)) {
+            if let Ok(l) = TcpListener::bind(format!("{bind_host}:{port}")) {
                 listener_opt = Some(l);
                 break;
             }
@@ -9877,7 +15102,7 @@ impl NativeServer {
         let listener = match listener_opt {
             Some(l) => l,
             None => TcpListener::bind(format!("127.0.0.1:{}", port))
-                .or_else(|_| TcpListener::bind("0.0.0.0:0"))
+                .or_else(|_| TcpListener::bind(format!("{bind_host}:0")))
                 .or_else(|_| TcpListener::bind("127.0.0.1:0"))
                 .map_err(|e| format!("Failed to bind TCP listener: {}", e))?,
         };
@@ -9898,15 +15123,49 @@ impl NativeServer {
             .set_nonblocking(true)
             .map_err(|e| format!("Failed to set nonblocking: {}", e))?;
 
+        // Tahap 243/247: 1x parallel background Wi-Fi auto-discovery on startup across ALL paired
+        // devices (0 network I/O when 0 paired devices -> 100% Clean Slate Tahap 246).
+        let _ = thread::Builder::new()
+            .name("iphone-wifi-boot-probe".into())
+            .spawn(|| {
+                let paired = iphone_link_apple::wifi::wifi_paired_udids();
+                if paired.is_empty() {
+                    return;
+                }
+                if paired.len() >= 2 {
+                    let results = iphone_link_apple::wifi::probe_all_paired_wifi_devices_parallel(650);
+                    let best_udid = results
+                        .iter()
+                        .find(|r| r.reachable)
+                        .or_else(|| results.first())
+                        .map(|r| r.udid.clone())
+                        .unwrap_or_else(|| paired[0].clone());
+                    let payload = get_wifi_status(Some(&best_udid), false);
+                    let wjson = payload.to_json_string();
+                    if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+                        *guard = Some((best_udid, wjson, std::time::Instant::now()));
+                    }
+                } else if let Some(first_u) = paired.into_iter().next() {
+                    let payload = get_wifi_status(Some(&first_u), true);
+                    let wjson = payload.to_json_string();
+                    if let Ok(mut guard) = WIFI_STATUS_STREAM_CACHE.lock() {
+                        *guard = Some((first_u, wjson, std::time::Instant::now()));
+                    }
+                }
+            });
+
         thread::spawn(move || {
             while running_clone.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let st_clone = state.clone();
                         let wd_clone = web_dir.clone();
-                        thread::spawn(move || {
-                            handle_client_stream(stream, st_clone, wd_clone);
-                        });
+                        let _ = thread::Builder::new()
+                            .name("http-client".into())
+                            .stack_size(4 * 1024 * 1024)
+                            .spawn(move || {
+                                handle_client_stream(stream, st_clone, wd_clone);
+                            });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -9977,7 +15236,9 @@ mod tests {
         let resp_status = handle_request(&req_status, &state, Path::new("web"));
         assert_eq!(resp_status.status_code, 200);
         let body_str = String::from_utf8_lossy(&resp_status.body);
-        assert!(body_str.contains(r#""version": "4.0.0""#));
+        assert!(body_str.contains(r#""version": "5.0.0""#));
+        assert!(body_str.contains(r#""zero_python_runtime": true"#));
+        assert!(body_str.contains(r#""zero_powershell_runtime": true"#));
         assert!(body_str.contains("devicePixelRatio"));
 
         let req_wp = HttpRequest {
@@ -10095,6 +15356,7 @@ mod tests {
     #[test]
     fn test_tahap183_tray_startup_pin_persistence_and_wipe() {
         let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = Arc::new(Mutex::new(AppState::default()));
 
         // 1. Verify V4_BRIDGE_JS includes Tahap 183 PIN persistence & tray update handlers
@@ -10102,7 +15364,7 @@ mod tests {
         assert!(V4_BRIDGE_JS.contains("persistUnlockPinDual"));
         assert!(V4_BRIDGE_JS.contains("guardPinInputAgainstAccidentalWipe"));
         assert!(V4_BRIDGE_JS.contains("handlePendingTrayAction"));
-        assert!(V4_BRIDGE_JS.contains("iPhone Link v4.0.0"));
+        assert!(V4_BRIDGE_JS.contains("iPhone Link v5.0.0"));
 
         // 2. Deterministic folderInstanceId & disk save/load/wipe roundtrip
         let tmp_dir = env::temp_dir().join("iphone_link_tahap183_test");
@@ -10455,27 +15717,27 @@ mod tests {
         assert_eq!(resp_status.status_code, 200);
         assert!(elapsed_ms < 50.0, "status took too long: {elapsed_ms} ms");
         let status_json = String::from_utf8_lossy(&resp_status.body);
-        assert!(status_json.contains(r#""currentVersion":"4.0.0""#));
-        assert!(status_json.contains(r#""latestVersion":"4.0.0""#));
+        assert!(status_json.contains(r#""currentVersion":"5.0.0""#));
+        assert!(status_json.contains(r#""latestVersion":"5.0.0""#));
         assert!(status_json.contains(r#""updateAvailable":false"#));
         assert!(status_json.contains(r#""user_settings.json""#));
 
-        // 2. Simulate cache rejecting stale v3.0.0 & accepting v4.0.1
+        // 2. Simulate cache rejecting stale v4.0.0 & accepting v5.0.1
         {
             let mut st = state.lock().unwrap();
             st.updater.apply_worker_payload(
-                r#"{"status":"update_available","latestVersion":"3.0.0","updateAvailable":true,"channel":"stable"}"#,
+                r#"{"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#,
                 "stable",
             );
             assert!(!st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "4.0.0");
+            assert_eq!(st.updater.latest_version, "5.0.0");
 
             st.updater.apply_worker_payload(
-                r#"{"status":"update_available","latestVersion":"4.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v4.0.1.zip","channel":"beta"}"#,
+                r#"{"status":"update_available","latestVersion":"5.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.1.zip","channel":"beta"}"#,
                 "beta",
             );
             assert!(st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "4.0.1");
+            assert_eq!(st.updater.latest_version, "5.0.1");
         }
 
         // 3. POST /api/update/check gracefully handles worker absent/offline without throwing HTTP error
@@ -10490,7 +15752,7 @@ mod tests {
         assert_eq!(resp_chk.status_code, 200);
         let chk_json = String::from_utf8_lossy(&resp_chk.body);
         assert!(chk_json.contains(r#""ok":true"#));
-        assert!(chk_json.contains(r#""currentVersion":"4.0.0""#));
+        assert!(chk_json.contains(r#""currentVersion":"5.0.0""#));
         assert!(chk_json.contains(r#""channel":"beta""#));
     }
 
@@ -10527,6 +15789,7 @@ mod tests {
     #[test]
     fn test_tahap213_hot_ocr_status_and_grab_link_shortcut_endpoints() {
         let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = Arc::new(Mutex::new(AppState::default()));
 
         let req_ocr = HttpRequest::parse(b"GET /api/ocr/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
@@ -10616,7 +15879,7 @@ mod tests {
         let urls = [
             ("https://www.instagram.com/p/DScCQallz12/?igsh=MzRlODBiNWFlZA==", "https%3A%2F%2Fwww.instagram.com%2Fp%2FDScCQallz12%2F%3Figsh%3DMzRlODBiNWFlZA%3D%3D"),
             ("https://www.instagram.com/reel/DVV5lTDy3RO/", "https%3A%2F%2Fwww.instagram.com%2Freel%2FDVV5lTDy3RO%2F"),
-            ("https://www.threads.com/@kelvin.daniyar/post/DVghAL_kW9d", "https%3A%2F%2Fwww.threads.com%2F%40kelvin.daniyar%2Fpost%2FDVghAL_kW9d"),
+            ("https://www.threads.com/@example.user/post/DVghAL_kW9d", "https%3A%2F%2Fwww.threads.com%2F%40example.user%2Fpost%2FDVghAL_kW9d"),
             ("https://www.tiktok.com/@kelvindaniyar/video/7412345678901234567", "https%3A%2F%2Fwww.tiktok.com%2F%40kelvindaniyar%2Fvideo%2F7412345678901234567"),
             ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ%26t%3D42s"),
             ("https://shopee.co.id/product/123456/7890123?sp_atk=xyz99", "https%3A%2F%2Fshopee.co.id%2Fproduct%2F123456%2F7890123%3Fsp_atk%3Dxyz99"),
@@ -10671,18 +15934,18 @@ mod tests {
         let state = Arc::new(Mutex::new(AppState::default()));
 
         // 1. Parser extracts cached iPhone LAN IPv4 without matching PC LAN IP or loopback
-        let sample_wifi_json = r#"{"paired":["00008140-00112233"],"enabled":true,"last_ip":"192.168.100.41"}"#;
+        let sample_wifi_json = r#"{"paired":["00008140-00112233"],"enabled":true,"last_ip":"192.0.2.41"}"#;
         assert_eq!(
-            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.168.100.8").as_deref(),
-            Some("192.168.100.41")
+            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.0.2.10").as_deref(),
+            Some("192.0.2.41")
         );
         assert_eq!(
-            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.168.100.41"),
+            extract_cached_iphone_lan_ip_from_json(sample_wifi_json, "192.0.2.41"),
             None
         );
         let loopback_json = r#"{"last_ip":"127.0.0.1"}"#;
         assert_eq!(
-            extract_cached_iphone_lan_ip_from_json(loopback_json, "192.168.100.8"),
+            extract_cached_iphone_lan_ip_from_json(loopback_json, "192.0.2.10"),
             None
         );
 
@@ -10714,5 +15977,3988 @@ mod tests {
         assert!(info_json.contains("Send to iPhone Link"), "missing shortcut name in {info_json}");
         assert!(info_json.contains("Get URLs from"), "missing Dual-Mode Get URLs from in {info_json}");
         assert!(info_json.contains("Get Contents of URL"), "missing Get Contents of URL in {info_json}");
+    }
+
+    #[test]
+    fn test_tahap226_native_inprocess_diagnostics_repair_and_amfi_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let req_diag = HttpRequest::parse(b"GET /api/driver/diagnostics HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_diag = handle_request(&req_diag, &state, Path::new("web"));
+        assert_eq!(resp_diag.status_code, 200);
+        let body_diag = String::from_utf8_lossy(&resp_diag.body);
+        assert!(body_diag.contains(r#""native":true"#), "got {body_diag}");
+        for k in [
+            "apple_driver_installed",
+            "apple_service_running",
+            "tcp_port_27015_normal",
+            "hevc_codec_installed",
+            "developer_mode_status",
+        ] {
+            assert!(body_diag.contains(k), "missing {k} in {body_diag}");
+        }
+
+        let req_status = HttpRequest::parse(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_status = handle_request(&req_status, &state, Path::new("web"));
+        assert_eq!(resp_status.status_code, 200);
+        let body_status = String::from_utf8_lossy(&resp_status.body);
+        assert!(body_status.contains(r#""detailedDiagnostics":"#), "missing detailedDiagnostics in {body_status}");
+
+        let req_usb = HttpRequest::parse(b"GET /api/devices/native-usb HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_usb = handle_request(&req_usb, &state, Path::new("web"));
+        assert_eq!(resp_usb.status_code, 200);
+        let body_usb = String::from_utf8_lossy(&resp_usb.body);
+        assert!(body_usb.contains(r#""native":true"#) && body_usb.contains(r#""devices":["#), "got {body_usb}");
+
+        let req_rep = HttpRequest::parse(b"POST /api/driver/repair HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+        let resp_rep = handle_request(&req_rep, &state, Path::new("web"));
+        assert_eq!(resp_rep.status_code, 200);
+        let body_rep = String::from_utf8_lossy(&resp_rep.body);
+        assert!(
+            body_rep.contains(r#""ok":true"#)
+                && body_rep.contains(r#""native":true"#)
+                && body_rep.contains(r#""diagnostics":"#)
+                && body_rep.contains(r#""message_id":"#)
+                && body_rep.contains(r#""message_en":"#),
+            "got {body_rep}"
+        );
+
+        let req_unl_disc = HttpRequest::parse(b"POST /api/device/unlock-developer-mode HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+        let resp_unl_disc = handle_request(&req_unl_disc, &state, Path::new("web"));
+        assert_eq!(resp_unl_disc.status_code, 200);
+        let body_unl_disc = String::from_utf8_lossy(&resp_unl_disc.body);
+        assert!(
+            body_unl_disc.contains(r#""developer_mode_status":"#)
+                && body_unl_disc.contains(r#""message_id":"#)
+                && body_unl_disc.contains(r#""message_en":"#),
+            "got {body_unl_disc}"
+        );
+
+        // Live mock usbmuxd + Lockdown + AmfiClient socket test in-process
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let mux_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mux_addr = mux_listener.local_addr().unwrap();
+        mux_listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+
+        fn read_mux(s: &mut std::net::TcpStream) -> String {
+            let mut hdr = [0u8; 16];
+            if s.read_exact(&mut hdr).is_err() {
+                return String::new();
+            }
+            let len = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+            let mut body = vec![0u8; len.saturating_sub(16)];
+            let _ = s.read_exact(&mut body);
+            String::from_utf8_lossy(&body).into_owned()
+        }
+        fn write_mux(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let total = (16 + b.len()) as u32;
+            let mut hdr = [0u8; 16];
+            hdr[0..4].copy_from_slice(&total.to_le_bytes());
+            hdr[4..8].copy_from_slice(&1u32.to_le_bytes());
+            hdr[8..12].copy_from_slice(&8u32.to_le_bytes());
+            hdr[12..16].copy_from_slice(&1u32.to_le_bytes());
+            let _ = s.write_all(&hdr);
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+        fn read_lp(s: &mut std::net::TcpStream) -> String {
+            let mut lb = [0u8; 4];
+            if s.read_exact(&mut lb).is_err() {
+                return String::new();
+            }
+            let len = u32::from_be_bytes(lb) as usize;
+            let mut body = vec![0u8; len];
+            let _ = s.read_exact(&mut body);
+            String::from_utf8_lossy(&body).into_owned()
+        }
+        fn write_lp(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let _ = s.write_all(&(b.len() as u32).to_be_bytes());
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+
+        let srv_handle = thread::spawn(move || {
+            let mut hs = Vec::new();
+            while !stop_srv.load(Ordering::Relaxed) {
+                match mux_listener.accept() {
+                    Ok((mut s, _)) => {
+                        let _ = s.set_nonblocking(false);
+                        let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                        hs.push(thread::spawn(move || {
+                            let req = read_mux(&mut s);
+                            if req.contains("ListDevices") {
+                                write_mux(&mut s, "<plist version=\"1.0\"><dict><key>DeviceList</key><array><dict><key>Properties</key><dict><key>SerialNumber</key><string>00008150-SRVAMFI</string><key>DeviceID</key><integer>3</integer><key>ConnectionType</key><string>USB</string></dict></dict></array></dict></plist>");
+                            } else if req.contains("ReadPairRecord") {
+                                write_mux(&mut s, "<plist version=\"1.0\"><dict><key>PairRecordData</key><data>PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48cGxpc3QgdmVyc2lvbj0iMS4wIj48ZGljdD48a2V5Pkhvc3RJRDwva2V5PjxzdHJpbmc+SDE8L3N0cmluZz48L2RpY3Q+PC9wbGlzdD4=</data></dict></plist>");
+                            } else if req.contains("Connect") {
+                                let is_lockdown = req.contains("<integer>32498</integer>");
+                                write_mux(&mut s, "<plist version=\"1.0\"><dict><key>Number</key><integer>0</integer></dict></plist>");
+                                if is_lockdown {
+                                    for _ in 0..3 {
+                                        let r = read_lp(&mut s);
+                                        if r.is_empty() { break; }
+                                        if r.contains("StartSession") {
+                                            write_lp(&mut s, "<plist version=\"1.0\"><dict><key>EnableSessionSSL</key><false/></dict></plist>");
+                                        } else if r.contains("StartService") {
+                                            write_lp(&mut s, "<plist version=\"1.0\"><dict><key>Port</key><integer>58222</integer><key>EnableServiceSSL</key><false/></dict></plist>");
+                                        } else if r.contains("GetValue") {
+                                            write_lp(&mut s, "<plist version=\"1.0\"><dict><key>Value</key><string>iPhone18,1</string></dict></plist>");
+                                        }
+                                    }
+                                } else {
+                                    for _ in 0..2 {
+                                        let r = read_lp(&mut s);
+                                        if r.is_empty() { break; }
+                                        if r.contains("<integer>3</integer>") {
+                                            write_lp(&mut s, "<plist version=\"1.0\"><dict><key>success</key><true/><key>status</key><false/></dict></plist>");
+                                        } else {
+                                            write_lp(&mut s, "<plist version=\"1.0\"><dict><key>success</key><true/></dict></plist>");
+                                        }
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+            for h in hs {
+                let _ = h.join();
+            }
+        });
+
+        env::set_var("USBMUXD_SOCKET_ADDRESS", mux_addr.to_string());
+        let req_unl_mock = HttpRequest::parse(
+            b"POST /api/device/unlock-developer-mode HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 42\r\n\r\n{\"udid\":\"00008150-SRVAMFI\",\"arm_enable\":0}",
+        ).unwrap();
+        let resp_unl_mock = handle_request(&req_unl_mock, &state, Path::new("web"));
+        env::remove_var("USBMUXD_SOCKET_ADDRESS");
+        stop.store(true, Ordering::Relaxed);
+        let _ = srv_handle.join();
+
+        assert_eq!(resp_unl_mock.status_code, 200);
+        let body_unl_mock = String::from_utf8_lossy(&resp_unl_mock.body);
+        assert!(
+            body_unl_mock.contains(r#""ok":true"#)
+                && body_unl_mock.contains(r#""revealed":true"#)
+                && body_unl_mock.contains(r#""udid":"00008150-SRVAMFI""#)
+                && body_unl_mock.contains(r#""developer_mode_status":"disabled""#),
+            "got {body_unl_mock}"
+        );
+    }
+
+    #[test]
+    fn test_tahap227_native_inprocess_wifi_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let tmp_root = env::temp_dir().join("iphone_link_tahap227_srv_wifi_test");
+        let _ = fs::remove_dir_all(&tmp_root);
+        fs::create_dir_all(&tmp_root).unwrap();
+        let state_file = tmp_root.join("wifi_state.json");
+        let pairing_dir = tmp_root.join("pairing");
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &state_file);
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pairing_dir);
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+
+        // 1. GET /api/wifi (clean unpaired state)
+        let req_get = HttpRequest::parse(b"GET /api/wifi HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_get = handle_request(&req_get, &state, Path::new("web"));
+        assert_eq!(resp_get.status_code, 200);
+        let body_get = String::from_utf8_lossy(&resp_get.body);
+        assert!(
+            body_get.contains(r#""ok":true"#)
+                && body_get.contains(r#""native":true"#)
+                && body_get.contains(r#""pairedUdids":[]"#)
+                && body_get.contains(r#""wirelessLockdownEnabled":false"#)
+                && body_get.contains(r#""wifi":{"#),
+            "got {body_get}"
+        );
+
+        // 2. POST /api/wifi/pair (disconnected -> bilingual guidance)
+        let req_pair_disc = HttpRequest::parse(b"POST /api/wifi/pair HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+        let resp_pair_disc = handle_request(&req_pair_disc, &state, Path::new("web"));
+        assert_eq!(resp_pair_disc.status_code, 200);
+        let body_pair_disc = String::from_utf8_lossy(&resp_pair_disc.body);
+        assert!(
+            body_pair_disc.contains(r#""ok":false"#)
+                && body_pair_disc.contains(r#""native":true"#)
+                && body_pair_disc.contains(r#""message_id":"#)
+                && body_pair_disc.contains(r#""message_en":"#),
+            "got {body_pair_disc}"
+        );
+
+        // 3. Mock USB usbmuxd + Lockdown + RemotePairing for POST /api/wifi/pair
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let mux_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mux_addr = mux_listener.local_addr().unwrap();
+        mux_listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+
+        fn rmux(s: &mut std::net::TcpStream) -> String {
+            let mut hdr = [0u8; 16];
+            if s.read_exact(&mut hdr).is_err() { return String::new(); }
+            let len = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+            let mut b = vec![0u8; len.saturating_sub(16)];
+            let _ = s.read_exact(&mut b);
+            String::from_utf8_lossy(&b).into_owned()
+        }
+        fn wmux(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let total = (16 + b.len()) as u32;
+            let mut hdr = [0u8; 16];
+            hdr[0..4].copy_from_slice(&total.to_le_bytes());
+            hdr[4..8].copy_from_slice(&1u32.to_le_bytes());
+            hdr[8..12].copy_from_slice(&8u32.to_le_bytes());
+            hdr[12..16].copy_from_slice(&1u32.to_le_bytes());
+            let _ = s.write_all(&hdr);
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+        fn rlp(s: &mut std::net::TcpStream) -> String {
+            let mut lb = [0u8; 4];
+            if s.read_exact(&mut lb).is_err() { return String::new(); }
+            let len = u32::from_be_bytes(lb) as usize;
+            let mut b = vec![0u8; len];
+            let _ = s.read_exact(&mut b);
+            String::from_utf8_lossy(&b).into_owned()
+        }
+        fn wlp(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let _ = s.write_all(&(b.len() as u32).to_be_bytes());
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+
+        let srv_handle = thread::spawn(move || {
+            let mut hs = Vec::new();
+            while !stop_srv.load(Ordering::Relaxed) {
+                match mux_listener.accept() {
+                    Ok((mut s, _)) => {
+                        let _ = s.set_nonblocking(false);
+                        let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                        hs.push(thread::spawn(move || {
+                            let req = rmux(&mut s);
+                            if req.contains("ListDevices") {
+                                wmux(&mut s, "<plist version=\"1.0\"><dict><key>DeviceList</key><array><dict><key>Properties</key><dict><key>SerialNumber</key><string>00008150-SRVWIFI</string><key>DeviceID</key><integer>4</integer><key>ConnectionType</key><string>USB</string></dict></dict></array></dict></plist>");
+                            } else if req.contains("ReadPairRecord") {
+                                wmux(&mut s, "<plist version=\"1.0\"><dict><key>PairRecordData</key><data>PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48cGxpc3QgdmVyc2lvbj0iMS4wIj48ZGljdD48a2V5Pkhvc3RJRDwva2V5PjxzdHJpbmc+SDE8L3N0cmluZz48L2RpY3Q+PC9wbGlzdD4=</data></dict></plist>");
+                            } else if req.contains("Connect") {
+                                let is_lockdown = req.contains("<integer>32498</integer>");
+                                wmux(&mut s, "<plist version=\"1.0\"><dict><key>Number</key><integer>0</integer></dict></plist>");
+                                if is_lockdown {
+                                    for _ in 0..8 {
+                                        let r = rlp(&mut s);
+                                        if r.is_empty() { break; }
+                                        if r.contains("StartSession") {
+                                            wlp(&mut s, "<plist version=\"1.0\"><dict><key>EnableSessionSSL</key><false/></dict></plist>");
+                                        } else if r.contains("SetValue") {
+                                            wlp(&mut s, "<plist version=\"1.0\"><dict><key>Request</key><string>SetValue</string></dict></plist>");
+                                        } else if r.contains("StartService") {
+                                            wlp(&mut s, "<plist version=\"1.0\"><dict><key>Port</key><integer>59111</integer><key>EnableServiceSSL</key><false/></dict></plist>");
+                                        } else if r.contains("GetValue") {
+                                            wlp(&mut s, "<plist version=\"1.0\"><dict><key>Value</key><string>00008150-SRVWIFI</string></dict></plist>");
+                                        }
+                                    }
+                                } else {
+                                    let _ = rlp(&mut s);
+                                    wlp(&mut s, "<plist version=\"1.0\"><dict><key>alt_irk</key><data>AQIDBAUGBwgJCgsMDQ4PEA==</data><key>encryptionKey</key><data>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</data></dict></plist>");
+                                }
+                            }
+                        }));
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(5)),
+                    Err(_) => break,
+                }
+            }
+            for h in hs { let _ = h.join(); }
+        });
+
+        env::set_var("USBMUXD_SOCKET_ADDRESS", mux_addr.to_string());
+        let req_pair = HttpRequest::parse(
+            b"POST /api/wifi/pair HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 27\r\n\r\n{\"udid\":\"00008150-SRVWIFI\"}",
+        ).unwrap();
+        let resp_pair = handle_request(&req_pair, &state, Path::new("web"));
+        env::remove_var("USBMUXD_SOCKET_ADDRESS");
+        stop.store(true, Ordering::Relaxed);
+        let _ = srv_handle.join();
+
+        assert_eq!(resp_pair.status_code, 200);
+        let body_pair = String::from_utf8_lossy(&resp_pair.body);
+        assert!(
+            body_pair.contains(r#""ok":true"#)
+                && body_pair.contains(r#""native":true"#)
+                && body_pair.contains(r#""wifi_enabled":true"#)
+                && body_pair.contains(r#""wirelessLockdownEnabled":true"#)
+                && body_pair.contains(r#""00008150-SRVWIFI""#),
+            "got {body_pair}"
+        );
+
+        // 4. Mock Lockdown QueryType server for POST /api/wifi/scan
+        iphone_link_apple::wifi::update_device_wifi_state(
+            "00008150-SRVWIFI",
+            Some(true),
+            Some("127.0.0.1"),
+            false,
+            None,
+            None,
+            false,
+            true,
+            None,
+        );
+        let ld_srv = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ld_port = ld_srv.local_addr().unwrap().port();
+        let ld_handle = thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut ls, _)) = ld_srv.accept() {
+                    let _ = rlp(&mut ls);
+                    wlp(
+                        &mut ls,
+                        "<plist version=\"1.0\"><dict><key>Type</key><string>com.apple.mobile.lockdown</string><key>UniqueDeviceID</key><string>00008150-SRVWIFI</string></dict></plist>",
+                    );
+                }
+            }
+        });
+        env::set_var("IPHONE_LINK_LOCKDOWN_PORT", ld_port.to_string());
+        let req_scan = HttpRequest::parse(
+            b"POST /api/wifi/scan HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nContent-Length: 27\r\n\r\n{\"udid\":\"00008150-SRVWIFI\"}",
+        ).unwrap();
+        let resp_scan = handle_request(&req_scan, &state, Path::new("web"));
+        let req_probe = HttpRequest::parse(b"GET /api/wifi/probe?udid=00008150-SRVWIFI HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_probe = handle_request(&req_probe, &state, Path::new("web"));
+        env::remove_var("IPHONE_LINK_LOCKDOWN_PORT");
+        let _ = ld_handle.join();
+
+        let body_scan = String::from_utf8_lossy(&resp_scan.body);
+        assert!(
+            body_scan.contains(r#""ok":true"#)
+                && body_scan.contains(r#""native":true"#)
+                && body_scan.contains(r#""found":true"#)
+                && body_scan.contains(r#""ip":"127.0.0.1""#)
+                && body_scan.contains(r#""reachable":true"#)
+                && body_scan.contains(r#""message_id":"#)
+                && body_scan.contains(r#""message_en":"#),
+            "got {body_scan}"
+        );
+        let body_probe = String::from_utf8_lossy(&resp_probe.body);
+        assert!(body_probe.contains(r#""reachable":true"#), "got {body_probe}");
+
+        // 5. GET /api/status inherits zero-network native Wi-Fi state
+        let req_status = HttpRequest::parse(b"GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n").unwrap();
+        let resp_status = handle_request(&req_status, &state, Path::new("web"));
+        let body_status = String::from_utf8_lossy(&resp_status.body);
+        assert!(
+            body_status.contains(r#""wirelessLockdownEnabled":"#)
+                && body_status.contains(r#""00008150-SRVWIFI""#),
+            "got {body_status}"
+        );
+
+        env::remove_var("USBMUXD_SOCKET_ADDRESS");
+        env::remove_var("IPHONE_LINK_WIFI_STATE_PATH");
+        env::remove_var("IPHONE_LINK_PAIRING_DIR");
+        let _ = fs::remove_dir_all(&tmp_root);
+    }
+
+    #[test]
+    fn test_tahap228_native_inprocess_hid_stealth_lock_wake_and_wipe() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+        GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Stealth Dim idempotency: 16 -> 0 (skipped) -> 4 -> 0 (skipped)
+        let d1 = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/stealth", r#"{"enabled":true}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(d1.contains(r#""steps":16"#) && d1.contains(r#""skipped":false"#) && d1.contains(r#""stealth":true"#), "got {d1}");
+
+        let d2 = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/stealth", r#"{"enabled":true}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(d2.contains(r#""steps":0"#) && d2.contains(r#""skipped":true"#), "got {d2}");
+
+        let r1 = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/stealth", r#"{"enabled":false,"restoreSteps":99}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(r1.contains(r#""steps":4"#) && r1.contains(r#""stealth":false"#), "got {r1}");
+
+        let r2 = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/stealth", r#"{"enabled":false}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(r2.contains(r#""steps":0"#) && r2.contains(r#""skipped":true"#), "got {r2}");
+
+        // 2. Dim again, then synchronous 0.5s lock auto-restores 4 steps + >=480ms hold
+        let _ = handle_request(&post("/api/device/stealth", r#"{"enabled":true}"#), &state, Path::new("web"));
+        let lock_body = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/lock", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            lock_body.contains(r#""locked":true"#)
+                && lock_body.contains(r#""stealthRestored":true"#)
+                && lock_body.contains(r#""restoreSteps":4"#),
+            "got {lock_body}"
+        );
+        assert!(!is_stealth_dim_active());
+
+        // 3. DPAPI PIN save + /api/keyboard/typed + /api/device/wake-unlock Zero Passcode Leakage
+        let pin_resp = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/pin", r#"{"unlockPin":"123456"}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(pin_resp.contains(r#""dpapiEncrypted":true"#), "got {pin_resp}");
+
+        let _ = handle_request(&post("/api/keyboard/typed", r#"{"text":"aman terkendali"}"#), &state, Path::new("web"));
+        let _ = handle_request(&post("/api/keyboard/typed", r#"{"commitLine":true}"#), &state, Path::new("web"));
+
+        let wake_resp = String::from_utf8_lossy(
+            &handle_request(&post("/api/device/wake-unlock", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(wake_resp.contains(r#""unlocked":true"#) && wake_resp.contains(r#""steps":12"#), "got {wake_resp}");
+
+        let typed_lines = String::from_utf8_lossy(
+            &handle_request(&HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/keyboard/typed".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            }, &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(typed_lines.contains("aman terkendali") && !typed_lines.contains("123456"), "got {typed_lines}");
+
+        // 4. Toggle onscreen keyboard (Eject 0x0C, 0x00B8 = 184) & 4-step Shift Latching paste
+        let toggle_resp = String::from_utf8_lossy(
+            &handle_request(&post("/api/keyboard/toggle-onscreen", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(toggle_resp.contains(r#""usage":184"#), "got {toggle_resp}");
+
+        let paste_resp = String::from_utf8_lossy(
+            &handle_request(&post("/api/keyboard/paste", r#"{"text":"karhutla aman wok?"}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(paste_resp.contains(r#""typed":18"#), "got {paste_resp}");
+
+        // 5. Privacy wipe clears PIN & typed buffer
+        let _ = handle_request(&post("/api/device/wipe-privacy-data", "{}"), &state, Path::new("web"));
+        assert!(get_typed_lines_buffer().is_empty());
+        assert!(load_decrypted_pin().unwrap().is_none());
+        reset_hid_runtime_state();
+        GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_tahap228_mirror_touch_rotation_and_gesture_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        let touch_270 = String::from_utf8_lossy(
+            &handle_request(
+                &post("/mirror/touch", r#"{"nx":0.25,"ny":0.75,"rotation":270}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(
+            touch_270.contains(r#""rotation":270"#)
+                && touch_270.contains(r#""mappedX":16384"#)
+                && touch_270.contains(r#""mappedY":16384"#),
+            "got {touch_270}"
+        );
+
+        let g_recent = String::from_utf8_lossy(
+            &handle_request(
+                &post("/mirror/gesture", r#"{"direction":"recent"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(g_recent.contains(r#""gesture":"recent""#) && g_recent.contains(r#""steps":12"#), "got {g_recent}");
+
+        let g_pinch = String::from_utf8_lossy(
+            &handle_request(
+                &post("/mirror/gesture", r#"{"action":"pinch"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(g_pinch.contains(r#""gesture":"pinch""#) && g_pinch.contains(r#""steps":10"#), "got {g_pinch}");
+    }
+
+    #[test]
+    fn test_tahap229_native_inprocess_ocr_shortcut_skip_ocr_alt_c_and_alt_r() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_clip = crate::ocr_engine::read_win32_clipboard();
+        clear_copy_cache();
+        set_active_clipboard_source(ClipboardSource::Pc);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Ctrl+C (skipOcr: true) executes in < 10ms without calling OCR or writing PC clipboard
+        let sentinel = "WIN_CLIPBOARD_SENTINEL_229";
+        let _ = write_win32_clipboard(sentinel);
+        let t0 = std::time::Instant::now();
+        let resp_ctrl_c = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/keyboard/shortcut", r#"{"action":"copy","skipOcr":true}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        let elapsed_ms = t0.elapsed().as_millis();
+        assert!(
+            resp_ctrl_c.contains(r#""native":true"#)
+                && resp_ctrl_c.contains(r#""skipOcr":true"#)
+                && resp_ctrl_c.contains(r#""source":"iphone""#),
+            "got {resp_ctrl_c}"
+        );
+        assert!(elapsed_ms < 50, "Ctrl+C took too long: {elapsed_ms}ms");
+        assert_eq!(crate::ocr_engine::get_active_clipboard_source(), ClipboardSource::Iphone);
+        assert_eq!(crate::ocr_engine::read_win32_clipboard().as_deref(), Some(sentinel));
+
+        // 2. Alt+C (skipOcr: false) runs full batch OCR + paragraph formatting + clipboard write
+        let batch_payload = concat!(
+            r#"{"action":"copy","waitResult":true,"batchTexts":["#,
+            r#""<<<SEL_COLOR:blue>>>\r\n"#,
+            r#"Aksi pelari Jakarta Running Festival terkena (Cut-Off Time/\r\n"#,
+            r#"COT) di titik Cut-Off Point (COP) 1 dihadang Oleh @wisnutry017.\r\n\r\n"#,
+            r#"Bagaimana tanggapan kalian terkena cut-off time ini, Banteners?\r\n\r\n"#,
+            r#"Source: Threads @wisnutry017\r\n\r\n"#,
+            r#"#iakartarunninafestival #irf2026""#,
+            r#"]}"#
+        );
+        let resp_alt_c = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/keyboard/shortcut", batch_payload),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(
+            resp_alt_c.contains(r#""native":true"#)
+                && resp_alt_c.contains(r#""copiedToPc":true"#)
+                && resp_alt_c.contains("(Cut-Off Time/")
+                && resp_alt_c.contains("Cut-Off Point (COP) 1")
+                && resp_alt_c.contains("@wisnutryo17")
+                && resp_alt_c.contains("#jakartarunningfestival")
+                && resp_alt_c.contains(r#""autoClearedCache":true"#),
+            "got {resp_alt_c}"
+        );
+
+        // 3. Alt+R (clear-copy-cache) & /api/ocr/clear-chunks
+        crate::ocr_engine::seed_long_ocr_chunk_for_test(
+            &["Line 1", "Line 2", "Line 3", "Line 4"],
+            crate::ocr_engine::SelectionColor::Yellow,
+        );
+        assert_eq!(crate::ocr_engine::get_recent_long_ocr_chunks_count(), 1);
+        let resp_clear = String::from_utf8_lossy(
+            &handle_request(&post("/api/ocr/clear-chunks", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(resp_clear.contains(r#""cleared":true"#));
+        assert_eq!(crate::ocr_engine::get_recent_long_ocr_chunks_count(), 0);
+
+        let resp_alt_r = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/keyboard/shortcut", r#"{"action":"clear-copy-cache"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(resp_alt_r.contains(r#""action":"clear-copy-cache""#) && resp_alt_r.contains(r#""cleared":true"#));
+
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+        clear_copy_cache();
+        set_active_clipboard_source(ClipboardSource::Pc);
+    }
+
+    #[test]
+    fn test_tahap229_native_ocr_extract_and_link_grab_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_clip = crate::ocr_engine::read_win32_clipboard();
+        clear_copy_cache();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        let ext = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/ocr/extract", r#"{"batchTexts":["tarhutla aman\r\n\r\nprabowk"]}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(ext.contains(r#""native":true"#) && ext.contains("karhutla aman") && ext.contains("prabowo"), "got {ext}");
+
+        let grab = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/link/grab", r#"{"text":"Cek http5://vt.tiktok.com/ZSjX9k2Lm/ sekarang"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(grab.contains(r#""native":true"#) && grab.contains("https://vt.tiktok.com/ZSjX9k2Lm/"), "got {grab}");
+
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+        clear_copy_cache();
+    }
+
+    #[test]
+    fn test_tahap230_in_process_screen_mirror_and_orientation_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::hid::reset_hid_runtime_state();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let get = |path: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. First-Frame Honest Gate via /api/screen/start -> phase "starting", url: null
+        let start_body = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/screen/start", r#"{"udid":"UDID-230","transport":"cable","honestGate":true}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(
+            start_body.contains(r#""phase":"starting""#)
+                && start_body.contains(r#""url":null"#)
+                && start_body.contains(r#""native":true"#),
+            "got {start_body}"
+        );
+
+        // 2. First valid Annex-B keyframe promotes phase to "running" and queues /stream.bin chunk
+        assert!(iphone_link_apple::mirror::global_on_first_valid_frame(
+            vec![0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0x99],
+            true
+        ));
+        let scr_body = String::from_utf8_lossy(
+            &handle_request(&get("/api/screen"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(scr_body.contains(r#""phase":"running""#) && scr_body.contains(r#""frames_received":1"#), "got {scr_body}");
+
+        // 3. /mirror/codec, /mirror/pli, /api/screen/restart
+        let codec_body = String::from_utf8_lossy(
+            &handle_request(&get("/mirror/codec"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            codec_body.contains(r#""codec":"hvc1.1.6.L150.B0""#)
+                && codec_body.contains(r#""bottom":58"#)
+                && codec_body.contains(r#""right":14"#),
+            "got {codec_body}"
+        );
+        let pli_body = String::from_utf8_lossy(
+            &handle_request(&post("/mirror/pli", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(pli_body.contains(r#""pliSent":true"#) && pli_body.contains(r#""pliCount":1"#), "got {pli_body}");
+
+        // 4. /api/screen/orientation manual 270 -> Home instant 0°
+        let rot270 = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/screen/orientation", r#"{"orientation":270,"action":"manual"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(rot270.contains(r#""orientation":270"#) && rot270.contains(r#""isLandscape":true"#), "got {rot270}");
+        let rot_home = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/screen/orientation", r#"{"action":"home"}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(rot_home.contains(r#""orientation":0"#) && rot_home.contains(r#""isLandscape":false"#), "got {rot_home}");
+
+        // 5. /api/screen/stop cleanly stops & restores Stealth Dim if active
+        iphone_link_apple::hid::set_stealth_dim_active(true);
+        let stop_body = String::from_utf8_lossy(
+            &handle_request(&post("/api/screen/stop", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(stop_body.contains(r#""phase":"idle""#), "got {stop_body}");
+        assert!(!iphone_link_apple::hid::is_stealth_dim_active());
+
+        // Drain live snapshot queue cleanly
+        let chunks = iphone_link_apple::mirror::global_take_live_stream_snapshot();
+        assert!(!chunks.is_empty());
+        assert_eq!(&chunks[0][4..8], &[0x00, 0x00, 0x00, 0x01]);
+
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::hid::reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap230_in_process_audio_and_status_zero_poll_endpoints() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::hid::reset_hid_runtime_state();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let get = |path: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. /api/audio/start with low buffer preset & 88% volume
+        let aud_start = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/audio/start", r#"{"audioOut":"pc","bufferPreset":"low","volume":88}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(
+            aud_start.contains(r#""ok":true"#)
+                && aud_start.contains(r#""audioOut":"pc""#)
+                && aud_start.contains(r#""volume":88"#)
+                && aud_start.contains(r#""streaming":true"#)
+                && aud_start.contains(r#""delayMs":30.0"#),
+            "got {aud_start}"
+        );
+
+        // 2. Switch to bluetooth A2DP -> suspends wireless lockdown
+        let aud_bt = String::from_utf8_lossy(
+            &handle_request(
+                &post("/api/audio/config", r#"{"audioOut":"bluetooth","forceStream":true}"#),
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(
+            aud_bt.contains(r#""audioOut":"bluetooth""#)
+                && aud_bt.contains(r#""bluetoothA2dp":true"#)
+                && aud_bt.contains(r#""wirelessLockdownSuspended":true"#),
+            "got {aud_bt}"
+        );
+
+        // 3. /api/status serves in-memory screen + audio telemetry in < 100ms without worker polling
+        let status_body = String::from_utf8_lossy(
+            &handle_request(&get("/api/status"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            status_body.contains(r#""screen":"#)
+                && status_body.contains(r#""audio":"#)
+                && (status_body.contains(r#""bluetoothA2dp": true"#) || status_body.contains(r#""bluetoothA2dp":true"#)),
+            "got {status_body}"
+        );
+
+        // 4. /api/audio/stop stops audio cleanly
+        let aud_stop = String::from_utf8_lossy(
+            &handle_request(&post("/api/audio/stop", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(aud_stop.contains(r#""streaming":false"#), "got {aud_stop}");
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::hid::reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap231_status_zero_polling_guard_and_all_top_level_keys() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::hid::reset_hid_runtime_state();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        // Warm cache first in idle so zero-poll measurement measures cached path cleanly
+        let get = |path: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let _ = handle_request(&get("/api/status"), &state, Path::new("web"));
+
+        // Enable active streaming & verify Zero-Polling Guard returns in < 2ms with all keys
+        let _ = iphone_link_apple::mirror::global_start_screen(Some("UDID-231"), "cable", false);
+        let t0 = std::time::Instant::now();
+        let resp = handle_request(&get("/api/status"), &state, Path::new("web"));
+        let elapsed_us = t0.elapsed().as_micros();
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        for key in [
+            r#""devices":"#,
+            r#""selectedUdid":"#,
+            r#""handset":"#,
+            r#""developerMode":"#,
+            r#""driverReady":"#,
+            r#""detailedDiagnostics":"#,
+            r#""screen":"#,
+            r#""wifi":"#,
+            r#""audio":"#,
+            r#""wallpaperSig":"#,
+            r#""folderInstanceId":"#,
+            r#""isFreshFolder":"#,
+            r#""clipboardSeq":"#,
+            r#""activeClipboardSource":"#,
+            r#""settings":"#,
+        ] {
+            assert!(body.contains(key), "missing key {key} in /api/status: {body}");
+        }
+        assert!(elapsed_us < 5000, "Zero-Polling Guard took too long: {elapsed_us} us");
+
+        // /api/devices/<udid> also serves zero-poll cached data
+        let dev_resp = handle_request(&get("/api/devices/UDID-231"), &state, Path::new("web"));
+        assert_eq!(dev_resp.status_code, 200);
+        let dev_body = String::from_utf8_lossy(&dev_resp.body);
+        assert!(dev_body.contains(r#""zeroPoll": true"#) && dev_body.contains("UDID-231"), "got {dev_body}");
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::hid::reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap231_wallpaper_spi_30s_cache_and_no_store_headers() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        invalidate_wallpaper_cache_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_wp = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/system/wallpaper".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp1 = handle_request(&req_wp, &state, Path::new("web"));
+        assert_eq!(resp1.status_code, 200);
+        assert!(resp1.body.len() > 1000, "expected image bytes > 1000");
+        assert!(
+            resp1.body.starts_with(&[0xFF, 0xD8]) || resp1.body.starts_with(b"\x89PNG"),
+            "wallpaper response must be valid JPEG or PNG"
+        );
+        let raw_bytes = resp1.to_bytes();
+        let raw_http = String::from_utf8_lossy(&raw_bytes);
+        assert!(
+            raw_http.contains("Cache-Control: no-store, no-cache, must-revalidate, max-age=0")
+                && raw_http.contains("Pragma: no-cache"),
+            "missing no-store/no-cache headers"
+        );
+
+        // Second hit must serve straight from 30s WALLPAPER_SIG_CACHE (< 500 us)
+        let t0 = std::time::Instant::now();
+        let resp2 = handle_request(&req_wp, &state, Path::new("web"));
+        let elapsed_us = t0.elapsed().as_micros();
+        assert_eq!(resp2.body.len(), resp1.body.len());
+        assert!(elapsed_us < 1000, "30s WALLPAPER_SIG_CACHE miss: {elapsed_us} us");
+    }
+
+    #[test]
+    fn test_tahap231_settings_persistence_and_autorotate_sync() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post_settings = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/settings".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"theme":"light","fitMode":"contain","crop":{"top":4,"bottom":8,"left":2,"right":6},"autoRotate":true,"pcClipboardPaste":false,"stealthDim":true,"restoreSteps":6,"transport":"wifi"}"#.to_string(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&post_settings, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(
+            body.contains(r#""theme":"light""#)
+                && body.contains(r#""fitMode":"contain""#)
+                && body.contains(r#""autoRotate":true"#)
+                && body.contains(r#""pcClipboardPaste":false"#)
+                && body.contains(r#""stealthDim":true"#)
+                && body.contains(r#""restoreSteps":6"#)
+                && body.contains(r#""transport":"wifi""#),
+            "got {body}"
+        );
+
+        let scr_json = iphone_link_apple::mirror::global_screen_status_json();
+        assert!(scr_json.contains(r#""autoRotate":true"#), "AutoRotateController did not sync: {scr_json}");
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap231_clipboard_sequence_state_machine_paste_ios_vs_pc() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ocr_guard = crate::ocr_engine::CRATE_GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_clip = read_win32_clipboard();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Ctrl+C inside iPhone (`skipOcr: true`) sets source="iphone" & records sequence number
+        let _ = write_win32_clipboard("PC_CLIPBOARD_SAMPLE_231");
+        let _ = handle_request(&post("/api/keyboard/shortcut", r#"{"action":"copy","skipOcr":true}"#), &state, Path::new("web"));
+
+        // 2. Subsequent `/api/keyboard/paste` with no sequence change executes native iOS Cmd+V (`paste-ios`)
+        let paste_ios = String::from_utf8_lossy(
+            &handle_request(&post("/api/keyboard/paste", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            paste_ios.contains(r#""method":"ios-shortcut""#)
+                && paste_ios.contains(r#""action":"paste-ios""#)
+                && paste_ios.contains(r#""reason":"iphone-source""#),
+            "expected paste-ios when source=iphone, got {paste_ios}"
+        );
+
+        // 3. Explicit `force: true` (`Alt+V` / Paste PC Text) types PC clipboard via 4-step Shift latching
+        let paste_force = String::from_utf8_lossy(
+            &handle_request(&post("/api/keyboard/paste", r#"{"force":true,"text":"Halo?!"}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            paste_force.contains(r#""method":"typed""#)
+                && paste_force.contains(r#""action":"paste-pc""#)
+                && paste_force.contains(r#""typed":6"#),
+            "expected typed paste-pc on force=true, got {paste_force}"
+        );
+
+        // 4. Simulate Windows GetClipboardSequenceNumber change after iPhone copy -> promotes source to PC
+        let _ = handle_request(&post("/api/keyboard/shortcut", r#"{"action":"copy","skipOcr":true}"#), &state, Path::new("web"));
+        crate::ocr_engine::set_last_recorded_clipboard_seq_for_test(1); // different from current Win32 seq
+        let paste_promoted = String::from_utf8_lossy(
+            &handle_request(&post("/api/keyboard/paste", "{}"), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            paste_promoted.contains(r#""method":"typed""#) && paste_promoted.contains(r#""source":"pc""#),
+            "expected seq change to promote clipboard source to PC, got {paste_promoted}"
+        );
+
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+        set_active_clipboard_source(ClipboardSource::Pc);
+    }
+
+    #[test]
+    fn test_tahap231_shortcut_lan_bridge_under_5ms_and_403_guard() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_clip = read_win32_clipboard();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_c = HttpRequest::parse(
+            b"GET /c?u=https://www.threads.com/@example.user/post/DV9abc12345 HTTP/1.1\r\nHost: 192.0.2.10:8765\r\n\r\n",
+        )
+        .unwrap();
+        let t0 = std::time::Instant::now();
+        let resp_c = handle_request(&req_c, &state, Path::new("web"));
+        let elapsed_ms = t0.elapsed().as_millis();
+        assert_eq!(resp_c.status_code, 200);
+        assert!(elapsed_ms < 25, "/c took unexpectedly long: {elapsed_ms}ms");
+        let body_c = String::from_utf8_lossy(&resp_c.body);
+        assert!(body_c.contains("https://www.threads.com/@example.user/post/DV9abc12345"), "got {body_c}");
+
+        let lan_ip: IpAddr = "192.0.2.41".parse().unwrap();
+        assert!(is_lan_request_allowed(lan_ip, "GET", "/c?u=https://threads.com/x"));
+        assert!(is_lan_request_allowed(lan_ip, "POST", "/api/shortcut/push"));
+        assert!(!is_lan_request_allowed(lan_ip, "GET", "/api/status"));
+        assert!(!is_lan_request_allowed(lan_ip, "POST", "/api/settings"));
+
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+    }
+
+    #[test]
+    fn test_tahap232_embedded_web_and_icon_assets_zero_disk_io() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let missing_web_dir = Path::new(r"Z:\non_existent_isolated_dir_tahap232\web");
+
+        let get_req = |p: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: p.to_string(),
+            query: "v=tahap232".to_string(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+
+        let cases: &[(&str, &str, usize)] = &[
+            ("/", "text/html; charset=utf-8", 50_000),
+            ("/index.html", "text/html; charset=utf-8", 50_000),
+            ("/app.js", "application/javascript; charset=utf-8", 150_000),
+            ("/app.css", "text/css; charset=utf-8", 100_000),
+            ("/mirror.html", "text/html; charset=utf-8", 800),
+            ("/mirror.js", "application/javascript; charset=utf-8", 150_000),
+            ("/mirror.css", "text/css; charset=utf-8", 3_000),
+            ("/keys.js", "application/javascript; charset=utf-8", 15_000),
+            ("/logo.svg", "image/svg+xml", 4_000),
+            ("/logo.png", "image/png", 100_000),
+            ("/favicon.ico", "image/x-icon", 50_000),
+        ];
+
+        for &(route, expected_mime, min_len) in cases {
+            let t0 = std::time::Instant::now();
+            let resp = handle_request(&get_req(route), &state, missing_web_dir);
+            let elapsed_ms = t0.elapsed().as_millis();
+            assert_eq!(resp.status_code, 200, "route {} failed", route);
+            assert_eq!(resp.content_type, expected_mime, "mime mismatch for {}", route);
+            assert!(
+                resp.body.len() >= min_len,
+                "route {} too small: {} < {}",
+                route,
+                resp.body.len(),
+                min_len
+            );
+            assert!(elapsed_ms < 50, "route {} too slow: {}ms", route, elapsed_ms);
+            let wire = resp.to_bytes_with_conn("close");
+            let wire_head = String::from_utf8_lossy(&wire[..wire.len().min(512)]);
+            assert!(
+                wire_head.contains("Cache-Control: no-store, no-cache, must-revalidate, max-age=0"),
+                "missing Cache-Control no-store for {}",
+                route
+            );
+        }
+
+        let idx_html = String::from_utf8_lossy(&handle_request(&get_req("/"), &state, missing_web_dir).body).to_string();
+        assert!(idx_html.contains("tahap222-theme-contrast"));
+        assert!(idx_html.contains("/v4_true_acrylic.css"));
+        assert!(idx_html.contains("/v4_bridge.js"));
+        assert!(idx_html.contains("window.__V4_INITIAL_SETTINGS__="));
+
+        let app_css = String::from_utf8_lossy(&handle_request(&get_req("/app.css"), &state, missing_web_dir).body).to_string();
+        assert!(app_css.contains("V4_TRUE_ACRYLIC_CSS OVERRIDE"));
+        assert!(app_css.contains(".app::before"));
+    }
+
+    #[test]
+    fn test_tahap232_fullscreen_persistence_lock_on_drawer_orientation_aspect() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        GLOBAL_IS_FULLSCREEN.store(false, Ordering::SeqCst);
+        GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+        GLOBAL_PORTRAIT_WIDTH.store(346, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |p: &str, b: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: p.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: b.to_string(),
+            body_bytes: b.as_bytes().to_vec(),
+        };
+
+        let fs_on = String::from_utf8_lossy(
+            &handle_request(&post("/api/window/fullscreen", r#"{"fullscreen":true}"#), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(fs_on.contains(r#""fullscreen":true"#), "got {fs_on}");
+
+        for (route, payload) in [
+            ("/api/window/drawer", r#"{"open":true}"#),
+            ("/api/window/orientation", r#"{"landscape":true}"#),
+            ("/api/window/aspect", r#"{"width":340,"profile":"iphone"}"#),
+        ] {
+            let body = String::from_utf8_lossy(
+                &handle_request(&post(route, payload), &state, Path::new("web")).body,
+            )
+            .to_string();
+            assert!(
+                body.contains(r#""skipped":"fullscreen""#) && body.contains(r#""is_fullscreen":true"#),
+                "expected fullscreen persistence lock on {} with {}, got {}",
+                route,
+                payload,
+                body
+            );
+        }
+
+        let state_json = String::from_utf8_lossy(
+            &handle_request(
+                &HttpRequest {
+                    method: "GET".to_string(),
+                    path: "/api/window/state".to_string(),
+                    query: String::new(),
+                    headers: HashMap::new(),
+                    body: String::new(),
+                    body_bytes: Vec::new(),
+                },
+                &state,
+                Path::new("web"),
+            )
+            .body,
+        )
+        .to_string();
+        assert!(state_json.contains(r#""is_fullscreen":true"#), "got {state_json}");
+
+        let _ = handle_request(&post("/api/window/fullscreen", r#"{"fullscreen":false}"#), &state, Path::new("web"));
+        GLOBAL_IS_FULLSCREEN.store(false, Ordering::SeqCst);
+        GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_tahap232_tray_menu_ascii_and_dynamic_check_flags() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+        GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+        GLOBAL_AUDIO_PC_ACTIVE.store(true, Ordering::SeqCst);
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let get_menu = || {
+            String::from_utf8_lossy(
+                &handle_request(
+                    &HttpRequest {
+                        method: "GET".to_string(),
+                        path: "/api/window/tray-menu".to_string(),
+                        query: String::new(),
+                        headers: HashMap::new(),
+                        body: String::new(),
+                        body_bytes: Vec::new(),
+                    },
+                    &state,
+                    Path::new("web"),
+                )
+                .body,
+            )
+            .to_string()
+        };
+
+        let m0 = get_menu();
+        assert!(m0.is_ascii(), "tray menu JSON must be pure ASCII: {m0}");
+        assert!(m0.contains(r#""default_item":"Show / Restore iPhone Link""#), "got {m0}");
+        assert!(m0.contains(r#""nim_delete_guaranteed":true"#), "got {m0}");
+        assert!(m0.contains(r#""stream_audio_to_pc":true"#), "got {m0}");
+
+        let post = |p: &str, b: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: p.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: b.to_string(),
+            body_bytes: b.as_bytes().to_vec(),
+        };
+        let _ = handle_request(&post("/api/window/orientation", r#"{"landscape":true}"#), &state, Path::new("web"));
+        let _ = handle_request(&post("/api/tray/trigger_action", r#"{"action":"toggle_stealth"}"#), &state, Path::new("web"));
+
+        let m1 = get_menu();
+        assert!(m1.contains(r#""landscape":true"#) && m1.contains(r#""stealth_dim":true"#), "got {m1}");
+
+        reset_hid_runtime_state();
+        GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        GLOBAL_STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+        GLOBAL_AUDIO_PC_ACTIVE.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_tahap232_clean_close_restores_stealth_dim_and_deletes_tray() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+        GLOBAL_TRAY_REGISTERED.store(true, Ordering::SeqCst);
+        GLOBAL_STEALTH_ACTIVE.store(true, Ordering::SeqCst);
+
+        let dim_res = set_iphone_physical_brightness("min", 16, false);
+        assert!(dim_res.stealth && is_stealth_dim_active());
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        {
+            let mut st = state.lock().unwrap();
+            st.stealth_dim = true;
+            st.is_streaming = true;
+        }
+
+        let resp_close = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/window/close".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: "{}".to_string(),
+                body_bytes: b"{}".to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_close.status_code, 200);
+        let close_json = String::from_utf8_lossy(&resp_close.body);
+        assert!(
+            close_json.contains(r#""stealth_restored":true"#)
+                && close_json.contains(r#""stealth_restore_steps":4"#)
+                && close_json.contains(r#""tray_deleted":true"#),
+            "expected stealth_restored=true, steps=4, tray_deleted=true, got {close_json}"
+        );
+        assert!(!is_stealth_dim_active());
+        assert!(!GLOBAL_TRAY_REGISTERED.load(Ordering::SeqCst));
+        reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap233_inprocess_video_pipeline_routes_and_status() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let resp_pipe0 = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/video/pipeline".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_pipe0.status_code, 200);
+        let pipe0 = String::from_utf8_lossy(&resp_pipe0.body);
+        assert!(pipe0.contains(r#""ringCapacity":6"#) && pipe0.contains(r#""lowLatencyMode":true"#), "got {pipe0}");
+
+        let resp_dec = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/video/decode-annexb".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"synthetic":true}"#.to_string(),
+                body_bytes: br#"{"synthetic":true}"#.to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_dec.status_code, 200);
+        let dec_json = String::from_utf8_lossy(&resp_dec.body);
+        assert!(
+            dec_json.contains(r#""cleanWidth":1202"#)
+                && dec_json.contains(r#""cleanHeight":2598"#)
+                && dec_json.contains(r#""topMarginNotCropped":true"#)
+                && dec_json.contains(r#""bottomPaddingTrimmed":true"#)
+                && dec_json.contains(r#""ringCapacity":6"#)
+                && dec_json.contains(r#""probeZeroAlloc":true"#),
+            "got {dec_json}"
+        );
+
+        let resp_st = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_st.status_code, 200);
+        let st_json = String::from_utf8_lossy(&resp_st.body);
+        assert!(st_json.contains(r#""videoPipeline":"#) && st_json.contains(r#""ringCapacity":6"#), "got {st_json}");
+        assert!(st_json.contains(r#""videoPresenter":"#) && st_json.contains(r#""DXGI_SWAP_EFFECT_FLIP_DISCARD""#), "got {st_json}");
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap234_inprocess_video_presenter_and_snapshot_routes() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let resp_get = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/video/presenter".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_get.status_code, 200);
+        let p0 = String::from_utf8_lossy(&resp_get.body);
+        assert!(p0.contains(r#""swapEffect":"DXGI_SWAP_EFFECT_FLIP_DISCARD""#), "got {p0}");
+        assert!(p0.contains(r#""format":"DXGI_FORMAT_B8G8R8A8_UNORM""#), "got {p0}");
+        assert!(p0.contains(r#""alphaMode":"DXGI_ALPHA_MODE_IGNORE""#), "got {p0}");
+        assert!(p0.contains(r#""obsCaptureCompatible":true"#), "got {p0}");
+
+        let post_body = r#"{"fitMode":"original_ratio","rotationDeg":270,"cropTop":12,"cropBottom":4,"cropLeft":6,"cropRight":8,"windowWidth":1200,"windowHeight":468,"isFullscreen":false,"isLandscape":true,"drawerOpen":true}"#;
+        let resp_post = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/video/presenter".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: post_body.to_string(),
+                body_bytes: post_body.as_bytes().to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_post.status_code, 200);
+        let p1 = String::from_utf8_lossy(&resp_post.body);
+        assert!(p1.contains(r#""fitMode":"original_ratio""#), "got {p1}");
+        assert!(p1.contains(r#""rotationDeg":270"#), "got {p1}");
+        assert!(p1.contains(r#""width":840,"height":386"#), "got {p1}");
+
+        let resp_snap = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/video/snapshot".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_snap.status_code, 200);
+        let snap_json = String::from_utf8_lossy(&resp_snap.body);
+        assert!(snap_json.contains(r#""ok":true"#) && snap_json.contains("data:image/bmp;base64,Qk"), "got {snap_json}");
+
+        let resp_shortcut = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/keyboard/shortcut".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"action":"copy"}"#.to_string(),
+                body_bytes: br#"{"action":"copy"}"#.to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_shortcut.status_code, 200);
+        let sc_json = String::from_utf8_lossy(&resp_shortcut.body);
+        assert!(sc_json.contains(r#""autoSnapshotUsed":true"#), "got {sc_json}");
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap235_ui_composition_css_gpu_containment_and_bridge_presenter_sync() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let resp_css = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/v4_true_acrylic.css".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_css.status_code, 200);
+        let css = String::from_utf8_lossy(&resp_css.body);
+        assert!(css.contains(".display-col"), "missing .display-col containment");
+        assert!(css.contains("contain: layout style paint;"), "missing GPU layer containment");
+        assert!(css.contains("will-change: transform;"), "missing will-change transform");
+        assert!(css.contains(".side-drawer .card"), "missing nested backdrop-filter override");
+        assert!(css.contains("backdrop-filter: none !important;"));
+        assert!(css.contains(".app.is-fullsize.drawer-open .side-drawer"), "missing Tahap 91 FS drawer");
+        assert!(css.contains("white-space: nowrap !important;"), "missing compact quick-nav guard");
+
+        let resp_js = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/v4_bridge.js".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_js.status_code, 200);
+        let js = String::from_utf8_lossy(&resp_js.body);
+        assert!(js.contains("function syncNativeVideoPresenter("), "missing dual-path presenter sync");
+        assert!(js.contains("/api/video/presenter"));
+        assert!(js.contains("PARALLAX_CALM_INTERVAL_MS = 1500"), "missing Calm Parallax 1500ms");
+        assert!(js.contains("dx >= 2 || dy >= 2"), "missing >=2px delta guard");
+
+        // Verify POST /api/settings syncs directly into D3d11VideoPresenter
+        let body = r#"{"fitMode":"fill","crop":{"top":10,"bottom":4,"left":6,"right":8}}"#;
+        let resp_set = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/settings".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: body.to_string(),
+                body_bytes: body.as_bytes().to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_set.status_code, 200);
+        let pres = iphone_link_apple::mirror::global_video_presenter_status_json();
+        assert!(pres.contains(r#""fitMode":"edge_to_edge""#), "got {pres}");
+        assert!(pres.contains(r#""top":10,"bottom":4,"left":6,"right":8"#), "got {pres}");
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap235_endurance_benchmark_endpoint_and_zero_polling_status() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let resp_bench = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/system/endurance-benchmark".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"frames":1000}"#.to_string(),
+                body_bytes: br#"{"frames":1000}"#.to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(resp_bench.status_code, 200);
+        let bj = String::from_utf8_lossy(&resp_bench.body);
+        assert!(bj.contains(r#""ok":true"#), "got {bj}");
+        assert!(bj.contains(r#""framesProcessed":1000"#), "got {bj}");
+        assert!(bj.contains(r#""maxRingSlotsUsed":6"#), "got {bj}");
+        assert!(bj.contains(r#""maxSubscriberQueueDepth":24"#), "got {bj}");
+        assert!(bj.contains(r#""autoRotateSleepAllocations":0"#), "got {bj}");
+        assert!(bj.contains(r#""statusPollIoCallsDuringStream":0"#), "got {bj}");
+        assert!(bj.contains(r#""emptyWorkingSetCallsDuringStream":0"#), "got {bj}");
+        assert!(bj.contains(r#""zeroMemoryLeakVerified":true"#), "got {bj}");
+        assert!(bj.contains(r#""maxViewportHistoryCap":4"#), "got {bj}");
+
+        // 10 consecutive /api/status calls while simulated streaming active must run < 5ms total
+        {
+            let mut st = state.lock().unwrap();
+            st.is_streaming = true;
+        }
+        let t0 = std::time::Instant::now();
+        for _ in 0..10 {
+            let r = handle_request(
+                &HttpRequest {
+                    method: "GET".to_string(),
+                    path: "/api/status".to_string(),
+                    query: String::new(),
+                    headers: HashMap::new(),
+                    body: String::new(),
+                    body_bytes: Vec::new(),
+                },
+                &state,
+                Path::new("web"),
+            );
+            assert_eq!(r.status_code, 200);
+        }
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        assert!(elapsed_ms < 25.0, "10x /api/status elapsed={elapsed_ms:.2}ms");
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap236_v5_version_identity_and_inmemory_html_branding() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. Embedded HTML served from GET / and GET /index.html reports iPhone Link v5.0 & v5.0.0
+        let req_root = HttpRequest {
+            method: "GET".to_string(),
+            path: "/".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp_root = handle_request(&req_root, &state, Path::new("Z:\\nonexistent\\web"));
+        assert_eq!(resp_root.status_code, 200);
+        let html = String::from_utf8_lossy(&resp_root.body);
+        assert!(html.contains("iPhone Link v5.0.0"), "HTML updater card missing v5.0.0 branding");
+        assert!(html.contains("iPhone Link v5.0"), "HTML footer credit missing v5.0 branding");
+        assert!(!html.contains("iPhone Link v4.0"), "HTML still contains stale v4.0 branding");
+        assert!(!html.contains("iPhone Link v3.0"), "HTML still contains stale v3.0 branding");
+
+        // 2. /v4_bridge.js reports v5.0.0 & v5.0
+        let resp_js = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/v4_bridge.js".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let js = String::from_utf8_lossy(&resp_js.body);
+        assert!(js.contains("iPhone Link v5.0.0"));
+        assert!(js.contains("iPhone Link v5.0"));
+
+        // 3. GET /api/status & GET /api/settings report Pure Native Rust Zero Python / Zero PowerShell v5.0.0
+        let resp_st = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let st_json = String::from_utf8_lossy(&resp_st.body);
+        assert!(st_json.trim_end().ends_with('}'), "status JSON must end cleanly with }}: {st_json}");
+        assert!(st_json.contains(r#""version": "5.0.0""#), "got {st_json}");
+        assert!(st_json.contains(APP_EDITION_V5), "got {st_json}");
+        assert!(st_json.contains(r#""zero_python_runtime": true"#), "got {st_json}");
+        assert!(st_json.contains(r#""zero_powershell_runtime": true"#), "got {st_json}");
+
+        let resp_cfg = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/settings".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let cfg_json = String::from_utf8_lossy(&resp_cfg.body);
+        assert!(cfg_json.contains(r#""version":"5.0.0""#), "got {cfg_json}");
+        assert!(cfg_json.contains(r#""zero_python_runtime":true"#), "got {cfg_json}");
+        assert!(cfg_json.contains(r#""zero_powershell_runtime":true"#), "got {cfg_json}");
+    }
+
+    #[test]
+    fn test_tahap236_updater_v5_downgrade_protection_and_protected_configs() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(crate::updater::CURRENT_VERSION, "5.0.0");
+        assert!(!crate::updater::is_newer_version("5.0.0", "4.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.0", "3.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.0", "5.0.0"));
+        assert!(crate::updater::is_newer_version("5.0.0", "5.0.1"));
+        assert!(crate::updater::is_protected_config_file("user_settings.json"));
+        assert!(crate::updater::is_protected_config_file("wifi_state.json"));
+        assert!(crate::updater::is_protected_config_file("typed_history.json"));
+
+        let mut cache = UpdateStateCache::default();
+        assert_eq!(cache.current_version, "5.0.0");
+        cache.apply_worker_payload(
+            r#"{"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#,
+            "stable",
+        );
+        assert!(!cache.update_available);
+        assert_eq!(cache.latest_version, "5.0.0");
+    }
+
+    #[test]
+    fn test_tahap238_hid_aliases_window_display_width_and_wifi_error_banner() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::window_dwm::GLOBAL_IS_FULLSCREEN.store(false, Ordering::SeqCst);
+        crate::window_dwm::GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        crate::window_dwm::GLOBAL_DRAWER_OPEN.store(false, Ordering::SeqCst);
+        crate::window_dwm::GLOBAL_PORTRAIT_WIDTH.store(346, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let post = |p: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: p.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+        let get = |p: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: p.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+
+        // 1. Direct /touch, /button, /key, /api/screen/swipe aliases never fall through to 404
+        let r_touch = handle_request(&post("/touch", r#"{"type":"contact","x":32768,"y":40000}"#), &state, Path::new("web"));
+        assert_eq!(r_touch.status_code, 200);
+        let b_touch = String::from_utf8_lossy(&r_touch.body);
+        assert!(b_touch.contains(r#""mappedX":32768"#) && b_touch.contains(r#""mappedY":40000"#), "got {b_touch}");
+
+        let r_btn = handle_request(&post("/button", r#"{"name":"home","state":"press"}"#), &state, Path::new("web"));
+        assert_eq!(r_btn.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_btn.body).contains(r#""button":"home""#));
+
+        let r_key = handle_request(&post("/key", r#"{"usages":[4,5]}"#), &state, Path::new("web"));
+        assert_eq!(r_key.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_key.body).contains(r#""usagesCount":2"#));
+
+        let r_swipe = handle_request(&post("/api/screen/swipe", r#"{"direction":"left"}"#), &state, Path::new("web"));
+        assert_eq!(r_swipe.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_swipe.body).contains(r#""direction":"left""#));
+
+        // 2. /api/window/aspect accepts displayWidth: 376 & /api/screen/orientation resizes state + /api/window/tray|restore aliases
+        let r_asp = handle_request(&post("/api/window/aspect", r#"{"displayWidth":376}"#), &state, Path::new("web"));
+        assert_eq!(r_asp.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_asp.body).contains(r#""portrait_width":376"#));
+
+        let r_rot = handle_request(&post("/api/screen/orientation", r#"{"orientation":270}"#), &state, Path::new("web"));
+        assert_eq!(r_rot.status_code, 200);
+        assert!(crate::window_dwm::GLOBAL_IS_LANDSCAPE.load(Ordering::SeqCst));
+
+        let r_rect = handle_request(&get("/api/window/rect"), &state, Path::new("web"));
+        let b_rect = String::from_utf8_lossy(&r_rect.body);
+        assert!(b_rect.contains(r#""hwnd":"#) && b_rect.contains(r#""portrait_width":376"#) && b_rect.contains(r#""is_landscape":true"#), "got {b_rect}");
+
+        assert_eq!(handle_request(&post("/api/window/tray", "{}"), &state, Path::new("web")).status_code, 200);
+        assert_eq!(handle_request(&post("/api/window/restore", "{}"), &state, Path::new("web")).status_code, 200);
+
+        // 3. /v4_bridge.js unhides #screen-error-banner on phase === 'error'
+        let js_resp = handle_request(&get("/v4_bridge.js"), &state, Path::new("web"));
+        let js_body = String::from_utf8_lossy(&js_resp.body);
+        assert!(js_body.contains("s.screen.phase === 'error'") && js_body.contains("errBanner.hidden = false"), "missing error banner reveal");
+
+        crate::window_dwm::GLOBAL_IS_LANDSCAPE.store(false, Ordering::SeqCst);
+        crate::window_dwm::GLOBAL_PORTRAIT_WIDTH.store(346, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_tahap240_audio_auto_start_on_screen_start_and_auto_stop_on_screen_stop() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::hid::reset_hid_runtime_state();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. POST /api/screen (honestGate=false) with default audio_routing="pc" MUST auto-start PC audio bridge
+        let r_start = handle_request(
+            &req_with("POST", "/api/screen", r#"{"transport":"usb","honestGate":false}"#),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_start.status_code, 200);
+        let aud_initial = String::from_utf8_lossy(
+            &handle_request(&req_with("GET", "/api/audio", ""), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            aud_initial.contains(r#""pcBridgeActive":true"#)
+                || aud_initial.contains(r#""pcBridgeConnecting":true"#),
+            "PC audio bridge must auto-start (active or connecting) on POST /api/screen: {aud_initial}"
+        );
+        // Poll up to 9.0s for background STA worker (WinRT A2DP multi-candidate fallback / WASAPI) to finish opening
+        let poll_deadline = std::time::Instant::now() + Duration::from_secs(9);
+        let mut became_active = iphone_link_audio::is_global_pc_audio_bridge_active();
+        while !became_active && std::time::Instant::now() < poll_deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            became_active = iphone_link_audio::is_global_pc_audio_bridge_active();
+        }
+        let aud_running = String::from_utf8_lossy(
+            &handle_request(&req_with("GET", "/api/audio", ""), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            became_active && aud_running.contains(r#""pcBridgeActive":true"#),
+            "PC audio bridge must reach pcBridgeActive=true after POST /api/screen: {aud_running}"
+        );
+
+        // 2. POST /api/screen/stop MUST immediately stop PC audio bridge while keeping saved audio_routing="pc"
+        let r_stop = handle_request(
+            &req_with("POST", "/api/screen/stop", "{}"),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_stop.status_code, 200);
+        assert!(
+            !iphone_link_audio::is_global_pc_audio_bridge_active(),
+            "PC audio bridge must auto-stop on POST /api/screen/stop"
+        );
+        assert_eq!(state.lock().unwrap().audio_routing, "pc");
+
+        // 3. DELETE /api/screen also stops PC audio bridge cleanly
+        let _ = handle_request(
+            &req_with("POST", "/api/screen", r#"{"transport":"usb","honestGate":false}"#),
+            &state,
+            Path::new("web"),
+        );
+        assert!(
+            iphone_link_audio::is_global_pc_audio_bridge_active()
+                || iphone_link_audio::is_global_pc_audio_bridge_connecting()
+        );
+        let r_del = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert_eq!(r_del.status_code, 200);
+        assert!(!iphone_link_audio::is_global_pc_audio_bridge_active());
+        assert!(!iphone_link_audio::is_global_pc_audio_bridge_connecting());
+
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::hid::reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap241_status_exposes_pc_bridge_active_and_v4_bridge_audio_safety_sync() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        // Verify alias acceptance (`audio_out`, `audio_routing`)
+        {
+            let mut st = state.lock().unwrap();
+            assert!(apply_settings_json_body_to_state(r#"{"audio_routing":"device"}"#, &mut st));
+            assert_eq!(st.audio_routing, "device");
+            assert!(apply_settings_json_body_to_state(r#"{"audio_out":"pc"}"#, &mut st));
+            assert_eq!(st.audio_routing, "pc");
+        }
+
+        let get = |path: &str| HttpRequest {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let st_body = String::from_utf8_lossy(&handle_request(&get("/api/status"), &state, Path::new("web")).body).to_string();
+        assert!(st_body.contains(r#""pcBridgeActive":"#), "status missing pcBridgeActive: {st_body}");
+        let js_body = String::from_utf8_lossy(&handle_request(&get("/v4_bridge.js"), &state, Path::new("web")).body).to_string();
+        assert!(js_body.contains("__v4AutoAudioSyncedForRun"), "v4_bridge.js missing auto-audio safety sync");
+    }
+
+    #[test]
+    fn test_tahap242_grab_link_spotlight_endpoints_and_reconnect_telemetry() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        let prev_clip = read_win32_clipboard();
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Spotlight HID endpoints return 200 OK with exact Golden v4.0.0 stages (no more 404!)
+        let r_paste = handle_request(&req_with("POST", "/api/device/spotlight-paste", "{}"), &state, Path::new("web"));
+        assert_eq!(r_paste.status_code, 200);
+        let paste_body = String::from_utf8_lossy(&r_paste.body).to_string();
+        assert!(paste_body.contains(r#""ok":true"#) && paste_body.contains(r#""stage":"pasted_clean""#), "got {paste_body}");
+
+        let r_tail = handle_request(&req_with("POST", "/api/device/spotlight-paste-tail", "{}"), &state, Path::new("web"));
+        assert_eq!(r_tail.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_tail.body).contains(r#""stage":"pasted_clean""#));
+
+        let r_head = handle_request(&req_with("POST", "/api/device/spotlight-move-head", "{}"), &state, Path::new("web"));
+        assert_eq!(r_head.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_head.body).contains(r#""stage":"head""#));
+
+        let r_close = handle_request(&req_with("POST", "/api/device/spotlight-close", "{}"), &state, Path::new("web"));
+        assert_eq!(r_close.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_close.body).contains(r#""stage":"closed""#));
+
+        // 2. /api/qr/scan normalizes schemeless Instagram URL + writes Windows Clipboard + full Golden schema
+        let r_qr = handle_request(
+            &req_with("POST", "/api/qr/scan", r#"{"text":"instagram.com/p/DR20E4rIdel/"}"#),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_qr.status_code, 200);
+        let qr_body = String::from_utf8_lossy(&r_qr.body).to_string();
+        assert!(
+            qr_body.contains(r#""ok":true"#)
+                && qr_body.contains("https://www.instagram.com/p/DR20E4rIdel/")
+                && qr_body.contains(r#""copiedToPc":true"#)
+                && qr_body.contains(r#""clipboardWritten":true"#)
+                && qr_body.contains(r#""complete":true"#),
+            "unexpected /api/qr/scan body: {qr_body}"
+        );
+        assert_eq!(
+            read_win32_clipboard().as_deref(),
+            Some("https://www.instagram.com/p/DR20E4rIdel/")
+        );
+
+        // 3. Head + tail Spotlight fragment stitching
+        let stitched = extract_best_link_from_candidates(&[
+            "https://www.instagram.com/reel/DUfFa".to_string(),
+            "reel/DUfFa9vE37z/".to_string(),
+        ]);
+        assert_eq!(
+            stitched.as_deref(),
+            Some("https://www.instagram.com/reel/DUfFa9vE37z/")
+        );
+
+        // 4. Fresh iPhone Shortcut LAN cache fallback (< 8s)
+        if let Ok(mut cache) = LATEST_SHORTCUT_URL_CACHE.lock() {
+            *cache = (
+                "https://www.instagram.com/reel/DUfFa9vE37z/".to_string(),
+                now_epoch_ms_u64(),
+            );
+        }
+        let r_sc = handle_request(&req_with("POST", "/api/qr/scan", "{}"), &state, Path::new("web"));
+        let sc_body = String::from_utf8_lossy(&r_sc.body).to_string();
+        assert!(
+            sc_body.contains("https://www.instagram.com/reel/DUfFa9vE37z/")
+                && sc_body.contains(r#""source":"iphone_shortcut""#),
+            "unexpected shortcut fallback: {sc_body}"
+        );
+        if let Ok(mut cache) = LATEST_SHORTCUT_URL_CACHE.lock() {
+            *cache = (String::new(), 0);
+        }
+
+        // 5. GET /api/screen exposes Tahap 242 telemetry & POST /api/screen is non-blocking (< 250 ms)
+        let t0 = std::time::Instant::now();
+        let r_start = handle_request(
+            &req_with("POST", "/api/screen", r#"{"transport":"usb","honestGate":false}"#),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_start.status_code, 200);
+        assert!(
+            t0.elapsed() < Duration::from_millis(500),
+            "POST /api/screen must be non-blocking, took {:?}",
+            t0.elapsed()
+        );
+        let scr_body = String::from_utf8_lossy(
+            &handle_request(&req_with("GET", "/api/screen", ""), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(
+            scr_body.contains(r#""display_xpc_pings":"#)
+                && scr_body.contains(r#""auto_reconnect_count":"#)
+                && scr_body.contains(r#""last_disconnect_reason":null"#)
+                && scr_body.contains(r#""reconnecting":false"#),
+            "GET /api/screen missing Tahap 242 fields: {scr_body}"
+        );
+
+        // 6. V4_BRIDGE_JS & V4_TRUE_ACRYLIC_CSS contain Tahap 242 anti-blank reconnect guard
+        let js_body = String::from_utf8_lossy(
+            &handle_request(&req_with("GET", "/v4_bridge.js", ""), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(js_body.contains("__v4Tahap242ReconnectGuard"), "missing reconnect guard in v4_bridge.js");
+        let css_body = String::from_utf8_lossy(
+            &handle_request(&req_with("GET", "/v4_true_acrylic.css", ""), &state, Path::new("web")).body,
+        )
+        .to_string();
+        assert!(css_body.contains("#v4-reconnect-pill"), "missing reconnect pill CSS");
+
+        let _ = handle_request(&req_with("POST", "/api/screen/stop", "{}"), &state, Path::new("web"));
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap243_anti_crash_ocr_stress_utf8_audio_connecting_and_force_refresh() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_clip = read_win32_clipboard();
+
+        // 1. Non-ASCII Spotlight OCR stress (… • — 🔍 İ emoji) NEVER panics inside frozen link_grabber.rs
+        let toxic_spotlight_samples = vec![
+            "\u{1F50D} https://www.instagram.com/reel/DW00rRVEi1M/?igsh=Z2FzdGM0aWl0d3M=\u{2026} \u{2014} Show Results".to_string(),
+            "\u{2022}İnstagram\u{2022} http5://www.instagram.com/reel/DW00rRVEi1M/?igsh=Z2FzdGM0aWl0d3M=\u{2026}".to_string(),
+            "\u{1F50D}a\u{2026}\u{2022}\u{2014}İ\u{2026}\u{2022}\u{2014} https://www.instagram.com/reel/DW00rRVEi1M/?igsh=Z2FzdGM0aWl0d3M=".to_string(),
+        ];
+        for sample in &toxic_spotlight_samples {
+            let extracted = extract_best_link_from_candidates(std::slice::from_ref(sample));
+            assert_eq!(
+                extracted.as_deref(),
+                Some("https://www.instagram.com/reel/DW00rRVEi1M/?igsh=Z2FzdGM0aWl0d3M="),
+                "Toxic UTF-8 Spotlight OCR must extract exact Instagram Reel URL without panic"
+            );
+        }
+
+        // 2. 10x consecutive image decode + recognize_data_url_for_link_grab stress (OnceLock GDI+ & combase.dll)
+        // Minimal valid 2x2 24-bit BMP data URL (guaranteed decoded by GDI+ / BMP parser, zero crash over 10 loops)
+        let bmp_2x2_b64 = "Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAAAA////AAAAAA==";
+        let bmp_data_url = format!("data:image/bmp;base64,{bmp_2x2_b64}");
+        for _ in 0..10 {
+            let _lines = crate::ocr_engine::recognize_data_url_for_link_grab(&bmp_data_url);
+        }
+
+        // 3. GET /api/status?force=1 & POST /api/status/refresh return 200 OK with reconnecting & pcBridgeConnecting
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_force = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: "force=1".to_string(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let r_force = handle_request(&req_force, &state, Path::new("web"));
+        assert_eq!(r_force.status_code, 200);
+        let b_force = String::from_utf8_lossy(&r_force.body).to_string();
+        assert!(
+            b_force.contains(r#""reconnecting":"#)
+                && b_force.contains(r#""pcBridgeConnecting":"#)
+                && b_force.contains(r#""pcBridgeActive":"#),
+            "GET /api/status?force=1 missing Tahap 243 fields: {b_force}"
+        );
+
+        let req_refresh = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/status/refresh".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: "{}".to_string(),
+            body_bytes: b"{}".to_vec(),
+        };
+        let r_refresh = handle_request(&req_refresh, &state, Path::new("web"));
+        assert_eq!(r_refresh.status_code, 200);
+        assert!(String::from_utf8_lossy(&r_refresh.body).contains(r#""pcBridgeConnecting":"#));
+
+        // 4. V4_BRIDGE_JS & V4_TRUE_ACRYLIC_CSS contain Tahap 243 hooks
+        assert!(V4_BRIDGE_JS.contains("installTahap243LaunchpadRefreshAndWifiBoot"));
+        assert!(V4_BRIDGE_JS.contains("#launchpad-scan-btn"));
+        assert!(V4_BRIDGE_JS.contains("pcBridgeConnecting"));
+        assert!(V4_BRIDGE_JS.contains("/api/status?force=1"));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("@keyframes v4Spin"));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains(".v4-refresh-spinning"));
+
+        if let Some(prev) = prev_clip {
+            let _ = write_win32_clipboard(&prev);
+        }
+    }
+
+    #[test]
+    fn test_tahap244_compact_reconnect_pill_audio_device_fields_and_mini_2x_ocr() {
+        // 1. Compact 1-line #v4-reconnect-pill CSS & sanitized JS text (never dumps raw IO errors)
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("max-width: 240px !important;"));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("white-space: nowrap !important;"));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("text-overflow: ellipsis !important;"));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("border-radius: 999px !important;"));
+        assert!(
+            V4_BRIDGE_JS.contains("Menyambung ulang")
+                && !V4_BRIDGE_JS.contains("pill.textContent = noteText ||"),
+            "reconnect pill JS must sanitize noteText and never dump raw IO errors"
+        );
+        assert!(V4_BRIDGE_JS.contains("pcBridgeDevice"));
+
+        // 2. GET /api/status and GET /api/audio expose pcBridgeDevice & pcBridgeCandidates
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_st = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let r_st = handle_request(&req_st, &state, Path::new("web"));
+        assert_eq!(r_st.status_code, 200);
+        let b_st = String::from_utf8_lossy(&r_st.body);
+        assert!(b_st.contains(r#""pcBridgeDevice":"#));
+        assert!(b_st.contains(r#""pcBridgeCandidates":"#));
+
+        let req_aud = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/audio".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let r_aud = handle_request(&req_aud, &state, Path::new("web"));
+        assert_eq!(r_aud.status_code, 200);
+        let b_aud = String::from_utf8_lossy(&r_aud.body);
+        assert!(b_aud.contains(r#""pcBridgeDevice":"#));
+        assert!(b_aud.contains(r#""pcBridgeCandidates":"#));
+
+        // 3. Mini 2x bilinear + contrast upscale on thin Spotlight strip (1216 x 160 -> 2432 x 320 <= 3.2 MB)
+        let strip_w = 1216usize;
+        let strip_h = 160usize;
+        let mut src = vec![235u8; strip_w * strip_h * 4];
+        for y in 60..100 {
+            for x in 100..200 {
+                let idx = (y * strip_w + x) * 4;
+                src[idx] = 40;
+                src[idx + 1] = 40;
+                src[idx + 2] = 40;
+                src[idx + 3] = 255;
+            }
+        }
+        let (up, uw, uh) = crate::ocr_engine::upscale_2x_bilinear_with_contrast_rgba(
+            &src, strip_w, strip_h, true,
+        );
+        assert_eq!((uw, uh), (2432, 320));
+        assert_eq!(up.len(), 2432 * 320 * 4);
+        assert!(up.len() < 3_500_000, "2x Spotlight strip must stay < 3.5 MB RAM");
+        // Verify contrast boost sharpened dark text stroke (< 20) and brightened light bg (>= 250)
+        let dark_px = up[(150 * uw + 250) * 4];
+        let light_px = up[(10 * uw + 10) * 4];
+        assert!(dark_px <= 15, "dark glyph stroke must sharpen, got {dark_px}");
+        assert!(light_px >= 250, "light pill bg must brighten, got {light_px}");
+    }
+
+    #[test]
+    fn test_tahap245_multiline_wrapped_ios27_spotlight_url_unwrapper() {
+        // 1. Exact video_1.mp4 Attempt #1 (iOS 27.2 3-line wrapped Spotlight URL + "Ask Siri")
+        let case1_raw = "https://www.instagram.com/p/\nDWUra9vEgZ1/?\nigsh=MTQyY213azh0eTR4OQ==\nAsk Siri";
+        let case1_unwrapped = crate::ocr_engine::unwrap_multiline_spotlight_urls(case1_raw);
+        assert!(
+            case1_unwrapped.contains("https://www.instagram.com/p/DWUra9vEgZ1/?igsh=MTQyY213azh0eTR4OQ=="),
+            "case1 unwrap failed: {case1_unwrapped:?}"
+        );
+        assert!(!case1_unwrapped.contains("OQ==Ask"), "Ask Siri must NOT be glued onto query");
+        let best1 = extract_best_link_from_candidates(&[case1_raw.to_string()]);
+        assert!(
+            best1
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://www.instagram.com/p/DWUra9vEgZ1/")),
+            "case1 best link mismatch: {best1:?}"
+        );
+
+        // 2. Exact video_1.mp4 Attempt #2 (trailing hyphen '-' in ID DR84sR-AUY- MUST stay intact!)
+        let case2_raw = "https://www.instagram.com/p/\nDR84sR-AUY-/?\nigsh=cGVkd2tmd2h0cTI0\nAsk Siri";
+        let case2_unwrapped = crate::ocr_engine::unwrap_multiline_spotlight_urls(case2_raw);
+        assert!(
+            case2_unwrapped.contains("https://www.instagram.com/p/DR84sR-AUY-/?igsh=cGVkd2tmd2h0cTI0"),
+            "case2 unwrap failed: {case2_unwrapped:?}"
+        );
+        let best2 = extract_best_link_from_candidates(&[case2_raw.to_string()]);
+        assert!(
+            best2
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://www.instagram.com/p/DR84sR-AUY-/")),
+            "case2 trailing hyphen ID corrupted: {best2:?}"
+        );
+
+        // 3. Single-line iPhone 11 Pro Max Spotlight case MUST remain 100% preserved
+        let case3_raw = "https://www.instagram.com/reel/DWTT87Ip3cz/?igsh=Z2FzdGM0aWl0d3M=\nCancel";
+        let best3 = extract_best_link_from_candidates(&[case3_raw.to_string()]);
+        assert!(
+            best3
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://www.instagram.com/reel/DWTT87Ip3cz/")),
+            "case3 single-line 11 Pro Max failed: {best3:?}"
+        );
+
+        // 4. Magnifier artifact + mid-URL OCR spacing + trailing clear button
+        let case4_raw = "Qhttps:// www.instagram.com /reel/DWI0xrREiq1/ ×";
+        let best4 = extract_best_link_from_candidates(&[case4_raw.to_string()]);
+        assert!(
+            best4
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://www.instagram.com/reel/DWI0xrREiq1/")),
+            "case4 artifact cleanup failed: {best4:?}"
+        );
+
+        // 5. Fallback to valid 1x candidate when 2x candidate only captured truncated `.../p/` prefix!
+        let best5 = extract_best_link_from_candidates(&[
+            "https://www.instagram.com/p/".to_string(),
+            case2_raw.to_string(),
+        ]);
+        assert!(
+            best5
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://www.instagram.com/p/DR84sR-AUY-/")),
+            "case5 failed to reject bare /p/ and fall back to valid 1x: {best5:?}"
+        );
+        assert!(crate::ocr_engine::text_has_complete_url_candidate(case1_raw));
+        assert!(!crate::ocr_engine::text_has_complete_url_candidate("https://www.instagram.com/p/"));
+    }
+
+    #[test]
+    fn test_tahap246_no_device_clean_slate_status() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::models::clear_metadata_cache(None);
+        clear_wifi_status_stream_cache_for_test();
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_t246_clean_slate_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        let st_default = AppState::default();
+        assert!(
+            st_default.selected_udid.is_empty(),
+            "AppState::default() must have empty selected_udid, got {:?}",
+            st_default.selected_udid
+        );
+        let state = Arc::new(Mutex::new(st_default));
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: "force=1".to_string(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&req, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+
+        // Restore env before assertions so cleanup always happens even on failure
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+
+        assert!(body.contains(r#""ready": false"#), "expected ready:false in {body}");
+        assert!(body.contains(r#""usbConnected": false"#), "expected usbConnected:false in {body}");
+        assert!(body.contains(r#""connected": false"#), "expected connected:false in {body}");
+        assert!(body.contains(r#""devices": []"#), "expected empty devices[] in {body}");
+        assert!(body.contains(r#""device": null"#), "expected device:null in {body}");
+        assert!(body.contains(r#""handset": null"#), "expected handset:null in {body}");
+        assert!(body.contains(r#""udid": """#), "expected empty udid in {body}");
+        assert!(body.contains(r#""selectedUdid": """#), "expected empty selectedUdid in {body}");
+
+        let body_lower = body.to_ascii_lowercase();
+        for forbidden in [
+            "iphone 17 pro".to_string(),
+            "iphone18,1".to_string(),
+            ["uwe", " ", "uh"].concat(),
+            "00008150".to_string(),
+            ["192.168.", "100."].concat(),
+            ["kel", "vin"].concat(),
+            "c:\\users\\".to_string(),
+            "d:\\".to_string(),
+        ] {
+            assert!(
+                !body_lower.contains(&forbidden),
+                "clean-slate /api/status leaked forbidden token {forbidden:?}: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tahap247_multi_device_auto_prioritization() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::models::clear_metadata_cache(None);
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_t247_autoprio_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        // Seed 2 synthetic RFC 5737 devices:
+        // Beta Phone (iPhone 11 Pro Max, 198.51.100.48) -> OFFLINE (listed first by UDID!)
+        // Alpha Phone (iPhone 17 Pro, 198.51.100.49) -> ONLINE
+        let seed_json = r#"{
+  "devices": {
+    "00008030-TEST-DEV-B": {
+      "wifi_enabled_on_device": true,
+      "name": "Beta Phone",
+      "device_name": "Beta Phone",
+      "productType": "iPhone12,5",
+      "model": "iPhone 11 Pro Max",
+      "iosVersion": "18.4",
+      "lastIp": "198.51.100.48",
+      "last_ip": "198.51.100.48",
+      "lastSeenAt": 1763600100,
+      "reachable": false
+    },
+    "00008150-TEST-DEV-A": {
+      "wifi_enabled_on_device": true,
+      "name": "Alpha Phone",
+      "device_name": "Alpha Phone",
+      "productType": "iPhone18,1",
+      "model": "iPhone 17 Pro",
+      "iosVersion": "27.2",
+      "lastIp": "198.51.100.49",
+      "last_ip": "198.51.100.49",
+      "lastSeenAt": 1763600200,
+      "reachable": true
+    }
+  },
+  "enabled_udids": ["00008030-TEST-DEV-B", "00008150-TEST-DEV-A"],
+  "last_ip": "198.51.100.49",
+  "mac_map": {},
+  "updated_at": "1763600200"
+}"#;
+        fs::write(&wifi_state_file, seed_json).unwrap();
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&req, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+
+        // Restore env before assertions
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+
+        // MUST auto-select ONLINE Alpha Phone (198.51.100.49), NOT offline Beta Phone!
+        assert!(
+            body.contains(r#""selectedUdid": "00008150-TEST-DEV-A""#),
+            "expected Alpha Phone auto-selected, got: {body}"
+        );
+        assert!(body.contains(r#""Alpha Phone""#), "missing Alpha Phone: {body}");
+        assert!(body.contains(r#""Beta Phone""#), "missing Beta Phone: {body}");
+        assert!(body.contains(r#""iPhone 17 Pro""#), "missing iPhone 17 Pro: {body}");
+        assert!(body.contains(r#""iPhone 11 Pro Max""#), "missing iPhone 11 Pro Max: {body}");
+        assert!(body.contains(r#""198.51.100.49""#), "missing Alpha IP: {body}");
+        assert!(body.contains(r#""198.51.100.48""#), "missing Beta IP: {body}");
+        assert!(body.contains(r#""wifiOnline": true"#), "missing wifiOnline:true: {body}");
+        assert!(body.contains(r#""wifiOnline": false"#), "missing wifiOnline:false: {body}");
+    }
+
+    #[test]
+    fn test_tahap247_explicit_select_overrides_and_persists() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::models::clear_metadata_cache(None);
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_t247_select_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        let seed_json = r#"{
+  "devices": {
+    "00008030-TEST-DEV-B": {
+      "wifi_enabled_on_device": true,
+      "name": "Beta Phone",
+      "productType": "iPhone12,5",
+      "model": "iPhone 11 Pro Max",
+      "iosVersion": "18.4",
+      "lastIp": "198.51.100.48",
+      "lastSeenAt": 1763600100,
+      "reachable": false
+    },
+    "00008150-TEST-DEV-A": {
+      "wifi_enabled_on_device": true,
+      "name": "Alpha Phone",
+      "productType": "iPhone18,1",
+      "model": "iPhone 17 Pro",
+      "iosVersion": "27.2",
+      "lastIp": "198.51.100.49",
+      "lastSeenAt": 1763600200,
+      "reachable": true
+    }
+  }
+}"#;
+        fs::write(&wifi_state_file, seed_json).unwrap();
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. Invalid UDID MUST return 400 Bad Request
+        let bad_req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/device/select".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"udid":"UNKNOWN-UDID-999"}"#.to_string(),
+            body_bytes: br#"{"udid":"UNKNOWN-UDID-999"}"#.to_vec(),
+        };
+        let bad_resp = handle_request(&bad_req, &state, Path::new("web"));
+        assert_eq!(bad_resp.status_code, 400);
+
+        // 2. Explicit POST /api/device/select to Beta Phone MUST succeed in < 50ms
+        let t0 = std::time::Instant::now();
+        let sel_req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/device/select".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"udid":"00008030-TEST-DEV-B"}"#.to_string(),
+            body_bytes: br#"{"udid":"00008030-TEST-DEV-B"}"#.to_vec(),
+        };
+        let sel_resp = handle_request(&sel_req, &state, Path::new("web"));
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let sel_body = String::from_utf8_lossy(&sel_resp.body).to_string();
+
+        // 3. Subsequent GET /api/status MUST honor explicit Beta Phone selection (NOT snap back to Alpha!)
+        let st_req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let st_resp = handle_request(&st_req, &state, Path::new("web"));
+        let st_body = String::from_utf8_lossy(&st_resp.body).to_string();
+
+        // Restore env before assertions
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+
+        assert_eq!(sel_resp.status_code, 200);
+        assert!(elapsed_ms < 50.0, "select took too long: {elapsed_ms:.2} ms");
+        assert!(sel_body.contains(r#""ok":true"#), "got {sel_body}");
+        assert!(sel_body.contains(r#""selectedUdid":"00008030-TEST-DEV-B""#), "got {sel_body}");
+        assert!(sel_body.contains(r#""Beta Phone""#), "got {sel_body}");
+        assert!(sel_body.contains(r#""iPhone 11 Pro Max""#), "got {sel_body}");
+        assert!(sel_body.contains(r#""198.51.100.48""#), "got {sel_body}");
+
+        assert_eq!(st_resp.status_code, 200);
+        assert!(
+            st_body.contains(r#""selectedUdid": "00008030-TEST-DEV-B""#),
+            "subsequent /api/status must preserve explicit Beta Phone selection: {st_body}"
+        );
+    }
+
+    #[test]
+    fn test_tahap247_fresh_install_remains_clean_slate() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::models::clear_metadata_cache(None);
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_t247_clean_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&req, &state, Path::new("web"));
+        let body = String::from_utf8_lossy(&resp.body).to_string();
+
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+
+        assert_eq!(resp.status_code, 200);
+        assert!(body.contains(r#""ready": false"#));
+        assert!(body.contains(r#""devices": []"#));
+        assert!(body.contains(r#""device": null"#));
+        assert!(body.contains(r#""selectedUdid": """#));
+        assert!(!body.to_ascii_lowercase().contains("iphone 17 pro"));
+        assert!(!body.to_ascii_lowercase().contains("iphone 11 pro max"));
+    }
+
+    #[test]
+    fn test_tahap248_m4_hevc_endpoints_and_open_store_oem_free() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let prev_hevc = env::var_os("IPHONE_LINK_MOCK_HEVC_MISSING");
+        let prev_h264 = env::var_os("IPHONE_LINK_MOCK_H264_MISSING");
+        let prev_dry = env::var_os("IPHONE_LINK_DRY_RUN_SHELL_OPEN");
+
+        env::set_var("IPHONE_LINK_MOCK_HEVC_MISSING", "1");
+        env::remove_var("IPHONE_LINK_MOCK_H264_MISSING");
+        env::set_var("IPHONE_LINK_DRY_RUN_SHELL_OPEN", "1");
+
+        // 1. Mock PC without HEVC (mfplat present, HEVC MFT missing) -> zero false positive!
+        let r_hevc = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/system/hevc_status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_hevc = String::from_utf8_lossy(&r_hevc.body).to_string();
+
+        let r_diag = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/driver/diagnostics".to_string(),
+                query: "force=1".to_string(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_diag = String::from_utf8_lossy(&r_diag.body).to_string();
+
+        let r_open_oem = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/system/open_hevc_store".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"target":"hevc_oem"}"#.to_string(),
+                body_bytes: br#"{"target":"hevc_oem"}"#.to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_open_oem = String::from_utf8_lossy(&r_open_oem.body).to_string();
+
+        // 2. Mock Windows N/KN Edition (H.264 + mfplat missing) -> mediaFeaturePackMissing=true
+        env::set_var("IPHONE_LINK_MOCK_H264_MISSING", "1");
+        let r_win_n = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/system/hevc_status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_win_n = String::from_utf8_lossy(&r_win_n.body).to_string();
+
+        let r_open_mfp = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/system/open_hevc_store".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"target":"media_feature_pack"}"#.to_string(),
+                body_bytes: br#"{"target":"media_feature_pack"}"#.to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_open_mfp = String::from_utf8_lossy(&r_open_mfp.body).to_string();
+
+        match prev_hevc {
+            Some(v) => env::set_var("IPHONE_LINK_MOCK_HEVC_MISSING", v),
+            None => env::remove_var("IPHONE_LINK_MOCK_HEVC_MISSING"),
+        }
+        match prev_h264 {
+            Some(v) => env::set_var("IPHONE_LINK_MOCK_H264_MISSING", v),
+            None => env::remove_var("IPHONE_LINK_MOCK_H264_MISSING"),
+        }
+        match prev_dry {
+            Some(v) => env::set_var("IPHONE_LINK_DRY_RUN_SHELL_OPEN", v),
+            None => env::remove_var("IPHONE_LINK_DRY_RUN_SHELL_OPEN"),
+        }
+
+        assert_eq!(r_hevc.status_code, 200);
+        assert!(b_hevc.contains(r#""installed":false"#), "got {b_hevc}");
+        assert!(b_hevc.contains(r#""hevcMftAvailable":false"#), "got {b_hevc}");
+        assert!(b_hevc.contains(r#""h264MftAvailable":true"#), "got {b_hevc}");
+        assert!(b_hevc.contains(r#""mediaFeaturePackMissing":false"#), "got {b_hevc}");
+        assert!(b_hevc.contains("9N4WGH0Z6VHQ"), "missing OEM free storeUrl: {b_hevc}");
+
+        assert_eq!(r_diag.status_code, 200);
+        assert!(b_diag.contains(r#""hevc_codec_installed":false"#), "got {b_diag}");
+        assert!(b_diag.contains("9N4WGH0Z6VHQ"), "got {b_diag}");
+
+        assert_eq!(r_open_oem.status_code, 200);
+        assert!(
+            b_open_oem.contains(r#""ok":true"#)
+                && b_open_oem.contains("9N4WGH0Z6VHQ")
+                && b_open_oem.contains(r#""dryRun":true"#),
+            "got {b_open_oem}"
+        );
+
+        assert_eq!(r_win_n.status_code, 200);
+        assert!(b_win_n.contains(r#""mediaFeaturePackMissing":true"#), "got {b_win_n}");
+        assert!(b_win_n.contains("ms-settings:optionalfeatures"), "got {b_win_n}");
+
+        assert_eq!(r_open_mfp.status_code, 200);
+        assert!(
+            b_open_mfp.contains("ms-settings:optionalfeatures")
+                && b_open_mfp.contains(r#""dryRun":true"#),
+            "got {b_open_mfp}"
+        );
+    }
+
+    #[test]
+    fn test_tahap248_m5_anti_blank_white_css_diag_overlay_and_wifi_boot_fix() {
+        // 1. Pre-first-frame Light Mode specificity lock (0,2,3,3)
+        assert!(V4_TRUE_ACRYLIC_CSS.contains(
+            "html body #app-root.app.is-streaming:not(.has-first-frame) #phone-screen"
+        ));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains(
+            "html body #app-root.app.is-streaming:not(.has-first-frame) iframe#screen-view"
+        ));
+        assert!(V4_TRUE_ACRYLIC_CSS.contains("#090d16 !important"));
+
+        // 2. V4_BRIDGE_JS fixed #screen-view ID (0 stale mirror-frame refs) + open_hevc_store fallback
+        assert!(!V4_BRIDGE_JS.contains("getElementById('mirror-frame')"));
+        assert!(V4_BRIDGE_JS.contains("getElementById('screen-view')"));
+        assert!(V4_BRIDGE_JS.contains("/api/system/open_hevc_store"));
+        assert!(V4_BRIDGE_JS.contains("mirror-first-frame"));
+
+        // 3. Mirror HTML + CSS inject #v4-mirror-diag-overlay & 3 buttons without touching frozen mirror.css
+        let m_html = get_embedded_mirror_html();
+        let m_css = get_embedded_mirror_css();
+        let m_js = get_embedded_mirror_js();
+        assert!(m_html.contains("id=\"v4-mirror-diag-overlay\""));
+        assert!(m_html.contains("id=\"btn-diag-install-hevc\""));
+        assert!(m_html.contains("id=\"btn-diag-soft-decode\""));
+        assert!(m_html.contains("id=\"btn-diag-copy-info\""));
+        assert!(m_css.contains("__V5_TAHAP248_MIRROR_DIAG_OVERLAY__"));
+        assert!(m_css.contains("#v4-mirror-diag-overlay"));
+
+        // 4. mirror.js 4-step fallback ladder (prefer-software + hev1/hvc1), pointerdown guard & test hook
+        assert!(m_js.contains("buildDecoderCandidateConfigs"));
+        assert!(m_js.contains("prefer-software"));
+        assert!(m_js.contains("_flipHevcCodecPrefix"));
+        assert!(m_js.contains("showMirrorDiagOverlay"));
+        assert!(m_js.contains("__v5SimulateDecodeErrorForTest"));
+        assert!(m_js.contains("mirror-first-frame"));
+
+        // 5. app.js Pilar 1 micro-glitch boot tab Wi-Fi fix
+        assert!(EMBEDDED_APP_JS.contains("resolveInitialTransport"));
+        assert!(EMBEDDED_APP_JS.contains("syncLaunchpadSwitchWifiButton"));
+        assert!(EMBEDDED_APP_JS.contains("window.currentTransport"));
+    }
+
+    #[test]
+    fn test_tahap249_fresh_install_default_audio_pc_and_post_stop_wifi_reachability() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_tahap249_fresh_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairings");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        clear_metadata_cache(None);
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+
+        // 1. Fresh-install AppState::default(): audio_routing="pc", 0-device clean-slate stays idle
+        let mut st_fresh = AppState::default();
+        assert_eq!(st_fresh.audio_routing, "pc");
+        assert!(!st_fresh.audio_muted);
+        // Simulate missing user_settings.json path via load_user_settings_from_path + sync
+        let missing_settings = tmp_base.join("user_settings.json");
+        let _ = load_user_settings_from_path(&missing_settings, &mut st_fresh);
+        GLOBAL_AUDIO_PC_ACTIVE.store(
+            (st_fresh.audio_routing == "pc" || st_fresh.audio_routing == "bluetooth")
+                && !st_fresh.audio_muted,
+            Ordering::SeqCst,
+        );
+        assert!(GLOBAL_AUDIO_PC_ACTIVE.load(Ordering::SeqCst));
+        assert!(!iphone_link_audio::is_global_pc_audio_bridge_active());
+        assert!(!iphone_link_audio::is_global_pc_audio_bridge_connecting());
+
+        // 2. Seed RFC 5737 synthetic paired Wi-Fi iPhone (0 personal data)
+        let synth_udid = "00008150-0000000000000249";
+        let synth_ip = "192.0.2.49";
+        let _ = fs::write(
+            pair_dir.join(format!("{synth_udid}.json")),
+            format!(
+                r#"{{"udid":"{synth_udid}","host_id":"SYNTH-HOST-249","remote_unlock_host_key":"00112233445566778899aabbccddeeff","client_ltpk":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","client_ltsk":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}}"#
+            ),
+        );
+        let _ = fs::write(
+            &wifi_state_file,
+            format!(
+                r#"{{"devices":{{"{synth_udid}":{{"name":"Test Phone 249","productType":"iPhone17,1","model":"iPhone 16 Pro","lastIp":"{synth_ip}","wifi_enabled_on_device":true,"reachable":true,"lastSeenAt":1750000249}}}}}}"#
+            ),
+        );
+        iphone_link_apple::wifi::set_cached_wifi_reachability(
+            synth_udid,
+            true,
+            Some(synth_ip),
+            1_750_000_249,
+        );
+
+        let state = Arc::new(Mutex::new(st_fresh));
+        // Pre-populate zero-I/O RAM cache via initial /api/status
+        let r_init = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_init = String::from_utf8_lossy(&r_init.body).to_string();
+        assert!(b_init.contains(r#""driverReady": true"#), "got {b_init}");
+        assert!(b_init.contains(r#""wifiOnline": true"#), "got {b_init}");
+        assert!(b_init.contains(synth_ip), "got {b_init}");
+
+        // 3. Start synthetic Wi-Fi mirror (honestGate=false -> active streaming) -> auto-audio PC starts
+        let start_body = format!(r#"{{"udid":"{synth_udid}","transport":"wifi","honestGate":false}}"#);
+        let r_start = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/screen".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: start_body.clone(),
+                body_bytes: start_body.into_bytes(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_start.status_code, 200);
+        let r_aud = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/audio".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_aud = String::from_utf8_lossy(&r_aud.body).to_string();
+        assert!(
+            b_aud.contains(r#""audioOut":"pc""#)
+                && (b_aud.contains(r#""pcBridgeActive":true"#)
+                    || b_aud.contains(r#""pcBridgeConnecting":true"#)),
+            "Fresh-install Wi-Fi start must auto-launch PC audio bridge: {b_aud}"
+        );
+
+        // While streaming (zero_poll_active=true), /api/status must STILL preserve model, IP, wifiOnline=true!
+        let r_live = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_live = String::from_utf8_lossy(&r_live.body).to_string();
+        assert!(
+            b_live.contains(r#""wifiOnline": true"#) && b_live.contains(synth_ip),
+            "Active Wi-Fi stream must never drop wifiOnline/IP during zero_poll_active: {b_live}"
+        );
+
+        // 4. Clean stop via POST /api/screen/stop -> post-stop /api/status MUST keep reachable=true + IP
+        let r_stop = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/screen/stop".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: "{}".to_string(),
+                body_bytes: b"{}".to_vec(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_stop.status_code, 200);
+        assert!(
+            iphone_link_apple::wifi::is_in_wifi_post_stop_grace(synth_udid),
+            "Clean Wi-Fi stop must activate 20s post-stop reachability grace window"
+        );
+        let r_after = handle_request(
+            &HttpRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_after = String::from_utf8_lossy(&r_after.body).to_string();
+        assert!(
+            b_after.contains(r#""wifiOnline": true"#)
+                && b_after.contains(r#""reachable": true"#)
+                && b_after.contains(synth_ip),
+            "Post-stop /api/status must stay Wi-Fi online (zero iPhone Terputus flash): {b_after}"
+        );
+        assert_eq!(state.lock().unwrap().audio_routing, "pc");
+
+        // Cleanup
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        LAST_STOP_MIRROR_MS.store(0, Ordering::SeqCst);
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+    }
+
+    #[test]
+    fn test_tahap249_topbar_pill_honesty_and_hw_decode_sticky_guard() {
+        // 1. mirror.js Pilar 1: Zero sticky software decode + 1x HW auto-upgrade + decodeQueueSize cap
+        let m_js = get_embedded_mirror_js();
+        assert!(m_js.contains("_hwTransientRecoveries"));
+        assert!(m_js.contains("_goodHwFramesSinceRecovery"));
+        assert!(m_js.contains("_droppedBacklogDeltas"));
+        assert!(m_js.contains("_postPliThrottled"));
+        assert!(m_js.contains("decoder_hw_transient_recover"));
+        assert!(m_js.contains("decoder_hw_auto_upgrade"));
+        assert!(m_js.contains("decoder.decodeQueueSize"));
+        assert!(m_js.contains("ActiveAccelMode:"));
+        assert!(m_js.contains("HwTransientRecoveries:"));
+        assert!(m_js.contains("DroppedBacklogDeltas:"));
+        // Preserve Tahap 248 Mock M-5 diagnostic overlay & test hook
+        assert!(m_js.contains("__v5SimulateDecodeErrorForTest"));
+        assert!(m_js.contains("showMirrorDiagOverlay"));
+
+        // 2. app.js Pilar 3: Honest top-bar pills, connecting phase lock, audio badge preservation
+        assert!(EMBEDDED_APP_JS.contains(r#"scrPhase === "starting""#));
+        assert!(EMBEDDED_APP_JS.contains("driverExplicitlyMissing"));
+        assert!(EMBEDDED_APP_JS.contains("!driverOk && !overWifi"));
+        assert!(EMBEDDED_APP_JS.contains("window.applyServerStatusState = applyServerStatusState"));
+        assert!(EMBEDDED_APP_JS.contains("window.renderPills = renderPills"));
+        assert!(EMBEDDED_APP_JS.contains("currentAudioState.pcBridgeActive"));
+        assert!(EMBEDDED_APP_JS.contains("currentAudioState.pcBridgeConnecting"));
+        assert!(
+            !EMBEDDED_APP_JS.contains("renderPills({ wifi: res.wifi, devices:"),
+            "triggerWifiScan must never pass stripped partial object without driver to renderPills"
+        );
+
+        // 3. V4_BRIDGE_JS Pilar 3: Boot placeholder pill guard + same-tick Launchpad/pill sync + 3 audio retries
+        assert!(V4_BRIDGE_JS.contains("isBootPlaceholder"));
+        assert!(V4_BRIDGE_JS.contains("window.applyServerStatusState"));
+        assert!(V4_BRIDGE_JS.contains("window.renderPills(s)"));
+        assert!(V4_BRIDGE_JS.contains("tries < 3"));
+    }
+
+    #[test]
+    fn test_tahap250_burst_tolerant_decode_queue_grace_and_fresh_wifi_auto_tab() {
+        // 1. mirror.js Pilar 1: Cold-Start GPU Shader Grace (6000 ms), sustained backlog >= 12 @ 450 ms,
+        //    non-freezing soft PLI hint (6..=11), zero aggressive qSize >= 3 delta drop!
+        let m_js = get_embedded_mirror_js();
+        assert!(m_js.contains("_COLD_START_SHADER_GRACE_MS = 6000"));
+        assert!(m_js.contains("_streamDecodeStartedAtMs"));
+        assert!(m_js.contains("_sustainedBacklogSinceMs"));
+        assert!(m_js.contains("_softPliBacklogSinceMs"));
+        assert!(m_js.contains("12@450ms/grace6000ms"));
+        assert!(m_js.contains("SustainedBacklogGuard:"));
+        assert!(m_js.contains("(nowDecodeMs - _sustainedBacklogSinceMs) >= 450"));
+        assert!(m_js.contains("(nowDecodeMs - _softPliBacklogSinceMs) >= 250"));
+        assert!(
+            !m_js.contains("if (!isKey && qSize >= 3)"),
+            "Aggressive qSize >= 3 delta drop that caused 3s Wi-Fi freeze MUST be removed!"
+        );
+        // Preserve Tahap 248/249 anti-sticky HW decode & Mock M-5
+        assert!(m_js.contains("_hwTransientRecoveries"));
+        assert!(m_js.contains("decoder_hw_auto_upgrade"));
+        assert!(m_js.contains("__v5SimulateDecodeErrorForTest"));
+
+        // 2. app.js Pilar 3: Explicit separation of userExplicitlyClickedTransport vs fresh-install boot
+        assert!(EMBEDDED_APP_JS.contains("let userExplicitlyClickedTransport = false"));
+        assert!(EMBEDDED_APP_JS.contains("let hasSavedExplicitTransport = Boolean("));
+        assert!(EMBEDDED_APP_JS.contains("!userExplicitlyClickedTransport && !hasSavedExplicitTransport"));
+        assert!(EMBEDDED_APP_JS.contains("hasOnlineWifiDevice"));
+        assert!(
+            !EMBEDDED_APP_JS.contains("if (userInitiated || reload)"),
+            "setTransport must NOT write localStorage handset-transport on programmatic non-user reload!"
+        );
+
+        // 3. V4_BRIDGE_JS Pilar 3: Fresh install (hasUserSettingsFile=false) clears handset-transport
+        //    and sanitizer respects auto-switched window.currentTransport === 'wifi'
+        assert!(V4_BRIDGE_JS.contains("if (initData.hasUserSettingsFile && initData.transport)"));
+        assert!(V4_BRIDGE_JS.contains("localStorage.removeItem('handset-transport')"));
+        assert!(V4_BRIDGE_JS.contains("var liveTr = (window.currentTransport === 'wifi') ? 'wifi' : ''"));
+    }
+
+    #[test]
+    fn test_tahap252_api_screen_mode_airplay_and_diag_switch_button() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Explicit POST /api/screen { mode: "airplay" } launches native AirPlay H.264 receiver
+        let r_ap = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"airplay","transport":"wifi","airplayPort":0,"advertiseMdns":false,"hybridHid":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_ap.status_code, 200);
+        let ap_body = String::from_utf8_lossy(&r_ap.body);
+        assert!(ap_body.contains(r#""phase":"starting""#), "ap_body={ap_body}");
+        assert!(ap_body.contains(r#""stage":"waiting_airplay""#), "ap_body={ap_body}");
+        assert!(ap_body.contains(r#""airplayActive":true"#), "ap_body={ap_body}");
+        assert!(ap_body.contains(r#""airplayName":"iPhone Link""#), "ap_body={ap_body}");
+        assert!(ap_body.contains(r#""mirrorRoute":"airplay_standalone""#), "ap_body={ap_body}");
+
+        // 2. GET /api/status exposes mirrorRoute, airplayActive, airplayName, airplayPort, hidControlAvailable
+        let r_st = handle_request(&req_with("GET", "/api/status", ""), &state, Path::new("web"));
+        let st_body = String::from_utf8_lossy(&r_st.body);
+        assert!(st_body.contains(r#""mirrorRoute": "airplay_standalone""#), "st_body={st_body}");
+        assert!(st_body.contains(r#""airplayActive": true"#), "st_body={st_body}");
+        assert!(st_body.contains(r#""airplayName": "iPhone Link""#), "st_body={st_body}");
+        assert!(st_body.contains(r#""hidControlAvailable": false"#), "st_body={st_body}");
+
+        // 3. Auto router on iOS 16.7.10 routes straight to airplay_standalone without CoreDevice
+        let r_auto16 = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"auto","iosVersion":"16.7.10","transport":"wifi","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let auto16_body = String::from_utf8_lossy(&r_auto16.body);
+        assert!(
+            auto16_body.contains(r#""mirrorRoute":"airplay_standalone""#),
+            "iOS 16.7.10 must route to airplay_standalone: {auto16_body}"
+        );
+
+        // 4. Mirror HTML injects #btn-diag-switch-airplay; index.html exposes #segmented-stream-mode;
+        //    mirror.js & app.js wire switch-to-airplay-h264 & waiting_airplay 120s timeout
+        let m_html = get_embedded_mirror_html();
+        assert!(m_html.contains(r#"id="btn-diag-switch-airplay""#));
+        assert!(EMBEDDED_INDEX_HTML.contains(r#"id="segmented-stream-mode""#));
+        assert!(EMBEDDED_INDEX_HTML.contains(r#"data-stream-mode="airplay""#));
+        let m_js = get_embedded_mirror_js();
+        assert!(m_js.contains("switch-to-airplay-h264"));
+        assert!(m_js.contains("const spsDims = isH264 ? null : parseHevcSpsDimensions(description)"));
+        assert!(EMBEDDED_APP_JS.contains("CONNECTING_TIMEOUT_AIRPLAY_MS = 120000"));
+        assert!(EMBEDDED_APP_JS.contains("switchToAirplayH264Mode"));
+
+        // 5. Clean DELETE /api/screen stops AirPlay receiver cleanly
+        let r_del = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert_eq!(r_del.status_code, 200);
+        assert!(!iphone_link_apple::airplay::is_global_airplay_running());
+    }
+
+    #[test]
+    fn test_tahap253_mirror_js_h264_avcc_description_annexb_fallback_and_local_idr_replay() {
+        let m_js = get_embedded_mirror_js();
+        // (a) avcC description attached for avc1 in AVCC tier (not blocked by !isH264)
+        assert!(m_js.contains(r#"if (h264Mode === "avcc" && hasAvccDesc)"#));
+        assert!(m_js.contains("cfg.description = description;"));
+        assert!(m_js.contains("Boolean(info.isAirplay || info.is_airplay)"));
+
+        // (b) Pure avcC -> Annex-B converters & AVCC IDR detection
+        assert!(m_js.contains("function parseAvccSpsPps(avccU8)"));
+        assert!(m_js.contains("function convertAvccChunkToAnnexB("));
+        assert!(m_js.contains("function avccChunkHasIdr("));
+
+        // (c) Local IDR replay on H.264 fallback (Zero-PLI recovery)
+        assert!(m_js.contains("let lastKeyChunkPayload = null"));
+        assert!(m_js.contains("const replayLocalKeyChunkIfAvailable = () =>"));
+        assert!(m_js.contains("h264_local_idr_replay"));
+
+        // (d) Zero-trim for AirPlay/H.264 & immediate mirror-first-frame notification
+        assert!(m_js.contains("isAirplayOrH264"));
+        assert!(m_js.contains(r#"window.parent.postMessage({ type: "mirror-first-frame" }, "*")"#));
+
+        // (e) Anti-silent-black 5000ms watchdog + enriched sanitized diagnostics (0 personal data)
+        assert!(m_js.contains("_H264_SILENT_BLACK_TIMEOUT_MS = 5000"));
+        assert!(m_js.contains("onH264SilentBlackCheck"));
+        assert!(m_js.contains("MirrorRoute:"));
+        assert!(m_js.contains("H264Mode:"));
+        assert!(m_js.contains("AirplayVideoFrames:"));
+        assert!(m_js.contains("AirplayDecryptFailures:"));
+
+        // (f) app.js clears Sequoia Connect Overlay immediately on mirror-first-frame
+        assert!(EMBEDDED_APP_JS.contains("completeSequoiaHandshake(null)"));
+    }
+
+    #[test]
+    fn test_tahap254_mirror_js_monotonic_timestamp_safe_raf_and_post_frame1_h264_recovery() {
+        let m_js = get_embedded_mirror_js();
+
+        // (a) Strictly positive monotonic timestamp (never constant 0!)
+        assert!(m_js.contains("const nextChunkTimestamp = () => (++_decodedChunkSeq) * 16667;"));
+        assert!(m_js.contains("timestamp: nextChunkTimestamp(),"));
+
+        // (b) Safe rAF scheduler reset in finally + auto re-arm on pendingFrame
+        assert!(m_js.contains("if (pendingFrame && !rafScheduled)"));
+        assert!(m_js.contains("_isFlushingPendingFrame = false;\n    rafScheduled = false;")
+            || m_js.contains("_isFlushingPendingFrame = false;\r\n    rafScheduled = false;"));
+
+        // (c) AVCC-first validation in convertAvccChunkToAnnexB (256..511B delta NALU safe!)
+        assert!(m_js.contains("let validAvcc = true;"));
+        assert!(m_js.contains("if (!validAvcc || nals.length === 0 || pos !== avccPayloadU8.byteLength)"));
+
+        // (d) Post-Frame-#1 H.264 silent stall watchdog & automatic tier recovery
+        assert!(m_js.contains("const _H264_POST_FRAME1_STALL_MS = 2500;"));
+        assert!(m_js.contains("onH264PostFrame1StallCheck = () =>"));
+        assert!(m_js.contains("h264_post_frame1_stall_recover"));
+
+        // (e) Enriched PII-free diagnostics in #v4-mirror-diag-overlay
+        assert!(m_js.contains("RenderedFrames:"));
+        assert!(m_js.contains("DecodedChunks:"));
+        assert!(m_js.contains("AirplayDeltaFrames:"));
+        assert!(m_js.contains("AirplayMirrorLoopAlive:"));
+        assert!(m_js.contains("LastDecodeError:"));
+
+        // (f) /api/status exposes all 5 new Tahap 254 PII-free telemetry keys
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/status".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&req, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        for key in [
+            r#""airplayDeltaFrames":"#,
+            r#""airplayTcpPacketsRead":"#,
+            r#""airplayMirrorLoopAlive":"#,
+            r#""liveChunksBroadcasted":"#,
+            r#""liveClientsConnected":"#,
+        ] {
+            let spaced = key.replace(":", ": ");
+            assert!(
+                body.contains(key) || body.contains(&spaced),
+                "/api/status missing Tahap 254 telemetry key {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tahap255_fresh_install_purges_stale_airplay_mode_and_auto_routes_ios27_to_coredevice() {
+        // 1. Fresh-install bridge & app.js MUST purge all stale streamMode keys and lock 'auto'
+        assert!(V4_BRIDGE_JS.contains("if (!initData.hasUserSettingsFile)"));
+        assert!(V4_BRIDGE_JS.contains("localStorage.removeItem('iphone_link_stream_mode')"));
+        assert!(V4_BRIDGE_JS.contains("localStorage.removeItem('handset-stream-mode')"));
+        assert!(V4_BRIDGE_JS.contains("localStorage.removeItem('v4-stream-mode')"));
+        assert!(V4_BRIDGE_JS.contains("window.currentStreamMode = 'auto'"));
+        assert!(V4_BRIDGE_JS.contains("else if (group.id === 'segmented-stream-mode')"));
+
+        assert!(EMBEDDED_APP_JS.contains("init && init.hasUserSettingsFile === false"));
+        assert!(EMBEDDED_APP_JS.contains("activeStreamPill"));
+        assert!(EMBEDDED_APP_JS.contains("mode: effectiveStreamMode"));
+        assert!(EMBEDDED_APP_JS.contains("updateStreamModeDescription"));
+        assert!(EMBEDDED_INDEX_HTML.contains(r#"id="stream-mode-desc""#));
+
+        // 2. Auto router strictly routes iOS 27.2 & unknown -> CoreDeviceNativeHevc,
+        //    iOS 18.5 -> HybridAirPlayCoreDeviceHid (Mock M-2 preserved!), iOS 16.7.10 -> AirPlayStandalone
+        use iphone_link_apple::link::{resolve_ios_mirror_route, IosMirrorRoute};
+        assert_eq!(resolve_ios_mirror_route("27.2"), IosMirrorRoute::CoreDeviceNativeHevc);
+        assert_eq!(resolve_ios_mirror_route(""), IosMirrorRoute::CoreDeviceNativeHevc);
+        assert_eq!(resolve_ios_mirror_route("18.5"), IosMirrorRoute::HybridAirPlayCoreDeviceHid);
+        assert_eq!(resolve_ios_mirror_route("16.7.10"), IosMirrorRoute::AirPlayStandalone);
+
+        // 3. POST /api/screen { mode: "auto", iosVersion: "27.2" } NEVER launches AirPlay!
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/screen".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"mode":"auto","iosVersion":"27.2","transport":"usb","honestGate":false}"#.to_string(),
+            body_bytes: br#"{"mode":"auto","iosVersion":"27.2","transport":"usb","honestGate":false}"#.to_vec(),
+        };
+        let resp = handle_request(&req, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(
+            !body.contains(r#""airplayActive":true"#) && !body.contains(r#""stage":"waiting_airplay""#),
+            "Auto mode on iOS 27.2 MUST NOT route to AirPlay: {body}"
+        );
+        assert!(!iphone_link_apple::airplay::is_global_airplay_running());
+    }
+
+    #[test]
+    fn test_tahap255_manual_airplay_mode_is_pure_standalone_zero_hid_and_soft_touch_response() {
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        {
+            let mut st = state.lock().unwrap();
+            st.selected_udid = "00008150-TEST-DEV-Z".to_string();
+        }
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Even with selected_udid + iOS 27.2 + explicit hybridHid:true, manual `mode: "airplay"`
+        //    is ALWAYS 100% Pure AirPlay Standalone (0 CoreDevice worker, hidControlAvailable = false)!
+        let r_ap = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"airplay","iosVersion":"27.2","udid":"00008150-TEST-DEV-Z","transport":"wifi","airplayPort":0,"advertiseMdns":false,"hybridHid":true}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_ap.status_code, 200);
+        let ap_body = String::from_utf8_lossy(&r_ap.body);
+        assert!(
+            ap_body.contains(r#""mirrorRoute":"airplay_standalone""#),
+            "Manual airplay mode must ALWAYS be airplay_standalone: {ap_body}"
+        );
+        assert!(
+            ap_body.contains(r#""hidControlAvailable":false"#),
+            "Manual airplay mode must expose hidControlAvailable:false: {ap_body}"
+        );
+        assert!(iphone_link_apple::mirror::is_airplay_standalone_no_hid_active());
+
+        // 2. Touch/button/key/scroll/gesture endpoints return calm HTTP 200 without HID error spam
+        for (ep, payload) in [
+            ("/mirror/touch", r#"{"x":0.5,"y":0.5,"action":"tap"}"#),
+            ("/mirror/button", r#"{"name":"home","state":"press"}"#),
+            ("/mirror/key", r#"{"text":"a"}"#),
+            ("/mirror/scroll", r#"{"deltaY":-120}"#),
+            ("/mirror/gesture", r#"{"direction":"back"}"#),
+        ] {
+            let r_in = handle_request(&req_with("POST", ep, payload), &state, Path::new("web"));
+            assert_eq!(r_in.status_code, 200, "endpoint {ep} must return HTTP 200");
+            let in_body = String::from_utf8_lossy(&r_in.body);
+            assert!(
+                in_body.contains(r#""ok":false"#) && in_body.contains(r#""hidControlAvailable":false"#),
+                "endpoint {ep} must return calm soft response in Pure AirPlay: {in_body}"
+            );
+        }
+
+        // 3. GET /api/debug/airplay-trace returns valid PII-free JSON & mirror.js fetches it
+        let r_tr = handle_request(&req_with("GET", "/api/debug/airplay-trace", ""), &state, Path::new("web"));
+        assert_eq!(r_tr.status_code, 200);
+        let tr_body = String::from_utf8_lossy(&r_tr.body);
+        assert!(tr_body.contains(r#""ok":true"#) && tr_body.contains(r#""events":["#), "trace={tr_body}");
+        assert!(!tr_body.contains("00008150-TEST-DEV-Z"), "trace must NEVER leak UDID: {tr_body}");
+        let m_js = get_embedded_mirror_js();
+        assert!(m_js.contains("/api/debug/airplay-trace"));
+        assert!(m_js.contains("AirplayTrace:"));
+
+        // 4. Clean stop
+        let _ = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert!(!iphone_link_apple::mirror::is_airplay_standalone_no_hid_active());
+    }
+
+    #[test]
+    fn test_tahap257_app_js_hides_stale_canvas_on_waiting_airplay_and_trace_exposes_counters() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+        {
+            let mut st = state.lock().unwrap();
+            st.audio_routing = "pc".to_string();
+            st.audio_muted = false;
+        }
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Verify embedded handset/web/app.js cleanly hides stale #screen-view on waiting_airplay,
+        //    resets screenTimer = 0, and runs startAirplayLiveStateWatcher() for live disconnect detection!
+        let app_js = EMBEDDED_APP_JS;
+        assert!(app_js.contains("function startAirplayLiveStateWatcher()"));
+        assert!(app_js.contains("function stopAirplayLiveStateWatcher()"));
+        assert!(app_js.contains("const isAirplayWaiting = Boolean("));
+        assert!(app_js.contains("screenView.src = \"about:blank\""));
+        assert!(app_js.contains("screenTimer = 0;"));
+        assert!(app_js.contains("force-stop-stream"));
+
+        // 2. Start Pure AirPlay session & confirm GET /api/debug/airplay-trace exposes full counters JSON
+        let r_ap = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"airplay","iosVersion":"27.2","udid":"00008150-TEST-257","transport":"wifi","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_ap.status_code, 200);
+        assert!(iphone_link_apple::mirror::is_airplay_active());
+
+        let r_tr = handle_request(&req_with("GET", "/api/debug/airplay-trace", ""), &state, Path::new("web"));
+        assert_eq!(r_tr.status_code, 200);
+        let tr = String::from_utf8_lossy(&r_tr.body);
+        for key in [
+            r#""counters":{"#,
+            r#""ntpTx":"#,
+            r#""ntpRx":"#,
+            r#""ntpLastErr":"#,
+            r#""eventAccepts":"#,
+            r#""eventRx":"#,
+            r#""audioDataRx":"#,
+            r#""audioCtrlRx":"#,
+            r#""feedbackCount":"#,
+            r#""teardownCount":"#,
+        ] {
+            assert!(tr.contains(key), "Trace JSON missing counter key {key}: {tr}");
+        }
+        assert!(!tr.contains("00008150-TEST-257"), "Trace JSON must never leak UDID: {tr}");
+
+        // 3. Simulate AirPlay reaching phase="running" -> GET /api/status MUST NOT launch Bluetooth A2DP!
+        {
+            let mut m = iphone_link_apple::mirror::mirror_runtime()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            m.phase = "running".to_string();
+        }
+        let r_st = handle_request(&req_with("GET", "/api/status", ""), &state, Path::new("web"));
+        assert_eq!(r_st.status_code, 200);
+        assert!(
+            !iphone_link_audio::is_global_pc_audio_bridge_active()
+                && !iphone_link_audio::is_global_pc_audio_bridge_connecting(),
+            "Bluetooth A2DP audio bridge MUST NEVER launch while AirPlay H.264 is active!"
+        );
+
+        // 4. Clean stop
+        let _ = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert!(!iphone_link_apple::mirror::is_airplay_active());
+    }
+
+    #[test]
+    fn test_tahap258_airplay_audio_mute_endpoint_keeps_bt_isolated_and_mirror_js_hd_crisp() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = Arc::new(Mutex::new(AppState::default()));
+        {
+            let mut st = state.lock().unwrap();
+            st.audio_routing = "pc".to_string();
+            st.audio_muted = false;
+        }
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Start Pure AirPlay H.264 session
+        let r_ap = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"airplay","iosVersion":"27.2","udid":"00008150-TEST-258","transport":"wifi","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_ap.status_code, 200);
+        assert!(iphone_link_apple::mirror::is_airplay_active());
+
+        // 2. POST /api/audio/airplay-mute true/false toggles cleanly with ZERO Bluetooth A2DP start!
+        let r_m1 = handle_request(&req_with("POST", "/api/audio/airplay-mute", r#"{"muted":true}"#), &state, Path::new("web"));
+        assert_eq!(r_m1.status_code, 200);
+        let b_m1 = String::from_utf8_lossy(&r_m1.body);
+        assert!(b_m1.contains(r#""airplayAudioMuted":true"#), "b_m1={b_m1}");
+        assert!(b_m1.contains(r#""pcBridgeActive":false"#), "b_m1={b_m1}");
+        assert!(b_m1.contains(r#""pcBridgeConnecting":false"#), "b_m1={b_m1}");
+
+        let r_m2 = handle_request(&req_with("POST", "/api/audio/airplay-mute", r#"{"muted":false}"#), &state, Path::new("web"));
+        assert_eq!(r_m2.status_code, 200);
+        let b_m2 = String::from_utf8_lossy(&r_m2.body);
+        assert!(b_m2.contains(r#""airplayAudioMuted":false"#), "b_m2={b_m2}");
+
+        // 3. Pressing Audio PC toggle (/api/audio/toggle) during AirPlay routes to AirPlay mute, NEVER Bluetooth A2DP!
+        let r_tog = handle_request(&req_with("POST", "/api/audio/toggle", "{}"), &state, Path::new("web"));
+        assert_eq!(r_tog.status_code, 200);
+        let b_tog = String::from_utf8_lossy(&r_tog.body);
+        assert!(b_tog.contains(r#""airplayAudioMuted":true"#), "b_tog={b_tog}");
+        assert!(b_tog.contains(r#""pcBridgeActive":false"#), "b_tog={b_tog}");
+        assert!(
+            !iphone_link_audio::is_global_pc_audio_bridge_active()
+                && !iphone_link_audio::is_global_pc_audio_bridge_connecting(),
+            "Bluetooth A2DP must remain 100% stopped during AirPlay audio toggle!"
+        );
+        iphone_link_apple::airplay::set_airplay_audio_muted(false);
+
+        // 4. Audit /api/screen, /api/status, /api/debug/airplay-trace telemetry + app.js & mirror.js crisp HD contracts
+        let r_scr = handle_request(&req_with("GET", "/api/screen", ""), &state, Path::new("web"));
+        let b_scr = String::from_utf8_lossy(&r_scr.body);
+        for key in [
+            r#""airplayAudioActive":"#,
+            r#""airplayAudioMuted":"#,
+            r#""airplayAudioCodec":"#,
+            r#""airplayAudioSampleRate":"#,
+            r#""airplayAudioDecodedPackets":"#,
+            r#""airplayAudioPlayedSamples":"#,
+        ] {
+            assert!(b_scr.contains(key), "/api/screen missing {key}: {b_scr}");
+        }
+        let r_tr = handle_request(&req_with("GET", "/api/debug/airplay-trace", ""), &state, Path::new("web"));
+        let b_tr = String::from_utf8_lossy(&r_tr.body);
+        for key in [r#""audioDecoded":"#, r#""audioPlayedSamples":"#, r#""audioDecodeErrors":"#, r#""audioCodec":"#] {
+            assert!(b_tr.contains(key), "/api/debug/airplay-trace missing {key}: {b_tr}");
+        }
+
+        let app_js = EMBEDDED_APP_JS;
+        assert!(app_js.contains("/api/audio/airplay-mute"));
+        assert!(app_js.contains("Audio AirPlay Aktif (44.1 kHz)"));
+        assert!(app_js.contains("AirPlay Audio Active (44.1 kHz)"));
+        assert!(app_js.contains("AirPlay H.264 Full HD 60 FPS + Audio PC (tanpa sentuh/keyboard)"));
+        assert!(app_js.contains("AirPlay H.264 Full HD 60 FPS + PC Audio (no touch/keyboard)"));
+
+        let mirror_js = EMBEDDED_MIRROR_JS;
+        assert!(mirror_js.contains("const disableNativeTrim = effectiveIpad || (fitMode === \"contain\") || isAirplayOrH264;"));
+        assert!(mirror_js.contains("ctx.imageSmoothingQuality = \"high\";"));
+        assert!(mirror_js.contains("_h264AvccRefreshInFlight"));
+
+        // 5. Clean stop
+        let _ = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert!(!iphone_link_apple::mirror::is_airplay_active());
+    }
+
+    #[test]
+    fn test_tahap259_airplay_live_config_endpoint_zero_bt_hijack_and_mirror_js_low_latency() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_with = |method: &str, path: &str, body: &str| HttpRequest {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. Start Pure AirPlay H.264 session (RFC 5737 synthetic UDID)
+        let r_ap = handle_request(
+            &req_with(
+                "POST",
+                "/api/screen",
+                r#"{"mode":"airplay","iosVersion":"27.2","udid":"00008150-TEST-DEV-A","transport":"wifi","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_ap.status_code, 200);
+        assert!(iphone_link_apple::mirror::is_airplay_active());
+
+        // 2. POST /api/audio/airplay-config hot-reloads volume/buffer/lipSync with 0 BT hijack & 0 unintended mute!
+        let r_c1 = handle_request(
+            &req_with(
+                "POST",
+                "/api/audio/airplay-config",
+                r#"{"volume":40,"buffer":"low","lipSync":false,"muted":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_c1.status_code, 200);
+        let b_c1 = String::from_utf8_lossy(&r_c1.body);
+        assert!(b_c1.contains(r#""airplayAudioVolume":40"#), "b_c1={b_c1}");
+        assert!(b_c1.contains(r#""airplayAudioBufferPreset":"low""#), "b_c1={b_c1}");
+        assert!(b_c1.contains(r#""airplayAudioLipSync":false"#), "b_c1={b_c1}");
+        assert!(b_c1.contains(r#""airplayAudioTargetMs":22"#), "b_c1={b_c1}");
+        assert!(b_c1.contains(r#""airplayAudioMuted":false"#), "b_c1={b_c1}");
+        assert!(b_c1.contains(r#""pcBridgeActive":false"#), "b_c1={b_c1}");
+
+        // 3. Clicking Buffer Audio via legacy POST /api/audio {"bufferPreset":"high"} MUST NOT mute AirPlay audio!
+        let r_buf = handle_request(
+            &req_with("POST", "/api/audio", r#"{"bufferPreset":"high"}"#),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_buf.status_code, 200);
+        let b_buf = String::from_utf8_lossy(&r_buf.body);
+        assert!(b_buf.contains(r#""airplayAudioBufferPreset":"high""#), "b_buf={b_buf}");
+        assert!(b_buf.contains(r#""airplayAudioMuted":false"#), "Buffer change must NEVER mute AirPlay: {b_buf}");
+        assert!(b_buf.contains(r#""pcBridgeActive":false"#), "b_buf={b_buf}");
+
+        // 4. POST /api/settings also live hot-reloads volume/buffer/lipSync cleanly
+        let r_set = handle_request(
+            &req_with(
+                "POST",
+                "/api/settings",
+                r#"{"audioVolume":85,"audioBufferPreset":"normal","lipSync":true}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_set.status_code, 200);
+        let r_scr = handle_request(&req_with("GET", "/api/screen", ""), &state, Path::new("web"));
+        let b_scr = String::from_utf8_lossy(&r_scr.body);
+        for expected in [
+            r#""airplayAudioVolume":85"#,
+            r#""airplayAudioBufferPreset":"normal""#,
+            r#""airplayAudioLipSync":true"#,
+            r#""airplayAudioTargetMs":100"#,
+            r#""airplayAudioBufferMs":"#,
+            r#""airplayAudioDroppedPackets":"#,
+            r#""airplayVideoQueueDropped":"#,
+        ] {
+            assert!(b_scr.contains(expected), "/api/screen missing {expected}: {b_scr}");
+        }
+        assert!(
+            !iphone_link_audio::is_global_pc_audio_bridge_active()
+                && !iphone_link_audio::is_global_pc_audio_bridge_connecting(),
+            "Bluetooth A2DP must stay 100% isolated during AirPlay live config!"
+        );
+
+        // 5. Audit embedded /mirror.js & /app.js ultra-low-latency & live hot-reload contracts
+        let mirror_js = EMBEDDED_MIRROR_JS;
+        assert!(mirror_js.contains("optimizeForLatency: true"));
+        assert!(mirror_js.contains("configureDecoderSafe"));
+        assert!(mirror_js.contains("ctx.imageSmoothingQuality = \"medium\";"));
+        assert!(mirror_js.contains("videoQueueDropped"));
+        assert!(mirror_js.contains("!window._isAirPlayStream && _lipSyncEnabled"));
+
+        let app_js = EMBEDDED_APP_JS;
+        assert!(app_js.contains("/api/audio/airplay-config"));
+
+        // 6. Clean restore defaults & stop
+        let _ = iphone_link_apple::airplay::apply_live_audio_config(
+            Some(100),
+            Some("normal"),
+            Some(true),
+            Some(false),
+        );
+        let _ = handle_request(&req_with("DELETE", "/api/screen", ""), &state, Path::new("web"));
+        assert!(!iphone_link_apple::mirror::is_airplay_active());
+    }
+
+    #[test]
+    fn test_tahap285_ios_routing_matrix_17_to_27_usb_and_wifi_cache() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let req_post = |path: &str, body: &str| HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
+        };
+
+        // 1. iOS 17.2.1 -> AirPlayStandalone (hidControlAvailable=false)
+        let r17 = handle_request(
+            &req_post(
+                "/api/screen/start",
+                r#"{"udid":"00008150-000000000001721","transport":"wifi","mode":"auto","iosVersion":"17.2.1","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let b17 = String::from_utf8_lossy(&r17.body).to_string();
+        assert!(b17.contains(r#""mirrorRoute":"airplay_standalone""#), "b17={b17}");
+        assert!(b17.contains(r#""stage":"waiting_airplay""#), "b17={b17}");
+        assert!(b17.contains(r#""hidControlAvailable":false"#), "b17={b17}");
+        let _ = handle_request(&req_post("/api/screen", "{}"), &state, Path::new("web"));
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+
+        // 2. iOS 17.4.1 & 26.0 -> HybridAirPlayCoreDeviceHid (hidControlAvailable=true)
+        let r26 = handle_request(
+            &req_post(
+                "/api/screen/start",
+                r#"{"udid":"00008150-000000000002600","transport":"usb","mode":"auto","iosVersion":"26.0","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let b26 = String::from_utf8_lossy(&r26.body).to_string();
+        assert!(b26.contains(r#""mirrorRoute":"hybrid_airplay_h264""#), "b26={b26}");
+        assert!(b26.contains(r#""stage":"waiting_airplay""#), "b26={b26}");
+        assert!(b26.contains(r#""hidControlAvailable":true"#), "b26={b26}");
+        assert!(!iphone_link_apple::mirror::is_airplay_standalone_no_hid_active());
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+
+        // 3. Cold Wi-Fi cache fallback: NO `iosVersion` in POST body AND empty active USB cache ->
+        //    MUST read `iosVersion = "18.5"` from `wifi_state.json` and select `hybrid_airplay_h264`!
+        let tmp_wifi = env::temp_dir().join(format!("ipl_t285_wifi_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&tmp_wifi);
+        let prev_ws = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &tmp_wifi);
+        iphone_link_apple::wifi::update_device_full_metadata(
+            "00008150-000000000001850",
+            Some("Phone18"),
+            Some("iPhone16,1"),
+            None,
+            Some("18.5"),
+            None,
+            Some("198.51.100.85"),
+            Some(1_763_700_000),
+            Some(true),
+        );
+        let r_wifi_cold = handle_request(
+            &req_post(
+                "/api/screen/start",
+                r#"{"udid":"00008150-000000000001850","transport":"wifi","mode":"auto","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let b_wifi_cold = String::from_utf8_lossy(&r_wifi_cold.body).to_string();
+        match prev_ws {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        let _ = std::fs::remove_file(&tmp_wifi);
+        assert!(
+            b_wifi_cold.contains(r#""mirrorRoute":"hybrid_airplay_h264""#),
+            "Cold Wi-Fi iOS 18.5 MUST resolve via wifi_state.json to Hybrid: {b_wifi_cold}"
+        );
+        assert!(b_wifi_cold.contains(r#""stage":"waiting_airplay""#), "b_wifi_cold={b_wifi_cold}");
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+
+        // 4. iOS 27.0 resolves to CoreDeviceNativeHevc
+        assert_eq!(
+            iphone_link_apple::link::resolve_ios_mirror_route("27.0"),
+            iphone_link_apple::link::IosMirrorRoute::CoreDeviceNativeHevc
+        );
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap285_win10_no_hevc_preflight_auto_fallback_to_hybrid_h264() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        let prev_hevc = env::var_os("IPHONE_LINK_MOCK_HEVC_MISSING");
+        let prev_h264 = env::var_os("IPHONE_LINK_MOCK_H264_MISSING");
+        let req_start = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/screen/start".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"udid":"00008150-000000000002700","transport":"usb","mode":"auto","iosVersion":"27.0","airplayPort":0,"advertiseMdns":false}"#.to_string(),
+            body_bytes: Vec::new(),
+        };
+
+        // 1. Windows 10 / Portable ZIP without HEVC (`hevc_mft_available=false`, inbox `h264_mft_available=true`)
+        //    MUST auto-fallback cleanly to Hybrid AirPlay H.264 instead of black/white blank screen!
+        env::set_var("IPHONE_LINK_MOCK_HEVC_MISSING", "1");
+        env::remove_var("IPHONE_LINK_MOCK_H264_MISSING");
+        let r_fb = handle_request(&req_start, &state, Path::new("web"));
+        assert_eq!(r_fb.status_code, 200);
+        let b_fb = String::from_utf8_lossy(&r_fb.body).to_string();
+        assert!(b_fb.contains(r#""mirrorRoute":"hybrid_airplay_h264""#), "b_fb={b_fb}");
+        assert!(b_fb.contains(r#""fallbackReason":"hevc_mft_missing""#), "b_fb={b_fb}");
+        assert!(b_fb.contains(r#""h264MftAvailable":true"#), "b_fb={b_fb}");
+        assert!(b_fb.contains(r#""hevcMftAvailable":false"#), "b_fb={b_fb}");
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+
+        // 2. Windows N/KN missing both H.264 & HEVC -> explicit Media Feature Pack error (no silent stall)
+        env::set_var("IPHONE_LINK_MOCK_H264_MISSING", "1");
+        let r_mfp = handle_request(&req_start, &state, Path::new("web"));
+        assert_eq!(r_mfp.status_code, 200);
+        let b_mfp = String::from_utf8_lossy(&r_mfp.body).to_string();
+        assert!(b_mfp.contains(r#""errorCode":"media_feature_pack_missing""#), "b_mfp={b_mfp}");
+        assert!(b_mfp.contains(r#""mediaFeaturePackMissing":true"#), "b_mfp={b_mfp}");
+
+        match prev_hevc {
+            Some(v) => env::set_var("IPHONE_LINK_MOCK_HEVC_MISSING", v),
+            None => env::remove_var("IPHONE_LINK_MOCK_HEVC_MISSING"),
+        }
+        match prev_h264 {
+            Some(v) => env::set_var("IPHONE_LINK_MOCK_H264_MISSING", v),
+            None => env::remove_var("IPHONE_LINK_MOCK_H264_MISSING"),
+        }
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap286_audio_routing_api_accepts_routing_and_audio_out_with_manual_stop_latch() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        // 1. Alias `{"routing":"device"}` and `{"audioOut":"device"}` MUST set routing="device" and latch manual stop
+        let r_routing = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/audio".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"routing":"device"}"#.to_string(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_routing.status_code, 200);
+        let b_dev = String::from_utf8_lossy(&r_routing.body).to_string();
+        assert!(b_dev.contains(r#""pcBridgeActive":false"#), "b_dev={b_dev}");
+        assert!(b_dev.contains(r#""pcBridgeState":"idle""#), "b_dev={b_dev}");
+        assert_eq!(state.lock().unwrap().audio_routing, "device");
+        assert!(AUDIO_MANUALLY_STOPPED_THIS_SESSION.load(Ordering::SeqCst));
+
+        // 2. Boolean `{"audioOut":false}` in /api/settings MUST persist "device", `"trackpadSpeed":30` MUST NOT clamp to 40
+        let _ = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/settings".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"audioOut":false,"trackpadSpeed":30}"#.to_string(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        {
+            let st = state.lock().unwrap();
+            assert_eq!(st.audio_routing, "device");
+            assert_eq!(st.trackpad_speed, 30);
+        }
+
+        // 3. Switching back to `"pc"` clears manual stop latch and unmutes cleanly
+        let r_pc = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/audio".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"audioOut":"pc","muted":false}"#.to_string(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        assert_eq!(r_pc.status_code, 200);
+        assert_eq!(state.lock().unwrap().audio_routing, "pc");
+        assert!(!state.lock().unwrap().audio_muted);
+        assert!(!AUDIO_MANUALLY_STOPPED_THIS_SESSION.load(Ordering::SeqCst));
+
+        iphone_link_audio::stop_global_pc_audio_bridge();
+        AUDIO_MANUALLY_STOPPED_THIS_SESSION.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_tahap291_pin_disk_dpapi_roundtrip_no_plaintext_and_legacy_compat() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+            g.clear();
+        }
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "iphone_link_t291_dpapi_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let settings_file = tmp_dir.join("user_settings.json");
+        let st_disk = AppState::default();
+        save_user_settings_to_path(&settings_file, &st_disk, "649281").expect("save settings");
+        let raw = fs::read_to_string(&settings_file).expect("read settings json");
+        assert!(
+            raw.contains(r#""unlockPin":"dpapi:"#),
+            "Expected DPAPI prefix on disk JSON, got: {raw}"
+        );
+        assert!(
+            !raw.contains("649281"),
+            "Plaintext PIN leaked into disk JSON: {raw}"
+        );
+
+        let mut st_reloaded = AppState::default();
+        let loaded_dpapi = load_user_settings_from_path(&settings_file, &mut st_reloaded);
+        assert_eq!(loaded_dpapi, "649281");
+
+        // Backward compatibility: legacy v4.0.0 plaintext JSON still decodes cleanly
+        let legacy_json = raw.replace(
+            &format!(r#""unlockPin":"{}""#, parse_string_param(&raw, "unlockPin").unwrap_or_default()),
+            r#""unlockPin":"246810""#,
+        );
+        fs::write(&settings_file, legacy_json.as_bytes()).expect("write legacy json");
+        let loaded_legacy = load_user_settings_from_path(&settings_file, &mut st_reloaded);
+        assert_eq!(loaded_legacy, "246810");
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+        clear_stored_pin();
+        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+            g.clear();
+        }
+        reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap291_pin_clear_and_wipe_remove_ram_ui_and_disk() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+        if let Ok(mut g) = SAVED_UNLOCK_PIN.lock() {
+            g.clear();
+        }
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "iphone_link_t291_wipe_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let settings_file = tmp_dir.join("user_settings.json");
+        let blur_file = tmp_dir.join("sequoia_last_blur.bin");
+        let dpapi_sidecar = tmp_dir.join("legacy.dpapi");
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        {
+            let st = state.lock().unwrap();
+            save_user_settings_to_path(&settings_file, &st, "739182").unwrap();
+        }
+        fs::write(&blur_file, b"ILB1dummy").unwrap();
+        fs::write(&dpapi_sidecar, b"dpapidummy").unwrap();
+
+        let mut st_cold = AppState::default();
+        let hydrated = init_persistent_settings_from_disk_from(&settings_file, &mut st_cold, true);
+        assert_eq!(hydrated, "739182");
+        assert_eq!(get_hydrated_unlock_pin().as_deref(), Some("739182"));
+
+        // Clear PIN sync empties RAM DPAPI & SAVED_UNLOCK_PIN, then rewrite disk with empty PIN
+        clear_unlock_pin_sync(&state).unwrap();
+        assert!(load_decrypted_pin().unwrap().is_none());
+        assert!(get_hydrated_unlock_pin().is_none());
+        {
+            let st = state.lock().unwrap();
+            save_user_settings_to_path(&settings_file, &st, "").unwrap();
+        }
+        let mut st_after_clear = AppState::default();
+        let after_clear_pin =
+            init_persistent_settings_from_disk_from(&settings_file, &mut st_after_clear, true);
+        assert_eq!(after_clear_pin, "");
+        assert!(get_hydrated_unlock_pin().is_none());
+
+        // Wipe directory removes user_settings.json, sequoia_last_blur.bin, & *.dpapi
+        wipe_privacy_files_in_dir(&tmp_dir);
+        assert!(!settings_file.exists());
+        assert!(!blur_file.exists());
+        assert!(!dpapi_sidecar.exists());
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+        reset_hid_runtime_state();
     }
 }

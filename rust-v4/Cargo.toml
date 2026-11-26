@@ -7,9 +7,36 @@ members = [
     "apps/iphone-link-desktop",
 ]
 
+[workspace.dependencies]
+idevice = { version = "=0.1.68", path = "vendor/idevice", default-features = false, features = [
+    "ring",
+    "amfi",
+    "usbmuxd",
+    "core_device_proxy",
+    "tunnel_tcp_stack",
+    "rsd",
+    "display_stream",
+    "mobile_image_mounter",
+    "tss",
+    "cryptexd",
+    "remote_pairing",
+    "springboardservices",
+    "notification_proxy",
+    "house_arrest",
+    "installation_proxy",
+] }
+tokio = { version = "1", path = "vendor/tokio", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+plist = { version = "1.7", path = "vendor/plist" }
+serde = { version = "1.0", path = "vendor/serde", features = ["derive"] }
+serde_json = { version = "1.0", path = "vendor/serde_json" }
+tracing = { version = "0.1", path = "vendor/tracing" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+panic = "unwind"
+
+[profile.release.package."*"]
+opt-level = "s"

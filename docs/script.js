@@ -1,5 +1,5 @@
 /* ==========================================================================
-   iPhone Link v4.0.0 - Official Interactive Website Script (Anti-AI-Slop Edition)
+   iPhone Link v5.0.0 - Official Interactive Website Script (Pure Native Rust)
    Zero Emoji - 100% Inline Vector SVG Icons - Obsidian Carbon & Apple Daylight
    ========================================================================== */
 (function () {
@@ -10,6 +10,8 @@
 
   var SVG_MOON = '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
   var SVG_SUN = '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>';
+  var SVG_VOL_ON = '<svg class="ui-icon ico-sm" viewBox="0 0 24 24" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+  var SVG_VOL_OFF = '<svg class="ui-icon ico-sm" viewBox="0 0 24 24" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/></svg>';
 
   var APP_SVGS = {
     notes: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>',
@@ -112,15 +114,21 @@
         navSlidingPill.style.opacity = "0";
         return;
       }
-      var linksRect = navLinksEl.getBoundingClientRect();
+      var parent = navSlidingPill.offsetParent || navLinksEl;
+      var parentRect = parent.getBoundingClientRect();
       var linkRect = targetLink.getBoundingClientRect();
-      if (linkRect.width <= 0 || linksRect.width <= 0) return;
-      var x = Math.round((linkRect.left - linksRect.left + navLinksEl.scrollLeft) * 10) / 10;
-      var w = Math.round(linkRect.width * 10) / 10;
-      navSlidingPill.dataset.x = String(x);
-      navSlidingPill.dataset.w = String(w);
-      navSlidingPill.style.width = w + "px";
-      navSlidingPill.style.transform = "translate3d(" + x + "px, 0, 0)";
+      if (linkRect.width <= 0 || parentRect.width <= 0) return;
+      var scaleX = parent.offsetWidth > 0 ? (parentRect.width / parent.offsetWidth) : 1;
+      if (!isFinite(scaleX) || scaleX <= 0.1) scaleX = 1;
+      var padX = 0;
+      var unscaledLeft = (linkRect.left - parentRect.left) / scaleX - parent.clientLeft + parent.scrollLeft;
+      var unscaledW = linkRect.width / scaleX;
+      var targetW = Math.max(unscaledW + padX * 2, 0);
+      var targetLeft = unscaledLeft + (unscaledW - targetW) / 2;
+      navSlidingPill.dataset.x = targetLeft.toFixed(2);
+      navSlidingPill.dataset.w = targetW.toFixed(2);
+      navSlidingPill.style.width = targetW.toFixed(2) + "px";
+      navSlidingPill.style.transform = "translate3d(" + targetLeft.toFixed(2) + "px, 0, 0)";
       navSlidingPill.style.opacity = "1";
     };
 
@@ -155,8 +163,23 @@
       if (window.innerWidth > 1080) {
         setMobileNavOpen(false);
       }
-      syncNavPillToActive();
+      requestAnimationFrame(syncNavPillToActive);
     });
+
+    if ("ResizeObserver" in window) {
+      var navResizeObs = new ResizeObserver(function () {
+        requestAnimationFrame(syncNavPillToActive);
+      });
+      navResizeObs.observe(navLinksEl);
+    }
+
+    if (floatingNav) {
+      floatingNav.addEventListener("transitionend", function (e) {
+        if (e.propertyName === "transform") {
+          syncNavPillToActive();
+        }
+      });
+    }
 
     if ("IntersectionObserver" in window) {
       var linkById = {};
@@ -180,10 +203,28 @@
       });
     }
 
+    window.addEventListener("scroll", function () {
+      if (navAnchors.length > 0 && (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 48)) {
+        var lastAnchor = navAnchors[navAnchors.length - 1];
+        if (activeNavLink !== lastAnchor) {
+          activeNavLink = lastAnchor;
+          syncNavPillToActive();
+        }
+      }
+    }, { passive: true });
+
     requestAnimationFrame(syncNavPillToActive);
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function () {
+        requestAnimationFrame(syncNavPillToActive);
+      });
+    }
+    window.addEventListener("load", function () {
+      requestAnimationFrame(syncNavPillToActive);
+    });
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(function () {
-        syncNavPillToActive();
+        requestAnimationFrame(syncNavPillToActive);
       });
     }
   }
@@ -222,7 +263,7 @@
   }
 
   /* --------------------------------------------------------------------------
-     3. UNIVERSAL INTERACTIVE SPOTLIGHT MOUSE TRACKING & GITHUB STARS (TAHAP 220)
+     3. SPOTLIGHT TRACKING, GITHUB STARS, & LIVE RELEASES DOWNLOAD COUNTER
      -------------------------------------------------------------------------- */
   var INTERACTIVE_GLOW_SELECTOR = [
     ".bento-card",
@@ -239,6 +280,7 @@
     ".shortcut-card",
     ".timeline-card",
     ".dl-card",
+    ".v5-upgrade-banner",
     ".smartscreen-card",
     ".ss-step",
     ".sha-bar",
@@ -271,17 +313,219 @@
     }, { passive: true });
   });
 
+  var LIVE_STATS_STORAGE_KEY = "iphone_link_live_stats_v5";
+  var LIVE_STATS_COOLDOWN_MS = 60 * 1000;
+  var LIVE_STATS_POLL_MS = 180 * 1000;
+  var LIVE_STATS_MAX_PAGES = 5;
+  var BASELINE_DOWNLOADS = 4984;
+
   var ghStarNumEl = document.getElementById("gh-star-num");
-  if (ghStarNumEl && typeof fetch === "function") {
-    fetch("https://api.github.com/repos/kelvindaniyar/iphone-link")
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) {
-        if (d && typeof d.stargazers_count === "number" && d.stargazers_count > 0) {
-          ghStarNumEl.textContent = String(d.stargazers_count);
+  var liveDlCountEl = document.getElementById("live-download-count");
+  var creatorDlCountEl = document.getElementById("creator-download-count");
+  var latestLiveDownloads = BASELINE_DOWNLOADS;
+  var latestLiveStars = null;
+  var lastLiveStatsFetchAt = 0;
+  var liveStatsFetchInFlight = false;
+
+  function formatLiveDownloadText(count, lang) {
+    var safeNum = (typeof count === "number" && isFinite(count) && count > 0)
+      ? Math.floor(count)
+      : BASELINE_DOWNLOADS;
+    var activeLang = lang === "en" ? "en" : "id";
+    var loc = activeLang === "en" ? "en-US" : "id-ID";
+    try {
+      return Number(safeNum).toLocaleString(loc) + "+";
+    } catch (e) {
+      return String(safeNum) + "+";
+    }
+  }
+
+  function pulseLiveStatEl(el) {
+    if (!el) return;
+    el.classList.remove("is-updated");
+    void el.offsetWidth;
+    el.classList.add("is-updated");
+    window.setTimeout(function () {
+      el.classList.remove("is-updated");
+    }, 600);
+  }
+
+  function renderLiveGitHubStats(lang, highlightDownloads, highlightStars) {
+    var activeLang = (lang || siteLang || "id") === "en" ? "en" : "id";
+    var formattedDownloads = formatLiveDownloadText(latestLiveDownloads, activeLang);
+    if (liveDlCountEl) {
+      liveDlCountEl.textContent = formattedDownloads;
+      if (highlightDownloads) pulseLiveStatEl(liveDlCountEl);
+    }
+    if (creatorDlCountEl) {
+      creatorDlCountEl.textContent = formattedDownloads;
+      if (highlightDownloads) pulseLiveStatEl(creatorDlCountEl);
+    }
+    if (ghStarNumEl && typeof latestLiveStars === "number" && isFinite(latestLiveStars) && latestLiveStars > 0) {
+      ghStarNumEl.textContent = String(Math.floor(latestLiveStars));
+      if (highlightStars) pulseLiveStatEl(ghStarNumEl);
+    }
+  }
+
+  function readCachedLiveStats() {
+    try {
+      var raw = localStorage.getItem(LIVE_STATS_STORAGE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCachedLiveStats(payload) {
+    try {
+      localStorage.setItem(LIVE_STATS_STORAGE_KEY, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function parseNextLinkUrl(linkHeader) {
+    if (!linkHeader || typeof linkHeader !== "string") return null;
+    var nextRegex = new RegExp('<([^>]+)>\\s*;\\s*rel="next"', "i");
+    var m = nextRegex.exec(linkHeader);
+    return m && m[1] ? m[1] : null;
+  }
+
+  function fetchAllReleaseDownloads() {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    var total = 0;
+    var page = 0;
+    var nextUrl = "https://api.github.com/repos/kelvindaniyar/iphone-link/releases?per_page=100";
+
+    function fetchPage(url) {
+      if (!url || page >= LIVE_STATS_MAX_PAGES) {
+        return Promise.resolve(total > 0 ? total : null);
+      }
+      page += 1;
+      return fetch(url, { cache: "no-store" })
+        .then(function (r) {
+          if (!r || !r.ok) return null;
+          var linkHdr = r.headers ? r.headers.get("Link") : null;
+          return r.json().then(function (releases) {
+            if (!Array.isArray(releases)) return null;
+            releases.forEach(function (rel) {
+              if (rel && Array.isArray(rel.assets)) {
+                rel.assets.forEach(function (asset) {
+                  if (asset && typeof asset.download_count === "number" && asset.download_count > 0) {
+                    total += asset.download_count;
+                  }
+                });
+              }
+            });
+            var following = parseNextLinkUrl(linkHdr);
+            if (following && page < LIVE_STATS_MAX_PAGES) {
+              return fetchPage(following);
+            }
+            return total > 0 ? total : null;
+          });
+        })
+        .catch(function () {
+          return total > 0 ? total : null;
+        });
+    }
+
+    return fetchPage(nextUrl);
+  }
+
+  function fetchRepoStars() {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    return fetch("https://api.github.com/repos/kelvindaniyar/iphone-link", { cache: "no-store" })
+      .then(function (r) {
+        if (!r || !r.ok) return null;
+        return r.json();
+      })
+      .then(function (repo) {
+        if (repo && typeof repo.stargazers_count === "number" && isFinite(repo.stargazers_count) && repo.stargazers_count > 0) {
+          return Math.floor(repo.stargazers_count);
+        }
+        return null;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
+  function refreshLiveGitHubStats(force) {
+    if (typeof fetch !== "function" || liveStatsFetchInFlight) return;
+    var now = Date.now();
+    if (!force && lastLiveStatsFetchAt > 0 && (now - lastLiveStatsFetchAt) < LIVE_STATS_COOLDOWN_MS) {
+      return;
+    }
+    liveStatsFetchInFlight = true;
+    lastLiveStatsFetchAt = now;
+
+    Promise.all([fetchAllReleaseDownloads(), fetchRepoStars()])
+      .then(function (results) {
+        var nextDownloads = results[0];
+        var nextStars = results[1];
+        var dlIncreased = false;
+        var starsIncreased = false;
+
+        if (typeof nextDownloads === "number" && isFinite(nextDownloads) && nextDownloads > 0) {
+          dlIncreased = nextDownloads > latestLiveDownloads;
+          latestLiveDownloads = nextDownloads;
+        }
+        if (typeof nextStars === "number" && isFinite(nextStars) && nextStars > 0) {
+          starsIncreased = latestLiveStars !== null && nextStars > latestLiveStars;
+          latestLiveStars = nextStars;
+        }
+
+        if (nextDownloads !== null || nextStars !== null) {
+          writeCachedLiveStats({
+            downloads: latestLiveDownloads,
+            stars: latestLiveStars,
+            fetchedAt: Date.now()
+          });
+          renderLiveGitHubStats(siteLang, dlIncreased, starsIncreased);
         }
       })
-      .catch(function () {});
+      .catch(function () {})
+      .then(function () {
+        liveStatsFetchInFlight = false;
+      });
   }
+
+  (function initLiveGitHubStats() {
+    var cached = readCachedLiveStats();
+    if (cached) {
+      if (typeof cached.downloads === "number" && isFinite(cached.downloads) && cached.downloads > latestLiveDownloads) {
+        latestLiveDownloads = Math.floor(cached.downloads);
+      }
+      if (typeof cached.stars === "number" && isFinite(cached.stars) && cached.stars > 0) {
+        latestLiveStars = Math.floor(cached.stars);
+      }
+      if (typeof cached.fetchedAt === "number" && isFinite(cached.fetchedAt) && cached.fetchedAt > 0) {
+        lastLiveStatsFetchAt = cached.fetchedAt;
+      }
+    }
+
+    renderLiveGitHubStats(siteLang, false, false);
+
+    if (!cached || !lastLiveStatsFetchAt || (Date.now() - lastLiveStatsFetchAt) >= LIVE_STATS_COOLDOWN_MS) {
+      refreshLiveGitHubStats(false);
+    }
+
+    window.setInterval(function () {
+      if (document.visibilityState === "visible") {
+        refreshLiveGitHubStats(false);
+      }
+    }, LIVE_STATS_POLL_MS);
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") {
+        refreshLiveGitHubStats(false);
+      }
+    });
+
+    window.addEventListener("focus", function () {
+      refreshLiveGitHubStats(false);
+    });
+  })();
 
   /* --------------------------------------------------------------------------
      4. HERO 3D INTERACTIVE DEVICE STACK, 3D GLASS BUBBLES & AUTO-MORPHING UI
@@ -290,19 +534,19 @@
   var HERO_META = {
     iphone17: {
       title: { id: "iPhone 17 Pro", en: "iPhone 17 Pro" },
-      sub: { id: "iOS 27.2 · Dynamic Island · 60fps H.265", en: "iOS 27.2 · Dynamic Island · 60fps H.265" }
+      sub: { id: "iOS 17-27 · Dynamic Island · USB / Wi-Fi / AirPlay", en: "iOS 17-27 · Dynamic Island · USB / Wi-Fi / AirPlay" }
     },
     iphone11: {
       title: { id: "iPhone 11 Pro Max", en: "iPhone 11 Pro Max" },
-      sub: { id: "iOS 27.2 · Notch Terkalibrasi · USB / Wi-Fi", en: "iOS 27.2 · Calibrated Notch · USB / Wi-Fi" }
+      sub: { id: "iOS 17-27 · Notch Terkalibrasi · Native Rust", en: "iOS 17-27 · Calibrated Notch · Native Rust" }
     },
     ipad: {
       title: { id: "iPad (4:3)", en: "iPad (4:3)" },
-      sub: { id: "iPadOS 27 · Mode Split View 924x832 & 564x832", en: "iPadOS 27 · Split View Mode 924x832 & 564x832" }
+      sub: { id: "iPadOS 17-27 · Layar Luas 4:3 Bebas Potong", en: "iPadOS 17-27 · Full 4:3 View With Zero Black Bars" }
     },
     gaming: {
       title: { id: "Landscape Gaming 270 deg", en: "Landscape Gaming 270 deg" },
-      sub: { id: "eFootball 2027 · 60 FPS H.265 & 120Hz HID", en: "eFootball 2027 · 60 FPS H.265 & 120Hz HID" }
+      sub: { id: "eFootball 2027 · 60 FPS & Kontrol Trackpad Halus", en: "eFootball 2027 · 60 FPS & Smooth Trackpad Control" }
     }
   };
 
@@ -461,98 +705,112 @@
   }
 
   /* --------------------------------------------------------------------------
-     5. LIVE INTERACTIVE APP SIMULATOR ("COBA SEBELUM MENGUNDUH")
+     5. LIVE INTERACTIVE APP SIMULATOR ("COBA SEBELUM MENGUNDUH" - v5.0.0)
      -------------------------------------------------------------------------- */
   var SIM_TEXTS = {
     id: {
-      secAppearance: "TAMPILAN & BAHASA",
+      secAppearance: "TAMPILAN, BAHASA & TRACKPAD",
+      themeDark: "Gelap Smoky",
+      themeLight: "Terang Kristal",
+      acrylicLbl: "Kaca Buram",
+      acrylicBadge: "Selalu Menyala",
+      streamModeLbl: "Mode Video",
+      streamAuto: "Otomatis (Disarankan)",
+      trackpadSpeedLbl: "Kecepatan Trackpad",
       secScale: "UKURAN & RASIO LAYAR",
       autoRotateLabel: "Putar Otomatis (Auto-Rotate)",
-      secCrop: "POTONG TEPI (EDGE CROP)",
-      saveCropBtn: "Simpan Crop",
-      secAudio: "AUDIO TANPA KABEL (iPhone -> PC)",
+      secCrop: "POTONG TEPI LAYAR",
+      saveCropBtn: "Simpan Potongan",
+      secAudio: "SUARA OTOMATIS & BLUETOOTH",
       audioPcBtn: "Di PC Ini",
       audioPhoneBtn: "Hanya di iPhone",
       volLabel: "Volume PC",
-      bufLow: "Buffer: Rendah",
-      bufHigh: "Tinggi",
-      lipActive: "Aktif",
-      secOcr: "KEYBOARD & PINTASAN OCR",
-      btnPaste: "Tempel PC (Alt+V)",
-      btnOcr: "Salin OCR (Alt+C)",
-      btnGrabLink: "Ambil Link (Alt+B)",
-      btnCache: "Clear Cache (Alt+R)",
-      btnKb: "Keyboard (Ctrl+K)",
-      secStealth: "KONTROL LAYAR & MODE REDUP",
-      btnWake: "Buka (Alt+U)",
-      btnLock: "Kunci (Alt+L)",
-      btnStealth: "Stealth Dim Mode (Alt+D)",
+      bufLow: "Responsif",
+      bufHigh: "Stabil",
+      lipActive: "Sinkron",
+      audioSinkLbl: "Tombol Bisukan Atas (Alt+M)",
+      secOcr: "KEYBOARD & PINTASAN TEKS",
+      btnPaste: "Tempel Teks (Alt+V)",
+      btnOcr: "Salin Teks (Alt+C)",
+      btnGrabLink: "Ambil Tautan (Alt+B)",
+      btnCache: "Bersihkan Memori (Alt+R)",
+      btnKb: "Keyboard Layar (Ctrl+K)",
+      secStealth: "LAYAR REDUP & KUNCI",
+      btnWake: "Buka Kunci (Alt+U)",
+      btnLock: "Kunci Layar (Alt+L)",
+      btnStealth: "Redupkan Layar iPhone (Alt+D)",
       pinLbl: "PIN 6-digit",
       btnWipe: "Hapus PIN & Data Privasi",
-      secUpdater: "KONEKSI & PEMBARUAN PERANGKAT LUNAK",
+      secUpdater: "KONEKSI & PEMBARUAN",
       connUsb: "Kabel",
       chanStable: "Stabil",
-      autoUpdLbl: "Cek otomatis saat dibuka",
+      autoUpdLbl: "Cek pembaruan otomatis",
       btnCheckUpd: "Periksa Pembaruan",
-      updReady: "v4.0.0 Native Rust Siap",
-      updLatest: "iPhone Link v4.0.0 sudah versi terbaru!",
-      themeDark: "Gelap",
-      themeLight: "Terang",
-      langId: "ID Indonesia",
-      langEn: "EN English",
-      liquidGlassLbl: "Liquid Glass",
-      glassThickLbl: "Ketebalan Kaca (Glass Thickness)",
-      secDiag: "DETAIL PERANGKAT & DIAGNOSTIK",
-      diagInstalled: "Terpasang",
-      diagRunning: "Berjalan (Started)",
-      diagDevActive: "Aktif (Enabled)",
-      diagHevcOk: "Terpasang (60fps)",
-      btnUnlockDevmode: "Unlock Developer Mode (1-Klik)"
+      secDiag: "STATUS PERANGKAT & BANTUAN",
+      diagEngineLbl: "Mesin Aplikasi",
+      diagEngineVal: "Native Rust (1 Proses)",
+      diagInstalled: "Siap Pakai",
+      diagRunning: "Aktif",
+      diagDevActive: "Aktif",
+      diagHevcOk: "Siap (60 FPS)",
+      btnUnlockDevmode: "Bantu Developer Mode (1-Klik)",
+      btnAirplayFallback: "Beralih ke AirPlay (1-Klik)",
+      drawerSaweriaBtn: "Dukung Kreator di Saweria",
+      drawerFooterCredit: "iPhone Link v5.0.0 by Kelvin Daniyar · GPL-3.0",
+      updReady: "v5.0.0 · Native Rust",
+      updLatest: "iPhone Link v5.0.0 sudah versi terbaru!"
     },
     en: {
-      secAppearance: "APPEARANCE & LANGUAGE",
-      secScale: "SIZE & ASPECT RATIO",
+      secAppearance: "APPEARANCE, LANGUAGE & TRACKPAD",
+      themeDark: "Dark Smoky",
+      themeLight: "Light Crystal",
+      acrylicLbl: "Frosted Glass",
+      acrylicBadge: "Always On",
+      streamModeLbl: "Video Mode",
+      streamAuto: "Auto (Recommended)",
+      trackpadSpeedLbl: "Trackpad Speed",
+      secScale: "SCREEN SIZE & RATIO",
       autoRotateLabel: "Auto-Rotate Landscape",
-      secCrop: "EDGE CROP (TRIM BEZEL)",
-      saveCropBtn: "Save Crop",
-      secAudio: "WIRELESS AUDIO (iPhone -> PC)",
+      secCrop: "TRIM SCREEN EDGES",
+      saveCropBtn: "Save Trim",
+      secAudio: "AUTO AUDIO & BLUETOOTH",
       audioPcBtn: "On This PC",
       audioPhoneBtn: "iPhone Only",
       volLabel: "PC Volume",
-      bufLow: "Buffer: Low",
-      bufHigh: "High",
-      lipActive: "Active",
-      secOcr: "KEYBOARD & OCR SHORTCUTS",
-      btnPaste: "Paste PC (Alt+V)",
-      btnOcr: "Copy OCR (Alt+C)",
+      bufLow: "Responsive",
+      bufHigh: "Smooth",
+      lipActive: "Synced",
+      audioSinkLbl: "Top Bar Mute (Alt+M)",
+      secOcr: "KEYBOARD & TEXT SHORTCUTS",
+      btnPaste: "Paste to iPhone (Alt+V)",
+      btnOcr: "Copy Text (Alt+C)",
       btnGrabLink: "Grab Link (Alt+B)",
-      btnCache: "Clear Cache (Alt+R)",
-      btnKb: "Keyboard (Ctrl+K)",
-      secStealth: "SCREEN & STEALTH CONTROL",
-      btnWake: "Wake/Unlock (Alt+U)",
-      btnLock: "Lock (Alt+L)",
-      btnStealth: "Stealth Dim Mode (Alt+D)",
+      btnCache: "Clear Memory (Alt+R)",
+      btnKb: "On-Screen Keyboard (Ctrl+K)",
+      secStealth: "SCREEN DIM & LOCK",
+      btnWake: "Unlock iPhone (Alt+U)",
+      btnLock: "Lock iPhone (Alt+L)",
+      btnStealth: "Dim Physical Screen (Alt+D)",
       pinLbl: "6-digit PIN",
       btnWipe: "Clear PIN & Privacy Data",
-      secUpdater: "CONNECTION & SOFTWARE UPDATE",
-      connUsb: "USB Cable",
+      secUpdater: "CONNECTION & UPDATES",
+      connUsb: "Cable",
       chanStable: "Stable",
-      autoUpdLbl: "Check automatically on startup",
+      autoUpdLbl: "Check updates automatically",
       btnCheckUpd: "Check for Updates",
-      updReady: "v4.0.0 Native Rust Ready",
-      updLatest: "iPhone Link v4.0.0 is up to date!",
-      themeDark: "Dark",
-      themeLight: "Light",
-      langId: "ID Indonesia",
-      langEn: "EN English",
-      liquidGlassLbl: "Liquid Glass",
-      glassThickLbl: "Glass Thickness",
-      secDiag: "DEVICE & CONNECTION DIAGNOSTICS",
-      diagInstalled: "Installed",
-      diagRunning: "Running (Started)",
-      diagDevActive: "Enabled (Active)",
-      diagHevcOk: "Installed (60fps)",
-      btnUnlockDevmode: "Unlock Developer Mode (1-Click)"
+      secDiag: "DEVICE STATUS & HELP",
+      diagEngineLbl: "App Engine",
+      diagEngineVal: "Native Rust (1 Process)",
+      diagInstalled: "Ready",
+      diagRunning: "Active",
+      diagDevActive: "Enabled",
+      diagHevcOk: "Ready (60 FPS)",
+      btnUnlockDevmode: "Unlock Developer Mode (1-Click)",
+      btnAirplayFallback: "Switch to AirPlay (1-Click)",
+      drawerSaweriaBtn: "Support Creator on Saweria",
+      drawerFooterCredit: "iPhone Link v5.0.0 by Kelvin Daniyar · GPL-3.0",
+      updReady: "v5.0.0 · Native Rust",
+      updLatest: "iPhone Link v5.0.0 is up to date!"
     }
   };
 
@@ -561,6 +819,7 @@
   var simState = {
     device: "iphone17",
     conn: "usb",
+    streamMode: "auto",
     theme: "dark",
     lang: "id",
     drawerOpen: true,
@@ -568,11 +827,13 @@
     aspect: "auto",
     autoRotate: true,
     cropPx: 0,
+    trackpadSpeed: 100,
     audioTarget: "pc",
+    audioMuted: false,
     volume: 85,
     buffer: "normal",
     lipsync: "active",
-    btA2dp: false,
+    btA2dp: true,
     keyboardOpen: false,
     stealth: false,
     landscape: false,
@@ -580,8 +841,8 @@
     screen: "home",
     channel: "stable",
     notesPasted: false,
-    liquidGlass: true,
-    glassThickness: 58
+    hevcFallbackUsed: false,
+    sequoiaTimer: null
   };
 
   var simWindowEl = document.getElementById("sim-app-window");
@@ -590,58 +851,28 @@
   var simReadoutEl = document.getElementById("sim-device-readout");
   var simBadgeMirrorEl = document.getElementById("sim-badge-mirror");
   var simStealthVeilEl = document.getElementById("sim-stealth-veil");
+  var simSequoiaVeilEl = document.getElementById("sim-sequoia-veil");
   var simKbEl = document.getElementById("sim-ios-kb");
   var simCropFrameEl = document.getElementById("sim-crop-frame");
   var simToastEl = document.getElementById("sim-toast");
+  var simDrawerEl = document.getElementById("sim-drawer");
   var simToastTimer = null;
 
-  var simDrawerEl = document.getElementById("sim-drawer");
-  var simLiquidGlassBtn = document.getElementById("sim-liquid-glass-toggle");
-  var simGlassSlider = document.getElementById("sim-glass-thickness");
-  var simGlassValEl = document.getElementById("sim-glass-thick-val");
+  var simBtnAudioMute = document.getElementById("sim-btn-audio-mute");
+  var simBtToggleBtn = document.getElementById("sim-bt-toggle");
+  var simAudioMuteStatus = document.getElementById("sim-audio-mute-status");
+  var simTrackpadSlider = document.getElementById("sim-trackpad-speed");
+  var simTrackpadVal = document.getElementById("sim-trackpad-val");
+  var simTrackpadCurve = document.getElementById("sim-trackpad-curve");
+  var simAcrylicStatus = document.getElementById("sim-acrylic-status");
 
-  function applySimGlassPhysics() {
+  function applySimAcrylicSurface() {
     if (!simWindowEl) return;
-    var pct = Math.max(0, Math.min(100, Number(simState.glassThickness)));
-    var on = Boolean(simState.liquidGlass);
-    simWindowEl.setAttribute("data-liquid-glass", on ? "on" : "off");
-    simWindowEl.setAttribute("data-glass-thickness", String(pct));
-
-    if (simLiquidGlassBtn) {
-      simLiquidGlassBtn.textContent = on ? "ON" : "OFF";
-      simLiquidGlassBtn.classList.toggle("is-active", on);
-    }
-    if (simGlassSlider) {
-      simGlassSlider.value = String(pct);
-      simGlassSlider.disabled = !on;
-    }
-    if (simGlassValEl) {
-      simGlassValEl.textContent = pct + "%";
-    }
-
-    if (!on) {
-      simWindowEl.style.setProperty("--sim-glass-blur", "0px");
-      simWindowEl.style.setProperty("--sim-glass-alpha", "0.98");
-      simWindowEl.style.setProperty("--sim-glass-drawer-alpha", "0.98");
-      simWindowEl.style.backdropFilter = "none";
-      simWindowEl.style.webkitBackdropFilter = "none";
-      if (simDrawerEl) {
-        simDrawerEl.style.backdropFilter = "none";
-        simDrawerEl.style.webkitBackdropFilter = "none";
-      }
-      return;
-    }
-
-    var blurPx = Math.round(10 + (pct * 0.30));
-    var winAlpha = simState.theme === "light"
-      ? (0.94 - (pct / 100) * 0.24).toFixed(3)
-      : (0.94 - (pct / 100) * 0.26).toFixed(3);
-    var drawerAlpha = simState.theme === "light"
-      ? (0.92 - (pct / 100) * 0.26).toFixed(3)
-      : (0.92 - (pct / 100) * 0.28).toFixed(3);
-
-    var filterCss = "blur(" + blurPx + "px) saturate(" + Math.round(145 + pct * 0.7) + "%)";
-    simWindowEl.style.setProperty("--sim-glass-blur", blurPx + "px");
+    var blurPx = "26px";
+    var winAlpha = simState.theme === "light" ? "0.78" : "0.76";
+    var drawerAlpha = simState.theme === "light" ? "0.74" : "0.72";
+    var filterCss = "blur(" + blurPx + ") saturate(180%)";
+    simWindowEl.style.setProperty("--sim-glass-blur", blurPx);
     simWindowEl.style.setProperty("--sim-glass-alpha", winAlpha);
     simWindowEl.style.setProperty("--sim-glass-drawer-alpha", drawerAlpha);
     simWindowEl.style.backdropFilter = filterCss;
@@ -650,6 +881,89 @@
       simDrawerEl.style.backdropFilter = filterCss;
       simDrawerEl.style.webkitBackdropFilter = filterCss;
     }
+    if (simAcrylicStatus) {
+      simAcrylicStatus.textContent = (SIM_TEXTS[simState.lang] || SIM_TEXTS.id).acrylicBadge;
+    }
+  }
+
+  function updateTrackpadReadout() {
+    var spd = Math.max(30, Math.min(200, Number(simState.trackpadSpeed) || 100));
+    simState.trackpadSpeed = spd;
+    if (simTrackpadSlider) simTrackpadSlider.value = String(spd);
+    if (simTrackpadVal) simTrackpadVal.textContent = spd + "%";
+    if (simTrackpadCurve) {
+      var isEn = simState.lang === "en";
+      simTrackpadCurve.className = "sim-trackpad-badge";
+      if (spd <= 65) {
+        simTrackpadCurve.classList.add("is-brake");
+        simTrackpadCurve.textContent = isEn ? "Precision · Anti-Fling Brake" : "Presisi · Anti-Fling Brake";
+      } else if (spd <= 125) {
+        simTrackpadCurve.textContent = isEn ? "Balanced (1:1 Native)" : "Seimbang (1:1 Native)";
+      } else {
+        simTrackpadCurve.classList.add("is-fast");
+        simTrackpadCurve.textContent = isEn ? "Fast Scroll Boost" : "Cepat (Fast Boost)";
+      }
+    }
+  }
+
+  function syncAudioControls() {
+    var isEn = simState.lang === "en";
+    var isActive = simState.audioTarget === "pc" && !simState.audioMuted;
+    if (simBtnAudioMute) {
+      simBtnAudioMute.innerHTML = isActive ? SVG_VOL_ON : SVG_VOL_OFF;
+      simBtnAudioMute.classList.toggle("is-muted", !isActive);
+      simBtnAudioMute.classList.toggle("is-active", isActive && simState.btA2dp);
+    }
+    if (simBtToggleBtn) {
+      simBtToggleBtn.classList.toggle("is-active", simState.btA2dp && isActive);
+      if (simState.audioMuted) {
+        simBtToggleBtn.textContent = isEn ? "Audio Muted (Alt+M)" : "Audio Mute (Alt+M)";
+      } else if (simState.btA2dp) {
+        simBtToggleBtn.textContent = isEn ? "A2DP Connected (Auto)" : "A2DP Terhubung (Otomatis)";
+      } else {
+        simBtToggleBtn.textContent = "BT A2DP: OFF";
+      }
+    }
+    if (simAudioMuteStatus) {
+      simAudioMuteStatus.textContent = isActive
+        ? (isEn ? "Active (Synced)" : "Aktif (Sinkron)")
+        : (isEn ? "Muted (Synced)" : "Mati / Mute (Sinkron)");
+      simAudioMuteStatus.style.color = isActive ? "#10B981" : "#F87171";
+    }
+  }
+
+  function getActiveDeviceName() {
+    if (simState.device === "iphone11") return "iPhone 11 Pro Max";
+    if (simState.device === "ipad") return "iPad Pro (4:3)";
+    return "iPhone 17 Pro";
+  }
+
+  function triggerSequoiaTransition(connMode, onDone) {
+    if (!simSequoiaVeilEl) {
+      if (typeof onDone === "function") onDone();
+      return;
+    }
+    clearTimeout(simState.sequoiaTimer);
+    var isEn = simState.lang === "en";
+    var devName = getActiveDeviceName();
+    if (connMode === "airplay") {
+      var instr = isEn
+        ? "Open Control Center on iPhone -> Screen Mirroring -> select 'iPhone Link'"
+        : "Buka Pusat Kontrol di iPhone -> Pencerminan Layar -> pilih 'iPhone Link'";
+      simSequoiaVeilEl.innerHTML =
+        '<div class="sim-sequoia-instruction">' + instr + "</div>" +
+        '<div class="sim-sequoia-model">' + devName + "</div>";
+    } else {
+      var kicker = isEn ? "Connecting to" : "Menyambungkan ke";
+      simSequoiaVeilEl.innerHTML =
+        '<div class="sim-sequoia-kicker">' + kicker + "</div>" +
+        '<div class="sim-sequoia-model">' + devName + "</div>";
+    }
+    simSequoiaVeilEl.classList.add("is-active");
+    simState.sequoiaTimer = setTimeout(function () {
+      simSequoiaVeilEl.classList.remove("is-active");
+      if (typeof onDone === "function") onDone();
+    }, 620);
   }
 
   function showSimToast(msg) {
@@ -659,7 +973,7 @@
     clearTimeout(simToastTimer);
     simToastTimer = setTimeout(function () {
       simToastEl.classList.remove("show");
-    }, 2200);
+    }, 2300);
   }
 
   function applySimDrawerTranslations() {
@@ -669,6 +983,9 @@
       if (dict[k]) el.textContent = dict[k];
     });
     if (simWindowEl) simWindowEl.setAttribute("data-sim-lang", simState.lang);
+    updateTrackpadReadout();
+    syncAudioControls();
+    applySimAcrylicSurface();
   }
 
   function renderSimViewport() {
@@ -703,8 +1020,10 @@
     if (simState.device === "iphone11") devLabel = "iPhone 11 Pro Max (1242x2688)";
     if (isIpad) devLabel = "iPad Pro 4:3 (924x832)";
     if (isLandscape) devLabel = "eFootball 2027 (270 deg)";
-    var connLabel = simState.conn === "wifi" ? "Wi-Fi Low-Latency" : "USB 60fps";
-    if (simReadoutEl) simReadoutEl.textContent = devLabel + " - " + connLabel;
+    var connLabel = simState.conn === "wifi"
+      ? "Wi-Fi HEVC 60fps"
+      : (simState.conn === "airplay" ? "AirPlay H.264 HD" : "USB 60fps");
+    if (simReadoutEl) simReadoutEl.textContent = devLabel + " - " + connLabel + " (v5.0)";
 
     if (simBadgeMirrorEl) {
       if (simState.stopped) {
@@ -717,29 +1036,32 @@
     var isEn = simState.lang === "en";
 
     if (simState.stopped) {
-      var devSub = simState.conn === "wifi" ? "192.168.100.38 · Wi-Fi Ready" : "192.168.100.38 · USB Connected";
+      var devSub = simState.conn === "wifi"
+        ? "192.168.1.25 · Wi-Fi HEVC Ready"
+        : (simState.conn === "airplay" ? "AirPlay H.264 · iOS 17-27 Ready" : "192.168.1.25 · USB Connected");
       simScreenBodyEl.innerHTML =
         '<div class="sim-launchpad-wrap">' +
         '<img src="logo.svg" alt="iPhone Link" width="38" height="38" style="border-radius:10px;">' +
-        '<strong style="font-size:0.86rem;">' + (isEn ? "iPhone 17 Pro ready" : "iPhone 17 Pro siap") + '</strong>' +
-        '<span style="font-size:0.70rem;opacity:0.78;">' + (isEn ? "Unlock, then click Start mirroring." : "Buka kunci, lalu tekan Mulai mirroring.") + '</span>' +
+        '<strong style="font-size:0.86rem;">' + getActiveDeviceName() + (isEn ? " ready" : " siap") + "</strong>" +
+        '<span style="font-size:0.70rem;opacity:0.78;">' + (isEn ? "Zero-WebView2 Native Rust · Click Start." : "Zero-WebView2 Native Rust · Tekan Mulai.") + "</span>" +
         '<div class="sim-launchpad-device">' +
           '<span class="sim-launchpad-dot"></span>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:0.72rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">iPhone</div>' +
-            '<div style="font-size:0.62rem;opacity:0.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + devSub + '</div>' +
-          '</div>' +
-        '</div>' +
+            '<div style="font-size:0.72rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + getActiveDeviceName() + "</div>" +
+            '<div style="font-size:0.62rem;opacity:0.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + devSub + "</div>" +
+          "</div>" +
+        "</div>" +
         '<div class="sim-launchpad-transport" role="group">' +
-          '<button type="button" class="sim-launchpad-pill' + (simState.conn === "usb" ? " is-active" : "") + '" data-sim-lp-conn="usb">' + (isEn ? "Cable (USB)" : "Kabel (USB)") + '</button>' +
+          '<button type="button" class="sim-launchpad-pill' + (simState.conn === "usb" ? " is-active" : "") + '" data-sim-lp-conn="usb">' + (isEn ? "USB" : "Kabel") + "</button>" +
           '<button type="button" class="sim-launchpad-pill' + (simState.conn === "wifi" ? " is-active" : "") + '" data-sim-lp-conn="wifi">Wi-Fi</button>' +
-        '</div>' +
+          '<button type="button" class="sim-launchpad-pill' + (simState.conn === "airplay" ? " is-active" : "") + '" data-sim-lp-conn="airplay">AirPlay</button>' +
+        "</div>" +
         '<button type="button" class="sim-launchpad-start-pill" id="sim-launchpad-start">' +
-        (isEn ? "Start mirroring" : "Mulai mirroring") + '</button></div>';
+        (isEn ? "Start mirroring" : "Mulai mirroring") + "</button></div>";
       document.querySelectorAll("[data-sim-lp-conn]").forEach(function (cBtn) {
         cBtn.addEventListener("click", function () {
           var nextC = cBtn.getAttribute("data-sim-lp-conn");
-          if (nextC) syncSimConnection(nextC);
+          if (nextC) syncSimConnection(nextC, false);
         });
       });
       var lpBtn = document.getElementById("sim-launchpad-start");
@@ -747,7 +1069,9 @@
         lpBtn.addEventListener("click", function () {
           simState.stopped = false;
           renderSimViewport();
-          showSimToast(isEn ? "Mirroring resumed (60fps)" : "Mirroring dilanjutkan (60fps)");
+          triggerSequoiaTransition(simState.conn, function () {
+            showSimToast(isEn ? "Mirroring Active + Auto Audio Sink Ready" : "Mirroring Aktif + Auto Audio Sink Siap");
+          });
         });
       }
       return;
@@ -756,12 +1080,12 @@
     if (simState.screen === "lockscreen") {
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen" style="align-items:center;justify-content:center;text-align:center;background:linear-gradient(160deg,#09090B,#111827);">' +
-        '<div style="font-size:0.72rem;opacity:0.8;">' + (isEn ? "Friday, 14 Nov" : "Jumat, 14 Nov") + '</div>' +
+        '<div style="font-size:0.72rem;opacity:0.8;">' + (isEn ? "Wednesday, 25 Nov" : "Rabu, 25 Nov") + "</div>" +
         '<div style="font-size:2.3rem;font-weight:800;letter-spacing:-0.03em;">09:41</div>' +
-        '<div style="font-size:0.74rem;color:#A1A1AA;">' + (isEn ? "Locked - Click Wake/Unlock (Alt+U)" : "Terkunci - Klik Buka (Alt+U)") + '</div>' +
+        '<div style="font-size:0.74rem;color:#A1A1AA;">' + (isEn ? "Locked - Click Wake/Unlock (Alt+U)" : "Terkunci - Klik Buka (Alt+U)") + "</div>" +
         '<div id="sim-lock-dots" style="font-family:var(--font-mono);font-size:1rem;letter-spacing:0.25em;margin:8px 0;">o o o o o o</div>' +
-        '<button type="button" class="sim-act-btn is-active" id="sim-quick-unlock" style="justify-content:center;">' + (isEn ? "Unlock with PIN" : "Buka dengan PIN") + '</button>' +
-        '</div>';
+        '<button type="button" class="sim-act-btn is-active" id="sim-quick-unlock" style="justify-content:center;">' + (isEn ? "Unlock with PIN" : "Buka dengan PIN") + "</button>" +
+        "</div>";
       var quBtn = document.getElementById("sim-quick-unlock");
       if (quBtn) quBtn.addEventListener("click", triggerSimUnlock);
       return;
@@ -769,7 +1093,7 @@
 
     if (simState.screen === "notes") {
       var noteExtra = simState.notesPasted
-        ? '<p style="margin:6px 0 0;color:#2997FF;font-weight:700;">' + (isEn ? "[Pasted via Alt+V] Hello from Windows 11!" : "[Ditempel via Alt+V] Halo dari PC Windows 11!") + '</p>'
+        ? '<p style="margin:6px 0 0;color:#2997FF;font-weight:700;">' + (isEn ? "[Pasted via Alt+V] Hello from Pure Native Rust v5!" : "[Ditempel via Alt+V] Halo dari Native Rust v5!") + "</p>"
         : "";
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen">' +
@@ -777,11 +1101,11 @@
         '<strong style="font-size:0.8rem;">Apple Notes (OCR Demo)</strong>' +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:3px 8px;font-size:0.68rem;">Home</button></div>' +
         '<div class="sim-notes-box">' +
-        '<strong>' + (isEn ? "Meeting & Architecture Notes" : "Catatan Kuliah & Arsitektur v4") + '</strong>' +
-        '<p style="margin:6px 0;">' + (isEn ? "Native Rust reduces binary overhead by 93% while locking Acrylic blur." : "Mesin Native Rust memangkas ukuran biner 93% serta mengunci DWM Acrylic Blur.") + '</p>' +
-        '<p style="margin:6px 0;">' + (isEn ? "Click Copy OCR (Alt+C) on the right drawer to copy cleanly to Windows!" : "Klik Salin OCR (Alt+C) di drawer kanan untuk menyalin paragraf ke PC!") + '</p>' +
+        "<strong>" + (isEn ? "v5.0.0 Architecture Notes" : "Catatan Arsitektur v5.0.0") + "</strong>" +
+        '<p style="margin:6px 0;">' + (isEn ? "Zero-WebView2 single process cuts standby RAM ~4x (~45 MB) with Always-On DWMSBT Acrylic." : "Mesin tunggal Zero-WebView2 memangkas RAM ~4x (~45 MB) + Always-On Acrylic.") + "</p>" +
+        '<p style="margin:6px 0;">' + (isEn ? "Click Copy OCR (Alt+C) on the right drawer to copy cleanly to Windows!" : "Klik Salin OCR (Alt+C) di drawer kanan untuk menyalin teks ke PC!") + "</p>" +
         noteExtra +
-        '</div></div>';
+        "</div></div>";
       bindScreenButtons();
       return;
     }
@@ -794,8 +1118,8 @@
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:3px 8px;font-size:0.68rem;">Home</button></div>' +
         '<div style="flex:1;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);display:flex;flex-direction:column;justify-content:flex-end;padding:12px;">' +
         '<div style="font-size:0.78rem;font-weight:750;">@kelvin.daniyar</div>' +
-        '<div style="font-size:0.7rem;color:#D4D4D8;">iPhone Link v4.0.0 Native Rust Spatial Preview on Windows 11</div>' +
-        '</div></div>';
+        '<div style="font-size:0.7rem;color:#D4D4D8;">iPhone Link v5.0.0 Pure Native Rust (Zero-WebView2) · Trackpad ' + simState.trackpadSpeed + "%</div>" +
+        "</div></div>";
       bindScreenButtons();
       return;
     }
@@ -804,11 +1128,11 @@
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen" style="background:linear-gradient(180deg,#064E3B,#047857);">' +
         '<div style="display:flex;justify-content:space-between;font-size:0.74rem;font-weight:750;">' +
-        '<span>eFootball 2027 (270 deg Auto-Rotate)</span>' +
+        "<span>eFootball 2027 (270 deg Auto-Rotate)</span>" +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:2px 8px;font-size:0.66rem;">Exit</button></div>' +
         '<div class="mini-pitch" style="flex:1;">' +
         '<span style="position:relative;z-index:2;font-weight:800;font-size:0.86rem;background:rgba(9,9,11,0.68);padding:4px 14px;border-radius:999px;">HOME 3 - 1 AWAY | 60 FPS</span>' +
-        '</div></div>';
+        "</div></div>";
       bindScreenButtons();
       return;
     }
@@ -822,19 +1146,22 @@
         '<div style="flex:1;border-radius:12px;background:linear-gradient(135deg,#DC2626,#18181B);display:flex;align-items:center;justify-content:center;color:#FFFFFF;">' +
         '<svg class="ui-icon ico-lg" style="width:28px;height:28px;" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></div>' +
         '<div style="height:5px;border-radius:999px;background:rgba(255,255,255,0.2);overflow:hidden;"><div style="width:62%;height:100%;background:#EF4444;"></div></div>' +
-        '</div>';
+        "</div>";
       bindScreenButtons();
       return;
     }
 
     if (simState.screen === "control") {
+      var audioDesc = (simState.audioTarget === "pc" && !simState.audioMuted)
+        ? "Windows PC (" + simState.volume + "% · " + (simState.btA2dp ? "BT A2DP Auto" : "WASAPI") + ")"
+        : (simState.audioMuted ? "Muted (Alt+M)" : "iPhone Speakers");
       simScreenBodyEl.innerHTML =
         '<div class="sim-subscreen" style="justify-content:space-between;">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;"><strong style="font-size:0.78rem;">Control Center</strong><button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:2px 8px;font-size:0.66rem;">Close</button></div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;margin-top:6px;">' +
-        '<div style="border-radius:14px;background:rgba(41,151,255,0.16);border:1px solid rgba(41,151,255,0.28);padding:10px;font-size:0.7rem;"><strong>AirPlay / Mirroring</strong><div>' + connLabel + ' Active</div></div>' +
-        '<div style="border-radius:14px;background:rgba(16,185,129,0.16);border:1px solid rgba(16,185,129,0.28);padding:10px;font-size:0.7rem;"><strong>Audio Output</strong><div>' + (simState.audioTarget === "pc" ? "Windows PC (" + simState.volume + "%)" : "iPhone Speakers") + '</div></div>' +
-        '</div></div>';
+        '<div style="border-radius:14px;background:rgba(41,151,255,0.16);border:1px solid rgba(41,151,255,0.28);padding:10px;font-size:0.7rem;"><strong>Transport</strong><div>' + connLabel + "</div></div>" +
+        '<div style="border-radius:14px;background:rgba(16,185,129,0.16);border:1px solid rgba(16,185,129,0.28);padding:10px;font-size:0.7rem;"><strong>Audio Sink</strong><div>' + audioDesc + "</div></div>" +
+        "</div></div>";
       bindScreenButtons();
       return;
     }
@@ -848,12 +1175,11 @@
         '<button type="button" class="sim-act-btn" data-open-screen="instagram">Instagram Reels</button>' +
         '<button type="button" class="sim-act-btn" data-open-screen="efootball">eFootball 2027</button>' +
         '<button type="button" class="sim-act-btn" data-open-screen="youtube">YouTube Full</button>' +
-        '</div></div>';
+        "</div></div>";
       bindScreenButtons();
       return;
     }
 
-    // Default: Home Screen with clickable vector SVG app squircles + dock
     var tilesHtml =
       tileMarkup("notes", "Notes OCR", "linear-gradient(180deg,#F59E0B,#D97706)", "notes", true) +
       tileMarkup("instagram", "Instagram", "linear-gradient(135deg,#F97316,#EA580C)", "instagram", true) +
@@ -869,13 +1195,13 @@
       tileMarkup("home", "Files", "linear-gradient(180deg,#0071E3,#005BB5)", "files", false);
 
     simScreenBodyEl.innerHTML =
-      '<div class="sim-app-grid">' + tilesHtml + '</div>' +
+      '<div class="sim-app-grid">' + tilesHtml + "</div>" +
       '<div class="sim-dock">' +
       dockBtn("notes", "linear-gradient(180deg,#F59E0B,#D97706)", "notes") +
       dockBtn("instagram", "linear-gradient(135deg,#F97316,#EA580C)", "instagram") +
       dockBtn("efootball", "linear-gradient(180deg,#10B981,#059669)", "efootball") +
       dockBtn("control", "linear-gradient(180deg,#3F3F46,#27272A)", "control") +
-      '</div>';
+      "</div>";
 
     bindScreenButtons();
   }
@@ -883,15 +1209,15 @@
   function tileMarkup(target, label, bg, iconKey, hl) {
     var txtColor = bg === "#FAFAFA" ? "#1D1D1F" : "#FFFFFF";
     var svg = APP_SVGS[iconKey] || APP_SVGS.notes;
-    return '<button type="button" class="sim-app-tile' + (hl ? ' highlight-demo' : '') + '" data-open-screen="' + target + '">' +
-      '<span class="tile-icon" style="background:' + bg + ';color:' + txtColor + ';">' + svg + '</span>' +
-      '<span class="tile-name">' + label + '</span></button>';
+    return '<button type="button" class="sim-app-tile' + (hl ? " highlight-demo" : "") + '" data-open-screen="' + target + '">' +
+      '<span class="tile-icon" style="background:' + bg + ";color:" + txtColor + ';">' + svg + "</span>" +
+      '<span class="tile-name">' + label + "</span></button>";
   }
 
   function dockBtn(target, bg, iconKey) {
     var svg = APP_SVGS[iconKey] || APP_SVGS.notes;
     return '<button type="button" class="sim-app-tile" data-open-screen="' + target + '" aria-label="' + target + '">' +
-      '<span class="tile-icon" style="width:36px;height:36px;background:' + bg + ';color:#FFFFFF;">' + svg + '</span></button>';
+      '<span class="tile-icon" style="width:36px;height:36px;background:' + bg + ';color:#FFFFFF;">' + svg + "</span></button>";
   }
 
   function bindScreenButtons() {
@@ -926,7 +1252,6 @@
     });
   }
 
-  // Simulator Top Bar Device & Connection Selectors
   document.querySelectorAll("[data-sim-device]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var dev = btn.getAttribute("data-sim-device");
@@ -946,23 +1271,52 @@
     });
   });
 
-  function syncSimConnection(conn) {
+  function syncSimConnection(conn, playSequoia) {
     simState.conn = conn;
     setActiveInGroup("data-sim-conn", conn);
     setActiveInGroup("data-sim-conn-drawer", conn);
+    setActiveInGroup("data-sim-lp-conn", conn);
+    if (conn === "airplay") {
+      simState.streamMode = "airplay";
+      setActiveInGroup("data-sim-stream", "airplay");
+    } else if (simState.streamMode === "airplay") {
+      simState.streamMode = "auto";
+      setActiveInGroup("data-sim-stream", "auto");
+    }
     renderSimViewport();
+    if (playSequoia && !simState.stopped) {
+      triggerSequoiaTransition(conn);
+    }
   }
 
   document.querySelectorAll("[data-sim-conn]").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      syncSimConnection(btn.getAttribute("data-sim-conn"));
-      showSimToast("Connection: " + simState.conn.toUpperCase());
+      var conn = btn.getAttribute("data-sim-conn");
+      syncSimConnection(conn, true);
+      showSimToast("Transport: " + conn.toUpperCase());
     });
   });
+
   document.querySelectorAll("[data-sim-conn-drawer]").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      syncSimConnection(btn.getAttribute("data-sim-conn-drawer"));
-      showSimToast("Connection: " + simState.conn.toUpperCase());
+      var conn = btn.getAttribute("data-sim-conn-drawer");
+      syncSimConnection(conn, true);
+      showSimToast("Transport: " + conn.toUpperCase());
+    });
+  });
+
+  document.querySelectorAll("[data-sim-stream]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var mode = btn.getAttribute("data-sim-stream");
+      simState.streamMode = mode;
+      setActiveInGroup("data-sim-stream", mode);
+      if (mode === "airplay") {
+        syncSimConnection("airplay", true);
+        showSimToast("Video Stream: AirPlay H.264 HD");
+      } else {
+        if (simState.conn === "airplay") syncSimConnection("usb", true);
+        showSimToast("Video Stream: Auto (HEVC 60fps / AirPlay)");
+      }
     });
   });
 
@@ -978,16 +1332,30 @@
   if (sRestart) sRestart.addEventListener("click", function () {
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("Stream Refreshed (0ms)");
+    triggerSequoiaTransition(simState.conn, function () {
+      showSimToast("Stream Refreshed (Zero-WebView2)");
+    });
   });
   if (sStop) sStop.addEventListener("click", function () {
     simState.stopped = !simState.stopped;
+    if (simSequoiaVeilEl) simSequoiaVeilEl.classList.remove("is-active");
     renderSimViewport();
+    if (!simState.stopped) {
+      triggerSequoiaTransition(simState.conn);
+    } else {
+      showSimToast(simState.lang === "en" ? "Sequoia Fade-Out -> Standby" : "Sequoia Fade-Out -> Siap");
+    }
   });
   if (sRotate) sRotate.addEventListener("click", function () {
     simState.landscape = !simState.landscape;
     renderSimViewport();
     showSimToast(simState.landscape ? "Landscape 270 deg (Alt+H)" : "Portrait 0 deg (Alt+H)");
+  });
+  if (simBtnAudioMute) simBtnAudioMute.addEventListener("click", function () {
+    simState.audioMuted = !simState.audioMuted;
+    syncAudioControls();
+    renderSimViewport();
+    showSimToast(simState.audioMuted ? "PC Audio Muted (Alt+M)" : "PC Audio Active + Auto-Synced (Alt+M)");
   });
   if (sSettings) sSettings.addEventListener("click", function () {
     simState.drawerOpen = !simState.drawerOpen;
@@ -995,7 +1363,7 @@
     renderSimViewport();
   });
   if (sFs) sFs.addEventListener("click", function () {
-    showSimToast("1:1 Spatial Mirror Viewport");
+    showSimToast("Fullscreen Portrait Frosted Wings + 1-Frame Sync");
   });
   if (sMin) sMin.addEventListener("click", function () {
     showSimToast("Window Hidden to Windows System Tray");
@@ -1028,35 +1396,15 @@
     });
   });
 
-  // Drawer Theme, Liquid Glass & Lang Buttons
+  // Drawer Theme, Lang & Trackpad Speed
   document.querySelectorAll("[data-sim-theme-btn]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       simState.theme = btn.getAttribute("data-sim-theme-btn");
       setActiveInGroup("data-sim-theme-btn", simState.theme);
       renderSimViewport();
-      applySimGlassPhysics();
+      applySimAcrylicSurface();
     });
   });
-
-  if (simLiquidGlassBtn) {
-    simLiquidGlassBtn.addEventListener("click", function () {
-      simState.liquidGlass = !simState.liquidGlass;
-      applySimGlassPhysics();
-      showSimToast("Liquid Glass: " + (simState.liquidGlass ? "ON" : "OFF"));
-    });
-  }
-
-  if (simGlassSlider) {
-    var onGlassSliderInput = function () {
-      simState.glassThickness = Number(simGlassSlider.value);
-      applySimGlassPhysics();
-    };
-    simGlassSlider.addEventListener("input", onGlassSliderInput);
-    simGlassSlider.addEventListener("change", function () {
-      onGlassSliderInput();
-      showSimToast("Glass Thickness: " + simState.glassThickness + "%");
-    });
-  }
 
   document.querySelectorAll("[data-sim-lang-btn]").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -1066,6 +1414,18 @@
       renderSimViewport();
     });
   });
+
+  if (simTrackpadSlider) {
+    simTrackpadSlider.addEventListener("input", function () {
+      simState.trackpadSpeed = parseInt(simTrackpadSlider.value, 10) || 100;
+      updateTrackpadReadout();
+    });
+    simTrackpadSlider.addEventListener("change", function () {
+      updateTrackpadReadout();
+      renderSimViewport();
+      showSimToast("Trackpad Speed: " + simState.trackpadSpeed + "%");
+    });
+  }
 
   // Fit, Aspect, Auto-Rotate, Crop
   document.querySelectorAll("[data-sim-fit]").forEach(function (btn) {
@@ -1116,6 +1476,7 @@
     btn.addEventListener("click", function () {
       simState.audioTarget = btn.getAttribute("data-sim-audio");
       setActiveInGroup("data-sim-audio", simState.audioTarget);
+      syncAudioControls();
       renderSimViewport();
     });
   });
@@ -1137,12 +1498,15 @@
       setActiveInGroup("data-sim-lipsync", simState.lipsync);
     });
   });
-  var btToggleBtn = document.getElementById("sim-bt-toggle");
-  if (btToggleBtn) btToggleBtn.addEventListener("click", function () {
-    simState.btA2dp = !simState.btA2dp;
-    btToggleBtn.textContent = simState.btA2dp ? "BT A2DP: ON" : "BT A2DP: OFF";
-    btToggleBtn.classList.toggle("is-active", simState.btA2dp);
-    showSimToast(simState.btA2dp ? "Bluetooth A2DP Sink Connected" : "Bluetooth A2DP Disconnected");
+  if (simBtToggleBtn) simBtToggleBtn.addEventListener("click", function () {
+    if (simState.audioMuted) {
+      simState.audioMuted = false;
+    } else {
+      simState.btA2dp = !simState.btA2dp;
+    }
+    syncAudioControls();
+    renderSimViewport();
+    showSimToast(simState.btA2dp ? "Auto-Start Bluetooth A2DP Sink Active" : "Bluetooth A2DP Disabled");
   });
 
   // Keyboard & OCR Controls
@@ -1163,16 +1527,16 @@
     simState.screen = "notes";
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("Copied to PC! (38.8 ms Instant OCR)");
+    showSimToast(simState.lang === "en" ? "Screen text copied to PC!" : "Teks layar disalin ke PC!");
   });
   if (sGrabLink) sGrabLink.addEventListener("click", function () {
     simState.screen = "instagram";
     simState.stopped = false;
     renderSimViewport();
-    showSimToast("Link Copied (< 5 ms): https://www.instagram.com/reel/DScCQallz12/");
+    showSimToast(simState.lang === "en" ? "Link copied straight to PC!" : "Tautan langsung tersalin ke PC!");
   });
   if (sClearCache) sClearCache.addEventListener("click", function () {
-    showSimToast("OCR Stitching Cache Cleared!");
+    showSimToast(simState.lang === "en" ? "Text memory cleared!" : "Memori teks berhasil dibersihkan!");
   });
   if (sKbBtn) sKbBtn.addEventListener("click", function () {
     simState.keyboardOpen = !simState.keyboardOpen;
@@ -1204,10 +1568,10 @@
   });
   if (sWipe) sWipe.addEventListener("click", function () {
     if (sPinInput) sPinInput.value = "";
-    showSimToast("PIN & Local Privacy Data Wiped!");
+    showSimToast(simState.lang === "en" ? "PIN & privacy data cleared!" : "PIN & data privasi terhapus bersih!");
   });
 
-  // Updater Card
+  // Updater & Diagnostics
   document.querySelectorAll("[data-sim-channel]").forEach(function (btn) {
     btn.addEventListener("click", function () {
       simState.channel = btn.getAttribute("data-sim-channel");
@@ -1224,9 +1588,20 @@
   var sUnlockDevBtn = document.getElementById("sim-btn-unlock-devmode");
   if (sUnlockDevBtn) sUnlockDevBtn.addEventListener("click", function () {
     var msg = simState.lang === "en"
-      ? "Developer Mode menu unlocked on iPhone! Ready to enable in Settings."
-      : "Menu Developer Mode dimunculkan di iPhone! Siap diaktifkan di Settings.";
+      ? "Developer Mode menu revealed!"
+      : "Menu Developer Mode berhasil dimunculkan!";
     showSimToast(msg);
+  });
+  var sAirplayFallbackBtn = document.getElementById("sim-btn-airplay-fallback");
+  var sDiagHevcVal = document.getElementById("sim-diag-hevc-val");
+  if (sAirplayFallbackBtn) sAirplayFallbackBtn.addEventListener("click", function () {
+    simState.hevcFallbackUsed = true;
+    if (sDiagHevcVal) {
+      sDiagHevcVal.textContent = simState.lang === "en" ? "Fallback: AirPlay H.264" : "Fallback: AirPlay H.264";
+      sDiagHevcVal.style.color = "#38BDF8";
+    }
+    syncSimConnection("airplay", true);
+    showSimToast(simState.lang === "en" ? "Switched 1-Click to AirPlay H.264 HD!" : "Beralih 1-Klik ke AirPlay H.264 HD!");
   });
 
   /* --------------------------------------------------------------------------
@@ -1249,7 +1624,7 @@
 
     var fbDev = document.getElementById("fb-device");
     var fbMsg = document.getElementById("fb-msg");
-    if (fbDev) fbDev.placeholder = "iPhone 17 Pro / iPhone 11 Pro Max / iPad (iOS 27.2)";
+    if (fbDev) fbDev.placeholder = "iPhone 17 Pro / iPhone 11 Pro Max / iPad (iOS 17-27, Win 10/11)";
     if (fbMsg) fbMsg.placeholder = siteLang === "en" ? "Share your experience, feature ideas, or feedback..." : "Ceritakan pengalaman, ide fitur, atau hal yang ingin ditingkatkan...";
 
     updateHeroStack(activeHeroDev);
@@ -1257,8 +1632,8 @@
     setActiveInGroup("data-sim-lang-btn", siteLang);
     applySimDrawerTranslations();
     renderSimViewport();
-    applySimGlassPhysics();
     requestAnimationFrame(syncNavPillToActive);
+    renderLiveGitHubStats(siteLang, false, false);
 
     try {
       localStorage.setItem("il_site_lang", siteLang);
@@ -1283,16 +1658,16 @@
 
   var SHA_TABLE = {
     setup: {
-      name: "iPhone-Link-v4.0.0-Setup.exe",
-      hash: "AF54AC770F3DD2BF1A998F83CE1E955B4929E0D552C3B406536BF216A890C42C"
+      name: "iPhone-Link-v5.0.0-Setup.exe",
+      hash: "1694A0E54470CE97EC677080A28F139BEA891B50C2317E77D3C7A2F9D0887E9F"
     },
     zip: {
-      name: "iPhone-Link-Win64-Native-Rust-v4.0.0.zip",
-      hash: "93350959EFECD44B764B0593367709694424912536B4B0E2A013F8E2C5A0BD1A"
+      name: "iPhone-Link-Win64-Native-Rust-v5.0.0.zip",
+      hash: "139E7681DC26E00CF34A53997916F05B88B73291345FAD0491BAD885C753CA52"
     },
     exe: {
       name: "iPhone Link.exe",
-      hash: "D2DE068AA5B12C59B86C5F80B99ECB910F0BA341FCEE8B8A5241AADDDDBDA8B4"
+      hash: "45D47BC4B10097FB73401FF5D37B0687B7598C8896D1284FAC5529B07CF65D05"
     }
   };
 
@@ -1328,9 +1703,9 @@
     fbForm.addEventListener("submit", function (e) {
       e.preventDefault();
       var typ = (document.getElementById("fb-type") || {}).value || "Feedback";
-      var dev = (document.getElementById("fb-device") || {}).value || "Windows 11 / iOS 27.2";
+      var dev = (document.getElementById("fb-device") || {}).value || "Windows 11 / iOS 17-27";
       var msg = (document.getElementById("fb-msg") || {}).value || "";
-      var title = encodeURIComponent("[v4.0.0 " + typ + "] " + dev);
+      var title = encodeURIComponent("[v5.0.0 " + typ + "] " + dev);
       var body = encodeURIComponent("**Category:** " + typ + "\n**Device / OS:** " + dev + "\n\n**Message:**\n" + msg);
       window.open("https://github.com/kelvindaniyar/iphone-link/issues/new?title=" + title + "&body=" + body, "_blank", "noopener");
     });

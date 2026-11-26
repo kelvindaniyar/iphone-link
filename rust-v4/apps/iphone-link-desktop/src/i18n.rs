@@ -43,6 +43,8 @@ pub fn translate_dynamic_status(raw: &str, lang: Lang) -> String {
     // Direct mapping of dynamic backend strings
     match trimmed {
         "Wi-Fi siap" => "Wi-Fi ready".to_string(),
+        "Menunggu iPhone" => "Waiting for iPhone".to_string(),
+        "Perangkat offline" => "Device offline".to_string(),
         "Kabel terputus" => "Cable disconnected".to_string(),
         "Mencari perangkat..." => "Searching for devices...".to_string(),
         "Terhubung (USB)" => "Connected (USB)".to_string(),

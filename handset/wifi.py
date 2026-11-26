@@ -497,7 +497,7 @@ def discover_iphone_ip_on_lan(udid: Optional[str] = None, timeout: float = 0.35)
 
     # 2. Subnet /24 parallel scan (253 candidate IPs in ~0.35s)
     lan_ips = _local_ipv4()
-    primary_lan = next((ip for ip in lan_ips if _is_private_lan(ip)), None) or "192.168.100.8"
+    primary_lan = next((ip for ip in lan_ips if _is_private_lan(ip)), None) or "192.0.2.10"
     prefix = ".".join(primary_lan.split(".")[:3]) + "."
     candidates = [f"{prefix}{i}" for i in range(1, 255) if f"{prefix}{i}" != primary_lan]
     if last_ip and last_ip in candidates:
@@ -979,7 +979,7 @@ def wifi_paired_udids() -> list[str]:
         except Exception:
             return 0.0
 
-    # Tahap 140: Prioritize iPhone 17 Pro (00008150-000231AC2669401C) over iPhone 11 Pro Max (00008030)
+    # Tahap 140: Prioritize iPhone 17 Pro (<UDID>) over iPhone 11 Pro Max (00008030)
     def _model_priority(u: str) -> int:
         if "8150" in u:
             return 0
