@@ -1,11 +1,36 @@
-# iPhone Link v5.0.0
+<div align="center">
 
-**100% Pure Native Rust Desktop (`Slint + DirectComposition`) - Zero WebView2, Zero Python, Zero PowerShell**
+<a href="https://kelvindaniyar.github.io/iphone-link/">
+  <img src="assets/logo.png" alt="iPhone Link Logo" width="116" height="116">
+</a>
 
-[![Release](https://img.shields.io/badge/release-v5.0.0%20(Win64%20Native%20Rust)-0ea5e9)](#unduh--instalasi)
-[![iOS](https://img.shields.io/badge/iOS-17--27%20Verified-10b981)](#kompatibilitas)
-[![UI Engine](https://img.shields.io/badge/UI%20Engine-Zero%20WebView2%20(Slint%20%2B%20DComp)-6366f1)](#perbandingan-performa-v400-vs-v500)
-[![License](https://img.shields.io/badge/License-GPL--3.0-blue)](LICENSE)
+<h1>iPhone Link v5.0.0</h1>
+<p><strong>Your iPhone screen, native on Windows.</strong><br>100% Pure Native Rust Desktop (Slint + DirectComposition) - Zero WebView2, Zero Python, Zero PowerShell</p>
+
+<p>
+  <a href="#unduh--instalasi"><img src="https://img.shields.io/badge/Version-v5.0.0_Native_Rust-0078D4?style=flat-square" alt="Version v5.0.0 Native Rust"></a>
+  <a href="#perbandingan-performa-v400-vs-v500"><img src="https://img.shields.io/badge/Engine-Pure_Rust_Zero_WebView2-10B981?style=flat-square" alt="Engine Pure Rust Zero WebView2"></a>
+  <a href="#kompatibilitas"><img src="https://img.shields.io/badge/Windows-10_%26_11_(64--bit)-0078D4?style=flat-square" alt="Windows 10 and 11 64-bit"></a>
+  <a href="#kompatibilitas"><img src="https://img.shields.io/badge/iOS_%26_iPadOS-17--27-111827?style=flat-square" alt="iOS and iPadOS 17-27"></a>
+  <a href="https://github.com/kelvindaniyar/iphone-link/releases"><img src="https://img.shields.io/github/downloads/kelvindaniyar/iphone-link/total?label=Downloads&color=0EA5E9&style=flat-square" alt="Total Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-2563EB?style=flat-square" alt="License GPL-3.0"></a>
+</p>
+
+<p>
+  <a href="#kompatibilitas"><img src="https://img.shields.io/badge/Tested_iOS-iOS_27.2-16A34A?style=flat-square" alt="Tested iOS 27.2"></a>
+  <a href="#kompatibilitas"><img src="https://img.shields.io/badge/Tested_Devices-iPhone_17_Pro_%26_iPhone_11_Pro_Max-0284C7?style=flat-square" alt="Tested Devices iPhone 17 Pro and iPhone 11 Pro Max"></a>
+  <a href="https://github.com/kelvindaniyar"><img src="https://img.shields.io/badge/Creator-Kelvin_Daniyar-1E293B?style=flat-square" alt="Creator Kelvin Daniyar"></a>
+</p>
+
+<p>
+  <a href="https://github.com/kelvindaniyar/iphone-link/releases/tag/v5.0.0"><img src="https://img.shields.io/badge/Download_v5.0.0-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download v5.0.0"></a>
+  <a href="https://kelvindaniyar.github.io/iphone-link/"><img src="https://img.shields.io/badge/Official_Website-0EA5E9?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Official Website"></a>
+  <a href="https://saweria.co/kelvindaniyar"><img src="https://img.shields.io/badge/Support_on_Saweria-F59E0B?style=for-the-badge&logo=buymeacoffee&logoColor=white" alt="Support on Saweria"></a>
+</p>
+
+</div>
+
+---
 
 **iPhone Link v5.0.0** is a **free, open-source (GPL-3.0) macOS-style iPhone and iPad screen mirroring and remote control app for Windows 10/11** (often described as **scrcpy for iOS / iPhone**), created by **Kelvin Daniyar**. Rebuilt in **100% Pure Native Rust** (Slint + DirectComposition, **Zero WebView2**, **Zero Python**), it runs as a single lightweight process (**~45 MB idle RAM**, **~79 MB live mirroring**) on stock non-jailbroken **iOS 17-27** and **Windows 10/11 64-bit** PCs. It delivers **Triple Connectivity** (**60fps USB HEVC**, **60fps Wi-Fi HEVC** with full mouse, keyboard, and trackpad control, plus a built-in **AirPlay Receiver**), **PC Audio (Bluetooth A2DP & AirPlay)**, **OCR Copy-Paste (`Alt+C`/`Alt+V`)**, **Stealth Dim (`Alt+D`)**, and a **Windows DPAPI encrypted local Auto-Unlock PIN**. Visit the [official website](https://kelvindaniyar.github.io/iphone-link/) or read the machine-readable [llms.txt](https://kelvindaniyar.github.io/iphone-link/llms.txt).
 
@@ -63,7 +88,7 @@
 
 | Platform | Dukungan | Catatan |
 |---|---|---|
-| **iPhone / iPad** | **iOS / iPadOS 17 - 27** | Wi-Fi RemoteXPC HEVC, USB Wire, & AirPlay Fallback |
+| **iPhone / iPad** | **iOS / iPadOS 17 - 27** | **Teruji fisik pada iPhone 17 Pro & iPhone 11 Pro Max (iOS 27.2)**; mendukung Wi-Fi RemoteXPC HEVC, USB Wire, & AirPlay Fallback |
 | **Windows 11 (64-bit)** | **Penuh** | Native `DWMSBT_TRANSIENTWINDOW` Frosted Acrylic + HEVC bawaan |
 | **Windows 10 (64-bit)** | **Penuh** | `Setup.exe` sudah membundel **HEVC Video Extension** & **Apple USB Driver** offline; pengguna **Portable ZIP** di Windows 10 yang belum memasang codec HEVC dapat memakai mode fallback **AirPlay (H.264)** secara otomatis atau memasang HEVC Video Extension |
 
@@ -71,7 +96,7 @@
 
 ## Unduh & Instalasi
 
-Unduh aset resmi rilis **`v5.0.0`** dari halaman [GitHub Releases](https://github.com/kelvindaniyar/iphone-link/releases):
+Unduh aset resmi rilis **`v5.0.0`** dari halaman [GitHub Releases](https://github.com/kelvindaniyar/iphone-link/releases/tag/v5.0.0):
 
 1. **`iPhone-Link-v5.0.0-Setup.exe`** *(1-Click Offline Installer - Direkomendasikan, `51.58 MB`)*
    - Berisi `iPhone Link.exe` (Zero-WebView2), `zlaac.dll`, `playfair.dll`, **Apple Mobile Device Support (`AppleMobileDeviceSupport64.msi`)**, dan **Microsoft HEVC Video Extension**.
@@ -83,11 +108,21 @@ Unduh aset resmi rilis **`v5.0.0`** dari halaman [GitHub Releases](https://githu
 
 ---
 
-## Atribusi & Lisensi
+## Support This Project & Atribusi
 
-- **Creator & Maintainer:** **Kelvin Daniyar** ([https://github.com/kelvindaniyar](https://github.com/kelvindaniyar))
-- **Dukung Pengembangan:** [Saweria - saweria.co/kelvindaniyar](https://saweria.co/kelvindaniyar)
+<div align="center">
+
+<p>Jika <strong>iPhone Link v5.0.0</strong> membantu alur kerja Anda, pertimbangkan untuk mendukung pengembangan lanjutan proyek ini:</p>
+
+<p>
+  <a href="https://saweria.co/kelvindaniyar"><img src="https://img.shields.io/badge/Support_on_Saweria-F59E0B?style=for-the-badge&logo=buymeacoffee&logoColor=white" alt="Support on Saweria"></a>
+</p>
+
+</div>
+
+- **Creator & Maintainer:** [**Kelvin Daniyar (`@kelvindaniyar`)**](https://github.com/kelvindaniyar) | [Official Website](https://kelvindaniyar.github.io/iphone-link/) | [Instagram](https://www.instagram.com/kelvin.daniyar/) | [TikTok](https://www.tiktok.com/@kelvindaniyar) | [Saweria](https://saweria.co/kelvindaniyar)
 - **Upstream & Kredit Open-Source (GPL-3.0):**
   - [`teyboxv1/pane-iphone-mirror-windows`](https://github.com/teyboxv1/pane-iphone-mirror-windows) - Arsitektur awal proyek mirror Windows.
+  - [`jkcoxson/idevice`](https://github.com/jkcoxson/idevice) - Referensi ekosistem Rust iOS device & RemoteXPC/USBMuxD.
   - [`doronz88/pymobiledevice3`](https://github.com/doronz88/pymobiledevice3) - Referensi protokol RemoteXPC, USBMuxD, Lockdown, & HID iOS.
 - **Lisensi:** Dirilis di bawah lisensi **GNU General Public License v3.0 ([LICENSE](LICENSE))**.
