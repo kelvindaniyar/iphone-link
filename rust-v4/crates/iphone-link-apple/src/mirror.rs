@@ -3011,12 +3011,15 @@ impl crate::airplay::AirPlaySink for MirrorAirPlaySink {
 /// worker alongside AirPlay so touch/keyboard work without ever risking AirPlay video delivery.
 pub fn start_airplay_mirror_session(
     udid: Option<&str>,
-    hybrid_hid: bool,
+    _hybrid_hid: bool,
     transport_label: &str,
-    wifi_ip: Option<&str>,
+    _wifi_ip: Option<&str>,
     bind_port: Option<u16>,
     advertise_mdns: bool,
 ) -> Result<String, String> {
+    // Tahap 293 Opsi 2: iOS < 27 runs strictly as pure AirPlay Standalone (View & Audio Only)
+    // with zero unverified `gate_only` background USB/Wi-Fi workers.
+    let effective_hybrid_hid = false;
     stop_active_physical_worker();
     clear_latest_airplay_avcc_snapshot();
     let _ = wait_previous_physical_worker_exit(350);
@@ -3025,9 +3028,10 @@ pub fn start_airplay_mirror_session(
     crate::airplay::reset_airplay_audio_stats();
     reset_airplay_video_queue_dropped();
     reset_hevc_bitrate_telemetry();
+    crate::diag_log::record("airplay", "start_airplay_mirror_session (airplay_standalone)");
     crate::airplay::record_airplay_trace(
         "session_start",
-        format!("hybrid_hid={hybrid_hid}"),
+        format!("hybrid_hid={effective_hybrid_hid}"),
     );
 
     let new_gen = LIVE_SESSION_GEN.fetch_add(1, Ordering::SeqCst).saturating_add(1);
@@ -3059,11 +3063,7 @@ pub fn start_airplay_mirror_session(
         advertise_mdns,
     )?;
 
-    let route_str = if hybrid_hid {
-        "hybrid_airplay_h264"
-    } else {
-        "airplay_standalone"
-    };
+    let route_str = "airplay_standalone";
 
     let status_json = {
         let mut g = mirror_runtime().lock().unwrap_or_else(|e| e.into_inner());
@@ -3075,7 +3075,7 @@ pub fn start_airplay_mirror_session(
         g.error = None;
         g.reconnecting = false;
         g.wait_for_first_frame = true;
-        g.tunnel_active = hybrid_hid;
+        g.tunnel_active = effective_hybrid_hid;
         g.frames_received = 0;
         g.last_keyframe = None;
         g.subscribers.clear();
@@ -3085,7 +3085,7 @@ pub fn start_airplay_mirror_session(
         g.airplay_active = true;
         g.airplay_name = airplay_name;
         g.airplay_port = port;
-        g.hid_control_available = hybrid_hid;
+        g.hid_control_available = effective_hybrid_hid;
         g.airplay_avcc_count = 0;
         g.airplay_video_frames = 0;
         g.airplay_idr_count = 0;
@@ -3131,18 +3131,7 @@ pub fn start_airplay_mirror_session(
             .unwrap_or_else(|e| e.into_inner());
         *slot = Some(stop.clone());
     }
-
-    if hybrid_hid {
-        let udid_owned = udid.unwrap_or("").to_string();
-        let wifi_owned = wifi_ip.map(str::to_string);
-        crate::physical_stream::spawn_physical_hybrid_hid_gate_worker(
-            udid_owned,
-            wifi_owned,
-            tr.to_string(),
-            new_gen,
-            stop,
-        );
-    }
+    let _ = stop;
 
     Ok(status_json)
 }

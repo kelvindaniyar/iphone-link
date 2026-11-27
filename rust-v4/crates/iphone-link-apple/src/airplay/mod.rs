@@ -1538,18 +1538,18 @@ mod tests {
     /// and rapid Stop -> Restart #2 on the exact same port with zero `AddrInUse`.
     #[test]
     fn test_tahap252_m2_ios17_4_to_26_hybrid_gate_only_zero_video_rtp_and_device_point() {
-        // 1. ProductVersion router tier verification (zero regression for iOS 27+)
+        // 1. ProductVersion router tier verification (Tahap 293 Opsi 2: iOS < 27 -> AirPlayStandalone)
         assert_eq!(
             resolve_ios_mirror_route("17.4"),
-            IosMirrorRoute::HybridAirPlayCoreDeviceHid
+            IosMirrorRoute::AirPlayStandalone
         );
         assert_eq!(
             resolve_ios_mirror_route("18.5"),
-            IosMirrorRoute::HybridAirPlayCoreDeviceHid
+            IosMirrorRoute::AirPlayStandalone
         );
         assert_eq!(
             resolve_ios_mirror_route("26.2"),
-            IosMirrorRoute::HybridAirPlayCoreDeviceHid
+            IosMirrorRoute::AirPlayStandalone
         );
         assert_eq!(
             resolve_ios_mirror_route("27.0"),
@@ -1603,16 +1603,16 @@ mod tests {
         assert_eq!(map_airplay_touch_to_ios_digitizer(0.0, 1.0, 270), (0, 0));
         assert_eq!(map_airplay_touch_to_ios_digitizer(1.0, 0.0, 270), (65535, 65535));
 
-        // 4. Fail-soft Hybrid Mode: unreachable RFC 5737 HID target must NEVER stop AirPlay video
+        // 4. AirPlay Standalone guarantee (Tahap 293 Opsi 2)
         let _start_json = crate::mirror::start_airplay_mirror_session(
             Some("00000000-0000000000001850"),
-            true,
+            false,
             "wifi",
             Some("192.0.2.55"),
             Some(0),
             false,
         )
-        .expect("start Hybrid AirPlay session");
+        .expect("start AirPlay Standalone session");
         let port1 = active_airplay_port();
         assert!(port1 > 0);
         let gen1 = crate::mirror::current_live_session_gen();
@@ -1624,9 +1624,9 @@ mod tests {
         let st_failsoft = crate::mirror::global_screen_status_json();
         assert!(
             st_failsoft.contains(r#""phase":"running""#),
-            "AirPlay video MUST stay running when HID gate degrades fail-soft: {st_failsoft}"
+            "AirPlay video MUST stay running: {st_failsoft}"
         );
-        assert!(st_failsoft.contains(r#""mirrorRoute":"hybrid_airplay_h264""#));
+        assert!(st_failsoft.contains(r#""mirrorRoute":"airplay_standalone""#));
         assert!(st_failsoft.contains(r#""hidControlAvailable":false"#));
 
         // 5. Rapid Stop -> Restart #2 on the EXACT same port1 with ZERO AddrInUse

@@ -80,7 +80,7 @@ pub static LATEST_SHORTCUT_URL_CACHE: Mutex<(String, u64)> = Mutex::new((String:
 pub static DEBUG_METRICS_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub const STANDALONE_INPROCESS_ONLY: bool = true;
 pub const INPROCESS_ROUTE_COUNT: usize = 50;
-pub const APP_VERSION_V5: &str = "5.0.0";
+pub const APP_VERSION_V5: &str = "5.0.1";
 pub const APP_EDITION_V5: &str = "100% Pure Native Rust (Zero Python & Zero PowerShell)";
 
 // Compile-time Zero-I/O Embedded Web & Icon Assets (Tahap 232)
@@ -105,14 +105,16 @@ use crate::ocr_engine::{
 };
 use crate::updater::{compute_sha256, UpdateStateCache};
 use crate::window_dwm::{
-    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop, dismiss_tray_menu_if_open,
+    apply_hwnd_geometry_from_state, apply_true_files_acrylic_backdrop,
+    detect_conflicting_apple_usb_processes, dismiss_tray_menu_if_open,
     execute_clean_window_close_resources, is_start_with_windows_enabled, move_hwnd_by, move_hwnd_to,
-    query_win32_apple_service_installed_in_registry, query_win32_desktop_wallpaper_path,
-    query_win32_hevc_appx_package, register_tray_app_state, register_tray_icon,
-    set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag, WindowGeometryManager,
-    GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN, GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE,
-    GLOBAL_PENDING_TRAY_ACTION, GLOBAL_PORTRAIT_WIDTH, GLOBAL_STEALTH_ACTIVE, GLOBAL_TRAY_MENU_OPEN,
-    GLOBAL_TRAY_REGISTERED, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, RECT, TRAY_MENU_ITEMS,
+    query_win32_apple_service_installed_in_registry, query_win32_apple_service_state,
+    query_win32_desktop_wallpaper_path, query_win32_hevc_appx_package, register_tray_app_state,
+    register_tray_icon, set_start_with_windows, toggle_fullscreen_state, trigger_hwnd_drag,
+    Win32ServiceState, WindowGeometryManager, GLOBAL_AUDIO_PC_ACTIVE, GLOBAL_DRAWER_OPEN,
+    GLOBAL_IS_FULLSCREEN, GLOBAL_IS_LANDSCAPE, GLOBAL_PENDING_TRAY_ACTION, GLOBAL_PORTRAIT_WIDTH,
+    GLOBAL_STEALTH_ACTIVE, GLOBAL_TRAY_MENU_OPEN, GLOBAL_TRAY_REGISTERED, MIN_WINDOW_HEIGHT,
+    MIN_WINDOW_WIDTH, RECT, TRAY_MENU_ITEMS,
 };
 
 use iphone_link_apple::amfi::{resolve_developer_mode_for_diagnostics, unlock_developer_mode_menu};
@@ -4000,8 +4002,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function syncVersionLabels() {
         try {
             var updVer = document.getElementById('update-current-version');
-            if (updVer && updVer.textContent.trim() !== 'iPhone Link v5.0.0') {
-                updVer.textContent = 'iPhone Link v5.0.0';
+            if (updVer && updVer.textContent.trim() !== 'iPhone Link v5.0.1') {
+                updVer.textContent = 'iPhone Link v5.0.1';
             }
             var credName = document.querySelector('.credit-app-name');
             if (credName && credName.textContent.trim() !== 'iPhone Link v5.0') {
@@ -4049,7 +4051,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     '  <p data-i18n="updater.info"></p>',
                     '</div>',
                     '<div class="update-card-body" id="update-card-body">',
-                    '  <div class="update-version-label" id="update-current-version">iPhone Link v5.0.0</div>',
+                    '  <div class="update-version-label" id="update-current-version">iPhone Link v5.0.1</div>',
                     '  <div class="update-row">',
                     '    <span class="update-row-label" data-i18n="updater.auto_check">' + (isEn ? 'Check automatically on startup' : 'Cek pembaruan otomatis saat dibuka') + '</span>',
                     '    <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Auto check updates"><span class="toggle-switch-thumb"></span></button>',
@@ -6449,11 +6451,11 @@ pub fn find_python_executable_and_root() -> Option<(PathBuf, PathBuf)> {
 }
 
 fn localappdata_settings_file_path() -> Option<PathBuf> {
-    env::var_os("LOCALAPPDATA").map(|v| {
-        PathBuf::from(v)
-            .join("iPhoneLink_NativeRust_v4")
-            .join("user_settings.json")
-    })
+    iphone_link_apple::app_paths::unified_localappdata_dir().map(|d| d.join("user_settings.json"))
+}
+
+fn legacy_v4_settings_file_path() -> Option<PathBuf> {
+    iphone_link_apple::app_paths::legacy_localappdata_v4_dir().map(|d| d.join("user_settings.json"))
 }
 
 /// Deterministic 12-char hex identifier for the installation folder (SHA-256 of canonical EXE directory).
@@ -6474,31 +6476,33 @@ pub fn get_deterministic_folder_instance_id() -> String {
 }
 
 pub fn user_settings_file_path() -> PathBuf {
-    let primary = current_exe_dir_normalized().join("user_settings.json");
-    if primary.is_file() {
-        return primary;
+    let resolved = iphone_link_apple::app_paths::resolve_app_data_dir().join("user_settings.json");
+    if let Some(legacy) = legacy_v4_settings_file_path() {
+        let _ = iphone_link_apple::app_paths::migrate_legacy_file_if_needed(&resolved, &legacy);
     }
-    if let Some(fallback) = localappdata_settings_file_path() {
-        if fallback.is_file() {
-            return fallback;
+    resolved
+}
+
+/// Clean Slate PIN Guard (Tahap 55 + Tahap 293 Program Files fix): returns `true` only when
+/// `folderInstanceId` stored in `settings_file` differs from the SHA-256 of `exe_dir`.
+pub fn is_fresh_extracted_folder_for(exe_dir: &Path, settings_file: &Path) -> bool {
+    if !settings_file.is_file() {
+        return true;
+    }
+    if let Ok(raw) = fs::read_to_string(settings_file) {
+        if let Some(saved_id) = parse_string_param(&raw, "folderInstanceId") {
+            return saved_id != get_deterministic_folder_instance_id_for_dir(exe_dir);
         }
     }
-    primary
+    true
 }
 
 /// Clean Slate PIN Guard (Tahap 55 parity): returns `true` when extracted into a new folder
 /// whose `folderInstanceId` does not match the persisted `user_settings.json`.
 pub fn is_fresh_extracted_folder() -> bool {
+    let exe_dir = current_exe_dir_normalized();
     let settings_file = user_settings_file_path();
-    if !settings_file.is_file() {
-        return true;
-    }
-    if let Ok(raw) = fs::read_to_string(&settings_file) {
-        if let Some(saved_id) = parse_string_param(&raw, "folderInstanceId") {
-            return saved_id != get_deterministic_folder_instance_id();
-        }
-    }
-    true
+    is_fresh_extracted_folder_for(&exe_dir, &settings_file)
 }
 
 fn extract_crop_object_slice(raw: &str) -> Option<&str> {
@@ -6513,7 +6517,7 @@ fn extract_crop_object_slice(raw: &str) -> Option<&str> {
 fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unlock_pin: &str) -> String {
     let bt_on = st.bluetooth_a2dp || st.audio_routing == "bluetooth";
     format!(
-        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","lastSelectedUdid":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"pcClipboardPaste":{},"ctrlVPastesPc":{},"autoRotate":{},"stealthDim":{},"restoreSteps":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"5.0.0","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true}}"#,
+        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","lastSelectedUdid":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"pcClipboardPaste":{},"ctrlVPastesPc":{},"autoRotate":{},"stealthDim":{},"restoreSteps":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"5.0.1","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true}}"#,
         escape_json_str(folder_id),
         has_file,
         escape_json_str(unlock_pin),
@@ -6563,14 +6567,18 @@ fn build_settings_json(st: &AppState) -> String {
     format_user_settings_json(st, &folder_id, has_file, &pin)
 }
 
-pub fn save_user_settings_to_path(path: &Path, st: &AppState, unlock_pin: &str) -> std::io::Result<()> {
+pub fn save_user_settings_to_path_with_folder_id(
+    path: &Path,
+    st: &AppState,
+    unlock_pin: &str,
+    folder_id: &str,
+) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     if !dir.as_os_str().is_empty() {
-        let _ = fs::create_dir_all(dir);
+        fs::create_dir_all(dir)?;
     }
-    let folder_id = get_deterministic_folder_instance_id_for_dir(dir);
     let protected_pin = protect_pin_for_disk(unlock_pin);
-    let json = format_user_settings_json(st, &folder_id, true, &protected_pin);
+    let json = format_user_settings_json(st, folder_id, true, &protected_pin);
     let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
     {
         let mut file = fs::OpenOptions::new()
@@ -6592,6 +6600,12 @@ pub fn save_user_settings_to_path(path: &Path, st: &AppState, unlock_pin: &str) 
     Ok(())
 }
 
+pub fn save_user_settings_to_path(path: &Path, st: &AppState, unlock_pin: &str) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let folder_id = get_deterministic_folder_instance_id_for_dir(dir);
+    save_user_settings_to_path_with_folder_id(path, st, unlock_pin, &folder_id)
+}
+
 fn save_user_settings_to_disk(st: &AppState) {
     if is_test_loopback_only_env_server() {
         return;
@@ -6600,10 +6614,13 @@ fn save_user_settings_to_disk(st: &AppState) {
         .lock()
         .map(|g| sanitize_pin_digits(&g))
         .unwrap_or_default();
-    let primary = current_exe_dir_normalized().join("user_settings.json");
-    if save_user_settings_to_path(&primary, st, &pin).is_err() {
+    let folder_id = get_deterministic_folder_instance_id();
+    let target = user_settings_file_path();
+    if save_user_settings_to_path_with_folder_id(&target, st, &pin, &folder_id).is_err() {
         if let Some(fallback) = localappdata_settings_file_path() {
-            let _ = save_user_settings_to_path(&fallback, st, &pin);
+            if fallback != target {
+                let _ = save_user_settings_to_path_with_folder_id(&fallback, st, &pin, &folder_id);
+            }
         }
     }
 }
@@ -7030,9 +7047,10 @@ fn wipe_all_privacy_state_and_files() {
             wipe_privacy_files_in_dir(fb_dir);
         }
     }
-    if let Some(local_appdata) = env::var_os("LOCALAPPDATA") {
-        let py_dir = PathBuf::from(local_appdata).join("iPhoneLink");
-        wipe_privacy_files_in_dir(&py_dir);
+    if let Some(legacy_fb) = legacy_v4_settings_file_path() {
+        if let Some(leg_dir) = legacy_fb.parent() {
+            wipe_privacy_files_in_dir(leg_dir);
+        }
     }
     wipe_temp_ocr_dir(&writable_temp_ocr_dir());
     if let Ok(cwd) = env::current_dir() {
@@ -7202,8 +7220,45 @@ fn query_native_apple_driver_installed() -> bool {
     false
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppleUsbDiagEval {
+    pub driver_installed: bool,
+    pub service_running: bool,
+    pub service_label_en: &'static str,
+    pub service_label_id: &'static str,
+    pub tcp_port_27015_normal: bool,
+    pub tcp_port_label_en: &'static str,
+    pub tcp_port_label_id: &'static str,
+}
+
+/// Pure testable evaluator for the honest 5-point USB diagnostic matrix (Tahap 293):
+/// - `service_running` reflects REAL Win32 SCM `SERVICE_RUNNING` (never registry key alone!)
+/// - `tcp_port_27015_normal` reflects PURE TCP `127.0.0.1:27015` reachability (never OR'd with service!)
+pub fn evaluate_apple_usb_diagnostics_pure(
+    port_27015_open: bool,
+    svc_state: Win32ServiceState,
+    driver_files_present: bool,
+) -> AppleUsbDiagEval {
+    let service_running = svc_state == Win32ServiceState::Running;
+    let (service_label_en, service_label_id) = match svc_state {
+        Win32ServiceState::Running => ("Running (Started)", "Berjalan (Started)"),
+        Win32ServiceState::Stopped => ("Installed, but Stopped", "Terpasang, tapi Berhenti"),
+        Win32ServiceState::NotInstalled => ("Not Installed", "Belum Terpasang"),
+    };
+    AppleUsbDiagEval {
+        driver_installed: driver_files_present || svc_state != Win32ServiceState::NotInstalled,
+        service_running,
+        service_label_en,
+        service_label_id,
+        tcp_port_27015_normal: port_27015_open,
+        tcp_port_label_en: if port_27015_open { "Normal" } else { "Unreachable" },
+        tcp_port_label_id: if port_27015_open { "Normal" } else { "Tidak Terjangkau" },
+    }
+}
+
 fn query_native_apple_service_running() -> bool {
-    query_native_port_27015_open() || query_win32_apple_service_installed_in_registry()
+    let _ = query_win32_apple_service_installed_in_registry();
+    query_win32_apple_service_state() == Win32ServiceState::Running
 }
 
 static HEVC_STATUS_CACHE: Mutex<Option<(iphone_link_video::d3d11_context::CodecCapabilitiesReport, std::time::Instant)>> = Mutex::new(None);
@@ -7438,12 +7493,45 @@ fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_stream
     let udid_opt = usb_devs.first().map(|d| d.udid.as_str());
 
     let port_open = if is_streaming {
-        has_usb || query_win32_apple_service_installed_in_registry()
+        has_usb || query_native_port_27015_open()
     } else {
         query_native_port_27015_open()
     };
-    let svc_running = port_open || query_win32_apple_service_installed_in_registry();
-    let drv_installed = svc_running || query_native_apple_driver_installed();
+    let svc_state = if is_streaming && port_open {
+        Win32ServiceState::Running
+    } else {
+        query_win32_apple_service_state()
+    };
+    let drv_files = query_native_apple_driver_installed();
+    let usb_eval = evaluate_apple_usb_diagnostics_pure(port_open, svc_state, drv_files);
+    let svc_running = usb_eval.service_running;
+    let drv_installed = usb_eval.driver_installed;
+    let conflicts = if is_streaming {
+        Vec::new()
+    } else {
+        detect_conflicting_apple_usb_processes()
+    };
+    let conflict_warning_id = if conflicts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Terdeteksi {} sedang berjalan di latar belakang. Tutup sementara agar tidak berebut koneksi USB iPhone.",
+            conflicts.join(", ")
+        )
+    };
+    let conflict_warning_en = if conflicts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Detected {} running in background. Close temporarily so it does not compete for iPhone USB connection.",
+            conflicts.join(", ")
+        )
+    };
+    let conflicts_json = conflicts
+        .iter()
+        .map(|c| format!(r#""{}""#, escape_json_str(c)))
+        .collect::<Vec<_>>()
+        .join(",");
     let cap = query_hevc_capabilities_cached(force_refresh && !is_streaming, is_streaming);
     let hevc_ok = cap.installed;
     let (dev_bool_opt, dev_status, dev_label_en, dev_label_id) =
@@ -7459,18 +7547,18 @@ fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_stream
     };
 
     let json = format!(
-        r#"{{"ok":true,"udid":{},"usb_connected":{},"apple_driver_installed":{},"apple_driver_label":"{}","apple_driver_label_id":"{}","apple_service_running":{},"apple_service_label":"{}","apple_service_label_id":"{}","tcp_port_27015_normal":{},"tcp_port_label":"{}","tcp_port_label_id":"{}","hevc_codec_installed":{},"hevc_codec_label":"{}","hevc_codec_label_id":"{}","installed":{},"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}","developer_mode_status":"{}","developer_mode_bool":{},"developer_mode_label":"{}","developer_mode_label_id":"{}"}}"#,
+        r#"{{"ok":true,"udid":{},"usb_connected":{},"apple_driver_installed":{},"apple_driver_label":"{}","apple_driver_label_id":"{}","apple_service_running":{},"apple_service_label":"{}","apple_service_label_id":"{}","tcp_port_27015_normal":{},"tcp_port_label":"{}","tcp_port_label_id":"{}","hevc_codec_installed":{},"hevc_codec_label":"{}","hevc_codec_label_id":"{}","installed":{},"hevcMftAvailable":{},"h264MftAvailable":{},"mediaFeaturePackMissing":{},"storeUrl":"{}","storeFallbackUrl":"{}","mediaFeaturePackUrl":"{}","developer_mode_status":"{}","developer_mode_bool":{},"developer_mode_label":"{}","developer_mode_label_id":"{}","conflict_processes":[{}],"conflict_warning_id":"{}","conflict_warning_en":"{}"}}"#,
         udid_json,
         has_usb,
         drv_installed,
         if drv_installed { "Installed" } else { "Not Installed" },
         if drv_installed { "Terpasang" } else { "Belum Terpasang" },
         svc_running,
-        if svc_running { "Running (Started)" } else { "Stopped" },
-        if svc_running { "Berjalan (Started)" } else { "Berhenti" },
-        port_open || svc_running,
-        if port_open || svc_running { "Normal" } else { "Unreachable" },
-        if port_open || svc_running { "Normal" } else { "Tidak Terjangkau" },
+        usb_eval.service_label_en,
+        usb_eval.service_label_id,
+        usb_eval.tcp_port_27015_normal,
+        usb_eval.tcp_port_label_en,
+        usb_eval.tcp_port_label_id,
         hevc_ok,
         if hevc_ok { "Installed (60fps)" } else { "Missing" },
         if hevc_ok { "Terpasang (60fps)" } else { "Belum Ada" },
@@ -7485,6 +7573,9 @@ fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_stream
         dev_bool_json,
         escape_json_str(dev_label_en),
         escape_json_str(dev_label_id),
+        conflicts_json,
+        escape_json_str(&conflict_warning_id),
+        escape_json_str(&conflict_warning_en),
     );
     if !is_mock_codec_env_active() {
         if let Ok(mut guard) = DRIVER_DIAG_CACHE.lock() {
@@ -7492,6 +7583,46 @@ fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_stream
         }
     }
     json
+}
+
+/// Builds a strictly Zero-PII diagnostic snapshot for 1-click user clipboard export (Tahap 293).
+pub fn build_zero_pii_diagnostic_report(state: &Arc<Mutex<AppState>>) -> String {
+    let diag_raw = build_native_driver_diagnostics_json_with_opts(false, false);
+    let diag_clean = iphone_link_apple::diag_log::sanitize_pii_for_diagnostic_log(&diag_raw);
+    let st_line = state
+        .lock()
+        .map(|s| {
+            format!(
+                "transport={}, fit_mode={}, lang={}, auto_rotate={}, device_profile={}",
+                s.transport,
+                s.fit_mode,
+                s.language.code(),
+                s.auto_rotate,
+                s.device_profile
+            )
+        })
+        .unwrap_or_else(|_| "state=locked".to_string());
+    let install_mode = iphone_link_apple::app_paths::install_mode_label();
+    let app_data_dir = iphone_link_apple::diag_log::sanitize_pii_for_diagnostic_log(
+        &iphone_link_apple::app_paths::resolve_app_data_dir().to_string_lossy(),
+    );
+    let logs = iphone_link_apple::diag_log::snapshot();
+    let log_block = if logs.is_empty() {
+        "(no milestones recorded yet)".to_string()
+    } else {
+        logs.join("\n")
+    };
+    let report = format!(
+        "=== iPhone Link v{} Diagnostic Report (Zero-PII) ===\ninstall_mode: {}\napp_data_dir: {}\nstate: {}\nusb_hevc_diagnostics: {}\n--- Recent Milestones ({}) ---\n{}",
+        APP_VERSION_V5,
+        install_mode,
+        app_data_dir,
+        st_line,
+        diag_clean,
+        logs.len(),
+        log_block
+    );
+    iphone_link_apple::diag_log::sanitize_pii_for_diagnostic_log(&report)
 }
 
 fn repair_native_apple_service() -> (bool, bool, bool, bool) {
@@ -8326,19 +8457,25 @@ pub fn extract_cached_iphone_lan_ip_from_json(raw_json: &str, pc_ip: &str) -> Op
 
 pub fn detect_cached_iphone_lan_ipv4(pc_ip: &str) -> String {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        if !appdata.trim().is_empty() {
-            candidates.push(PathBuf::from(&appdata).join("iPhone Link").join("wifi_state.json"));
-        }
+    if let Some(unified) = iphone_link_apple::app_paths::unified_localappdata_dir() {
+        candidates.push(unified.join("wifi_state.json"));
     }
     if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
         if !localappdata.trim().is_empty() {
             candidates.push(PathBuf::from(&localappdata).join("iPhone Link").join("wifi_state.json"));
         }
     }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        if !appdata.trim().is_empty() {
+            candidates.push(PathBuf::from(&appdata).join("iPhone Link").join("wifi_state.json"));
+        }
+    }
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("wifi_state.json"));
+            let clean = iphone_link_apple::app_paths::normalize_dir_path(exe_dir);
+            if !iphone_link_apple::app_paths::is_path_under_program_files(&clean) {
+                candidates.push(clean.join("wifi_state.json"));
+            }
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
@@ -9929,7 +10066,7 @@ fn build_status_payload_json(
   }},
   "videoPipeline": {},
   "videoPresenter": {},
-  "version": "5.0.0",
+  "version": "5.0.1",
   "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
   "zero_python_runtime": true,
   "zero_powershell_runtime": true{}"#,
@@ -10273,7 +10410,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 if !sanitized.contains("status_text") {
                     sanitized = sanitized.replace(
                         r#""version": "4.0.0""#,
-                        &format!(r#""status_text": "{}", "language": "{}", "version": "5.0.0", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, status_text, lang_code, APP_EDITION_V5)
+                        &format!(r#""status_text": "{}", "language": "{}", "version": "5.0.1", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, status_text, lang_code, APP_EDITION_V5)
                     );
                 } else {
                     sanitized = sanitized
@@ -10283,7 +10420,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         .replace(r#""language": "en""#, &format!(r#""language": "{}""#, lang_code))
                         .replace(r#""language":"id""#, &format!(r#""language":"{}""#, lang_code))
                         .replace(r#""language":"en""#, &format!(r#""language":"{}""#, lang_code))
-                        .replace(r#""version": "4.0.0""#, &format!(r#""version": "5.0.0", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, APP_EDITION_V5));
+                        .replace(r#""version": "4.0.0""#, &format!(r#""version": "5.0.1", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, APP_EDITION_V5));
                 }
 
                 let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
@@ -10372,7 +10509,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"5.0.0","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
+                        r#","version":"5.0.1","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
                         pending_tray_str,
@@ -12065,6 +12202,14 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"native":true,"diagnostics":{}}}"#, diag_json));
     }
 
+    if path == "/api/diagnostics/report" {
+        let report = build_zero_pii_diagnostic_report(state);
+        return HttpResponse::ok_json(&format!(
+            r#"{{"ok":true,"report":"{}"}}"#,
+            escape_json_str(&report)
+        ));
+    }
+
     if path == "/api/driver/repair" {
         let (repaired, drv_ok, svc_ok, msi_found) = repair_native_apple_service();
         let is_streaming = state.lock().map(|s| s.is_streaming).unwrap_or(false);
@@ -13372,48 +13517,78 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 }
             }
             let auto_route = iphone_link_apple::link::resolve_ios_mirror_route(&resolved_ios_ver);
-            let mut use_airplay_route = if req_mode == "airplay" {
+            iphone_link_apple::diag_log::record(
+                "screen_start",
+                &format!("transport={req_transport}, mode={req_mode}, ios={resolved_ios_ver}"),
+            );
+
+            // Tahap 293 Opsi 1 + Opsi 2: Stop silent USB -> AirPlay hijack.
+            // - Only explicit `mode == "airplay"` launches AirPlay Standalone immediately.
+            // - On iOS < 27 (iOS 17-26) when user clicked Start under USB/Auto, return an honest
+            //   `requiresDecision` payload (`ios_below_27`) with 1-click AirPlay switch option.
+            // - On iOS >= 27 without HEVC MFT, return `requiresDecision` (`hevc_mft_missing`).
+            let use_airplay_route = if req_mode == "airplay" {
                 Some(false)
-            } else if req_mode != "coredevice" && explicit_honest_gate != Some(false) {
-                match auto_route {
-                    iphone_link_apple::link::IosMirrorRoute::AirPlayStandalone => Some(false),
-                    iphone_link_apple::link::IosMirrorRoute::HybridAirPlayCoreDeviceHid => Some(true),
-                    iphone_link_apple::link::IosMirrorRoute::CoreDeviceNativeHevc => None,
-                }
             } else {
                 None
             };
 
-            // Tahap 285 Pilar 4: Windows 10 & Portable ZIP pre-flight HEVC capability check.
-            // If PC lacks HEVC MFT while Inbox Microsoft H.264 MFT is ready (100% of Win10/Win11),
-            // automatically route to Hybrid AirPlay H.264 so users never hit a permanent blank screen.
-            let mut fallback_reason: Option<&'static str> = None;
             if use_airplay_route.is_none()
-                && req_mode == "auto"
+                && req_mode != "coredevice"
                 && explicit_honest_gate != Some(false)
             {
-                let cap = query_hevc_capabilities();
-                if cap.media_feature_pack_missing {
-                    let err_msg = "Windows Edisi N/KN membutuhkan Media Feature Pack agar video mirroring dapat ditampilkan.";
-                    let err_json = iphone_link_apple::mirror::global_set_screen_error(
-                        effective_target_udid.as_deref(),
-                        &req_transport,
-                        err_msg,
-                    );
-                    let enriched = if let Some(prefix) = err_json.strip_suffix('}') {
-                        format!(
-                            r#"{prefix},"errorCode":"media_feature_pack_missing","mediaFeaturePackMissing":true,"hevcMftAvailable":false,"h264MftAvailable":false,"message_id":"{}","message_en":"Windows N/KN edition requires Microsoft Media Feature Pack to decode video mirroring."}}"#,
-                            escape_json_str(err_msg)
-                        )
+                if auto_route == iphone_link_apple::link::IosMirrorRoute::AirPlayStandalone {
+                    let ios_disp = if resolved_ios_ver.trim().is_empty() {
+                        "< 27"
                     } else {
-                        err_json
+                        resolved_ios_ver.trim()
                     };
-                    return HttpResponse::ok_json(&enriched);
-                } else if !cap.hevc_mft_available && cap.h264_mft_available {
-                    use_airplay_route = Some(true);
-                    fallback_reason = Some("hevc_mft_missing");
+                    let msg_id = format!(
+                        "iPhone Anda menjalankan iOS {ios_disp}. Apple membatasi fitur mirroring USB 60fps & kontrol mouse/keyboard hanya untuk iOS 27+. Gunakan Mode AirPlay (Wi-Fi) untuk tampilan & audio saja."
+                    );
+                    let msg_en = format!(
+                        "Your iPhone is running iOS {ios_disp}. Apple restricts 60fps USB mirroring & mouse/keyboard control to iOS 27+. Use AirPlay Mode (Wi-Fi) for display & audio (view-only)."
+                    );
+                    let payload = format!(
+                        r#"{{"ok":false,"phase":"idle","stage":"","requiresDecision":true,"decisionReason":"ios_below_27","iosVersion":"{}","mirrorRoute":"airplay_standalone","hidControlAvailable":false,"message_id":"{}","message_en":"{}"}}"#,
+                        escape_json_str(ios_disp),
+                        escape_json_str(&msg_id),
+                        escape_json_str(&msg_en),
+                    );
+                    return HttpResponse::ok_json(&payload);
+                }
+
+                if req_mode == "auto" {
+                    let cap = query_hevc_capabilities();
+                    if cap.media_feature_pack_missing {
+                        let err_msg = "Windows Edisi N/KN membutuhkan Media Feature Pack agar video mirroring dapat ditampilkan.";
+                        let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                            effective_target_udid.as_deref(),
+                            &req_transport,
+                            err_msg,
+                        );
+                        let enriched = if let Some(prefix) = err_json.strip_suffix('}') {
+                            format!(
+                                r#"{prefix},"errorCode":"media_feature_pack_missing","mediaFeaturePackMissing":true,"hevcMftAvailable":false,"h264MftAvailable":false,"message_id":"{}","message_en":"Windows N/KN edition requires Microsoft Media Feature Pack to decode video mirroring."}}"#,
+                                escape_json_str(err_msg)
+                            )
+                        } else {
+                            err_json
+                        };
+                        return HttpResponse::ok_json(&enriched);
+                    } else if !cap.hevc_mft_available && cap.h264_mft_available {
+                        let msg_id = "Codec Video HEVC belum terpasang pada akun Windows ini. Pasang HEVC Gratis untuk USB 60fps + kontrol penuh, atau gunakan AirPlay sementara (tampilan & audio).";
+                        let msg_en = "HEVC Video Extensions is not installed for this Windows user yet. Install Free HEVC for 60fps USB + full control, or use AirPlay temporarily (view & audio only).";
+                        let payload = format!(
+                            r#"{{"ok":false,"phase":"idle","stage":"","requiresDecision":true,"decisionReason":"hevc_mft_missing","hevcMftAvailable":false,"h264MftAvailable":true,"message_id":"{}","message_en":"{}"}}"#,
+                            escape_json_str(msg_id),
+                            escape_json_str(msg_en),
+                        );
+                        return HttpResponse::ok_json(&payload);
+                    }
                 }
             }
+            let fallback_reason: Option<&'static str> = None;
 
             if let Some(hybrid_hid) = use_airplay_route {
                 let target_udid = req_udid.clone().or_else(|| {
@@ -13724,10 +13899,10 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     format_offline_target_error(pinned_u, resolved_ip.as_deref())
                 } else if let Some(ref ip_str) = resolved_ip {
                     format!(
-                        "iPhone terdeteksi di Wi-Fi ({ip_str}), tetapi belum di-pairing untuk RemotePairing Wi-Fi. Colok kabel USB 1x lalu klik 'Set up Wi-Fi'."
+                        "iPhone terdeteksi di Wi-Fi ({ip_str}), tetapi belum diatur untuk RemotePairing Wi-Fi. Colok kabel USB 1x lalu klik 'Atur Wi-Fi'."
                     )
                 } else {
-                    "Streaming Wi-Fi nirkabel tidak menemukan iPhone di jaringan Wi-Fi (_remotepairing._tcp.local.). Pastikan iPhone menyala, terhubung di Wi-Fi yang sama, dan sudah pernah 'Set up Wi-Fi' 1x via USB.".to_string()
+                    "Streaming Wi-Fi nirkabel tidak menemukan iPhone di jaringan Wi-Fi (_remotepairing._tcp.local.). Pastikan iPhone menyala, terhubung di Wi-Fi yang sama, dan sudah pernah klik 'Atur Wi-Fi' 1x via USB.".to_string()
                 };
                 let err_json = iphone_link_apple::mirror::global_set_screen_error(
                     pinned_udid.as_deref(),
@@ -14256,8 +14431,8 @@ fn transform_mirror_html(raw: &str) -> String {
 
 fn build_index_html_template_parts(raw: &str) -> (String, String) {
     let mut html = raw
-        .replace("iPhone Link v4.0.0", "iPhone Link v5.0.0")
-        .replace("iPhone Link v3.0.0", "iPhone Link v5.0.0")
+        .replace("iPhone Link v4.0.0", "iPhone Link v5.0.1")
+        .replace("iPhone Link v3.0.0", "iPhone Link v5.0.1")
         .replace("iPhone Link v4.0", "iPhone Link v5.0")
         .replace("iPhone Link v3.0", "iPhone Link v5.0");
     if !html.contains("tahap222-theme-contrast") {
@@ -15236,7 +15411,7 @@ mod tests {
         let resp_status = handle_request(&req_status, &state, Path::new("web"));
         assert_eq!(resp_status.status_code, 200);
         let body_str = String::from_utf8_lossy(&resp_status.body);
-        assert!(body_str.contains(r#""version": "5.0.0""#));
+        assert!(body_str.contains(r#""version": "5.0.1""#));
         assert!(body_str.contains(r#""zero_python_runtime": true"#));
         assert!(body_str.contains(r#""zero_powershell_runtime": true"#));
         assert!(body_str.contains("devicePixelRatio"));
@@ -15364,7 +15539,7 @@ mod tests {
         assert!(V4_BRIDGE_JS.contains("persistUnlockPinDual"));
         assert!(V4_BRIDGE_JS.contains("guardPinInputAgainstAccidentalWipe"));
         assert!(V4_BRIDGE_JS.contains("handlePendingTrayAction"));
-        assert!(V4_BRIDGE_JS.contains("iPhone Link v5.0.0"));
+        assert!(V4_BRIDGE_JS.contains("iPhone Link v5.0.1"));
 
         // 2. Deterministic folderInstanceId & disk save/load/wipe roundtrip
         let tmp_dir = env::temp_dir().join("iphone_link_tahap183_test");
@@ -15717,12 +15892,12 @@ mod tests {
         assert_eq!(resp_status.status_code, 200);
         assert!(elapsed_ms < 50.0, "status took too long: {elapsed_ms} ms");
         let status_json = String::from_utf8_lossy(&resp_status.body);
-        assert!(status_json.contains(r#""currentVersion":"5.0.0""#));
-        assert!(status_json.contains(r#""latestVersion":"5.0.0""#));
+        assert!(status_json.contains(r#""currentVersion":"5.0.1""#));
+        assert!(status_json.contains(r#""latestVersion":"5.0.1""#));
         assert!(status_json.contains(r#""updateAvailable":false"#));
         assert!(status_json.contains(r#""user_settings.json""#));
 
-        // 2. Simulate cache rejecting stale v4.0.0 & accepting v5.0.1
+        // 2. Simulate cache rejecting stale v4.0.0 & accepting v5.0.2
         {
             let mut st = state.lock().unwrap();
             st.updater.apply_worker_payload(
@@ -15730,14 +15905,14 @@ mod tests {
                 "stable",
             );
             assert!(!st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "5.0.0");
+            assert_eq!(st.updater.latest_version, "5.0.1");
 
             st.updater.apply_worker_payload(
-                r#"{"status":"update_available","latestVersion":"5.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.1.zip","channel":"beta"}"#,
+                r#"{"status":"update_available","latestVersion":"5.0.2","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.2.zip","channel":"beta"}"#,
                 "beta",
             );
             assert!(st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "5.0.1");
+            assert_eq!(st.updater.latest_version, "5.0.2");
         }
 
         // 3. POST /api/update/check gracefully handles worker absent/offline without throwing HTTP error
@@ -15752,7 +15927,7 @@ mod tests {
         assert_eq!(resp_chk.status_code, 200);
         let chk_json = String::from_utf8_lossy(&resp_chk.body);
         assert!(chk_json.contains(r#""ok":true"#));
-        assert!(chk_json.contains(r#""currentVersion":"5.0.0""#));
+        assert!(chk_json.contains(r#""currentVersion":"5.0.1""#));
         assert!(chk_json.contains(r#""channel":"beta""#));
     }
 
@@ -17624,12 +17799,12 @@ mod tests {
         let resp_root = handle_request(&req_root, &state, Path::new("Z:\\nonexistent\\web"));
         assert_eq!(resp_root.status_code, 200);
         let html = String::from_utf8_lossy(&resp_root.body);
-        assert!(html.contains("iPhone Link v5.0.0"), "HTML updater card missing v5.0.0 branding");
+        assert!(html.contains("iPhone Link v5.0.1"), "HTML updater card missing v5.0.1 branding");
         assert!(html.contains("iPhone Link v5.0"), "HTML footer credit missing v5.0 branding");
         assert!(!html.contains("iPhone Link v4.0"), "HTML still contains stale v4.0 branding");
         assert!(!html.contains("iPhone Link v3.0"), "HTML still contains stale v3.0 branding");
 
-        // 2. /v4_bridge.js reports v5.0.0 & v5.0
+        // 2. /v4_bridge.js reports v5.0.1 & v5.0
         let resp_js = handle_request(
             &HttpRequest {
                 method: "GET".to_string(),
@@ -17643,10 +17818,10 @@ mod tests {
             Path::new("web"),
         );
         let js = String::from_utf8_lossy(&resp_js.body);
-        assert!(js.contains("iPhone Link v5.0.0"));
+        assert!(js.contains("iPhone Link v5.0.1"));
         assert!(js.contains("iPhone Link v5.0"));
 
-        // 3. GET /api/status & GET /api/settings report Pure Native Rust Zero Python / Zero PowerShell v5.0.0
+        // 3. GET /api/status & GET /api/settings report Pure Native Rust Zero Python / Zero PowerShell v5.0.1
         let resp_st = handle_request(
             &HttpRequest {
                 method: "GET".to_string(),
@@ -17661,7 +17836,7 @@ mod tests {
         );
         let st_json = String::from_utf8_lossy(&resp_st.body);
         assert!(st_json.trim_end().ends_with('}'), "status JSON must end cleanly with }}: {st_json}");
-        assert!(st_json.contains(r#""version": "5.0.0""#), "got {st_json}");
+        assert!(st_json.contains(r#""version": "5.0.1""#), "got {st_json}");
         assert!(st_json.contains(APP_EDITION_V5), "got {st_json}");
         assert!(st_json.contains(r#""zero_python_runtime": true"#), "got {st_json}");
         assert!(st_json.contains(r#""zero_powershell_runtime": true"#), "got {st_json}");
@@ -17679,7 +17854,7 @@ mod tests {
             Path::new("web"),
         );
         let cfg_json = String::from_utf8_lossy(&resp_cfg.body);
-        assert!(cfg_json.contains(r#""version":"5.0.0""#), "got {cfg_json}");
+        assert!(cfg_json.contains(r#""version":"5.0.1""#), "got {cfg_json}");
         assert!(cfg_json.contains(r#""zero_python_runtime":true"#), "got {cfg_json}");
         assert!(cfg_json.contains(r#""zero_powershell_runtime":true"#), "got {cfg_json}");
     }
@@ -17687,23 +17862,24 @@ mod tests {
     #[test]
     fn test_tahap236_updater_v5_downgrade_protection_and_protected_configs() {
         let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(crate::updater::CURRENT_VERSION, "5.0.0");
-        assert!(!crate::updater::is_newer_version("5.0.0", "4.0.0"));
-        assert!(!crate::updater::is_newer_version("5.0.0", "3.0.0"));
-        assert!(!crate::updater::is_newer_version("5.0.0", "5.0.0"));
-        assert!(crate::updater::is_newer_version("5.0.0", "5.0.1"));
+        assert_eq!(crate::updater::CURRENT_VERSION, "5.0.1");
+        assert!(!crate::updater::is_newer_version("5.0.1", "4.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.1", "3.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.1", "5.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.1", "5.0.1"));
+        assert!(crate::updater::is_newer_version("5.0.1", "5.0.2"));
         assert!(crate::updater::is_protected_config_file("user_settings.json"));
         assert!(crate::updater::is_protected_config_file("wifi_state.json"));
         assert!(crate::updater::is_protected_config_file("typed_history.json"));
 
         let mut cache = UpdateStateCache::default();
-        assert_eq!(cache.current_version, "5.0.0");
+        assert_eq!(cache.current_version, "5.0.1");
         cache.apply_worker_payload(
             r#"{"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#,
             "stable",
         );
         assert!(!cache.update_available);
-        assert_eq!(cache.latest_version, "5.0.0");
+        assert_eq!(cache.latest_version, "5.0.1");
     }
 
     #[test]
@@ -19259,11 +19435,11 @@ mod tests {
         assert!(EMBEDDED_INDEX_HTML.contains(r#"id="stream-mode-desc""#));
 
         // 2. Auto router strictly routes iOS 27.2 & unknown -> CoreDeviceNativeHevc,
-        //    iOS 18.5 -> HybridAirPlayCoreDeviceHid (Mock M-2 preserved!), iOS 16.7.10 -> AirPlayStandalone
+        //    iOS 18.5 & iOS 16.7.10 -> AirPlayStandalone (Tahap 293 Opsi 2)
         use iphone_link_apple::link::{resolve_ios_mirror_route, IosMirrorRoute};
         assert_eq!(resolve_ios_mirror_route("27.2"), IosMirrorRoute::CoreDeviceNativeHevc);
         assert_eq!(resolve_ios_mirror_route(""), IosMirrorRoute::CoreDeviceNativeHevc);
-        assert_eq!(resolve_ios_mirror_route("18.5"), IosMirrorRoute::HybridAirPlayCoreDeviceHid);
+        assert_eq!(resolve_ios_mirror_route("18.5"), IosMirrorRoute::AirPlayStandalone);
         assert_eq!(resolve_ios_mirror_route("16.7.10"), IosMirrorRoute::AirPlayStandalone);
 
         // 3. POST /api/screen { mode: "auto", iosVersion: "27.2" } NEVER launches AirPlay!
@@ -19655,11 +19831,22 @@ mod tests {
             body_bytes: body.as_bytes().to_vec(),
         };
 
-        // 1. iOS 17.2.1 -> AirPlayStandalone (hidControlAvailable=false)
-        let r17 = handle_request(
+        // 1. iOS 17.2.1 with mode="auto" -> honest requiresDecision(ios_below_27); mode="airplay" -> AirPlayStandalone (hidControlAvailable=false)
+        let r17_dec = handle_request(
             &req_post(
                 "/api/screen/start",
                 r#"{"udid":"00008150-000000000001721","transport":"wifi","mode":"auto","iosVersion":"17.2.1","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let b17_dec = String::from_utf8_lossy(&r17_dec.body).to_string();
+        assert!(b17_dec.contains(r#""requiresDecision":true"#), "b17_dec={b17_dec}");
+        assert!(b17_dec.contains(r#""decisionReason":"ios_below_27""#), "b17_dec={b17_dec}");
+        let r17 = handle_request(
+            &req_post(
+                "/api/screen/start",
+                r#"{"udid":"00008150-000000000001721","transport":"wifi","mode":"airplay","iosVersion":"17.2.1","airplayPort":0,"advertiseMdns":false}"#,
             ),
             &state,
             Path::new("web"),
@@ -19671,7 +19858,8 @@ mod tests {
         let _ = handle_request(&req_post("/api/screen", "{}"), &state, Path::new("web"));
         let _ = iphone_link_apple::mirror::global_stop_screen();
 
-        // 2. iOS 17.4.1 & 26.0 -> HybridAirPlayCoreDeviceHid (hidControlAvailable=true)
+        // 2. Tahap 293 Opsi 1+2: iOS 17.4.1 & 26.0 over USB mode="auto" returns honest decision card
+        //    (no silent USB->AirPlay hijack), and mode="airplay" uses pure AirPlayStandalone (hidControlAvailable=false).
         let r26 = handle_request(
             &req_post(
                 "/api/screen/start",
@@ -19681,14 +19869,27 @@ mod tests {
             Path::new("web"),
         );
         let b26 = String::from_utf8_lossy(&r26.body).to_string();
-        assert!(b26.contains(r#""mirrorRoute":"hybrid_airplay_h264""#), "b26={b26}");
-        assert!(b26.contains(r#""stage":"waiting_airplay""#), "b26={b26}");
-        assert!(b26.contains(r#""hidControlAvailable":true"#), "b26={b26}");
-        assert!(!iphone_link_apple::mirror::is_airplay_standalone_no_hid_active());
+        assert!(b26.contains(r#""requiresDecision":true"#), "b26={b26}");
+        assert!(b26.contains(r#""decisionReason":"ios_below_27""#), "b26={b26}");
+        assert!(b26.contains(r#""mirrorRoute":"airplay_standalone""#), "b26={b26}");
+        assert!(b26.contains(r#""hidControlAvailable":false"#), "b26={b26}");
+        let r26_ap = handle_request(
+            &req_post(
+                "/api/screen/start",
+                r#"{"udid":"00008150-000000000002600","transport":"airplay","mode":"airplay","iosVersion":"26.0","airplayPort":0,"advertiseMdns":false}"#,
+            ),
+            &state,
+            Path::new("web"),
+        );
+        let b26_ap = String::from_utf8_lossy(&r26_ap.body).to_string();
+        assert!(b26_ap.contains(r#""mirrorRoute":"airplay_standalone""#), "b26_ap={b26_ap}");
+        assert!(b26_ap.contains(r#""stage":"waiting_airplay""#), "b26_ap={b26_ap}");
+        assert!(b26_ap.contains(r#""hidControlAvailable":false"#), "b26_ap={b26_ap}");
+        assert!(iphone_link_apple::mirror::is_airplay_standalone_no_hid_active());
         let _ = iphone_link_apple::mirror::global_stop_screen();
 
         // 3. Cold Wi-Fi cache fallback: NO `iosVersion` in POST body AND empty active USB cache ->
-        //    MUST read `iosVersion = "18.5"` from `wifi_state.json` and select `hybrid_airplay_h264`!
+        //    MUST read `iosVersion = "18.5"` from `wifi_state.json` and classify as `ios_below_27` (`airplay_standalone`).
         let tmp_wifi = env::temp_dir().join(format!("ipl_t285_wifi_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&tmp_wifi);
         let prev_ws = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
@@ -19719,10 +19920,11 @@ mod tests {
         }
         let _ = std::fs::remove_file(&tmp_wifi);
         assert!(
-            b_wifi_cold.contains(r#""mirrorRoute":"hybrid_airplay_h264""#),
-            "Cold Wi-Fi iOS 18.5 MUST resolve via wifi_state.json to Hybrid: {b_wifi_cold}"
+            b_wifi_cold.contains(r#""iosVersion":"18.5""#)
+                && b_wifi_cold.contains(r#""mirrorRoute":"airplay_standalone""#)
+                && b_wifi_cold.contains(r#""decisionReason":"ios_below_27""#),
+            "Cold Wi-Fi iOS 18.5 MUST resolve via wifi_state.json to honest AirPlayStandalone decision: {b_wifi_cold}"
         );
-        assert!(b_wifi_cold.contains(r#""stage":"waiting_airplay""#), "b_wifi_cold={b_wifi_cold}");
         let _ = iphone_link_apple::mirror::global_stop_screen();
 
         // 4. iOS 27.0 resolves to CoreDeviceNativeHevc
@@ -19750,17 +19952,32 @@ mod tests {
             body_bytes: Vec::new(),
         };
 
-        // 1. Windows 10 / Portable ZIP without HEVC (`hevc_mft_available=false`, inbox `h264_mft_available=true`)
-        //    MUST auto-fallback cleanly to Hybrid AirPlay H.264 instead of black/white blank screen!
+        // 1. Tahap 293 Opsi 1: Windows 10 / Portable ZIP without HEVC (`hevc_mft_available=false`, inbox `h264_mft_available=true`)
+        //    MUST present an honest decision card (`requiresDecision=true`, `decisionReason="hevc_mft_missing"`) instead of silent hijack,
+        //    and explicit AirPlay mode works cleanly.
         env::set_var("IPHONE_LINK_MOCK_HEVC_MISSING", "1");
         env::remove_var("IPHONE_LINK_MOCK_H264_MISSING");
         let r_fb = handle_request(&req_start, &state, Path::new("web"));
         assert_eq!(r_fb.status_code, 200);
         let b_fb = String::from_utf8_lossy(&r_fb.body).to_string();
-        assert!(b_fb.contains(r#""mirrorRoute":"hybrid_airplay_h264""#), "b_fb={b_fb}");
-        assert!(b_fb.contains(r#""fallbackReason":"hevc_mft_missing""#), "b_fb={b_fb}");
+        assert!(b_fb.contains(r#""requiresDecision":true"#), "b_fb={b_fb}");
+        assert!(b_fb.contains(r#""decisionReason":"hevc_mft_missing""#), "b_fb={b_fb}");
         assert!(b_fb.contains(r#""h264MftAvailable":true"#), "b_fb={b_fb}");
         assert!(b_fb.contains(r#""hevcMftAvailable":false"#), "b_fb={b_fb}");
+        let r_ap = handle_request(
+            &HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/screen/start".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: r#"{"udid":"00008150-000000000002700","transport":"airplay","mode":"airplay","iosVersion":"27.0","airplayPort":0,"advertiseMdns":false}"#.to_string(),
+                body_bytes: Vec::new(),
+            },
+            &state,
+            Path::new("web"),
+        );
+        let b_ap = String::from_utf8_lossy(&r_ap.body).to_string();
+        assert!(b_ap.contains(r#""mirrorRoute":"airplay_standalone""#), "b_ap={b_ap}");
         let _ = iphone_link_apple::mirror::global_stop_screen();
 
         // 2. Windows N/KN missing both H.264 & HEVC -> explicit Media Feature Pack error (no silent stall)
@@ -19960,5 +20177,140 @@ mod tests {
 
         let _ = fs::remove_dir_all(&tmp_dir);
         reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap293_diagnostics_port_27015_closed_does_not_or_service_flag() {
+        // Port 27015 closed MUST report tcp_port_27015_normal == false even if service is Running!
+        let closed_running = evaluate_apple_usb_diagnostics_pure(false, Win32ServiceState::Running, true);
+        assert!(closed_running.driver_installed);
+        assert!(closed_running.service_running);
+        assert!(
+            !closed_running.tcp_port_27015_normal,
+            "Port 27015 closed must NEVER report Normal just because registry/SCM exists"
+        );
+        assert_eq!(closed_running.tcp_port_label_id, "Tidak Terjangkau");
+
+        // Stopped service MUST report service_running == false with honest Stopped label
+        let stopped = evaluate_apple_usb_diagnostics_pure(false, Win32ServiceState::Stopped, true);
+        assert!(stopped.driver_installed);
+        assert!(!stopped.service_running);
+        assert!(!stopped.tcp_port_27015_normal);
+        assert_eq!(stopped.service_label_id, "Terpasang, tapi Berhenti");
+
+        // Open port 27015 -> true
+        let healthy = evaluate_apple_usb_diagnostics_pure(true, Win32ServiceState::Running, true);
+        assert!(healthy.tcp_port_27015_normal);
+        assert_eq!(healthy.tcp_port_label_en, "Normal");
+    }
+
+    #[test]
+    fn test_tahap293_program_files_fallback_preserves_folder_instance_id_and_migrates_dpapi() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_hid_runtime_state();
+
+        let base = env::temp_dir().join(format!(
+            "iphone_link_t293_pf_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let fake_pf_exe_dir = PathBuf::from(r"C:\Program Files\iPhone Link");
+        assert!(iphone_link_apple::app_paths::is_path_under_program_files(&fake_pf_exe_dir));
+        assert!(!iphone_link_apple::app_paths::is_dir_writable(&fake_pf_exe_dir));
+
+        let unified_dir = base.join("iPhoneLink");
+        let legacy_dir = base.join("iPhoneLink_NativeRust_v4");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_settings = legacy_dir.join("user_settings.json");
+        let unified_settings = unified_dir.join("user_settings.json");
+
+        // Save in legacy dir using fake Program Files exe folderInstanceId + DPAPI PIN
+        let exe_fid = get_deterministic_folder_instance_id_for_dir(&fake_pf_exe_dir);
+        let st = AppState::default();
+        save_user_settings_to_path_with_folder_id(&legacy_settings, &st, "519283", &exe_fid)
+            .expect("save legacy settings");
+
+        // Migrate non-destructively into unified %LOCALAPPDATA%\iPhoneLink\
+        assert!(iphone_link_apple::app_paths::migrate_legacy_file_if_needed(
+            &unified_settings,
+            &legacy_settings
+        ));
+        assert!(unified_settings.is_file());
+        assert!(
+            !is_fresh_extracted_folder_for(&fake_pf_exe_dir, &unified_settings),
+            "Program Files fallback MUST match exe folderInstanceId and NOT appear fresh every restart"
+        );
+
+        let mut st_cold = AppState::default();
+        let hydrated = init_persistent_settings_from_disk_from(&unified_settings, &mut st_cold, true);
+        assert_eq!(hydrated, "519283");
+
+        let _ = fs::remove_dir_all(&base);
+        clear_stored_pin();
+        reset_hid_runtime_state();
+    }
+
+    #[test]
+    fn test_tahap293_ios_below_27_returns_honest_decision_without_silent_airplay_hijack() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        for ver in ["17.2.1", "26.3.1"] {
+            let req = HttpRequest {
+                method: "POST".to_string(),
+                path: "/api/screen/start".to_string(),
+                query: String::new(),
+                headers: HashMap::new(),
+                body: format!(
+                    r#"{{"udid":"00008150-0000000000002930","transport":"usb","mode":"auto","iosVersion":"{ver}","honestGate":true}}"#
+                ),
+                body_bytes: Vec::new(),
+            };
+            let resp = handle_request(&req, &state, Path::new("web"));
+            let body = String::from_utf8_lossy(&resp.body).to_string();
+            assert!(
+                body.contains(r#""requiresDecision":true"#)
+                    && body.contains(r#""decisionReason":"ios_below_27""#),
+                "iOS {ver} MUST NOT hijack USB Start into AirPlay silently: {body}"
+            );
+            assert!(!iphone_link_apple::airplay::is_global_airplay_running());
+        }
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap293_diagnostic_log_ring_buffer_zero_pii_redaction() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::diag_log::clear_for_test();
+        let synthetic_udid = ["00008150-", "0002", "AABB", "CCDD", "001C"].concat();
+        let synthetic_ip = ["192.", "168.", "55.", "42"].concat();
+        let synthetic_mac = ["AA:", "BB:", "CC:", "DD:", "EE:", "FF"].concat();
+        let synthetic_user_path = r"C:\Users\TestPerson\AppData\Local\iPhoneLink\user_settings.json";
+        let synthetic_pin = "unlockPin\":\"847291\" dpapi:SECRETBLOB123";
+        let sample = format!(
+            "udid={synthetic_udid} ip={synthetic_ip} mac={synthetic_mac} path={synthetic_user_path} {synthetic_pin}"
+        );
+        iphone_link_apple::diag_log::record("test", &sample);
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let report = build_zero_pii_diagnostic_report(&state);
+        assert!(report.contains("UDID#"), "Expected hashed UDID tag: {report}");
+        assert!(report.contains("<LAN-IP>"), "Expected LAN IP redaction: {report}");
+        assert!(report.contains("<MAC>"), "Expected MAC redaction: {report}");
+        assert!(report.contains("<USERPROFILE>"), "Expected user path redaction: {report}");
+        assert!(report.contains("<PIN-REDACTED>"), "Expected PIN/DPAPI redaction: {report}");
+        assert!(!report.contains(&synthetic_udid));
+        assert!(!report.contains(&synthetic_ip));
+        assert!(!report.contains(&synthetic_mac));
+        assert!(!report.contains("TestPerson"));
+        assert!(!report.contains("847291"));
+        assert!(!report.contains("SECRETBLOB123"));
+        iphone_link_apple::diag_log::clear_for_test();
     }
 }

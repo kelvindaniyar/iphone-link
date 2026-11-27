@@ -120,11 +120,13 @@ pub fn resolve_sequoia_blur_cache_path() -> PathBuf {
 }
 
 fn localappdata_sequoia_blur_cache_path() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|v| {
-        PathBuf::from(v)
-            .join("iPhoneLink_NativeRust_v4")
-            .join(SEQUOIA_BLUR_CACHE_FILENAME)
-    })
+    iphone_link_apple::app_paths::unified_localappdata_dir()
+        .map(|d| d.join(SEQUOIA_BLUR_CACHE_FILENAME))
+}
+
+fn legacy_localappdata_sequoia_blur_cache_path() -> Option<PathBuf> {
+    iphone_link_apple::app_paths::legacy_localappdata_v4_dir()
+        .map(|d| d.join(SEQUOIA_BLUR_CACHE_FILENAME))
 }
 
 /// Atomically writes validated pre-blurred RGBA bytes (`ILB1` header + W/H LE + RGBA) to `path`.
@@ -196,7 +198,13 @@ fn load_persisted_blur_cache_default() -> Option<(Vec<u8>, u32, u32)> {
     if let Some(loaded) = load_persisted_blur_cache_from(&primary) {
         return Some(loaded);
     }
-    localappdata_sequoia_blur_cache_path()
+    if let Some(loaded) = localappdata_sequoia_blur_cache_path()
+        .as_deref()
+        .and_then(load_persisted_blur_cache_from)
+    {
+        return Some(loaded);
+    }
+    legacy_localappdata_sequoia_blur_cache_path()
         .as_deref()
         .and_then(load_persisted_blur_cache_from)
 }
@@ -215,6 +223,9 @@ fn delete_persisted_blur_cache_default() {
     let _ = std::fs::remove_file(resolve_sequoia_blur_cache_path());
     if let Some(fallback) = localappdata_sequoia_blur_cache_path() {
         let _ = std::fs::remove_file(fallback);
+    }
+    if let Some(legacy) = legacy_localappdata_sequoia_blur_cache_path() {
+        let _ = std::fs::remove_file(legacy);
     }
 }
 
@@ -2601,7 +2612,7 @@ fn parse_launchpad_from_status(val: &serde_json::Value, lang_en: bool) -> Launch
                 .unwrap_or(false);
             let reachable = d.get("reachable").and_then(|v| v.as_bool()).unwrap_or(false);
             let wifi_paired = d.get("wifiPaired").and_then(|v| v.as_bool()).unwrap_or(false);
-            let wifi_up = wifi_online || reachable || (!ip.is_empty() && wifi_paired);
+            let wifi_up = wifi_online || (reachable && wifi_paired);
             let online = usb || wifi_up;
 
             let display_title = if !model.is_empty() && !name.is_empty() && !model.eq_ignore_ascii_case(&name) {
@@ -2771,7 +2782,7 @@ fn build_diag_rows_from_json(val: &serde_json::Value, lang_en: bool) -> Vec<Diag
     vec![
         item("Apple USB Driver", "Apple USB Driver", "apple_driver_installed", "apple_driver_label_id", "apple_driver_label"),
         item("Layanan Apple Mobile", "Apple Mobile Service", "apple_service_running", "apple_service_label_id", "apple_service_label"),
-        item("Tunnel CoreDevice (27015)", "CoreDevice Tunnel (27015)", "tcp_port_27015_normal", "tcp_port_label_id", "tcp_port_label"),
+        item("Layanan usbmuxd (27015)", "usbmuxd Service (27015)", "tcp_port_27015_normal", "tcp_port_label_id", "tcp_port_label"),
         item("Codec Video HEVC 60fps", "HEVC 60fps Video Codec", "hevc_codec_installed", "hevc_codec_label_id", "hevc_codec_label"),
         DiagRow {
             label: SharedString::from(if lang_en { "iOS Developer Mode" } else { "Developer Mode iOS" }),
@@ -2867,6 +2878,19 @@ fn format_anti_blank_overlay_copy(reason: &str, lang_en: bool) -> (String, Strin
                 )
             }
         }
+        "ios_below_27" => {
+            if lang_en {
+                (
+                    "AirPlay Mode Required (iOS < 27)".to_string(),
+                    "Apple limits 60fps USB mirroring and mouse/keyboard control to iOS 27+. Switch to AirPlay Mode (Wi-Fi) for display & audio (view-only).".to_string(),
+                )
+            } else {
+                (
+                    "Mode AirPlay Diperlukan (iOS < 27)".to_string(),
+                    "Apple membatasi mirroring USB 60fps & kontrol mouse/keyboard hanya untuk iOS 27+. Lanjut ke Mode AirPlay (Wi-Fi) untuk tampilan & audio saja.".to_string(),
+                )
+            }
+        }
         "hevc_mft_missing" => {
             if lang_en {
                 (
@@ -2897,29 +2921,82 @@ fn format_anti_blank_overlay_copy(reason: &str, lang_en: bool) -> (String, Strin
             if lang_en {
                 (
                     "No Video Frame Received Yet".to_string(),
-                    "Mirroring started but no frame rendered after 7s. Switch to AirPlay H.264 (compatible with iOS 17–26 & Win 10) or install Free HEVC.".to_string(),
+                    "Mirroring started but no frame rendered after 7s. Switch to AirPlay H.264 (compatible with iOS 17-26 & Win 10) or install Free HEVC.".to_string(),
                 )
             } else {
                 (
                     "Belum Ada Frame Video Masuk".to_string(),
-                    "Sesi berjalan tetapi belum ada frame tampil setelah 7 detik. Pindah ke AirPlay H.264 (kompatibel iOS 17–26 & Win 10) atau pasang HEVC Gratis.".to_string(),
+                    "Sesi berjalan tetapi belum ada frame tampil setelah 7 detik. Pindah ke AirPlay H.264 (kompatibel iOS 17-26 & Win 10) atau pasang HEVC Gratis.".to_string(),
                 )
             }
         }
     }
 }
 
-fn parse_start_mirror_outcome_ex(
-    resp: &str,
-    lang_en: bool,
-) -> Result<(String, String, Option<String>), String> {
-    let v: serde_json::Value = serde_json::from_str(resp).map_err(|_| {
-        if lang_en {
-            "Failed to parse start-mirror response from local engine.".to_string()
-        } else {
-            "Gagal membaca respons mulai mirroring dari mesin lokal.".to_string()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartMirrorOutcome {
+    Started {
+        phase: String,
+        stage: String,
+        fallback_reason: Option<String>,
+        airplay: bool,
+    },
+    DecisionRequired {
+        reason: String,
+        message_id: String,
+        message_en: String,
+        ios_version: String,
+    },
+    Error(String),
+}
+
+pub fn parse_start_mirror_outcome_v2(resp: &str, lang_en: bool) -> StartMirrorOutcome {
+    let v: serde_json::Value = match serde_json::from_str(resp) {
+        Ok(val) => val,
+        Err(_) => {
+            return StartMirrorOutcome::Error(if lang_en {
+                "Failed to parse start-mirror response from local engine.".to_string()
+            } else {
+                "Gagal membaca respons mulai mirroring dari mesin lokal.".to_string()
+            });
         }
-    })?;
+    };
+    if v.get("requiresDecision")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
+        let reason = v
+            .get("decisionReason")
+            .and_then(|x| x.as_str())
+            .unwrap_or("hevc_mft_missing")
+            .trim()
+            .to_string();
+        let message_id = v
+            .get("message_id")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let message_en = v
+            .get("message_en")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let ios_version = v
+            .get("iosVersion")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        return StartMirrorOutcome::DecisionRequired {
+            reason,
+            message_id,
+            message_en,
+            ios_version,
+        };
+    }
+
     let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
     let phase = v
         .get("phase")
@@ -2957,9 +3034,50 @@ fn parse_start_mirror_outcome_ex(
         } else {
             "Gagal memulai mirroring. Pastikan iPhone terbuka kuncinya & koneksi USB/Wi-Fi aktif."
         };
-        return Err(if err_msg.is_empty() { fallback.to_string() } else { err_msg });
+        return StartMirrorOutcome::Error(if err_msg.is_empty() {
+            fallback.to_string()
+        } else {
+            err_msg
+        });
     }
-    Ok((phase, stage, fallback_reason))
+    let route_is_airplay = v
+        .get("mirrorRoute")
+        .and_then(|x| x.as_str())
+        .is_some_and(|r| r.contains("airplay"));
+    let airplay = stage == "waiting_airplay" || route_is_airplay;
+    StartMirrorOutcome::Started {
+        phase,
+        stage,
+        fallback_reason,
+        airplay,
+    }
+}
+
+#[allow(dead_code)]
+fn parse_start_mirror_outcome_ex(
+    resp: &str,
+    lang_en: bool,
+) -> Result<(String, String, Option<String>), String> {
+    match parse_start_mirror_outcome_v2(resp, lang_en) {
+        StartMirrorOutcome::Started {
+            phase,
+            stage,
+            fallback_reason,
+            ..
+        } => Ok((phase, stage, fallback_reason)),
+        StartMirrorOutcome::DecisionRequired {
+            message_id,
+            message_en,
+            ..
+        } => Err(if lang_en {
+            if message_en.is_empty() { message_id } else { message_en }
+        } else if message_id.is_empty() {
+            message_en
+        } else {
+            message_id
+        }),
+        StartMirrorOutcome::Error(e) => Err(e),
+    }
 }
 
 #[allow(dead_code)]
@@ -2967,14 +3085,14 @@ fn parse_start_mirror_outcome(resp: &str, lang_en: bool) -> Result<(String, Stri
     parse_start_mirror_outcome_ex(resp, lang_en).map(|(ph, stg, _)| (ph, stg))
 }
 
-fn resolve_udid_and_start_mirror_ex(
+fn resolve_udid_and_start_mirror_v2(
     state: &Arc<Mutex<server_v4::AppState>>,
     web_dir: &Path,
     initial_udid: &str,
     transport: &str,
     stream_mode: &str,
     lang_en: bool,
-) -> Result<(String, String, Option<String>), String> {
+) -> StartMirrorOutcome {
     let mut udid = initial_udid.trim().to_string();
     let tr = if transport.eq_ignore_ascii_case("usb") { "usb" } else { "wifi" };
     let mode = if stream_mode.eq_ignore_ascii_case("airplay") { "airplay" } else { "auto" };
@@ -3002,12 +3120,11 @@ fn resolve_udid_and_start_mirror_ex(
     }
 
     if udid.is_empty() && mode != "airplay" {
-        return Err(if lang_en {
-            "No iPhone selected or detected yet. Plug in USB or tap Pindai Wi-Fi first."
+        return StartMirrorOutcome::Error(if lang_en {
+            "No iPhone selected or detected yet. Plug in USB or tap Pindai Wi-Fi first.".to_string()
         } else {
-            "Belum ada iPhone terdeteksi. Hubungkan kabel USB atau klik Pindai Wi-Fi terlebih dahulu."
-        }
-        .to_string());
+            "Belum ada iPhone terdeteksi. Hubungkan kabel USB atau klik Pindai Wi-Fi terlebih dahulu.".to_string()
+        });
     }
 
     let body = format!(
@@ -3018,7 +3135,45 @@ fn resolve_udid_and_start_mirror_ex(
         escape_json(mode)
     );
     let resp = inprocess_api(state, web_dir, "POST", "/api/screen/start", &body);
-    parse_start_mirror_outcome_ex(&resp, lang_en)
+    parse_start_mirror_outcome_v2(&resp, lang_en)
+}
+
+#[allow(dead_code)]
+fn resolve_udid_and_start_mirror_ex(
+    state: &Arc<Mutex<server_v4::AppState>>,
+    web_dir: &Path,
+    initial_udid: &str,
+    transport: &str,
+    stream_mode: &str,
+    lang_en: bool,
+) -> Result<(String, String, Option<String>), String> {
+    match resolve_udid_and_start_mirror_v2(
+        state,
+        web_dir,
+        initial_udid,
+        transport,
+        stream_mode,
+        lang_en,
+    ) {
+        StartMirrorOutcome::Started {
+            phase,
+            stage,
+            fallback_reason,
+            ..
+        } => Ok((phase, stage, fallback_reason)),
+        StartMirrorOutcome::DecisionRequired {
+            message_id,
+            message_en,
+            ..
+        } => Err(if lang_en {
+            if message_en.is_empty() { message_id } else { message_en }
+        } else if message_id.is_empty() {
+            message_en
+        } else {
+            message_id
+        }),
+        StartMirrorOutcome::Error(e) => Err(e),
+    }
 }
 
 #[allow(dead_code)]
@@ -3174,7 +3329,11 @@ pub fn resolve_topbar_status_pill_text(
     match phase {
         "running" => {
             if airplay_active || transport.eq_ignore_ascii_case("airplay") {
-                "AirPlay".to_string()
+                if stage == "waiting_frame" {
+                    "AirPlay...".to_string()
+                } else {
+                    "AirPlay".to_string()
+                }
             } else if transport.eq_ignore_ascii_case("wifi") {
                 "Mirroring · Wi-Fi".to_string()
             } else {
@@ -3204,6 +3363,28 @@ pub fn resolve_topbar_status_pill_text(
             }
         }
     }
+}
+
+/// Pure Connecting watchdog for CoreDevice USB/Wi-Fi handshake:
+/// flags `"stage_stagnant"` (>= 25s on one step) or `"total_timeout"` (>= 90s overall),
+/// while staying silent during passive `waiting_airplay` sessions.
+pub fn evaluate_connecting_watchdog(
+    phase: &str,
+    airplay_active: bool,
+    stage: &str,
+    stagnant_ms: u64,
+    total_ms: u64,
+) -> Option<&'static str> {
+    if phase != "starting" || airplay_active || stage == "waiting_airplay" {
+        return None;
+    }
+    if total_ms >= 90_000 {
+        return Some("total_timeout");
+    }
+    if stagnant_ms >= 25_000 {
+        return Some("stage_stagnant");
+    }
+    None
 }
 
 fn format_status_pill_with_transport(
@@ -4876,6 +5057,7 @@ pub fn run_native_ui(
             v_act.store(false, Ordering::SeqCst);
             u.set_first_frame_ready(false);
             u.set_video_layer_active(false);
+            u.set_is_airplay_session(mode == "airplay");
             u.set_error_text(SharedString::from(""));
             u.set_phase(SharedString::from("starting"));
             u.set_stage(SharedString::from(init_stage));
@@ -4930,15 +5112,21 @@ pub fn run_native_ui(
             let trans_g_e = trans_g.clone();
             std::thread::spawn(move || {
                 let _guard = lock_t.lock().unwrap_or_else(|e| e.into_inner());
-                let res = resolve_udid_and_start_mirror_ex(&st_t, &wd_t, &udid, &transport, &mode, lang_en);
+                let res = resolve_udid_and_start_mirror_v2(&st_t, &wd_t, &udid, &transport, &mode, lang_en);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(u2) = ui_w2.upgrade() {
                         match res {
-                            Ok((ph, stg, fallback_reason)) => {
+                            StartMirrorOutcome::Started {
+                                phase: ph,
+                                stage: stg,
+                                fallback_reason,
+                                airplay,
+                            } => {
                                 u2.set_phase(SharedString::from(ph.as_str()));
                                 if !stg.is_empty() {
                                     u2.set_stage(SharedString::from(stg.as_str()));
                                 }
+                                u2.set_is_airplay_session(airplay);
                                 if fallback_reason.as_deref() == Some("hevc_mft_missing") {
                                     u2.set_connecting_detail(SharedString::from(if u2.get_lang_en() {
                                         "Auto AirPlay H.264 + Touch active (PC lacks HEVC codec)."
@@ -4947,7 +5135,12 @@ pub fn run_native_ui(
                                     }));
                                 }
                             }
-                            Err(err_msg) => {
+                            StartMirrorOutcome::DecisionRequired {
+                                reason,
+                                message_id,
+                                message_en,
+                                ..
+                            } => {
                                 trans_g_e.fetch_add(1, Ordering::SeqCst);
                                 u2.set_transition_active(false);
                                 u2.set_standby_opacity(1.0);
@@ -4959,6 +5152,36 @@ pub fn run_native_ui(
                                 u2.set_stage_progress(0);
                                 u2.set_video_layer_active(false);
                                 u2.set_first_frame_ready(false);
+                                u2.set_is_airplay_session(false);
+                                u2.set_error_text(SharedString::from(""));
+                                u2.set_status_pill(SharedString::from(if u2.get_lang_en() { "Ready" } else { "Siap" }));
+                                let (ab_title, ab_fallback) =
+                                    format_anti_blank_overlay_copy(&reason, u2.get_lang_en());
+                                let ab_detail = if u2.get_lang_en() {
+                                    if message_en.is_empty() { ab_fallback } else { message_en }
+                                } else if message_id.is_empty() {
+                                    ab_fallback
+                                } else {
+                                    message_id
+                                };
+                                u2.set_anti_blank_reason(SharedString::from(reason));
+                                u2.set_anti_blank_title(SharedString::from(ab_title));
+                                u2.set_anti_blank_detail(SharedString::from(ab_detail));
+                                u2.set_anti_blank_visible(true);
+                            }
+                            StartMirrorOutcome::Error(err_msg) => {
+                                trans_g_e.fetch_add(1, Ordering::SeqCst);
+                                u2.set_transition_active(false);
+                                u2.set_standby_opacity(1.0);
+                                u2.set_sequoia_opacity(0.0);
+                                u2.set_sequoia_text_opacity(0.0);
+                                u2.set_reveal_blur_visible(false);
+                                u2.set_phase(SharedString::from("idle"));
+                                u2.set_stage(SharedString::from(""));
+                                u2.set_stage_progress(0);
+                                u2.set_video_layer_active(false);
+                                u2.set_first_frame_ready(false);
+                                u2.set_is_airplay_session(false);
                                 u2.set_status_pill(SharedString::from(if u2.get_lang_en() { "Ready" } else { "Siap" }));
                                 u2.set_error_text(SharedString::from(err_msg));
                             }
@@ -5010,6 +5233,7 @@ pub fn run_native_ui(
             v_act.store(false, Ordering::SeqCst);
             u.set_first_frame_ready(false);
             u.set_video_layer_active(false);
+            u.set_is_airplay_session(true);
             u.set_error_text(SharedString::from(""));
             u.set_phase(SharedString::from("starting"));
             u.set_stage(SharedString::from("waiting_airplay"));
@@ -5034,19 +5258,27 @@ pub fn run_native_ui(
                 let _ = inprocess_api(&st_t, &wd_t, "POST", "/api/settings", r#"{"streamMode":"airplay"}"#);
                 let _ = inprocess_api(&st_t, &wd_t, "POST", "/api/screen/stop", "{}");
                 std::thread::sleep(Duration::from_millis(120));
-                let res = resolve_udid_and_start_mirror_ex(&st_t, &wd_t, &udid, &transport, "airplay", lang_en);
+                let res = resolve_udid_and_start_mirror_v2(&st_t, &wd_t, &udid, &transport, "airplay", lang_en);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(u2) = ui_w2.upgrade() {
                         match res {
-                            Ok((ph, stg, _)) => {
+                            StartMirrorOutcome::Started { phase: ph, stage: stg, .. } => {
                                 u2.set_phase(SharedString::from(ph.as_str()));
                                 if !stg.is_empty() {
                                     u2.set_stage(SharedString::from(stg.as_str()));
                                 }
+                                u2.set_is_airplay_session(true);
                             }
-                            Err(err_msg) => {
+                            StartMirrorOutcome::DecisionRequired { message_id, message_en, .. } => {
                                 u2.set_phase(SharedString::from("idle"));
                                 u2.set_stage(SharedString::from(""));
+                                u2.set_is_airplay_session(false);
+                                u2.set_error_text(SharedString::from(if u2.get_lang_en() { message_en } else { message_id }));
+                            }
+                            StartMirrorOutcome::Error(err_msg) => {
+                                u2.set_phase(SharedString::from("idle"));
+                                u2.set_stage(SharedString::from(""));
+                                u2.set_is_airplay_session(false);
                                 u2.set_error_text(SharedString::from(err_msg));
                             }
                         }
@@ -5218,6 +5450,7 @@ pub fn run_native_ui(
 
             u.set_first_frame_ready(false);
             u.set_video_layer_active(false);
+            u.set_is_airplay_session(false);
             u.set_phase(SharedString::from("idle"));
             u.set_stage(SharedString::from(""));
             u.set_stage_progress(0);
@@ -5280,12 +5513,15 @@ pub fn run_native_ui(
             u.set_reveal_blur_visible(false);
             u.set_reveal_blur_opacity(0.0);
             u.set_reveal_blur_image(Image::default());
+            u.set_anti_blank_visible(false);
+            u.set_anti_blank_reason(SharedString::from(""));
             let udid = u.get_selected_udid().to_string();
             let transport = u.get_transport_tab().to_string();
             let mode = u.get_stream_mode().to_string();
             v_act.store(false, Ordering::SeqCst);
             u.set_first_frame_ready(false);
             u.set_video_layer_active(false);
+            u.set_is_airplay_session(mode == "airplay");
             u.set_phase(SharedString::from("starting"));
             u.set_stage(SharedString::from(if mode == "airplay" {
                 "waiting_airplay"
@@ -6882,8 +7118,21 @@ pub fn run_native_ui(
                 if let Ok(dv) = serde_json::from_str(&resp) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(u) = ui_w2.upgrade() {
-                            let rows = build_diag_rows_from_json(&dv, u.get_lang_en());
+                            let en = u.get_lang_en();
+                            let rows = build_diag_rows_from_json(&dv, en);
                             u.set_diagnostics(ModelRc::new(VecModel::from(rows)));
+                            let warn_key = if en { "conflict_warning_en" } else { "conflict_warning_id" };
+                            let warn_msg = dv
+                                .get("diagnostics")
+                                .and_then(|d| d.get(warn_key))
+                                .or_else(|| dv.get(warn_key))
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .unwrap_or("");
+                            if !warn_msg.is_empty() {
+                                u.set_diag_feedback_ok(false);
+                                u.set_diag_feedback_text(SharedString::from(warn_msg));
+                            }
                         }
                     });
                 }
@@ -6956,11 +7205,70 @@ pub fn run_native_ui(
                 if let Ok(dv) = serde_json::from_str(&resp) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(u) = ui_w2.upgrade() {
-                            let rows = build_diag_rows_from_json(&dv, u.get_lang_en());
+                            let en = u.get_lang_en();
+                            let rows = build_diag_rows_from_json(&dv, en);
                             u.set_diagnostics(ModelRc::new(VecModel::from(rows)));
+                            let warn_key = if en { "conflict_warning_en" } else { "conflict_warning_id" };
+                            let warn_msg = dv
+                                .get("diagnostics")
+                                .and_then(|d| d.get(warn_key))
+                                .or_else(|| dv.get(warn_key))
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .unwrap_or("");
+                            if !warn_msg.is_empty() {
+                                u.set_diag_feedback_ok(false);
+                                u.set_diag_feedback_text(SharedString::from(warn_msg));
+                            }
                         }
                     });
                 }
+            });
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let st_c = state.clone();
+        let copy_gen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        ui.on_copy_diagnostic_log(move || {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let next_g = copy_gen.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+            let en = u.get_lang_en();
+            u.set_fb_diag_copy_state(1);
+            u.set_fb_diag_copy_text(SharedString::from(if en {
+                "Copying..."
+            } else {
+                "Menyalin..."
+            }));
+            let st_t = st_c.clone();
+            let ui_w2 = ui_weak.clone();
+            let copy_g2 = copy_gen.clone();
+            std::thread::spawn(move || {
+                let report = server_v4::build_zero_pii_diagnostic_report(&st_t);
+                let ok = crate::ocr_engine::write_win32_clipboard(&report);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(u2) = ui_w2.upgrade() {
+                        let en2 = u2.get_lang_en();
+                        u2.set_fb_diag_copy_state(if ok { 2 } else { 3 });
+                        u2.set_fb_diag_copy_text(SharedString::from(if ok {
+                            if en2 { "Copied!" } else { "Tersalin!" }
+                        } else if en2 {
+                            "Copy Failed"
+                        } else {
+                            "Gagal Salin"
+                        }));
+                        let ui_w3 = ui_w2.clone();
+                        let copy_g3 = copy_g2.clone();
+                        slint::Timer::single_shot(Duration::from_millis(1800), move || {
+                            if copy_g3.load(Ordering::SeqCst) == next_g {
+                                if let Some(u3) = ui_w3.upgrade() {
+                                    u3.set_fb_diag_copy_state(0);
+                                    u3.set_fb_diag_copy_text(SharedString::from(""));
+                                }
+                            }
+                        });
+                    }
+                });
             });
         });
     }
@@ -7037,9 +7345,9 @@ pub fn run_native_ui(
                             u.set_update_status_text(SharedString::from(st_txt));
                         } else {
                             u.set_update_status_text(SharedString::from(if en {
-                                "iPhone Link v5.0.0 is up to date."
+                                "iPhone Link v5.0.1 is up to date."
                             } else {
-                                "iPhone Link v5.0.0 sudah versi terbaru."
+                                "iPhone Link v5.0.1 sudah versi terbaru."
                             }));
                         }
                     }
@@ -7138,6 +7446,9 @@ pub fn run_native_ui(
         let rev_flag = frame1_reveal_needed.clone();
         let d_anim_s_sync = drawer_anim_state.clone();
         let zero_frame_since_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let connecting_started_at_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let last_stage_change_at_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let last_stage_key_rc: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
         let prewarmed_gen_rc = Rc::new(Cell::new(0u64));
         let auto_audio_triggered_gen_rc = Rc::new(Cell::new(0u64));
         let auto_audio_started_at_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
@@ -7325,10 +7636,15 @@ pub fn run_native_ui(
                 .get()
                 .map(|dl| Instant::now() < dl)
                 .unwrap_or(false);
-            if phase == "running" || !err_str.is_empty() || !u.get_error_text().is_empty() {
+            if phase == "running" || !err_str.is_empty() || !u.get_error_text().is_empty() || u.get_anti_blank_visible() {
                 inflight_rc.set(None);
             }
-            let effective_phase = if inflight_active && phase == "idle" && u.get_phase() == "starting" && u.get_error_text().is_empty() {
+            let effective_phase = if inflight_active
+                && phase == "idle"
+                && u.get_phase() == "starting"
+                && u.get_error_text().is_empty()
+                && !u.get_anti_blank_visible()
+            {
                 "starting"
             } else {
                 phase
@@ -7338,6 +7654,78 @@ pub fn run_native_ui(
             } else {
                 stage.to_string()
             };
+
+            if effective_phase == "starting" && !airplay_active && effective_stage != "waiting_airplay" {
+                if connecting_started_at_rc.get().is_none() {
+                    connecting_started_at_rc.set(Some(Instant::now()));
+                }
+                let stage_key = format!("{effective_stage}|{}", stage_detail.trim());
+                let mut prev_k = last_stage_key_rc.borrow_mut();
+                if *prev_k != stage_key || last_stage_change_at_rc.get().is_none() {
+                    *prev_k = stage_key;
+                    last_stage_change_at_rc.set(Some(Instant::now()));
+                }
+            } else {
+                connecting_started_at_rc.set(None);
+                last_stage_change_at_rc.set(None);
+                last_stage_key_rc.borrow_mut().clear();
+            }
+
+            let conn_stagnant_ms = last_stage_change_at_rc
+                .get()
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            let conn_total_ms = connecting_started_at_rc
+                .get()
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            if let Some(wd_reason) = evaluate_connecting_watchdog(
+                effective_phase,
+                airplay_active,
+                &effective_stage,
+                conn_stagnant_ms,
+                conn_total_ms,
+            ) {
+                connecting_started_at_rc.set(None);
+                last_stage_change_at_rc.set(None);
+                last_stage_key_rc.borrow_mut().clear();
+                inflight_rc.set(None);
+                streaming_rc.store(false, Ordering::SeqCst);
+                rev_flag.store(false, Ordering::SeqCst);
+                sub_st.is_streaming_or_starting.store(false, Ordering::SeqCst);
+                sub_st.phase_running.store(false, Ordering::SeqCst);
+                let wd_en = u.get_lang_en();
+                let wd_msg = if wd_reason == "total_timeout" {
+                    if wd_en {
+                        "USB/CoreDevice handshake timed out (>90s). Unplug & replug the USB cable, unlock your iPhone, verify Trust & Developer Mode, or click Copy Diagnostic Log."
+                    } else {
+                        "Koneksi USB/CoreDevice terlalu lama (>90 detik). Cabut lalu colok ulang kabel USB, buka kunci iPhone, cek Trust & Developer Mode, atau klik Salin Log Diagnostik."
+                    }
+                } else if wd_en {
+                    "Connection stalled at the current step (>25s). Replug USB cable, check Apple Mobile Device Service / conflicting apps, or click Copy Diagnostic Log."
+                } else {
+                    "Koneksi tertahan pada tahap ini (>25 detik). Colok ulang kabel USB, cek Apple Mobile Device Service / aplikasi bentrok, atau klik Salin Log Diagnostik."
+                };
+                std::thread::spawn(move || {
+                    let _ = mirror::global_stop_screen();
+                });
+                u.set_transition_active(false);
+                u.set_standby_opacity(1.0);
+                u.set_sequoia_opacity(0.0);
+                u.set_sequoia_text_opacity(0.0);
+                u.set_reveal_blur_visible(false);
+                u.set_first_frame_ready(false);
+                u.set_video_layer_active(false);
+                u.set_is_airplay_session(false);
+                u.set_phase(SharedString::from("idle"));
+                u.set_stage(SharedString::from(""));
+                u.set_stage_progress(0);
+                let ready_pill = if wd_en { "Ready" } else { "Siap" };
+                u.set_status_pill(SharedString::from(ready_pill));
+                u.set_status_pill_compact(SharedString::from(ready_pill));
+                u.set_error_text(SharedString::from(wd_msg));
+                return;
+            }
 
             let stream_or_start = effective_phase == "running" || effective_phase == "starting";
             streaming_rc.store(stream_or_start, Ordering::Relaxed);
@@ -7358,6 +7746,11 @@ pub fn run_native_ui(
             if !err_str.is_empty() || effective_phase == "running" {
                 u.set_error_text(SharedString::from(if effective_phase == "running" { "" } else { err_str }));
             }
+            if effective_phase == "idle" && !u.get_first_frame_ready() {
+                u.set_is_airplay_session(false);
+            } else if airplay_active || effective_stage == "waiting_airplay" {
+                u.set_is_airplay_session(true);
+            }
             if effective_stage == "waiting_airplay" {
                 let note_str = sv.get("note").and_then(|v| v.as_str()).unwrap_or("").trim();
                 let sync_detail = if !note_str.is_empty() {
@@ -7375,6 +7768,8 @@ pub fn run_native_ui(
                         p.prewarm_h264_decoder();
                     }
                 }
+            } else if effective_phase == "starting" && !stage_detail.trim().is_empty() {
+                u.set_connecting_detail(SharedString::from(stage_detail.trim()));
             }
             u.set_is_airplay_standalone(standalone);
             router_c.update_config(|c| c.airplay_no_hid = standalone);
@@ -7555,8 +7950,16 @@ pub fn run_native_ui(
                         u.set_anti_blank_visible(true);
                     }
                 } else if u.get_anti_blank_visible() {
-                    u.set_anti_blank_visible(false);
-                    u.set_anti_blank_reason(SharedString::from(""));
+                    let cur_ab = u.get_anti_blank_reason();
+                    let keep_decision_card = effective_phase == "idle"
+                        && matches!(
+                            cur_ab.as_str(),
+                            "ios_below_27" | "hevc_mft_missing" | "media_feature_pack_missing"
+                        );
+                    if !keep_decision_card {
+                        u.set_anti_blank_visible(false);
+                        u.set_anti_blank_reason(SharedString::from(""));
+                    }
                 }
                 if tel.width > 0 && tel.height > 0 {
                     if let Ok(mut d) = dims_sh.lock() {
@@ -9787,8 +10190,8 @@ pub fn run_native_ui_selftest() -> i32 {
                             let topbar_auto_ok = ar_on && ar_off && budgets_ok && main_src.contains("text: \"AUTO\";");
                             let saweria_ok = main_src.contains("Dukung Kreator di Saweria")
                                 && main_src.contains("Support Creator on Saweria")
-                                // Superseded by Tahap 288 V3: clean single-row footer "iPhone Link v5.0.0 by Kelvin Daniyar · GPL-3.0" without "Forked from" in UI
-                                && main_src.contains("iPhone Link v5.0.0 by")
+                                // Superseded by Tahap 288 V3 / Tahap 293: clean single-row footer "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
+                                && main_src.contains("iPhone Link v5.0.1 by")
                                 && main_src.contains("Kelvin Daniyar")
                                 && main_src.contains(" · GPL-3.0")
                                 && !main_src.contains("Forked from")
@@ -11828,11 +12231,11 @@ mod tests {
     #[test]
     fn test_tahap282_saweria_footer_dark_light_tokens_and_public_url_allowlist() {
         let main_src = include_str!("../ui/main_window.slint");
-        // Superseded by Tahap 288 V3: footer simplified cleanly to "iPhone Link v5.0.0 by Kelvin Daniyar · GPL-3.0" without "Forked from"
+        // Superseded by Tahap 288 V3 / Tahap 293: footer simplified cleanly to "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
         for needle in [
             "Dukung Kreator di Saweria",
             "Support Creator on Saweria",
-            "iPhone Link v5.0.0 by",
+            "iPhone Link v5.0.1 by",
             "Kelvin Daniyar",
             "https://saweria.co/kelvindaniyar",
             "https://github.com/kelvindaniyar",
@@ -12033,19 +12436,19 @@ mod tests {
             Some(0),
             false,
         )
-        .expect("hybrid airplay session");
-        assert!(resp.contains(r#""mirrorRoute":"hybrid_airplay_h264""#), "resp={resp}");
+        .expect("airplay standalone session");
+        // Tahap 293 Opsi 2: background `gate_only` CoreDevice HID worker is completely disabled for iOS < 27;
+        // AirPlay route runs strictly in clean `airplay_standalone` view/audio mode with `hidControlAvailable=false`.
+        assert!(resp.contains(r#""mirrorRoute":"airplay_standalone""#), "resp={resp}");
         let gen = mirror::current_live_session_gen();
 
-        // In Hybrid mode (`hid_control_available == true`), AirPlay video is active
-        // while `is_airplay_standalone_no_hid_active()` MUST be false so touch/scroll work!
-        assert!(mirror::is_hybrid_airplay_route());
-        assert!(!mirror::is_airplay_standalone_no_hid_active());
+        assert!(!mirror::is_hybrid_airplay_route());
+        assert!(mirror::is_airplay_standalone_no_hid_active());
         let mut input_cfg = crate::native_input::NativeInputConfig::default();
         input_cfg.airplay_no_hid = mirror::is_airplay_standalone_no_hid_active();
-        assert!(!input_cfg.airplay_no_hid, "Hybrid MUST keep HID enabled");
+        assert!(input_cfg.airplay_no_hid, "AirPlay Standalone MUST lock HID");
 
-        // Simulating first AirPlay H.264 video frame transition -> phase="running", AirPlay active, HID active
+        // Simulating first AirPlay H.264 video frame transition -> phase="running", AirPlay active
         let f = iphone_link_video::mf_decoder::build_synthetic_h264_ipcm_idr(64, 64, 0x55, 0);
         let avcc_b64 = mirror::base64_encode(&f.avcc_config);
         mirror::global_on_airplay_mirror_loop_state(gen, true);
@@ -12053,12 +12456,7 @@ mod tests {
         let idr_au = iphone_link_video::mf_decoder::wrap_avcc_with_aud_sei(&f.avcc_sample);
         assert!(mirror::global_on_physical_h264_avcc_frame(gen, idr_au, true));
         assert!(mirror::is_airplay_active());
-        assert!(!mirror::is_airplay_standalone_no_hid_active());
-
-        // Fail-soft degrade when CoreDevice HID gate cannot open: HID turns off, AirPlay video keeps running!
-        mirror::set_hybrid_hid_available(gen, false);
-        assert!(mirror::is_airplay_active(), "AirPlay video MUST stay alive on HID fail-soft");
-        assert!(mirror::is_airplay_standalone_no_hid_active(), "HID MUST lock safely on fail-soft");
+        assert!(mirror::is_airplay_standalone_no_hid_active());
 
         let _ = mirror::global_stop_screen();
         mirror::global_reset_mirror_runtime_for_test();
@@ -13017,9 +13415,11 @@ mod tests {
         assert!(seq_seg.contains("#0F172A"), "Light cold-start must keep high-contrast #0F172A headline");
         assert!(seq_seg.contains("#334155"), "Light cold-start must keep high-contrast #334155 kicker");
 
+        // Tahap 293 renders `root.connecting-detail` cleanly below device name during live USB handshake,
+        // while preserving no progress bar / no wifi icon / no Abort button inside `sequoia-reveal`.
+        assert!(seq_seg.contains("root.connecting-detail"));
         for forbidden_item in [
             "stage-progress",
-            "connecting-detail",
             "stage-detail",
             "name: \"wifi\"",
             "\"AirPlay Siap\"",
@@ -13254,7 +13654,7 @@ mod tests {
             0
         );
         for req in [
-            "iPhone Link v5.0.0 by ",
+            "iPhone Link v5.0.1 by ",
             "Kelvin Daniyar",
             " · GPL-3.0",
             "Dukung Kreator di Saweria",
@@ -13405,6 +13805,97 @@ mod tests {
             Some(v) => std::env::set_var("IPHONE_LINK_TEST_LOOPBACK_ONLY", v),
             None => std::env::remove_var("IPHONE_LINK_TEST_LOOPBACK_ONLY"),
         }
+    }
+
+    #[test]
+    fn test_tahap293_device_card_badge_usb_only_when_not_wifi_paired() {
+        // 1. USB-only iPhone with cached/reachable LAN IP (`wifiOnline:false, wifiPaired:false`) -> "USB" (NOT "USB + Wi-Fi")
+        let sv_usb_only: serde_json::Value = serde_json::from_str(
+            r#"{
+                "selectedUdid": "00008150-000000000002931",
+                "devices": [{
+                    "udid": "00008150-000000000002931",
+                    "name": "TestPhone",
+                    "model": "iPhone 17 Pro",
+                    "usb": true,
+                    "wifiOnline": false,
+                    "reachable": true,
+                    "wifiPaired": false,
+                    "ip": "198.51.100.42"
+                }]
+            }"#,
+        )
+        .unwrap();
+        let sum_usb = parse_launchpad_from_status(&sv_usb_only, false);
+        assert_eq!(sum_usb.cards.len(), 1);
+        assert_eq!(sum_usb.cards[0].transport_badge.as_str(), "USB");
+        assert_eq!(sum_usb.status_pill_short, "USB Siap");
+
+        // 2. Same device once Wi-Fi paired & reachable -> "USB + Wi-Fi"
+        let sv_paired: serde_json::Value = serde_json::from_str(
+            r#"{
+                "selectedUdid": "00008150-000000000002931",
+                "devices": [{
+                    "udid": "00008150-000000000002931",
+                    "name": "TestPhone",
+                    "model": "iPhone 17 Pro",
+                    "usb": true,
+                    "wifiOnline": false,
+                    "reachable": true,
+                    "wifiPaired": true,
+                    "ip": "198.51.100.42"
+                }]
+            }"#,
+        )
+        .unwrap();
+        let sum_paired = parse_launchpad_from_status(&sv_paired, false);
+        assert_eq!(sum_paired.cards[0].transport_badge.as_str(), "USB + Wi-Fi");
+        assert!(sum_paired.status_pill_short.contains("Wi-Fi"));
+
+        // 3. Connecting watchdog boundaries: 25s stagnant / 90s total, silent in waiting_airplay
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "connecting", 24_999, 24_999), None);
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "connecting", 25_000, 25_000),
+            Some("stage_stagnant")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "mounting_ddi", 5_000, 90_000),
+            Some("total_timeout")
+        );
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "waiting_airplay", 40_000, 120_000), None);
+        assert_eq!(evaluate_connecting_watchdog("running", false, "streaming", 40_000, 120_000), None);
+
+        // 4. Decision Card parser handles both `ios_below_27` and `hevc_mft_missing`
+        let dec_ios = parse_start_mirror_outcome_v2(
+            r#"{"ok":false,"phase":"idle","stage":"","requiresDecision":true,"decisionReason":"ios_below_27","iosVersion":"26.3.1","message_id":"Gunakan AirPlay","message_en":"Use AirPlay"}"#,
+            false,
+        );
+        assert_eq!(
+            dec_ios,
+            StartMirrorOutcome::DecisionRequired {
+                reason: "ios_below_27".to_string(),
+                message_id: "Gunakan AirPlay".to_string(),
+                message_en: "Use AirPlay".to_string(),
+                ios_version: "26.3.1".to_string(),
+            }
+        );
+        let dec_hevc = parse_start_mirror_outcome_v2(
+            r#"{"ok":false,"phase":"idle","stage":"","requiresDecision":true,"decisionReason":"hevc_mft_missing","message_id":"Pasang HEVC","message_en":"Install HEVC"}"#,
+            true,
+        );
+        assert_eq!(
+            dec_hevc,
+            StartMirrorOutcome::DecisionRequired {
+                reason: "hevc_mft_missing".to_string(),
+                message_id: "Pasang HEVC".to_string(),
+                message_en: "Install HEVC".to_string(),
+                ios_version: String::new(),
+            }
+        );
+
+        // 5. Honest Top Bar pill while AirPlay awaits first frame vs streaming
+        assert_eq!(resolve_topbar_status_pill_text("running", "waiting_frame", "airplay", true, true), "AirPlay...");
+        assert_eq!(resolve_topbar_status_pill_text("running", "streaming", "airplay", true, true), "AirPlay");
     }
 }
 

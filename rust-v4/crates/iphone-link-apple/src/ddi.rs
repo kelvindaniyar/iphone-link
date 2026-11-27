@@ -230,7 +230,7 @@ where
         on_progress(
             slice_start,
             &format!(
-                "Menyiapkan iPhone (pertama kali) — mengunduh {} ({}/{})...",
+                "Menyiapkan komponen iOS 27 (pertama kali) - mengunduh {} ({}/{})...",
                 filename,
                 idx + 1,
                 total_files
@@ -241,7 +241,7 @@ where
         let dl_res = crate::win_http::http_download_to_file_atomic(
             &url,
             &dest,
-            90_000,
+            45_000,
             |downloaded, total_opt| {
                 if downloaded.saturating_sub(last_reported_bytes) < 256 * 1024
                     && total_opt.map(|t| downloaded < t).unwrap_or(true)

@@ -304,7 +304,7 @@ pub struct Record {
     pub public_key: Vec<u8>,
 }
 
-/// Candidate pairing directories (`IPHONE_LINK_PAIRING_DIR`, `~/.pymobiledevice3`, `%LOCALAPPDATA%\iPhoneLink\pairing`).
+/// Candidate pairing directories (`IPHONE_LINK_PAIRING_DIR`, `%LOCALAPPDATA%\iPhoneLink\pairing`, `~/.pymobiledevice3`).
 pub fn record_dirs() -> Vec<PathBuf> {
     if let Ok(override_dir) = std::env::var("IPHONE_LINK_PAIRING_DIR") {
         let trimmed = override_dir.trim();
@@ -313,11 +313,11 @@ pub fn record_dirs() -> Vec<PathBuf> {
         }
     }
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        dirs.push(PathBuf::from(home).join(".pymobiledevice3"));
-    }
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         dirs.push(PathBuf::from(local).join("iPhoneLink").join("pairing"));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        dirs.push(PathBuf::from(home).join(".pymobiledevice3"));
     }
     dirs
 }
@@ -406,11 +406,20 @@ pub fn save_remote_record(
     let val = plist::Value::Dictionary(d);
 
     let mut written = Vec::new();
+    let mut errors = Vec::new();
     for dir in record_dirs() {
-        fs::create_dir_all(&dir).map_err(|e| format!("create pairing dir {}: {e}", dir.display()))?;
+        if let Err(e) = fs::create_dir_all(&dir) {
+            errors.push(format!("create pairing dir {}: {e}", dir.display()));
+            continue;
+        }
         let path = dir.join(format!("remote_{udid}.plist"));
-        plist::to_file_xml(&path, &val).map_err(|e| format!("write {}: {e}", path.display()))?;
-        written.push(path);
+        match plist::to_file_xml(&path, &val) {
+            Ok(()) => written.push(path),
+            Err(e) => errors.push(format!("write {}: {e}", path.display())),
+        }
+    }
+    if written.is_empty() {
+        return Err(errors.join("; "));
     }
     Ok(written)
 }
@@ -448,23 +457,19 @@ pub fn wifi_state_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("wifi_state.json");
-            if candidate.is_file() {
-                return candidate;
+    let resolved = crate::app_paths::resolve_app_data_dir().join("wifi_state.json");
+    if !resolved.is_file() {
+        if let Ok(cwd) = std::env::current_dir() {
+            let clean_cwd = crate::app_paths::normalize_dir_path(&cwd);
+            if !crate::app_paths::is_path_under_program_files(&clean_cwd) {
+                let candidate = clean_cwd.join("wifi_state.json");
+                if candidate.is_file() {
+                    return candidate;
+                }
             }
         }
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join("wifi_state.json");
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    std::env::var_os("LOCALAPPDATA")
-        .map(|b| PathBuf::from(b).join("iPhoneLink").join("wifi_state.json"))
-        .unwrap_or_else(|| PathBuf::from("wifi_state.json"))
+    resolved
 }
 
 pub fn load_wifi_state_value() -> Value {
@@ -503,7 +508,23 @@ pub fn save_wifi_state_value(val: &Value) -> Result<(), String> {
         }
     }
     let text = serde_json::to_string_pretty(val).map_err(|e| e.to_string())?;
-    fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+    match fs::write(&path, &text) {
+        Ok(()) => Ok(()),
+        Err(first_err) => {
+            if let Some(unified) = crate::app_paths::unified_localappdata_dir() {
+                let fb = unified.join("wifi_state.json");
+                if fb != path {
+                    let _ = fs::create_dir_all(&unified);
+                    if fs::write(&fb, &text).is_ok() {
+                        return Ok(());
+                    }
+                }
+            }
+            let err_msg = format!("write {}: {first_err}", path.display());
+            crate::diag_log::record("wifi_state", &err_msg);
+            Err(err_msg)
+        }
+    }
 }
 
 fn sync_top_level_wifi_fields(root: &mut Map<String, Value>, preferred_ip: Option<&str>) {
@@ -622,7 +643,9 @@ pub fn update_device_wifi_state(
         entry.clone()
     };
     sync_top_level_wifi_fields(root_obj, ip);
-    let _ = save_wifi_state_value(&root);
+    if let Err(e) = save_wifi_state_value(&root) {
+        crate::diag_log::record("wifi_state", &format!("save failed: {e}"));
+    }
     updated_entry
 }
 
@@ -1868,7 +1891,7 @@ fn probe_single_wifi_device_with_mdns_cache(
         paired: false,
         status_text: "Wi-Fi Not Configured".into(),
         status_tone: "muted".into(),
-        message: "Wi-Fi belum dikonfigurasi. Hubungkan iPhone via kabel lalu klik 'Set up Wi-Fi'.".into(),
+        message: "Wi-Fi belum dikonfigurasi. Hubungkan iPhone via kabel USB lalu klik 'Atur Wi-Fi'.".into(),
     }
 }
 
@@ -1995,7 +2018,7 @@ pub fn get_wifi_status(selected_udid: Option<&str>, probe_network: bool) -> Wifi
             method: "cached".into(),
             status_text: "🔌 Colok kabel USB 1x untuk aktifkan mode Wi‑Fi".into(),
             status_tone: "bad".into(),
-            note: "iPhone belum pernah di-setup untuk Wi-Fi. Colokkan kabel USB dan klik 'Set up Wi-Fi'.".into(),
+            note: "iPhone belum pernah diatur untuk Wi-Fi. Colokkan kabel USB dan klik 'Atur Wi-Fi'.".into(),
             udid: Some(target_udid),
             devices: devices_map,
         };

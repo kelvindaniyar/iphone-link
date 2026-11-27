@@ -11,8 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Canonical public GitHub repository URL (single source of truth for runtime API derivation).
 pub const PUBLIC_GITHUB_REPO_URL: &str = "https://github.com/kelvindaniyar/iphone-link";
 
-/// Current desktop application semantic version synchronized with iPhone Link v5.0.0.
-pub const CURRENT_VERSION: &str = "5.0.0";
+/// Current desktop application semantic version synchronized with iPhone Link v5.0.1.
+pub const CURRENT_VERSION: &str = "5.0.1";
 
 /// Derives the GitHub Releases REST API URL at runtime from `PUBLIC_GITHUB_REPO_URL`.
 pub fn github_releases_api_url() -> String {
@@ -972,14 +972,15 @@ mod tests {
 
     #[test]
     fn test_semver_version_comparison_v4() {
-        assert!(!is_newer_version("5.0.0", "2.0.0"));
-        assert!(!is_newer_version("5.0.0", "3.0.0"));
-        assert!(!is_newer_version("5.0.0", "v4.0.0"));
-        assert!(!is_newer_version("5.0.0", "5.0.0"));
-        assert!(!is_newer_version("5.0.0", "v5.0.0"));
-        assert!(!is_newer_version("5.0.0", "5.0.0-beta.1"));
-        assert!(is_newer_version("5.0.0", "5.0.1"));
-        assert!(is_newer_version("5.0.0", "v5.1.0-beta.1"));
+        assert!(!is_newer_version("5.0.1", "2.0.0"));
+        assert!(!is_newer_version("5.0.1", "3.0.0"));
+        assert!(!is_newer_version("5.0.1", "v4.0.0"));
+        assert!(!is_newer_version("5.0.1", "5.0.0"));
+        assert!(!is_newer_version("5.0.1", "5.0.1"));
+        assert!(!is_newer_version("5.0.1", "v5.0.1"));
+        assert!(!is_newer_version("5.0.1", "5.0.1-beta.1"));
+        assert!(is_newer_version("5.0.1", "5.0.2"));
+        assert!(is_newer_version("5.0.1", "v5.1.0-beta.1"));
         assert!(is_newer_version("5.1.0-beta.1", "5.1.0-beta.2"));
         assert!(is_newer_version("5.1.0-beta.2", "5.1.0"));
     }
@@ -990,22 +991,22 @@ mod tests {
         let stale_payload = r#"{"ok":true,"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#;
         cache.apply_worker_payload(stale_payload, "stable");
         assert!(!cache.update_available);
-        assert_eq!(cache.current_version, "5.0.0");
-        assert_eq!(cache.latest_version, "5.0.0");
+        assert_eq!(cache.current_version, "5.0.1");
+        assert_eq!(cache.latest_version, "5.0.1");
         assert_eq!(cache.status, "up_to_date");
 
-        let newer_payload = r#"{"ok":true,"status":"update_available","latestVersion":"5.0.1","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.1.zip","channel":"stable"}"#;
+        let newer_payload = r#"{"ok":true,"status":"update_available","latestVersion":"5.0.2","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.2.zip","channel":"stable"}"#;
         cache.apply_worker_payload(newer_payload, "stable");
         assert!(cache.update_available);
-        assert_eq!(cache.latest_version, "5.0.1");
+        assert_eq!(cache.latest_version, "5.0.2");
         assert_eq!(cache.status, "update_available");
     }
 
     #[test]
     fn test_semver_parsing_and_comparison() {
-        let v5 = Semver::parse("v5.0.0").unwrap();
+        let v5 = Semver::parse("v5.0.1").unwrap();
         let v4 = Semver::parse("v4.0.0").unwrap();
-        let v5_beta = Semver::parse("v5.0.0-beta.1").unwrap();
+        let v5_beta = Semver::parse("v5.0.1-beta.1").unwrap();
 
         assert!(v5.is_newer_than(&v4));
         assert!(v5.is_newer_than(&v5_beta));
@@ -1100,7 +1101,7 @@ mod tests {
         assert_eq!(reqs.len(), 2);
         for req in reqs.iter() {
             let low = req.to_ascii_lowercase();
-            assert!(low.contains("user-agent: iphone-link/5.0.0"), "missing User-Agent header: {req}");
+            assert!(low.contains("user-agent: iphone-link/5.0.1"), "missing User-Agent header: {req}");
             assert!(low.contains("accept: application/vnd.github+json"), "missing GitHub Accept header: {req}");
         }
 

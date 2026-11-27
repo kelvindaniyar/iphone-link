@@ -521,6 +521,7 @@ export component MainWindow inherits Window {
     in-out property <string> live-res: "";
     in-out property <string> live-codec: "";
     in-out property <bool> is-airplay-standalone: false;
+    in-out property <bool> is-airplay-session: false;
 
     // Card 2: Display, Aspect, Auto-Rotate, Stream Mode, 4-Edge Crop
     in-out property <string> fit-mode: "auto_fit";    // "auto_fit" | "edge_to_edge" | "original_ratio"
@@ -569,9 +570,9 @@ export component MainWindow inherits Window {
     in-out property <[DiagRow]> diagnostics: [];
     in-out property <bool> auto-check-update: true;
     in-out property <string> update-channel: "stable"; // "stable" | "beta"
-    in-out property <string> update-status-text: "iPhone Link v5.0.0 (Native Rust)";
+    in-out property <string> update-status-text: "iPhone Link v5.0.1 (Native Rust)";
     in-out property <bool> update-available: false;
-    in-out property <string> latest-version: "5.0.0";
+    in-out property <string> latest-version: "5.0.1";
     in-out property <string> update-release-url: "";
     in-out property <string> update-download-url: "";
     in-out property <string> diag-feedback-text: "";
@@ -604,6 +605,8 @@ export component MainWindow inherits Window {
     in-out property <string> fb-pin-text: "";
     in-out property <int> fb-wipe-state: 0;
     in-out property <string> fb-wipe-text: "";
+    in-out property <int> fb-diag-copy-state: 0;
+    in-out property <string> fb-diag-copy-text: "";
 
     // Computed translucent Win11 Acrylic glass palette (Dark Smoky + Light Milky Crystal)
     property <color> glass-shell: root.dark-mode ? #0C101A38 : #F4F7FC6E;
@@ -616,6 +619,7 @@ export component MainWindow inherits Window {
     property <color> sub-surface: root.dark-mode ? #FFFFFF10 : #FFFFFF59;
     property <bool> is-streaming-or-starting: root.phase == "running" || root.phase == "starting";
     property <bool> is-airplay-waiting: root.stage == "waiting_airplay";
+    property <bool> is-airplay-waiting-frame: root.is-airplay-session && root.stage == "waiting_frame";
     property <float> eff-standby-op: root.anti-blank-visible ? 0.0
         : (root.transition-active ? clamp(root.standby-opacity, 0.0, 1.0)
             : ((root.phase != "running" && root.phase != "starting") ? 1.0 : 0.0));
@@ -700,6 +704,7 @@ export component MainWindow inherits Window {
     callback refresh-diagnostics();
     callback unlock-developer-mode();
     callback repair-driver();
+    callback copy-diagnostic-log();
     callback set-auto-check-update(bool);
     callback set-update-channel(string);
     callback check-updates();
@@ -788,10 +793,12 @@ export component MainWindow inherits Window {
                                 : (root.is-streaming-or-starting ? (root.auto-rotate ? 84px : 108px) : (root.auto-rotate ? 112px : 142px));
                             border-radius: 11px;
                             border-width: 1px;
-                            border-color: root.phase == "running" ? #10B981AA
+                            border-color: (root.phase == "running" && root.first-frame-ready) ? #10B981AA
+                                : root.is-streaming-or-starting ? #38BDF899
                                 : root.device-ready ? #10B98188
                                 : (root.dark-mode ? #FFFFFF29 : #0F172A24);
-                            background: root.phase == "running" ? (root.dark-mode ? #064E3B77 : #D1FAE5CC)
+                            background: (root.phase == "running" && root.first-frame-ready) ? (root.dark-mode ? #064E3B77 : #D1FAE5CC)
+                                : root.is-streaming-or-starting ? (root.dark-mode ? #0C4A6E77 : #E0F2FECC)
                                 : root.device-ready ? (root.dark-mode ? #064E3B44 : #DCFCE7CC)
                                 : (root.dark-mode ? #FFFFFF14 : #FFFFFFA6);
 
@@ -804,13 +811,15 @@ export component MainWindow inherits Window {
                                     width: 6px;
                                     height: 6px;
                                     border-radius: 3px;
-                                    background: root.phase == "running" ? #10B981
+                                    background: (root.phase == "running" && root.first-frame-ready) ? #10B981
+                                        : root.is-streaming-or-starting ? #38BDF8
                                         : root.device-ready ? #22C55E
                                         : #94A3B8;
                                 }
                                 Text {
                                     text: (!root.topbar-wide && root.status-pill-compact != "") ? root.status-pill-compact : root.status-pill;
-                                    color: root.phase == "running" ? (root.dark-mode ? #A7F3D0 : #065F46)
+                                    color: (root.phase == "running" && root.first-frame-ready) ? (root.dark-mode ? #A7F3D0 : #065F46)
+                                        : root.is-streaming-or-starting ? (root.dark-mode ? #BAE6FD : #0369A1)
                                         : root.device-ready ? (root.dark-mode ? #86EFAC : #065F46)
                                         : root.text-primary;
                                     font-size: 10.5px;
@@ -1148,10 +1157,10 @@ export component MainWindow inherits Window {
                                     property <color> seq-kicker-fg: (root.has-last-frame-blur || root.dark-mode) ? #E2E8F0 : #334155;
 
                                     width: 100%;
-                                    spacing: root.is-airplay-waiting ? 6px : 4px;
+                                    spacing: (root.is-airplay-waiting || root.is-airplay-waiting-frame) ? 6px : 4px;
                                     alignment: center;
 
-                                    if !root.is-airplay-waiting : Text {
+                                    if !root.is-airplay-waiting && !root.is-airplay-waiting-frame : Text {
                                         text: root.is-en ? "Connecting to" : "Menyambungkan ke";
                                         color: parent.seq-kicker-fg;
                                         font-size: 13.5px;
@@ -1159,11 +1168,20 @@ export component MainWindow inherits Window {
                                         horizontal-alignment: center;
                                     }
 
-                                    if !root.is-airplay-waiting : Text {
+                                    if !root.is-airplay-waiting && !root.is-airplay-waiting-frame : Text {
                                         text: root.device-model-name != "" ? root.device-model-name : "iPhone";
                                         color: parent.seq-fg;
                                         font-size: 21px;
                                         font-weight: 700;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if !root.is-airplay-waiting && !root.is-airplay-waiting-frame && root.connecting-detail != "" : Text {
+                                        text: root.connecting-detail;
+                                        color: parent.seq-kicker-fg;
+                                        font-size: 11px;
+                                        font-weight: 500;
                                         horizontal-alignment: center;
                                         wrap: word-wrap;
                                     }
@@ -1180,6 +1198,37 @@ export component MainWindow inherits Window {
                                     }
 
                                     if root.is-airplay-waiting : Text {
+                                        text: root.device-model-name != "" ? root.device-model-name : "iPhone";
+                                        color: parent.seq-fg;
+                                        font-size: 21px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if root.is-airplay-waiting : Text {
+                                        text: root.is-en
+                                            ? "View & Audio Only (No PC Control)"
+                                            : "Tampilan & Audio Saja (Tanpa Kontrol PC)";
+                                        color: parent.seq-kicker-fg;
+                                        font-size: 10.5px;
+                                        font-weight: 500;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if root.is-airplay-waiting-frame : Text {
+                                        text: root.is-en
+                                            ? "Connected to AirPlay - Waiting for first frame..."
+                                            : "Tersambung ke AirPlay - Menunggu gambar pertama...";
+                                        color: parent.seq-kicker-fg;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if root.is-airplay-waiting-frame : Text {
                                         text: root.device-model-name != "" ? root.device-model-name : "iPhone";
                                         color: parent.seq-fg;
                                         font-size: 21px;
@@ -1259,17 +1308,21 @@ export component MainWindow inherits Window {
                                     }
 
                                     if root.anti-blank-reason != "media_feature_pack_missing" : ActionBtn {
-                                        label: root.is-en ? "Switch to AirPlay H.264" : "Pindah ke AirPlay H.264";
+                                        label: root.anti-blank-reason == "ios_below_27"
+                                            ? (root.is-en ? "Switch to AirPlay Mode" : "Lanjut ke Mode AirPlay")
+                                            : (root.anti-blank-reason == "hevc_mft_missing"
+                                                ? (root.is-en ? "Use AirPlay Temporarily" : "Gunakan AirPlay Sementara")
+                                                : (root.is-en ? "Switch to AirPlay H.264" : "Pindah ke AirPlay H.264"));
                                         icon-name: "monitor";
                                         primary: true;
                                         dark-mode: root.dark-mode;
                                         clicked => { root.switch-to-airplay-h264(); }
                                     }
 
-                                    ActionBtn {
+                                    if root.anti-blank-reason != "ios_below_27" : ActionBtn {
                                         label: root.anti-blank-reason == "media_feature_pack_missing"
                                             ? (root.is-en ? "Open Optional Features" : "Buka Optional Features")
-                                            : (root.is-en ? "Install Free HEVC" : "Pasang HEVC Gratis");
+                                            : (root.is-en ? "Install Free HEVC (USB 60fps)" : "Pasang HEVC Gratis (USB 60fps)");
                                         icon-name: "sparkles";
                                         emerald: true;
                                         dark-mode: root.dark-mode;
@@ -1655,7 +1708,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
-                                // Honest Error Banner (Zero Silent Failures)
+                                // Honest Error Banner (Zero Silent Failures + 1-Click Zero-PII Diagnostic Log Copy)
                                 if root.error-text != "" : Rectangle {
                                     x: (parent.width - self.width) / 2;
                                     width: min(parent.width - 12px, 316px);
@@ -1664,38 +1717,51 @@ export component MainWindow inherits Window {
                                     border-color: #EF4444AA;
                                     background: root.dark-mode ? #7F1D1D66 : #FEE2E2CC;
 
-                                    HorizontalLayout {
+                                    VerticalLayout {
                                         padding: 10px;
-                                        spacing: 8px;
-                                        FluentIcon {
-                                            y: 2px;
-                                            name: "warning";
-                                            icon-size: 15px;
-                                            icon-color: root.dark-mode ? #FCA5A5 : #B91C1C;
-                                        }
-                                        Text {
-                                            horizontal-stretch: 1;
-                                            text: root.error-text;
-                                            color: root.dark-mode ? #FECACA : #991B1B;
-                                            font-size: 11px;
-                                            wrap: word-wrap;
-                                        }
-                                        Rectangle {
-                                            width: 20px;
-                                            height: 20px;
-                                            border-radius: 5px;
-                                            background: err-close-ta.has-hover ? #EF444433 : transparent;
+                                        spacing: 7px;
+                                        HorizontalLayout {
+                                            spacing: 8px;
                                             FluentIcon {
-                                                x: 4px;
-                                                y: 4px;
-                                                name: "close";
-                                                icon-size: 12px;
+                                                y: 2px;
+                                                name: "warning";
+                                                icon-size: 15px;
                                                 icon-color: root.dark-mode ? #FCA5A5 : #B91C1C;
                                             }
-                                            err-close-ta := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => { root.clear-error(); }
+                                            Text {
+                                                horizontal-stretch: 1;
+                                                text: root.error-text;
+                                                color: root.dark-mode ? #FECACA : #991B1B;
+                                                font-size: 11px;
+                                                wrap: word-wrap;
                                             }
+                                            Rectangle {
+                                                width: 20px;
+                                                height: 20px;
+                                                border-radius: 5px;
+                                                background: err-close-ta.has-hover ? #EF444433 : transparent;
+                                                FluentIcon {
+                                                    x: 4px;
+                                                    y: 4px;
+                                                    name: "close";
+                                                    icon-size: 12px;
+                                                    icon-color: root.dark-mode ? #FCA5A5 : #B91C1C;
+                                                }
+                                                err-close-ta := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.clear-error(); }
+                                                }
+                                            }
+                                        }
+                                        ActionBtn {
+                                            btn-height: 28px;
+                                            label-font-px: 10.5px;
+                                            label: root.is-en ? "Copy Diagnostic Log" : "Salin Log Diagnostik";
+                                            icon-name: "copy";
+                                            fb-state: root.fb-diag-copy-state;
+                                            fb-label: root.fb-diag-copy-text;
+                                            dark-mode: root.dark-mode;
+                                            clicked => { root.copy-diagnostic-log(); }
                                         }
                                     }
                                 }
@@ -3202,7 +3268,7 @@ export component MainWindow inherits Window {
                                     dark-mode: root.dark-mode;
 
                                     DrawerAccordion {
-                                        title: "iPhone Link v5.0.0";
+                                        title: "iPhone Link v5.0.1";
                                         badge: root.update-available
                                             ? ((root.is-en ? "New v" : "Baru v") + root.latest-version)
                                             : (root.update-channel == "beta" ? "Beta" : (root.is-en ? "Stable" : "Stabil"));
@@ -3408,6 +3474,15 @@ export component MainWindow inherits Window {
                                         }
                                     }
 
+                                    ActionBtn {
+                                        label: root.is-en ? "Copy Diagnostic Log" : "Salin Log Diagnostik";
+                                        icon-name: "copy";
+                                        fb-state: root.fb-diag-copy-state;
+                                        fb-label: root.fb-diag-copy-text;
+                                        dark-mode: root.dark-mode;
+                                        clicked => { root.copy-diagnostic-log(); }
+                                    }
+
                                     if root.diag-feedback-text != "" : Rectangle {
                                         border-radius: 8px;
                                         border-width: 1px;
@@ -3560,12 +3635,12 @@ export component MainWindow inherits Window {
                                             }
                                         }
 
-                                        // Clean Creator Attribution Row: "iPhone Link v5.0.0 by Kelvin Daniyar · GPL-3.0"
+                                        // Clean Creator Attribution Row: "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
                                         HorizontalLayout {
                                             alignment: center;
                                             spacing: 0px;
                                             Text {
-                                                text: "iPhone Link v5.0.0 by ";
+                                                text: "iPhone Link v5.0.1 by ";
                                                 color: root.dark-mode ? #CBD5E1 : #0F172A;
                                                 font-size: 10.5px;
                                                 font-weight: 600;

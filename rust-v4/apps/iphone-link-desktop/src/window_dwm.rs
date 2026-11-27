@@ -968,6 +968,173 @@ pub fn query_win32_hevc_appx_package() -> Option<(String, String)> {
     None
 }
 
+/// Actual Win32 Service Control Manager state for Apple Mobile Device Service (Tahap 293).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Win32ServiceState {
+    Running,
+    Stopped,
+    NotInstalled,
+}
+
+#[allow(clippy::UPPER_CASE_ACRONYMS)]
+mod diag_ffi {
+    use std::ffi::c_void;
+
+    pub const SC_MANAGER_CONNECT: u32 = 0x0001;
+    pub const SERVICE_QUERY_STATUS: u32 = 0x0004;
+    pub const SC_STATUS_PROCESS_INFO: u32 = 0;
+    pub const SERVICE_RUNNING: u32 = 0x0000_0004;
+    pub const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
+    pub const INVALID_HANDLE_VALUE: isize = -1;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct SERVICE_STATUS_PROCESS {
+        pub dw_service_type: u32,
+        pub dw_current_state: u32,
+        pub dw_controls_accepted: u32,
+        pub dw_win32_exit_code: u32,
+        pub dw_service_specific_exit_code: u32,
+        pub dw_check_point: u32,
+        pub dw_wait_hint: u32,
+        pub dw_process_id: u32,
+        pub dw_service_flags: u32,
+    }
+
+    #[repr(C)]
+    pub struct PROCESSENTRY32W {
+        pub dw_size: u32,
+        pub cnt_usage: u32,
+        pub th32_process_id: u32,
+        pub th32_default_heap_id: usize,
+        pub th32_module_id: u32,
+        pub cnt_threads: u32,
+        pub th32_parent_process_id: u32,
+        pub pc_pri_class_base: i32,
+        pub dw_flags: u32,
+        pub sz_exe_file: [u16; 260],
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        pub fn OpenSCManagerW(
+            lp_machine_name: *const u16,
+            lp_database_name: *const u16,
+            dw_desired_access: u32,
+        ) -> *mut c_void;
+        pub fn OpenServiceW(
+            h_sc_manager: *mut c_void,
+            lp_service_name: *const u16,
+            dw_desired_access: u32,
+        ) -> *mut c_void;
+        pub fn QueryServiceStatusEx(
+            h_service: *mut c_void,
+            info_level: u32,
+            lp_buffer: *mut u8,
+            cb_buf_size: u32,
+            pcb_bytes_needed: *mut u32,
+        ) -> i32;
+        pub fn CloseServiceHandle(h_sc_object: *mut c_void) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut c_void;
+        pub fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        pub fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        pub fn CloseHandle(h_object: *mut c_void) -> i32;
+    }
+}
+
+/// Queries live `Apple Mobile Device Service` status via Win32 SCM (`QueryServiceStatusEx`),
+/// distinguishing `Running`, `Stopped`, and `NotInstalled` (0 PowerShell, 0 `sc.exe`).
+pub fn query_win32_apple_service_state() -> Win32ServiceState {
+    unsafe {
+        let h_scm = diag_ffi::OpenSCManagerW(
+            ptr::null(),
+            ptr::null(),
+            diag_ffi::SC_MANAGER_CONNECT,
+        );
+        if h_scm.is_null() {
+            return if query_win32_apple_service_installed_in_registry() {
+                Win32ServiceState::Stopped
+            } else {
+                Win32ServiceState::NotInstalled
+            };
+        }
+
+        let svc_name = to_wide_null("Apple Mobile Device Service");
+        let h_svc = diag_ffi::OpenServiceW(
+            h_scm,
+            svc_name.as_ptr(),
+            diag_ffi::SERVICE_QUERY_STATUS,
+        );
+        if h_svc.is_null() {
+            let _ = diag_ffi::CloseServiceHandle(h_scm);
+            return Win32ServiceState::NotInstalled;
+        }
+
+        let mut ssp = diag_ffi::SERVICE_STATUS_PROCESS::default();
+        let mut needed: u32 = 0;
+        let ok = diag_ffi::QueryServiceStatusEx(
+            h_svc,
+            diag_ffi::SC_STATUS_PROCESS_INFO,
+            (&mut ssp as *mut diag_ffi::SERVICE_STATUS_PROCESS).cast::<u8>(),
+            std::mem::size_of::<diag_ffi::SERVICE_STATUS_PROCESS>() as u32,
+            &mut needed,
+        );
+        let _ = diag_ffi::CloseServiceHandle(h_svc);
+        let _ = diag_ffi::CloseServiceHandle(h_scm);
+
+        if ok != 0 && ssp.dw_current_state == diag_ffi::SERVICE_RUNNING {
+            Win32ServiceState::Running
+        } else {
+            Win32ServiceState::Stopped
+        }
+    }
+}
+
+/// Detects active competing Apple USB tools (`3uTools.exe`, `iTunes.exe`, `AppleDevices.exe`)
+/// natively via Win32 `CreateToolhelp32Snapshot` (0 PowerShell).
+pub fn detect_conflicting_apple_usb_processes() -> Vec<String> {
+    let mut found = Vec::new();
+    unsafe {
+        let snap = diag_ffi::CreateToolhelp32Snapshot(diag_ffi::TH32CS_SNAPPROCESS, 0);
+        if snap.is_null() || (snap as isize) == diag_ffi::INVALID_HANDLE_VALUE {
+            return found;
+        }
+        let mut pe: diag_ffi::PROCESSENTRY32W = std::mem::zeroed();
+        pe.dw_size = std::mem::size_of::<diag_ffi::PROCESSENTRY32W>() as u32;
+        if diag_ffi::Process32FirstW(snap, &mut pe) != 0 {
+            loop {
+                let nul = pe
+                    .sz_exe_file
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(pe.sz_exe_file.len());
+                let name = String::from_utf16_lossy(&pe.sz_exe_file[..nul]);
+                let low = name.to_ascii_lowercase();
+                let matched = match low.as_str() {
+                    "3utools.exe" => Some("3uTools.exe"),
+                    "itunes.exe" => Some("iTunes.exe"),
+                    "appledevices.exe" => Some("AppleDevices.exe"),
+                    _ => None,
+                };
+                if let Some(canon) = matched {
+                    if !found.iter().any(|x| x == canon) {
+                        found.push(canon.to_string());
+                    }
+                }
+                if diag_ffi::Process32NextW(snap, &mut pe) == 0 {
+                    break;
+                }
+            }
+        }
+        let _ = diag_ffi::CloseHandle(snap);
+    }
+    found
+}
+
 /// Checks Apple Mobile Device Service registration in HKLM without spawning `sc.exe`.
 pub fn query_win32_apple_service_installed_in_registry() -> bool {
     unsafe {
@@ -2521,7 +2688,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     // 6. Test /api/status and webview metrics
     let (code_status, body_status) = http_send(port, "GET", "/api/status", "")?;
     let status_ok = code_status == 200
-        && body_status.contains(r#""version": "5.0.0""#)
+        && body_status.contains(r#""version": "5.0.1""#)
         && body_status.contains("webviewMetrics");
 
     // 7. Test language switching: English -> Indonesian
@@ -2579,7 +2746,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
 
     let test_res = UiSelfTestResult {
         status: "PASS".to_string(),
-        version: "5.0.0".to_string(),
+        version: "5.0.1".to_string(),
         true_dwm_acrylic_active,
         static_wallpaper_disabled,
         index_html_served,
@@ -2597,7 +2764,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let json_report = format!(
         r#"{{
   "status": "PASS",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "true_dwm_acrylic_active": {},
   "static_wallpaper_disabled": {},
   "index_html_served": {},
@@ -2622,7 +2789,9 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
         theme_switching_ok,
         elapsed_ms
     );
-    let _ = fs::write("self_test_v4_result.json", json_report);
+    if fs::write("self_test_v4_result.json", &json_report).is_err() {
+        let _ = fs::write(std::env::temp_dir().join("self_test_v4_result.json"), &json_report);
+    }
 
     Ok(test_res)
 }

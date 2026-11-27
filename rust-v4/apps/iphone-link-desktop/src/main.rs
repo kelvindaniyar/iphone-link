@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-//! iPhone Link v5.0.0 Native Rust Desktop Engine Entry Point (Default Zero-WebView2).
+//! iPhone Link v5.0.1 Native Rust Desktop Engine Entry Point (Default Zero-WebView2).
 
 pub mod dcomp_presenter;
 pub mod i18n;
@@ -86,7 +86,7 @@ fn find_zlaac_dll() -> Option<PathBuf> {
 }
 
 fn run_self_test() -> i32 {
-    println!("=== iPhone Link v5.0.0 Native Rust Self-Test ===");
+    println!("=== iPhone Link v5.0.1 Native Rust Self-Test ===");
 
     // 1. Model Resolution & Screen Type Detection
     let model_18_1 = resolve_apple_model("iPhone18,1");
@@ -358,9 +358,9 @@ fn run_self_test() -> i32 {
         && dwm_info.elapsed_ms < 150;
 
     // OTA Updater verification
-    let v5 = Semver::parse("v5.0.0").unwrap();
+    let v5 = Semver::parse("v5.0.1").unwrap();
     let v4 = Semver::parse("v4.0.0").unwrap();
-    let semver_passed = v5.is_newer_than(&v4) && crate::updater::CURRENT_VERSION == "5.0.0";
+    let semver_passed = v5.is_newer_than(&v4) && crate::updater::CURRENT_VERSION == "5.0.1";
     let hash_passed = verify_sha256(b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     let config_protect_passed = is_protected_config_file("user_settings.json")
         && is_protected_config_file("wifi_state.json")
@@ -457,7 +457,7 @@ fn run_self_test() -> i32 {
     // Structured JSON result
     let json_output = format!(r#"{{
   "status": "{}",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
   "zero_python_runtime": true,
   "zero_powershell_runtime": true,
@@ -737,7 +737,9 @@ fn run_self_test() -> i32 {
     );
 
     println!("{}", json_output);
-    let _ = std::fs::write("self_test_cli_result.json", &json_output);
+    if std::fs::write("self_test_cli_result.json", &json_output).is_err() {
+        let _ = std::fs::write(env::temp_dir().join("self_test_cli_result.json"), &json_output);
+    }
 
     if all_passed {
         0
@@ -1158,7 +1160,7 @@ fn main() {
                 let _ = AttachConsole(0xFFFFFFFF);
                 let _ = CoInitializeEx(std::ptr::null_mut(), 2);
             }
-            println!("=== iPhone Link v5.0.0 Native Rust UI Self-Test ===");
+            println!("=== iPhone Link v5.0.1 Native Rust UI Self-Test ===");
             let web_dir = find_web_dir();
             match window_dwm::run_ui_self_test(&web_dir) {
                 Ok(res) => {

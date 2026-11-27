@@ -58,17 +58,18 @@ impl DdiStage {
 /// Routing tier selected from iOS `ProductVersion` for multi-iOS mirroring compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IosMirrorRoute {
-    /// iOS <= 17.3: AirPlay standalone H.264 mirroring.
+    /// iOS < 27 (iOS 17-26): AirPlay standalone H.264 mirroring (View & Audio Only).
     AirPlayStandalone,
-    /// iOS 17.4 ..= 26.x: Hybrid AirPlay H.264 video + CoreDevice/RSD HID touch/keyboard.
+    /// Legacy variant retained for enum compatibility; Tahap 293 Opsi 2 routes iOS < 27 to AirPlayStandalone.
+    #[allow(dead_code)]
     HybridAirPlayCoreDeviceHid,
     /// iOS >= 27.0 (or unknown fallback): Native CoreDevice DisplayService HEVC + HID.
     CoreDeviceNativeHevc,
 }
 
-/// Resolves the optimal mirroring transport route from an iOS `ProductVersion` string
-/// (e.g. `"16.7.10"`, `"17.2.1"`, `"17.4.1"`, `"18.5"`, `"26.2"`, `"27.2"`).
-/// Empty or unparseable versions safely default to `CoreDeviceNativeHevc`.
+/// Resolves the optimal mirroring transport route from an iOS `ProductVersion` string.
+/// Tahap 293 Opsi 2: iOS < 27 routes strictly to `AirPlayStandalone` (View & Audio Only);
+/// iOS >= 27.0 (or empty/unknown) routes to `CoreDeviceNativeHevc`.
 pub fn resolve_ios_mirror_route(product_version: &str) -> IosMirrorRoute {
     let trimmed = product_version.trim();
     if trimmed.is_empty() {
@@ -78,14 +79,8 @@ pub fn resolve_ios_mirror_route(product_version: &str) -> IosMirrorRoute {
     let Ok(major) = parts.next().unwrap_or("").trim().parse::<u32>() else {
         return IosMirrorRoute::CoreDeviceNativeHevc;
     };
-    let minor = parts
-        .next()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0);
-    if major < 17 || (major == 17 && minor <= 3) {
+    if major < 27 {
         IosMirrorRoute::AirPlayStandalone
-    } else if (major == 17 && minor >= 4) || (18..=26).contains(&major) {
-        IosMirrorRoute::HybridAirPlayCoreDeviceHid
     } else {
         IosMirrorRoute::CoreDeviceNativeHevc
     }
@@ -144,58 +139,66 @@ pub async fn usbmux() -> Result<UsbmuxdConnection, String> {
 }
 
 pub(crate) async fn check_developer_mode_enabled(provider: &UsbmuxdProvider) -> bool {
-    // Primary check via Lockdown (`com.apple.security.mac.amfi` -> `DeveloperModeStatus`)
-    if let Ok(mut lockdown) = LockdownClient::connect(provider).await {
-        let pairing_opt = provider.get_pairing_file().await.ok();
-        if let Some(ref pf) = pairing_opt {
-            let _ = lockdown.start_session(pf).await;
-        }
-        if let Ok(status) = lockdown.get_developer_mode_status().await {
-            if !status {
-                if let Ok(mut amfi) = AmfiClient::connect(provider).await {
-                    let _ = amfi.reveal_developer_mode_option_in_ui().await;
-                }
+    tokio::time::timeout(Duration::from_secs(8), async move {
+        // Primary check via Lockdown (`com.apple.security.mac.amfi` -> `DeveloperModeStatus`)
+        if let Ok(mut lockdown) = LockdownClient::connect(provider).await {
+            let pairing_opt = provider.get_pairing_file().await.ok();
+            if let Some(ref pf) = pairing_opt {
+                let _ = lockdown.start_session(pf).await;
             }
-            return status;
+            if let Ok(status) = lockdown.get_developer_mode_status().await {
+                if !status {
+                    if let Ok(mut amfi) = AmfiClient::connect(provider).await {
+                        let _ = amfi.reveal_developer_mode_option_in_ui().await;
+                    }
+                }
+                return status;
+            }
         }
-    }
-    // Secondary check via AMFI Lockdown service (`com.apple.amfi.lockdown`, action=3)
-    let Ok(mut amfi) = AmfiClient::connect(provider).await else {
-        return true;
-    };
-    match amfi.get_developer_mode_status().await {
-        Ok(false) => {
-            let _ = amfi.reveal_developer_mode_option_in_ui().await;
-            false
+        // Secondary check via AMFI Lockdown service (`com.apple.amfi.lockdown`, action=3)
+        let Ok(mut amfi) = AmfiClient::connect(provider).await else {
+            return true;
+        };
+        match amfi.get_developer_mode_status().await {
+            Ok(false) => {
+                let _ = amfi.reveal_developer_mode_option_in_ui().await;
+                false
+            }
+            _ => true,
         }
-        _ => true,
-    }
+    })
+    .await
+    .unwrap_or(true)
 }
 
 /// Reads `UniqueChipID` (ECID) and optional `ProductVersion` from Lockdown over USB.
 pub(crate) async fn read_ecid_and_version(
     provider: &UsbmuxdProvider,
 ) -> Result<(u64, String), String> {
-    let mut lockdown = LockdownClient::connect(provider)
-        .await
-        .map_err(err("lockdown"))?;
-    let pairing_opt = provider.get_pairing_file().await.ok();
-    if let Some(ref pf) = pairing_opt {
-        let _ = lockdown.start_session(pf).await;
-    }
-    let ecid = lockdown
-        .get_value(Some("UniqueChipID"), None)
-        .await
-        .ok()
-        .and_then(|v| v.as_unsigned_integer())
-        .ok_or_else(|| "Gagal membaca UniqueChipID (ECID) dari iPhone.".to_string())?;
-    let version = lockdown
-        .get_value(Some("ProductVersion"), None)
-        .await
-        .ok()
-        .and_then(|v| v.as_string().map(str::to_owned))
-        .unwrap_or_default();
-    Ok((ecid, version))
+    tokio::time::timeout(Duration::from_secs(8), async move {
+        let mut lockdown = LockdownClient::connect(provider)
+            .await
+            .map_err(err("lockdown"))?;
+        let pairing_opt = provider.get_pairing_file().await.ok();
+        if let Some(ref pf) = pairing_opt {
+            let _ = lockdown.start_session(pf).await;
+        }
+        let ecid = lockdown
+            .get_value(Some("UniqueChipID"), None)
+            .await
+            .ok()
+            .and_then(|v| v.as_unsigned_integer())
+            .ok_or_else(|| "Gagal membaca UniqueChipID (ECID) dari iPhone.".to_string())?;
+        let version = lockdown
+            .get_value(Some("ProductVersion"), None)
+            .await
+            .ok()
+            .and_then(|v| v.as_string().map(str::to_owned))
+            .unwrap_or_default();
+        Ok((ecid, version))
+    })
+    .await
+    .map_err(|_| "Timeout membaca info iPhone lewat USB Lockdown (>8 detik).".to_string())?
 }
 
 /// Core shared DDI installer used by BOTH `Link::ensure_ddi()` AND `physical_stream.rs`
@@ -244,7 +247,11 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
             .services
             .contains_key(idevice::cryptexd::CRYPTEXD_SERVICE_NAME)
     {
-        if let Ok(Some(_)) = installed_ddi(rsd_provider, rsd).await {
+        crate::diag_log::record("ddi", "Checking installed_ddi over RSD cryptexd");
+        if let Ok(Ok(Some(_))) =
+            tokio::time::timeout(Duration::from_secs(8), installed_ddi(rsd_provider, rsd)).await
+        {
+            crate::diag_log::record("ddi", "Cryptex1 DDI already installed");
             return Ok(DdiMountOutcome::AlreadyMounted);
         }
     }
@@ -252,6 +259,7 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
     // Check Developer Mode over USB AMFI before any download or TSS request.
     if let Some(provider) = usb_provider {
         if !check_developer_mode_enabled(provider).await {
+            crate::diag_log::record("ddi", "Developer Mode disabled");
             return Err(DEV_MODE_OFF_BILINGUAL.into());
         }
     } else if kind == Kind::Personalized {
@@ -264,20 +272,22 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
     }
 
     // Step 1: Ensure DDI assets exist locally (auto-download 1x via pure WinHTTP if missing).
+    crate::diag_log::record("ddi", "Ensuring DDI files exist locally");
     on_stage(
         DdiStage::DownloadingDdi,
         10,
-        "Menyiapkan komponen iPhone (pertama kali)...",
+        "Menyiapkan komponen iOS 27 (pertama kali)...",
     );
     let dir = ddi::ensure_ddi_files_downloaded(kind, |pct, msg| {
         on_stage(DdiStage::DownloadingDdi, pct, msg);
     })?;
 
     // Step 2: Read DDI assets and perform real Apple TSS personalization + device mount.
+    crate::diag_log::record("ddi", "Mounting Developer Disk Image");
     on_stage(
         DdiStage::MountingDdi,
         75,
-        "Menandatangani & memasang Developer Disk Image ke iPhone...",
+        "Memasang Developer Disk Image ke iPhone...",
     );
     let files = ddi::read(kind, &dir).map_err(|e| format!("Gagal membaca berkas DDI: {e}"))?;
 
@@ -298,9 +308,15 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
                 files.root_hash,
                 identity,
             );
-            install_ddi(rsd_provider, rsd, &assets)
-                .await
-                .map_err(|e| {
+            tokio::time::timeout(
+                Duration::from_secs(45),
+                install_ddi(rsd_provider, rsd, &assets),
+            )
+            .await
+            .map_err(|_| {
+                "Timeout memasang Cryptex1 DDI ke iPhone (>45 detik). Buka kunci layar iPhone dan pastikan kabel USB terpasang erat. / Timed out mounting Cryptex1 DDI (>45s). Unlock iPhone and retry.".to_string()
+            })?
+            .map_err(|e| {
                     let s = format!("{e}");
                     if usb_provider.is_none() {
                         format!("{WIFI_DDI_POST_REBOOT_BILINGUAL} ({s})")
@@ -315,28 +331,32 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
             let Some(provider) = usb_provider else {
                 return Err(WIFI_DDI_POST_REBOOT_BILINGUAL.into());
             };
-            let mut mounter = ImageMounter::connect(provider)
-                .await
-                .map_err(err("mobile_image_mounter"))?;
             let (ecid, _) = read_ecid_and_version(provider).await?;
-            mounter
-                .mount_personalized(
-                    provider,
-                    files.image,
-                    files.trustcache,
-                    &files.build_manifest,
-                    None,
-                    ecid,
-                )
-                .await
-                .map_err(|e| {
-                    let s = format!("{e}");
-                    if s.to_ascii_lowercase().contains("developer mode") {
-                        DEV_MODE_OFF_BILINGUAL.to_string()
-                    } else {
-                        format!("Gagal memasang Personalized DDI: {s}")
-                    }
-                })?;
+            tokio::time::timeout(Duration::from_secs(45), async {
+                let mut mounter = ImageMounter::connect(provider)
+                    .await
+                    .map_err(err("mobile_image_mounter"))?;
+                mounter
+                    .mount_personalized(
+                        provider,
+                        files.image,
+                        files.trustcache,
+                        &files.build_manifest,
+                        None,
+                        ecid,
+                    )
+                    .await
+                    .map_err(|e| {
+                        let s = format!("{e}");
+                        if s.to_ascii_lowercase().contains("developer mode") {
+                            DEV_MODE_OFF_BILINGUAL.to_string()
+                        } else {
+                            format!("Gagal memasang Personalized DDI: {s}")
+                        }
+                    })
+            })
+            .await
+            .map_err(|_| "Timeout memasang Personalized DDI (>45 detik).".to_string())??;
         }
     }
 

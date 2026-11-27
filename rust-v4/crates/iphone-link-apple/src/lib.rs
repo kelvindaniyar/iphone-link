@@ -1,7 +1,9 @@
 pub mod airplay;
 pub mod amfi;
+pub mod app_paths;
 pub mod connection;
 pub mod ddi;
+pub mod diag_log;
 pub mod hid;
 pub mod link;
 pub mod mirror;
