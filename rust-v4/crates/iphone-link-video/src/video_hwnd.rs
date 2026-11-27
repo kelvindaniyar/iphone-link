@@ -5,7 +5,7 @@
 //! and Lossless BMP Snapshot Bridge (`< 5 ms`) to WinRT OCR / Link Grabber.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
@@ -277,22 +277,12 @@ pub fn compute_clean_source_region(
     let raw_w = slot.coded_width.max(1);
     let raw_h = slot.coded_height.max(1);
 
-    let (nat_top, nat_left, nat_bottom, nat_right) = if slot.trim_top == 0
-        && slot.trim_left == 0
-        && slot.trim_bottom == 0
-        && slot.trim_right == 0
-        && raw_w == 1216
-        && raw_h == 2656
-    {
-        (0, 0, 58, 14)
-    } else {
-        (
-            slot.trim_top,
-            slot.trim_left,
-            slot.trim_bottom,
-            slot.trim_right,
-        )
-    };
+    let (nat_top, nat_left, nat_bottom, nat_right) = (
+        slot.trim_top,
+        slot.trim_left,
+        slot.trim_bottom,
+        slot.trim_right,
+    );
 
     let sensor_clean_w = raw_w.saturating_sub(nat_left + nat_right).max(1);
     let sensor_clean_h = raw_h.saturating_sub(nat_top + nat_bottom).max(1);
@@ -669,11 +659,17 @@ pub fn compute_presenter_viewport_rect(
 /// Maps client mouse/touch coordinates `(client_x, client_y)` inside the stage viewport
 /// into sub-pixel accurate iOS HID coordinates `(0..=65535, 0..=65535)` with Inverse
 /// Rotation (`0°`/`90°`/`180°`/`270°`) and 4-side edge crop compensation.
-pub fn map_stage_touch_to_ios_hid(
+/// Maps pointer coordinates inside a Win32 client viewport (`ViewportStageRect`)
+/// into sub-pixel accurate iOS HID coordinates `(0..=65535, 0..=65535)` with Inverse
+/// Rotation (`0°`/`90°`/`180°`/`270°`), dynamic post-trim active source dimensions, and
+/// 4-side edge crop compensation.
+pub fn map_stage_touch_to_ios_hid_with_dims(
     client_x: f64,
     client_y: f64,
     viewport: &ViewportStageRect,
     config: &PresenterConfig,
+    active_w: u32,
+    active_h: u32,
 ) -> (u16, u16) {
     let w = (viewport.width.max(1)) as f64;
     let h = (viewport.height.max(1)) as f64;
@@ -687,25 +683,36 @@ pub fn map_stage_touch_to_ios_hid(
         _ => (nx, ny),
     };
 
-    // Clean iOS sensor space (1202 x 2598 after fixed macroblock strip)
-    const SENSOR_CLEAN_W: f64 = 1202.0;
-    const SENSOR_CLEAN_H: f64 = 2598.0;
-    let px_scale = SENSOR_CLEAN_W / (NORMAL_PORTRAIT_STAGE_W as f64);
+    let (sensor_clean_w, sensor_clean_h) = if active_w > 0 && active_h > 0 {
+        (active_w as f64, active_h as f64)
+    } else {
+        (1202.0, 2598.0)
+    };
+    let px_scale = (sensor_clean_w / (NORMAL_PORTRAIT_STAGE_W as f64)).max(1.0);
 
     let extra_l = (config.crop_left.min(24) as f64) * px_scale + (config.base_trim_px as f64);
     let extra_r = (config.crop_right.min(24) as f64) * px_scale + (config.base_trim_px as f64);
     let extra_t = (config.crop_top.min(24) as f64) * px_scale + (config.base_trim_px as f64);
     let extra_b = (config.crop_bottom.min(24) as f64) * px_scale + (config.base_trim_px as f64);
 
-    let vis_w = (SENSOR_CLEAN_W - extra_l - extra_r).max(1.0);
-    let vis_h = (SENSOR_CLEAN_H - extra_t - extra_b).max(1.0);
+    let vis_w = (sensor_clean_w - extra_l - extra_r).max(1.0);
+    let vis_h = (sensor_clean_h - extra_t - extra_b).max(1.0);
 
-    let ios_norm_x = ((extra_l + ux * vis_w) / SENSOR_CLEAN_W).clamp(0.0, 1.0);
-    let ios_norm_y = ((extra_t + uy * vis_h) / SENSOR_CLEAN_H).clamp(0.0, 1.0);
+    let ios_norm_x = ((extra_l + ux * vis_w) / sensor_clean_w).clamp(0.0, 1.0);
+    let ios_norm_y = ((extra_t + uy * vis_h) / sensor_clean_h).clamp(0.0, 1.0);
 
     let hid_x = (ios_norm_x * 65535.0).round().clamp(0.0, 65535.0) as u16;
     let hid_y = (ios_norm_y * 65535.0).round().clamp(0.0, 65535.0) as u16;
     (hid_x, hid_y)
+}
+
+pub fn map_stage_touch_to_ios_hid(
+    client_x: f64,
+    client_y: f64,
+    viewport: &ViewportStageRect,
+    config: &PresenterConfig,
+) -> (u16, u16) {
+    map_stage_touch_to_ios_hid_with_dims(client_x, client_y, viewport, config, 1202, 2598)
 }
 
 const B64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1228,6 +1235,7 @@ pub type StageKeyCallback = Arc<dyn Fn(StageKeyEvent) + Send + Sync + 'static>;
 
 struct StageInputState {
     config: Mutex<PresenterConfig>,
+    active_dims: Mutex<(u32, u32)>,
     pressed: AtomicBool,
     callback: Mutex<Option<StagePointerCallback>>,
     key_callback: Mutex<Option<StageKeyCallback>>,
@@ -1242,6 +1250,11 @@ impl StageInputState {
         let cw = (rc.right - rc.left).max(1) as u32;
         let ch = (rc.bottom - rc.top).max(1) as u32;
         let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (aw, ah) = self
+            .active_dims
+            .lock()
+            .map(|g| *g)
+            .unwrap_or((0, 0));
         let vp = ViewportStageRect {
             x: 0,
             y: 0,
@@ -1258,7 +1271,7 @@ impl StageInputState {
             bottom_black_bar_gap_px: 0.0,
             pillarbox_gap_px: 0.0,
         };
-        map_stage_touch_to_ios_hid(client_x as f64, client_y as f64, &vp, &cfg)
+        map_stage_touch_to_ios_hid_with_dims(client_x as f64, client_y as f64, &vp, &cfg, aw, ah)
     }
 
     fn emit(&self, ev: StagePointerEvent) {
@@ -1769,7 +1782,275 @@ impl LiveVideoProcessor {
     }
 }
 
-fn compute_vram_source_rect(snap: &VramFrameSnapshot, cfg: &PresenterConfig) -> Rect {
+pub const MAX_EDGE_PAD_PX: u32 = 96;
+pub const EDGE_PAD_STRIP_SAMPLES: u32 = 64;
+pub const EDGE_PAD_BLACK_THRESHOLD: u8 = 8;
+pub const EDGE_PAD_STEP_CONTENT_LUMA: u8 = 24;
+pub const EDGE_PAD_INTERIOR_BAND_PX: u32 = 8;
+
+#[inline]
+pub fn pack_edge_pad(pad_bottom: u32, pad_right: u32) -> u32 {
+    ((pad_bottom.min(0xFFFF)) << 16) | (pad_right.min(0xFFFF))
+}
+
+#[inline]
+pub fn unpack_edge_pad(packed: u32) -> (u32, u32) {
+    ((packed >> 16) & 0xFFFF, packed & 0xFFFF)
+}
+
+#[inline]
+fn bgra_pixel_max_channel(bgra: &[u8], offset: usize) -> u8 {
+    let b = bgra[offset];
+    let g = bgra[offset + 1];
+    let r = bgra[offset + 2];
+    b.max(g).max(r)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StripEdgeAxis {
+    Right,
+    Bottom,
+}
+
+/// Scans a 1:1 BGRA8 edge strip (`Right`: `strip_w x strip_h`, `Bottom`: `strip_w x strip_h`)
+/// across the middle `20%..80%` active band to detect baked encoder padding.
+/// Enforces: (1) uniform pure black `max(R,G,B) <= 8` across all cross-axis samples,
+/// (2) `4 <= run <= MAX_EDGE_PAD_PX`, (3) Interior Step-Edge Gate (`>= 24` in the adjacent `8 px`
+/// interior band across at least 25% of sampled rows/cols so pure black / `>96 px` letterbox never
+/// crops), and (4) even rounding `run & !1`.
+fn scan_edge_strip_common(
+    bgra: &[u8],
+    pitch: usize,
+    strip_w: u32,
+    strip_h: u32,
+    axis: StripEdgeAxis,
+    prev_committed: u32,
+) -> (Option<u32>, bool) {
+    if strip_w < 8 || strip_h < 8 || pitch < (strip_w as usize) * 4 {
+        return (None, false);
+    }
+    let need_bytes = (strip_h as usize - 1) * pitch + (strip_w as usize) * 4;
+    if bgra.len() < need_bytes {
+        return (None, false);
+    }
+
+    let (extent, sample_count) = match axis {
+        StripEdgeAxis::Right => (strip_w, strip_h),
+        StripEdgeAxis::Bottom => (strip_h, strip_w),
+    };
+    let line_max_luma = |depth_from_edge: u32| -> (u8, u32) {
+        let mut max_v = 0u8;
+        let mut bright_cnt = 0u32;
+        for s in 0..sample_count {
+            let (x, y) = match axis {
+                StripEdgeAxis::Right => (strip_w - 1 - depth_from_edge, s),
+                StripEdgeAxis::Bottom => (s, strip_h - 1 - depth_from_edge),
+            };
+            let off = (y as usize) * pitch + (x as usize) * 4;
+            let v = bgra_pixel_max_channel(bgra, off);
+            if v > max_v {
+                max_v = v;
+            }
+            if v >= EDGE_PAD_STEP_CONTENT_LUMA {
+                bright_cnt += 1;
+            }
+        }
+        (max_v, bright_cnt)
+    };
+
+    let mut run = 0u32;
+    for d in 0..extent {
+        let (max_v, _) = line_max_luma(d);
+        if max_v <= EDGE_PAD_BLACK_THRESHOLD {
+            run += 1;
+        } else {
+            break;
+        }
+    }
+
+    let outer_unlocked = if prev_committed >= 16 && run + 16 <= prev_committed {
+        let mut outer_bright = 0u32;
+        for d in run..prev_committed.min(extent) {
+            let (max_v, bright_cnt) = line_max_luma(d);
+            if max_v >= EDGE_PAD_STEP_CONTENT_LUMA && bright_cnt >= (sample_count / 4).max(1) {
+                outer_bright += 1;
+                break;
+            }
+        }
+        outer_bright > 0
+    } else {
+        false
+    };
+
+    if run < 4 || run > MAX_EDGE_PAD_PX || run + 4 > extent {
+        return (None, outer_unlocked);
+    }
+
+    // Interior Step-Edge Gate: the adjacent 8 px band strictly inside `run` MUST show real UI/video
+    // luminance (`>= 24` across >= 25% of middle-band samples) so empty dark backgrounds, pure
+    // black frames, or >96 px 4:3 pillarboxes are NEVER falsely trimmed.
+    let check_end = (run + EDGE_PAD_INTERIOR_BAND_PX).min(extent);
+    let mut interior_peak = 0u8;
+    let mut interior_active_lines = 0u32;
+    let min_active = (sample_count / 4).max(1);
+    for d in run..check_end {
+        let (max_v, bright_cnt) = line_max_luma(d);
+        if max_v > interior_peak {
+            interior_peak = max_v;
+        }
+        if bright_cnt >= min_active {
+            interior_active_lines += 1;
+        }
+    }
+    if interior_peak < EDGE_PAD_STEP_CONTENT_LUMA || interior_active_lines == 0 {
+        return (None, outer_unlocked);
+    }
+
+    let even_pad = run & !1;
+    if even_pad >= 4 {
+        (Some(even_pad), outer_unlocked)
+    } else {
+        (None, outer_unlocked)
+    }
+}
+
+pub fn scan_right_strip_bgra(bgra: &[u8], pitch: usize, strip_w: u32, strip_h: u32) -> Option<u32> {
+    scan_edge_strip_common(bgra, pitch, strip_w, strip_h, StripEdgeAxis::Right, 0).0
+}
+
+pub fn scan_bottom_strip_bgra(
+    bgra: &[u8],
+    pitch: usize,
+    strip_w: u32,
+    strip_h: u32,
+) -> Option<u32> {
+    scan_edge_strip_common(bgra, pitch, strip_w, strip_h, StripEdgeAxis::Bottom, 0).0
+}
+
+#[derive(Debug, Clone)]
+pub struct HevcEdgePadDetector {
+    last_tier1_dims: (u32, u32),
+    probe_budget_remaining: u32,
+    last_periodic_probe_at: Option<Instant>,
+    pending_pad: (u32, u32),
+    pending_streak: u8,
+    committed_pad: (u32, u32),
+}
+
+impl Default for HevcEdgePadDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HevcEdgePadDetector {
+    pub fn new() -> Self {
+        Self {
+            last_tier1_dims: (0, 0),
+            probe_budget_remaining: 15,
+            last_periodic_probe_at: None,
+            pending_pad: (0, 0),
+            pending_streak: 0,
+            committed_pad: (0, 0),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    pub fn committed_pad(&self) -> (u32, u32) {
+        self.committed_pad
+    }
+
+    pub fn should_probe(
+        &mut self,
+        tier1_w: u32,
+        tier1_h: u32,
+        is_airplay: bool,
+        now: Instant,
+    ) -> bool {
+        if is_airplay || tier1_w < 64 || tier1_h < 64 {
+            return false;
+        }
+        if (tier1_w, tier1_h) != self.last_tier1_dims {
+            self.last_tier1_dims = (tier1_w, tier1_h);
+            self.probe_budget_remaining = 15;
+            self.last_periodic_probe_at = None;
+            self.pending_pad = (0, 0);
+            self.pending_streak = 0;
+            self.committed_pad = (0, 0);
+            return true;
+        }
+        if self.probe_budget_remaining > 0 {
+            return true;
+        }
+        if self.committed_pad == (0, 0)
+            && self
+                .last_periodic_probe_at
+                .map_or(true, |t| now.duration_since(t) >= Duration::from_secs(1))
+        {
+            return true;
+        }
+        false
+    }
+
+    pub fn observe_measurement(
+        &mut self,
+        meas_bottom: u32,
+        meas_right: u32,
+        outer_unlocked_b: bool,
+        outer_unlocked_r: bool,
+        now: Instant,
+    ) -> (u32, u32) {
+        self.probe_budget_remaining = self.probe_budget_remaining.saturating_sub(1);
+        self.last_periodic_probe_at = Some(now);
+
+        let cand_b = (meas_bottom & !1).min(MAX_EDGE_PAD_PX);
+        let cand_r = (meas_right & !1).min(MAX_EDGE_PAD_PX);
+
+        // Monotonic High-Watermark Expansion (requires 2 consecutive frames to raise trim)
+        if cand_b > self.committed_pad.0 || cand_r > self.committed_pad.1 {
+            let target = (
+                cand_b.max(self.committed_pad.0),
+                cand_r.max(self.committed_pad.1),
+            );
+            if target == self.pending_pad {
+                self.pending_streak = self.pending_streak.saturating_add(1);
+            } else {
+                self.pending_pad = target;
+                self.pending_streak = 1;
+            }
+            if self.pending_streak >= 2 {
+                self.committed_pad = self.pending_pad;
+                self.pending_streak = 0;
+            }
+        } else {
+            self.pending_streak = 0;
+        }
+
+        // 1-frame High-Watermark unlock ONLY when >= 16 px reduction coincides with bright content
+        // inside the previously trimmed outer boundary.
+        if self.committed_pad.0 > 0
+            && outer_unlocked_b
+            && cand_b.saturating_add(16) <= self.committed_pad.0
+        {
+            self.committed_pad.0 = cand_b;
+        }
+        if self.committed_pad.1 > 0
+            && outer_unlocked_r
+            && cand_r.saturating_add(16) <= self.committed_pad.1
+        {
+            self.committed_pad.1 = cand_r;
+        }
+
+        self.committed_pad
+    }
+}
+
+/// Computes the Tier 1 aperture/SPS source rectangle BEFORE Tier 2 baked padding detection or
+/// user manual edge crop. Guarantees ZERO double-trimming when `visible_rect` already crops.
+pub fn compute_reconciled_aperture_rect_only(snap: &VramFrameSnapshot) -> Rect {
     let raw_w = snap.coded_width.max(1);
     let raw_h = snap.coded_height.max(1);
     let base_l = snap.visible_rect.left.max(0) as u32;
@@ -1777,26 +2058,17 @@ fn compute_vram_source_rect(snap: &VramFrameSnapshot, cfg: &PresenterConfig) -> 
     let base_r = (snap.visible_rect.right as u32).min(raw_w).max(base_l + 1);
     let base_b = (snap.visible_rect.bottom as u32).min(raw_h).max(base_t + 1);
 
-    let (trim_t, trim_l, trim_b, trim_r) = if snap.is_airplay {
+    let vis_already_cropped = base_l > 0 || base_t > 0 || base_r < raw_w || base_b < raw_h;
+    let (trim_t, trim_l, trim_b, trim_r) = if snap.is_airplay || vis_already_cropped {
         (0, 0, 0, 0)
-    } else if snap.trim == (0, 0, 0, 0) && raw_w == 1216 && raw_h == 2656 {
-        (0, 0, 58, 14)
     } else {
         snap.trim
     };
 
-    let vis_w = base_r.saturating_sub(base_l).saturating_sub(trim_l + trim_r).max(1);
-    let px_scale = (vis_w as f32 / NORMAL_PORTRAIT_STAGE_W as f32).max(1.0);
-    let extra_l = (cfg.crop_left.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
-    let extra_r = (cfg.crop_right.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
-    let extra_t = (cfg.crop_top.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
-    let extra_b = (cfg.crop_bottom.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
-
-    let mut l = base_l.saturating_add(trim_l).saturating_add(extra_l);
-    let mut r = base_r.saturating_sub(trim_r).saturating_sub(extra_r);
-    let mut t = base_t.saturating_add(trim_t).saturating_add(extra_t);
-    let mut b = base_b.saturating_sub(trim_b).saturating_sub(extra_b);
-
+    let mut l = base_l.saturating_add(trim_l);
+    let mut r = base_r.saturating_sub(trim_r);
+    let mut t = base_t.saturating_add(trim_t);
+    let mut b = base_b.saturating_sub(trim_b);
     if l >= r {
         l = base_l;
         r = base_r;
@@ -1804,6 +2076,58 @@ fn compute_vram_source_rect(snap: &VramFrameSnapshot, cfg: &PresenterConfig) -> 
     if t >= b {
         t = base_t;
         b = base_b;
+    }
+    Rect {
+        left: l as i32,
+        top: t as i32,
+        right: r as i32,
+        bottom: b as i32,
+    }
+}
+
+/// Computes the final VRAM crop rectangle combining Tier 1 reconciled aperture, Tier 2
+/// dynamically detected baked padding `(pad_bottom, pad_right)`, and user manual crop settings.
+pub fn compute_vram_source_rect_with_pad(
+    snap: &VramFrameSnapshot,
+    cfg: &PresenterConfig,
+    detected_pad: (u32, u32),
+) -> Rect {
+    let tier1 = compute_reconciled_aperture_rect_only(snap);
+    let t_l = tier1.left.max(0) as u32;
+    let t_t = tier1.top.max(0) as u32;
+    let mut t_r = tier1.right.max(t_l as i32 + 1) as u32;
+    let mut t_b = tier1.bottom.max(t_t as i32 + 1) as u32;
+
+    if !snap.is_airplay {
+        let pad_b = (detected_pad.0 & !1).min(MAX_EDGE_PAD_PX);
+        let pad_r = (detected_pad.1 & !1).min(MAX_EDGE_PAD_PX);
+        if pad_r > 0 && t_r.saturating_sub(t_l) > pad_r + 16 {
+            t_r -= pad_r;
+        }
+        if pad_b > 0 && t_b.saturating_sub(t_t) > pad_b + 16 {
+            t_b -= pad_b;
+        }
+    }
+
+    let vis_w = t_r.saturating_sub(t_l).max(1);
+    let px_scale = (vis_w as f32 / NORMAL_PORTRAIT_STAGE_W as f32).max(1.0);
+    let extra_l = (cfg.crop_left.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
+    let extra_r = (cfg.crop_right.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
+    let extra_t = (cfg.crop_top.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
+    let extra_b = (cfg.crop_bottom.min(24) as f32 * px_scale).round() as u32 + cfg.base_trim_px;
+
+    let mut l = t_l.saturating_add(extra_l);
+    let mut r = t_r.saturating_sub(extra_r);
+    let mut t = t_t.saturating_add(extra_t);
+    let mut b = t_b.saturating_sub(extra_b);
+
+    if l >= r {
+        l = t_l;
+        r = t_r;
+    }
+    if t >= b {
+        t = t_t;
+        b = t_b;
     }
     Rect {
         left: l as i32,
@@ -1975,12 +2299,19 @@ pub fn compute_dest_and_clip_rects_for_fit(
 }
 
 /// Computes post-trim visible source dimensions matching `compute_vram_source_rect`.
-pub fn compute_post_trim_dimensions(snap: &VramFrameSnapshot) -> (u32, u32) {
-    let r = compute_vram_source_rect(snap, &PresenterConfig::default());
+pub fn compute_post_trim_dimensions_with_pad(
+    snap: &VramFrameSnapshot,
+    detected_pad: (u32, u32),
+) -> (u32, u32) {
+    let r = compute_vram_source_rect_with_pad(snap, &PresenterConfig::default(), detected_pad);
     (
         (r.right - r.left).max(2) as u32,
         (r.bottom - r.top).max(2) as u32,
     )
+}
+
+pub fn compute_post_trim_dimensions(snap: &VramFrameSnapshot) -> (u32, u32) {
+    compute_post_trim_dimensions_with_pad(snap, (0, 0))
 }
 
 /// Tahap 274 (Pilar 4): Per-frame atomic rotation policy for AirPlay streams so rotation
@@ -2152,6 +2483,10 @@ pub struct LiveVideoHwnd {
     hd_shader: Option<HdNv12ShaderRenderer>,
     hd_shader_presents: u64,
     last_presenter_key: Option<(u32, u32, u32, u32)>,
+    edge_pad_detector: HevcEdgePadDetector,
+    detected_pad_packed: Arc<AtomicU32>,
+    pad_right_rt: Option<(ComPtr, ComPtr, ComPtr, u32, u32)>,
+    pad_bottom_rt: Option<(ComPtr, ComPtr, ComPtr, u32, u32)>,
     // MUST remain the last field so D3D11/DXGI COM children drop BEFORE
     // `LiveD3d11Gpu::drop()` calls `MFShutdown()` and `FreeLibrary(d3d11.dll)`.
     gpu: Arc<LiveD3d11Gpu>,
@@ -2218,6 +2553,7 @@ impl LiveVideoHwnd {
 
         let input_state = Arc::new(StageInputState {
             config: Mutex::new(PresenterConfig::default()),
+            active_dims: Mutex::new((0, 0)),
             pressed: AtomicBool::new(false),
             callback: Mutex::new(None),
             key_callback: Mutex::new(None),
@@ -2339,6 +2675,10 @@ impl LiveVideoHwnd {
             hd_shader,
             hd_shader_presents: 0,
             last_presenter_key: None,
+            edge_pad_detector: HevcEdgePadDetector::new(),
+            detected_pad_packed: Arc::new(AtomicU32::new(0)),
+            pad_right_rt: None,
+            pad_bottom_rt: None,
         })
     }
 
@@ -2355,6 +2695,7 @@ impl LiveVideoHwnd {
         let h = height.max(1);
         let input_state = Arc::new(StageInputState {
             config: Mutex::new(PresenterConfig::default()),
+            active_dims: Mutex::new((0, 0)),
             pressed: AtomicBool::new(false),
             callback: Mutex::new(None),
             key_callback: Mutex::new(None),
@@ -2406,6 +2747,10 @@ impl LiveVideoHwnd {
             hd_shader,
             hd_shader_presents: 0,
             last_presenter_key: None,
+            edge_pad_detector: HevcEdgePadDetector::new(),
+            detected_pad_packed: Arc::new(AtomicU32::new(0)),
+            pad_right_rt: None,
+            pad_bottom_rt: None,
         })
     }
 
@@ -2447,6 +2792,25 @@ impl LiveVideoHwnd {
 
     pub fn set_airplay_mode(&mut self, is_airplay: bool) {
         self.airplay_render_policy.is_airplay = is_airplay;
+        if is_airplay {
+            self.edge_pad_detector.reset();
+            self.detected_pad_packed.store(0, Ordering::Release);
+        }
+    }
+
+    pub fn set_detected_pad_atomic(&mut self, shared: Arc<AtomicU32>) {
+        let cur = self.detected_pad_packed.load(Ordering::Acquire);
+        shared.store(cur, Ordering::Release);
+        self.detected_pad_packed = shared;
+    }
+
+    pub fn detected_pad_trim(&self) -> (u32, u32) {
+        unpack_edge_pad(self.detected_pad_packed.load(Ordering::Acquire))
+    }
+
+    pub fn reset_edge_pad_detector(&mut self) {
+        self.edge_pad_detector.reset();
+        self.detected_pad_packed.store(0, Ordering::Release);
     }
 
     pub fn set_window_landscape(&mut self, window_is_landscape: bool) {
@@ -2522,6 +2886,8 @@ impl LiveVideoHwnd {
         self.probe_rt = None;
         self.probe_rtv = None;
         self.probe_staging = None;
+        self.pad_right_rt = None;
+        self.pad_bottom_rt = None;
     }
 
     pub fn set_presenter_config(&mut self, mut cfg: PresenterConfig) {
@@ -2659,6 +3025,7 @@ impl LiveVideoHwnd {
         HD_SHADER_TRACE_PRESENTS.store(0, Ordering::Relaxed);
         HD_SHADER_TRACE_ACTIVE.store(self.hd_shader.is_some(), Ordering::Relaxed);
         self.pending_dual_backbuffer_overwrite = false;
+        self.reset_edge_pad_detector();
         self.release_cached_processors_and_views();
 
         let Some(ref sc) = self.swapchain else {
@@ -2788,6 +3155,178 @@ impl LiveVideoHwnd {
     ///   (ZERO black clear & ZERO empty Present mid-stream).
     /// - Atomically overwrites both `FLIP_SEQUENTIAL` backbuffers on the first clean frame after
     ///   `prepare_seamless_dimension_transition()`.
+    fn probe_bgra_strip(
+        &mut self,
+        snap: &VramFrameSnapshot,
+        tex_w: u32,
+        tex_h: u32,
+        is_bottom: bool,
+        src_rect: Rect,
+        out_w: u32,
+        out_h: u32,
+    ) -> Option<(Vec<u8>, usize)> {
+        if out_w < 8 || out_h < 8 {
+            return None;
+        }
+        if self.hd_shader.is_none() {
+            self.hd_shader = HdNv12ShaderRenderer::new(&self.gpu).ok();
+        }
+        let sh = self.hd_shader.as_mut()?;
+        let slot = if is_bottom {
+            &mut self.pad_bottom_rt
+        } else {
+            &mut self.pad_right_rt
+        };
+        let needs_rebuild = match slot {
+            Some((_, _, _, w, h)) => *w != out_w || *h != out_h,
+            None => true,
+        };
+        if needs_rebuild {
+            let rt = self
+                .gpu
+                .create_bgra_texture(
+                    out_w,
+                    out_h,
+                    D3D11_USAGE_DEFAULT,
+                    D3D11_BIND_RENDER_TARGET,
+                    0,
+                )
+                .ok()?;
+            let rtv = self.gpu.create_rtv(&rt).ok()?;
+            let stg = self
+                .gpu
+                .create_bgra_texture(out_w, out_h, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ)
+                .ok()?;
+            *slot = Some((rt, rtv, stg, out_w, out_h));
+        }
+        let (rt, rtv, stg, _, _) = slot.as_ref()?;
+        let dst_rect = Rect {
+            left: 0,
+            top: 0,
+            right: out_w as i32,
+            bottom: out_h as i32,
+        };
+        if sh
+            .render_to_rtv_with_sharpen(
+                &self.gpu,
+                &snap.texture,
+                rtv,
+                tex_w,
+                tex_h,
+                src_rect,
+                dst_rect,
+                0,
+                snap.color_info,
+                0.0,
+            )
+            .is_err()
+        {
+            return None;
+        }
+        self.gpu.copy_resource(stg, rt);
+        let mapped = self.gpu.map_texture(stg, 0, D3D11_MAP_READ).ok()?;
+        let pitch = mapped.row_pitch as usize;
+        let total = pitch.saturating_mul(out_h as usize);
+        let mut out = vec![0u8; total];
+        unsafe {
+            if !mapped.p_data.is_null() && total > 0 {
+                std::ptr::copy_nonoverlapping(mapped.p_data as *const u8, out.as_mut_ptr(), total);
+            }
+        }
+        self.gpu.unmap_texture(stg, 0);
+        Some((out, pitch))
+    }
+
+    fn maybe_update_edge_pad_detector(
+        &mut self,
+        snap: &VramFrameSnapshot,
+        in_w: u32,
+        in_h: u32,
+    ) -> (u32, u32) {
+        let tier1_raw = compute_reconciled_aperture_rect_only(snap);
+        let tier1 = Rect {
+            left: tier1_raw.left.clamp(0, in_w.saturating_sub(2) as i32),
+            top: tier1_raw.top.clamp(0, in_h.saturating_sub(2) as i32),
+            right: tier1_raw.right.clamp(2.min(in_w as i32), in_w as i32),
+            bottom: tier1_raw.bottom.clamp(2.min(in_h as i32), in_h as i32),
+        };
+        let tier1_w = (tier1.right - tier1.left).max(1) as u32;
+        let tier1_h = (tier1.bottom - tier1.top).max(1) as u32;
+        let now = Instant::now();
+        if !self
+            .edge_pad_detector
+            .should_probe(tier1_w, tier1_h, snap.is_airplay, now)
+        {
+            return if snap.is_airplay {
+                (0, 0)
+            } else {
+                self.edge_pad_detector.committed_pad()
+            };
+        }
+
+        let prev_pad = self.edge_pad_detector.committed_pad();
+        let right_w = (MAX_EDGE_PAD_PX.min(tier1_w / 4).max(8)) & !1;
+        let right_h = EDGE_PAD_STRIP_SAMPLES;
+        let y_band_start = tier1.top + (tier1_h as i32) / 5;
+        let y_band_end = (tier1.top + ((tier1_h as i32) * 4) / 5).max(y_band_start + 8);
+        let right_src = Rect {
+            left: (tier1.right - right_w as i32).max(tier1.left),
+            top: y_band_start,
+            right: tier1.right,
+            bottom: y_band_end,
+        };
+        let (meas_r, unlock_r) =
+            if let Some((buf, pitch)) =
+                self.probe_bgra_strip(snap, in_w, in_h, false, right_src, right_w, right_h)
+            {
+                let (m, u) = scan_edge_strip_common(
+                    &buf,
+                    pitch,
+                    right_w,
+                    right_h,
+                    StripEdgeAxis::Right,
+                    prev_pad.1,
+                );
+                (m.unwrap_or(0), u)
+            } else {
+                (0, false)
+            };
+
+        let bot_w = EDGE_PAD_STRIP_SAMPLES;
+        let bot_h = (MAX_EDGE_PAD_PX.min(tier1_h / 4).max(8)) & !1;
+        let x_band_start = tier1.left + (tier1_w as i32) / 5;
+        let x_band_end = (tier1.left + ((tier1_w as i32) * 4) / 5).max(x_band_start + 8);
+        let bot_src = Rect {
+            left: x_band_start,
+            top: (tier1.bottom - bot_h as i32).max(tier1.top),
+            right: x_band_end,
+            bottom: tier1.bottom,
+        };
+        let (meas_b, unlock_b) =
+            if let Some((buf, pitch)) =
+                self.probe_bgra_strip(snap, in_w, in_h, true, bot_src, bot_w, bot_h)
+            {
+                let (m, u) = scan_edge_strip_common(
+                    &buf,
+                    pitch,
+                    bot_w,
+                    bot_h,
+                    StripEdgeAxis::Bottom,
+                    prev_pad.0,
+                );
+                (m.unwrap_or(0), u)
+            } else {
+                (0, false)
+            };
+
+        let committed = self
+            .edge_pad_detector
+            .observe_measurement(meas_b, meas_r, unlock_b, unlock_r, now);
+        self.detected_pad_packed
+            .store(pack_edge_pad(committed.0, committed.1), Ordering::Release);
+        committed
+    }
+
     pub fn present_latest(&mut self) -> Result<LivePresentStats, String> {
         let sc = self
             .swapchain
@@ -2833,21 +3372,27 @@ impl LiveVideoHwnd {
             if let Some(ref snap) = latest_snap {
                 frame_seq = snap.frame_seq;
                 self.last_frame_seq = frame_seq;
-                // Tahap 275 (Pilar 2): Always inspect the actual D3D11 NV12 texture dims for
-                // each frame so adaptive portrait scaling (`990x2160 <-> 888x1920 <-> 640x1388`)
-                // clamps `src_raw` strictly inside committed bounds and recreates
-                // `LiveVideoProcessor` atomically without stretching or black borders.
                 let tex_desc = LiveD3d11Gpu::get_texture2d_desc(&snap.texture);
                 let in_w = tex_desc.width.max(2);
                 let in_h = tex_desc.height.max(2);
                 let src_dims = (in_w, in_h);
-                let unclipped_src = compute_vram_source_rect(snap, &cfg);
+                let detected_pad = if pass_idx == 0 {
+                    self.maybe_update_edge_pad_detector(snap, in_w, in_h)
+                } else {
+                    self.detected_pad_trim()
+                };
+                let unclipped_src = compute_vram_source_rect_with_pad(snap, &cfg, detected_pad);
                 let src_raw = Rect {
                     left: unclipped_src.left.clamp(0, in_w.saturating_sub(2) as i32),
                     top: unclipped_src.top.clamp(0, in_h.saturating_sub(2) as i32),
                     right: unclipped_src.right.clamp(2.min(in_w as i32), in_w as i32),
                     bottom: unclipped_src.bottom.clamp(2.min(in_h as i32), in_h as i32),
                 };
+                let active_vis_w = (src_raw.right - src_raw.left).max(1) as u32;
+                let active_vis_h = (src_raw.bottom - src_raw.top).max(1) as u32;
+                if let Ok(mut ad) = self.input_state.active_dims.lock() {
+                    *ad = (active_vis_w, active_vis_h);
+                }
                 let (rot, src_clipped, dst_clipped) = if self.airplay_render_policy.is_airplay {
                     compute_stateless_airplay_present_rects(
                         src_raw,
@@ -3095,7 +3640,7 @@ impl LiveVideoHwnd {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let src_rect = compute_vram_source_rect(&snap, &cfg);
+        let src_rect = compute_vram_source_rect_with_pad(&snap, &cfg, self.detected_pad_trim());
         let src_w = (src_rect.right - src_rect.left).max(1) as u32;
         let src_h = (src_rect.bottom - src_rect.top).max(1) as u32;
         let bmp_policy = if self.airplay_render_policy.is_airplay {
@@ -3391,7 +3936,7 @@ impl LiveVideoHwnd {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let src_rect = compute_vram_source_rect(&snap, &cfg);
+        let src_rect = compute_vram_source_rect_with_pad(&snap, &cfg, self.detected_pad_trim());
         let sw = (src_rect.right - src_rect.left).max(2) as u32;
         let sh = (src_rect.bottom - src_rect.top).max(2) as u32;
         let thumb_policy = if self.airplay_render_policy.is_airplay {
@@ -4873,5 +5418,63 @@ mod tests {
 
         ring.clear();
         drop(hwnd);
+    }
+
+    #[test]
+    fn test_tahap297_ipad_4_3_and_dark_mode_youtube_letterbox_never_false_cropped() {
+        // 1. iPad 4:3 pillarbox inside 16:9 or full pure black strip (>96 px or zero interior step-edge)
+        let w = 96u32;
+        let h = 64u32;
+        let pitch = (w as usize) * 4;
+        let pure_black_strip = vec![0u8; pitch * (h as usize)];
+        assert_eq!(scan_right_strip_bgra(&pure_black_strip, pitch, w, h), None);
+        assert_eq!(scan_bottom_strip_bgra(&pure_black_strip, pitch, 64, 96), None);
+
+        // 2. Dark mode YouTube (#121212 = 18 > 8 threshold) must never be detected as black padding
+        let dark_mode_youtube = vec![18u8; pitch * (h as usize)];
+        assert_eq!(scan_right_strip_bgra(&dark_mode_youtube, pitch, w, h), None);
+
+        // 3. Synthetic 15 px odd baked right pad + bright content (200) inside -> rounds even to 14 px,
+        //    requires 2 consecutive frames to lock, holds on small fluctuations (<16 px shrink),
+        //    and unlocks in 1 frame when >= 16 px genuine reduction occurs with bright content.
+        let mut strip_r14 = vec![200u8; pitch * (h as usize)];
+        for y in 0..h {
+            for x in (w - 15)..w {
+                let off = (y as usize) * pitch + (x as usize) * 4;
+                strip_r14[off] = 4;
+                strip_r14[off + 1] = 4;
+                strip_r14[off + 2] = 4;
+            }
+        }
+        assert_eq!(scan_right_strip_bgra(&strip_r14, pitch, w, h), Some(14));
+
+        // 58 px bottom baked pad
+        let bw = 64u32;
+        let bh = 96u32;
+        let bpitch = (bw as usize) * 4;
+        let mut strip_b58 = vec![190u8; bpitch * (bh as usize)];
+        for y in (bh - 58)..bh {
+            for x in 0..bw {
+                let off = (y as usize) * bpitch + (x as usize) * 4;
+                strip_b58[off] = 2;
+                strip_b58[off + 1] = 2;
+                strip_b58[off + 2] = 2;
+            }
+        }
+        assert_eq!(scan_bottom_strip_bgra(&strip_b58, bpitch, bw, bh), Some(58));
+
+        let mut det = HevcEdgePadDetector::new();
+        let t0 = Instant::now();
+        assert!(det.should_probe(1216, 2656, false, t0));
+        // Frame 1: pending only (requires 2-frame lock)
+        assert_eq!(det.observe_measurement(58, 14, false, false, t0), (0, 0));
+        // Frame 2: locks cleanly to (58, 14)
+        assert_eq!(det.observe_measurement(58, 14, false, false, t0), (58, 14));
+        // Monotonic hold against small shrink (50 instead of 58)
+        assert_eq!(det.observe_measurement(50, 14, false, false, t0), (58, 14));
+        // Full-bleed flash unlock (>= 16 px shrink with bright content outside)
+        assert_eq!(det.observe_measurement(0, 0, true, false, t0), (0, 14));
+        // AirPlay ALWAYS bypassed
+        assert!(!det.should_probe(1216, 2656, true, t0));
     }
 }

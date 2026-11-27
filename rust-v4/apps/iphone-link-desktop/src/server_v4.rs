@@ -80,7 +80,7 @@ pub static LATEST_SHORTCUT_URL_CACHE: Mutex<(String, u64)> = Mutex::new((String:
 pub static DEBUG_METRICS_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub const STANDALONE_INPROCESS_ONLY: bool = true;
 pub const INPROCESS_ROUTE_COUNT: usize = 50;
-pub const APP_VERSION_V5: &str = "5.0.1";
+pub const APP_VERSION_V5: &str = "5.0.2";
 pub const APP_EDITION_V5: &str = "100% Pure Native Rust (Zero Python & Zero PowerShell)";
 
 // Compile-time Zero-I/O Embedded Web & Icon Assets (Tahap 232)
@@ -4002,8 +4002,8 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
     function syncVersionLabels() {
         try {
             var updVer = document.getElementById('update-current-version');
-            if (updVer && updVer.textContent.trim() !== 'iPhone Link v5.0.1') {
-                updVer.textContent = 'iPhone Link v5.0.1';
+            if (updVer && updVer.textContent.trim() !== 'iPhone Link v5.0.2') {
+                updVer.textContent = 'iPhone Link v5.0.2';
             }
             var credName = document.querySelector('.credit-app-name');
             if (credName && credName.textContent.trim() !== 'iPhone Link v5.0') {
@@ -4051,7 +4051,7 @@ pub const V4_BRIDGE_JS: &str = r#"/* v4_bridge.js - Native Rust IPC Shim for pyw
                     '  <p data-i18n="updater.info"></p>',
                     '</div>',
                     '<div class="update-card-body" id="update-card-body">',
-                    '  <div class="update-version-label" id="update-current-version">iPhone Link v5.0.1</div>',
+                    '  <div class="update-version-label" id="update-current-version">iPhone Link v5.0.2</div>',
                     '  <div class="update-row">',
                     '    <span class="update-row-label" data-i18n="updater.auto_check">' + (isEn ? 'Check automatically on startup' : 'Cek pembaruan otomatis saat dibuka') + '</span>',
                     '    <button type="button" class="toggle-switch is-active" id="toggle-auto-update-check" role="switch" aria-checked="true" aria-label="Auto check updates"><span class="toggle-switch-thumb"></span></button>',
@@ -6517,7 +6517,7 @@ fn extract_crop_object_slice(raw: &str) -> Option<&str> {
 fn format_user_settings_json(st: &AppState, folder_id: &str, has_file: bool, unlock_pin: &str) -> String {
     let bt_on = st.bluetooth_a2dp || st.audio_routing == "bluetooth";
     format!(
-        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","lastSelectedUdid":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"pcClipboardPaste":{},"ctrlVPastesPc":{},"autoRotate":{},"stealthDim":{},"restoreSteps":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"5.0.1","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true}}"#,
+        r#"{{"isFreshFolder":false,"folderInstanceId":"{}","hasUserSettingsFile":{},"unlockPin":"{}","lastSelectedUdid":"{}","crop":{{"top":{},"bottom":{},"left":{},"right":{}}},"fitMode":"{}","theme":"{}","transport":"{}","audioOut":"{}","audioTarget":"{}","audioSinkEnabled":{},"bluetoothA2dp":{},"audioVolume":{},"pcVolume":{},"audioMuted":{},"pcMuted":{},"audioBufferPreset":"{}","audioBuffer":"{}","lipSync":{},"trackpadSpeed":{},"gestureSpeed":{},"speedSensitivity":{},"crossPlatformShortcuts":{},"pastePcClipboard":{},"pcClipboardPaste":{},"ctrlVPastesPc":{},"autoRotate":{},"stealthDim":{},"restoreSteps":{},"deviceProfile":"{}","customWindowSize":null,"autoCheckUpdate":{},"updateChannel":"{}","language":"{}","version":"5.0.2","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true}}"#,
         escape_json_str(folder_id),
         has_file,
         escape_json_str(unlock_pin),
@@ -7585,9 +7585,15 @@ fn build_native_driver_diagnostics_json_with_opts(force_refresh: bool, is_stream
     json
 }
 
+/// Returns `true` when mirroring is actively streaming OR negotiating (`Zero-Poll` guard).
+pub fn is_effective_streaming_now(state: &Arc<Mutex<AppState>>) -> bool {
+    iphone_link_apple::mirror::is_mirror_starting_or_running_fast()
+        || state.lock().map(|s| s.is_streaming).unwrap_or(false)
+}
+
 /// Builds a strictly Zero-PII diagnostic snapshot for 1-click user clipboard export (Tahap 293).
 pub fn build_zero_pii_diagnostic_report(state: &Arc<Mutex<AppState>>) -> String {
-    let diag_raw = build_native_driver_diagnostics_json_with_opts(false, false);
+    let diag_raw = build_native_driver_diagnostics_json_with_opts(false, is_effective_streaming_now(state));
     let diag_clean = iphone_link_apple::diag_log::sanitize_pii_for_diagnostic_log(&diag_raw);
     let st_line = state
         .lock()
@@ -7629,52 +7635,33 @@ fn repair_native_apple_service() -> (bool, bool, bool, bool) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
 
-    let mut cfg = std::process::Command::new("sc.exe");
-    cfg.args(["config", "Apple Mobile Device Service", "start=", "auto"]);
-    cfg.creation_flags(CREATE_NO_WINDOW_FLAG);
-    let _ = cfg.output();
-
-    let mut st = std::process::Command::new("sc.exe");
-    st.args(["start", "Apple Mobile Device Service"]);
-    st.creation_flags(CREATE_NO_WINDOW_FLAG);
-    let _ = st.output();
+    // 1. Primary path: pure Win32 SCM clean restart (`stop -> wait <= 8s -> start`, 0 PowerShell).
+    let scm_res = crate::window_dwm::restart_apple_mobile_device_service_native();
+    if scm_res.access_denied && !iphone_link_apple::connection::is_loopback_only_test_mode() {
+        if crate::window_dwm::launch_elevated_amds_repair_self().is_ok() {
+            let deadline = std::time::Instant::now() + Duration::from_millis(3_000);
+            while std::time::Instant::now() < deadline {
+                if query_win32_apple_service_state() == Win32ServiceState::Running {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
 
     clear_metadata_cache(None);
-    let (ps1_path, msi_path) = find_bundled_apple_driver_files();
+    let (_ps1_path, msi_path) = find_bundled_apple_driver_files();
     let pre_svc = query_native_port_27015_open() || query_native_apple_service_running();
     let pre_drv = pre_svc || query_native_apple_driver_installed();
 
-    if !pre_drv || !pre_svc {
-        if let Some(ref ps1) = ps1_path {
-            let mut pcmd = std::process::Command::new("powershell");
-            pcmd.args([
-                "-WindowStyle",
-                "Hidden",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                &ps1.to_string_lossy(),
-            ]);
-            pcmd.creation_flags(CREATE_NO_WINDOW_FLAG);
-            let _ = pcmd.output();
-        } else if let Some(ref msi) = msi_path {
-            if !pre_drv {
-                let mut mcmd = std::process::Command::new("msiexec.exe");
-                mcmd.args(["/i", &msi.to_string_lossy(), "/qn", "/norestart"]);
-                mcmd.creation_flags(CREATE_NO_WINDOW_FLAG);
-                let _ = mcmd.output();
-            }
+    if !pre_drv {
+        if let Some(ref msi) = msi_path {
+            let mut mcmd = std::process::Command::new("msiexec.exe");
+            mcmd.args(["/i", &msi.to_string_lossy(), "/qn", "/norestart"]);
+            mcmd.creation_flags(CREATE_NO_WINDOW_FLAG);
+            let _ = mcmd.output();
+            let _ = crate::window_dwm::restart_apple_mobile_device_service_native();
         }
-        let mut cfg2 = std::process::Command::new("sc.exe");
-        cfg2.args(["config", "Apple Mobile Device Service", "start=", "auto"]);
-        cfg2.creation_flags(CREATE_NO_WINDOW_FLAG);
-        let _ = cfg2.output();
-        let mut st2 = std::process::Command::new("sc.exe");
-        st2.args(["start", "Apple Mobile Device Service"]);
-        st2.creation_flags(CREATE_NO_WINDOW_FLAG);
-        let _ = st2.output();
     }
 
     clear_metadata_cache(None);
@@ -7695,7 +7682,7 @@ fn extract_query_param(query: &str, key: &str) -> Option<String> {
 }
 
 fn build_native_usb_devices_json(force_refresh: bool) -> String {
-    let streaming_active = iphone_link_apple::mirror::is_mirror_streaming_fast();
+    let streaming_active = iphone_link_apple::mirror::is_mirror_starting_or_running_fast();
     let devs = if streaming_active && !force_refresh {
         snapshot_cached_devices_metadata_zero_io()
     } else {
@@ -7728,7 +7715,7 @@ fn build_native_usb_devices_json(force_refresh: bool) -> String {
             dev_bool_json,
         ));
     }
-    let diag = build_native_driver_diagnostics_json_with_opts(false, false);
+    let diag = build_native_driver_diagnostics_json_with_opts(false, streaming_active);
     format!(
         r#"{{"ok":true,"native":true,"count":{},"devices":[{}],"diagnostics":{}}}"#,
         devs.len(),
@@ -9154,7 +9141,10 @@ fn collect_unified_devices(
 
     let mut result = Vec::with_capacity(ordered_udids.len());
     for udid in ordered_udids {
-        let meta_opt = native_meta.iter().find(|m| m.udid.eq_ignore_ascii_case(&udid));
+        let meta_opt = native_meta
+            .iter()
+            .find(|m| m.udid.eq_ignore_ascii_case(&udid) && m.connection_type.eq_ignore_ascii_case("USB"))
+            .or_else(|| native_meta.iter().find(|m| m.udid.eq_ignore_ascii_case(&udid)));
         let usb_opt = usb_list
             .iter()
             .find(|u| u.serial_udid.eq_ignore_ascii_case(&udid));
@@ -9168,17 +9158,21 @@ fn collect_unified_devices(
             fresh_meta
         };
 
-        let is_usb = meta_opt.is_some_and(|m| m.connection_type.eq_ignore_ascii_case("USB"))
-            || usb_opt.is_some_and(|u| u.connection_type.eq_ignore_ascii_case("USB"));
-        let is_net_live =
-            meta_opt.is_some_and(|m| !m.connection_type.eq_ignore_ascii_case("USB"));
+        let is_usb = native_meta.iter().any(|m| {
+            m.udid.eq_ignore_ascii_case(&udid) && m.connection_type.eq_ignore_ascii_case("USB")
+        }) || usb_opt.is_some_and(|u| u.connection_type.eq_ignore_ascii_case("USB"));
         let wifi_paired = paired_wifi_udids
             .iter()
-            .any(|p| p.eq_ignore_ascii_case(&udid))
-            || wmeta.wifi_enabled;
+            .any(|p| p.eq_ignore_ascii_case(&udid));
+        let is_net_live = wifi_paired
+            && native_meta.iter().any(|m| {
+                m.udid.eq_ignore_ascii_case(&udid)
+                    && !m.connection_type.eq_ignore_ascii_case("USB")
+            });
         let ip = wmeta.last_ip.clone().filter(|s| !s.is_empty());
-        let wifi_online = is_net_live
-            || (wifi_paired && wmeta.reachable.unwrap_or_else(|| ip.is_some()));
+        let wifi_online = wifi_paired
+            && ip.is_some()
+            && (is_net_live || wmeta.reachable.unwrap_or(true));
         let reachable = is_usb || wifi_online;
         let connection_type = if is_usb {
             "usb".to_string()
@@ -9447,7 +9441,7 @@ fn build_status_payload_json(
     fast_zero_io: bool,
 ) -> String {
     let st_peek = state.lock().unwrap();
-    let streaming_peek = iphone_link_apple::mirror::is_mirror_streaming_fast()
+    let streaming_peek = iphone_link_apple::mirror::is_mirror_starting_or_running_fast()
         || (st_peek.is_streaming && !stop_cooldown);
     let audio_streaming_peek = iphone_link_apple::mirror::mirror_runtime()
         .lock()
@@ -9480,6 +9474,9 @@ fn build_status_payload_json(
 
     let st_snap = {
         let mut st = state.lock().unwrap();
+        if iphone_link_apple::mirror::is_mirror_streaming_fast() && !stop_cooldown {
+            st.is_streaming = true;
+        }
         if !zero_poll_active {
             let resolved_udid = resolve_active_selected_udid(
                 &unified_devices,
@@ -10066,7 +10063,7 @@ fn build_status_payload_json(
   }},
   "videoPipeline": {},
   "videoPresenter": {},
-  "version": "5.0.1",
+  "version": "5.0.2",
   "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
   "zero_python_runtime": true,
   "zero_powershell_runtime": true{}"#,
@@ -10410,7 +10407,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 if !sanitized.contains("status_text") {
                     sanitized = sanitized.replace(
                         r#""version": "4.0.0""#,
-                        &format!(r#""status_text": "{}", "language": "{}", "version": "5.0.1", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, status_text, lang_code, APP_EDITION_V5)
+                        &format!(r#""status_text": "{}", "language": "{}", "version": "5.0.2", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, status_text, lang_code, APP_EDITION_V5)
                     );
                 } else {
                     sanitized = sanitized
@@ -10420,7 +10417,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                         .replace(r#""language": "en""#, &format!(r#""language": "{}""#, lang_code))
                         .replace(r#""language":"id""#, &format!(r#""language":"{}""#, lang_code))
                         .replace(r#""language":"en""#, &format!(r#""language":"{}""#, lang_code))
-                        .replace(r#""version": "4.0.0""#, &format!(r#""version": "5.0.1", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, APP_EDITION_V5));
+                        .replace(r#""version": "4.0.0""#, &format!(r#""version": "5.0.2", "edition": "{}", "zero_python_runtime": true, "zero_powershell_runtime": true"#, APP_EDITION_V5));
                 }
 
                 let dpr_float = (GLOBAL_DEVICE_PIXEL_RATIO.load(Ordering::SeqCst) as f64) / 100.0;
@@ -10509,7 +10506,7 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
                 if !sanitized.contains("webviewMetrics") {
                     let metrics_str = format!(
-                        r#","version":"5.0.1","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
+                        r#","version":"5.0.2","edition":"100% Pure Native Rust (Zero Python & Zero PowerShell)","zero_python_runtime":true,"zero_powershell_runtime":true{}{}{}{},"webviewMetrics":{{"indexHtmlServed":{},"appCssServed":{},"appJsServed":{},"domReadyBeacon":{},"devicePixelRatio":{:.2},"appWidth":{},"appHeight":{},"launchpadVisible":{},"startBtnVisible":{},"startBtnText":"{}","userAgent":"{}","rafVerified":{},"activeTheme":"{}","domTheme":"{}","wireframeClean":{},"wireframeDetails":"{}","concentricTrackRadius":"{}","concentricButtonRadius":"{}","badgeBg":"{}","segmentedClean":{},"segmentedDetails":"{}","activeDeviceProfile":"{}","drawerRectWidth":{},"drawerRightOverflow":{},"displayColWidth":{},"sideDrawerWidth":{},"sideDrawerRightGap":{},"drawerScrollRightGap":{},"innerWidth":{},"stretchGlitchCount":{},"maxDisplayColWidthDuringClose":{},"unlockPinValue":"{}","updateVersionText":"{}","lastTrayAction":"{}","domLanguage":"{}","activeLangId":{},"activeLangEn":{},"drawerTitleText":"{}","domTogglesSummary":"{}","cardUpdaterExists":{},"cardUpdaterTitle":"{}","stealthActive":{},"audioPcActive":{},"startWithWindows":{},"trayMenuOpen":{},"trayDismissedCount":{}}}}}"#,
                         pending_click_str,
                         pending_test_str,
                         pending_tray_str,
@@ -12197,8 +12194,8 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
     if path == "/api/driver/diagnostics" {
         let force = req.query.contains("refresh=1") || req.query.contains("force=1");
-        let is_streaming = state.lock().map(|s| s.is_streaming).unwrap_or(false);
-        let diag_json = build_native_driver_diagnostics_json_with_opts(force, is_streaming);
+        let is_streaming = is_effective_streaming_now(state);
+        let diag_json = build_native_driver_diagnostics_json_with_opts(force && !is_streaming, is_streaming);
         return HttpResponse::ok_json(&format!(r#"{{"ok":true,"native":true,"diagnostics":{}}}"#, diag_json));
     }
 
@@ -12211,8 +12208,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/driver/repair" {
+        if is_effective_streaming_now(state) {
+            let diag_json = build_native_driver_diagnostics_json_with_opts(false, true);
+            return HttpResponse::ok_json(&format!(
+                r#"{{"ok":false,"native":true,"busy":true,"repaired":false,"diagnostics":{},"message_id":"Hentikan mirroring terlebih dahulu sebelum memperbaiki driver Apple USB.","message_en":"Stop mirroring first before repairing the Apple USB driver."}}"#,
+                diag_json
+            ));
+        }
         let (repaired, drv_ok, svc_ok, msi_found) = repair_native_apple_service();
-        let is_streaming = state.lock().map(|s| s.is_streaming).unwrap_or(false);
+        let is_streaming = is_effective_streaming_now(state);
         let diag_json = build_native_driver_diagnostics_json_with_opts(true, is_streaming);
         let msg_id = if repaired {
             "Layanan Apple Mobile Device Service & Driver USB aktif dan siap digunakan."
@@ -13521,6 +13525,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 "screen_start",
                 &format!("transport={req_transport}, mode={req_mode}, ios={resolved_ios_ver}"),
             );
+            let active_conflicts = detect_conflicting_apple_usb_processes();
+            if !active_conflicts.is_empty() {
+                iphone_link_apple::diag_log::record(
+                    "usb_conflict",
+                    &format!("active={}", active_conflicts.join(", ")),
+                );
+            }
 
             // Tahap 293 Opsi 1 + Opsi 2: Stop silent USB -> AirPlay hijack.
             // - Only explicit `mode == "airplay"` launches AirPlay Standalone immediately.
@@ -13678,18 +13689,41 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
 
             let find_usb_match = |allow_forced: bool| -> Option<String> {
                 let req_trimmed = req_udid.as_deref().map(str::trim).filter(|s| !s.is_empty());
-                let cached = snapshot_cached_devices_metadata_zero_io();
-                if let Some(u) = pick_usb_from(&cached, req_trimmed) {
-                    return Some(u);
+                if !allow_forced {
+                    let cached = snapshot_cached_devices_metadata_zero_io();
+                    if let Some(u) = pick_usb_from(&cached, req_trimmed) {
+                        return Some(u);
+                    }
                 }
-                let max_attempts = if allow_forced { 5 } else { 2 };
-                for attempt in 0..max_attempts {
+                if !query_native_port_27015_open() {
+                    return None;
+                }
+                if let Ok(live_usb) = list_connected_usb_devices(Duration::from_millis(200)) {
+                    let usb_only: Vec<_> = live_usb
+                        .iter()
+                        .filter(|d| {
+                            d.connection_type.eq_ignore_ascii_case("USB")
+                                && !d.serial_udid.is_empty()
+                        })
+                        .collect();
+                    if let Some(d) = usb_only
+                        .iter()
+                        .find(|d| req_trimmed.is_none_or(|u| d.serial_udid.eq_ignore_ascii_case(u)))
+                        .or_else(|| usb_only.first())
+                    {
+                        return Some(d.serial_udid.clone());
+                    }
+                    if !allow_forced {
+                        return None;
+                    }
+                }
+                for attempt in 0..2u8 {
                     let discovered = discover_devices_with_metadata(allow_forced && attempt >= 1);
                     if let Some(u) = pick_usb_from(&discovered, req_trimmed) {
                         return Some(u);
                     }
-                    if attempt + 1 < max_attempts {
-                        std::thread::sleep(Duration::from_millis(100));
+                    if attempt == 0 {
+                        std::thread::sleep(Duration::from_millis(60));
                     }
                 }
                 None
@@ -13738,6 +13772,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                 }
 
+                iphone_link_apple::diag_log::record(
+                    "wifi_preflight",
+                    &format!(
+                        "has_record={} explicit_lock={} pinned={}",
+                        rp_rec.is_some(),
+                        explicit_target_locked,
+                        pinned_udid.is_some()
+                    ),
+                );
+
                 // Helper to format rich Model + Name + IP diagnostic for an offline Wi-Fi target
                 let format_offline_target_error = |target_u: &str, ip_opt: Option<&str>| -> String {
                     let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(target_u);
@@ -13764,11 +13808,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 };
 
                 if let Some(ref rec) = rp_rec {
-                    // Tahap 247/250 Pilar 2: Anti-False-Offline Click #1 while preserving instant
-                    // fail-fast (< 50 ms) for RFC 5737 synthetic offline targets & ultra-fresh (< 2s)
-                    // confirmed offline probes. For real paired LAN iPhones whose cache is >= 2s old
-                    // or last marked reachable=true, hand off directly to fresh mDNS wakeup!
-                    if let Some((false, ref cached_ip, _, age)) =
+                    // Fail-fast ONLY for RFC 5737 synthetic offline test targets; for real LAN IPs
+                    // hand off directly to RemotePairing mDNS wakeup + worker without spurious rejects.
+                    if let Some((false, ref cached_ip, _, _age)) =
                         iphone_link_apple::wifi::get_cached_wifi_reachability(&rec.udid)
                     {
                         let is_rfc5737_ip = cached_ip.as_deref().is_some_and(|ip| {
@@ -13776,38 +13818,25 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                                 || ip.starts_with("198.51.100.")
                                 || ip.starts_with("203.0.113.")
                         });
-                        let disk_meta_check =
-                            iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&rec.udid);
-                        let should_fail_fast_probe = is_rfc5737_ip
-                            || (age < Duration::from_secs(2) && disk_meta_check.reachable != Some(true));
-                        if should_fail_fast_probe {
-                            let still_alive = !is_rfc5737_ip
-                                && cached_ip.as_deref().is_some_and(|ip| {
-                                    iphone_link_apple::wifi::verify_ip_is_apple_device(
-                                        ip,
-                                        Some(&rec.udid),
-                                        250,
-                                    )
-                                });
-                            if !still_alive {
-                                let err_msg =
-                                    format_offline_target_error(&rec.udid, cached_ip.as_deref());
-                                let err_json = iphone_link_apple::mirror::global_set_screen_error(
-                                    Some(&rec.udid),
-                                    "wifi",
-                                    &err_msg,
-                                );
-                                if let Ok(mut st) = state.lock() {
-                                    st.is_streaming = false;
-                                    st.selected_udid = rec.udid.clone();
-                                    st.transport = "wifi".to_string();
-                                }
-                                return HttpResponse::ok_json(&err_json);
+                        if is_rfc5737_ip {
+                            let err_msg =
+                                format_offline_target_error(&rec.udid, cached_ip.as_deref());
+                            let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                                Some(&rec.udid),
+                                "wifi",
+                                &err_msg,
+                            );
+                            if let Ok(mut st) = state.lock() {
+                                st.is_streaming = false;
+                                st.selected_udid = rec.udid.clone();
+                                st.transport = "wifi".to_string();
                             }
+                            return HttpResponse::ok_json(&err_json);
                         }
                     }
 
                     // Tahap 241/244/249: Fast zero-blocking handoff to real Wi-Fi worker!
+                    iphone_link_apple::diag_log::record("wifi_preflight", "handoff_to_rp_worker");
                     let cached_ws = get_wifi_status(Some(&rec.udid), false);
                     let ip_hint = cached_ws.ip.as_deref().unwrap_or("");
                     let mut wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(&rec.udid);
@@ -13849,24 +13878,27 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     return HttpResponse::ok_json(&resp_json);
                 }
 
-                // If user explicitly targeted a specific paired/known device without an active online RemotePairing session
+                // Target lacks a RemotePairing `.plist` record -> give honest setup guidance (or USB fallback if plugged)
                 if explicit_target_locked {
                     if let Some(ref pinned_u) = pinned_udid {
+                        iphone_link_apple::diag_log::record("wifi_preflight", "missing_remote_plist");
                         let wmeta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(pinned_u);
-                        if wmeta.wifi_enabled || wmeta.last_ip.is_some() {
-                            let err_msg = format_offline_target_error(pinned_u, wmeta.last_ip.as_deref());
-                            let err_json = iphone_link_apple::mirror::global_set_screen_error(
-                                Some(pinned_u),
-                                "wifi",
-                                &err_msg,
-                            );
-                            if let Ok(mut st) = state.lock() {
-                                st.is_streaming = false;
-                                st.selected_udid = pinned_u.clone();
-                                st.transport = "wifi".to_string();
-                            }
-                            return HttpResponse::ok_json(&err_json);
+                        let err_msg = if wmeta.last_ip.is_some() || wmeta.wifi_enabled {
+                            "Record RemotePairing Wi-Fi (remote_<udid>.plist) belum dibuat. Hubungkan kabel USB 1x lalu klik 'Atur Wi-Fi'. / Wi-Fi RemotePairing record has not been created yet. Connect USB once and click 'Set up Wi-Fi'.".to_string()
+                        } else {
+                            "iPhone belum dipasangkan untuk Wi-Fi nirkabel. Colok kabel USB 1x lalu klik 'Atur Wi-Fi'. / iPhone is not paired for wireless Wi-Fi yet. Connect USB once and click 'Set up Wi-Fi'.".to_string()
+                        };
+                        let err_json = iphone_link_apple::mirror::global_set_screen_error(
+                            Some(pinned_u),
+                            "wifi",
+                            &err_msg,
+                        );
+                        if let Ok(mut st) = state.lock() {
+                            st.is_streaming = false;
+                            st.selected_udid = pinned_u.clone();
+                            st.transport = "wifi".to_string();
                         }
+                        return HttpResponse::ok_json(&err_json);
                     }
                 }
 
@@ -13895,15 +13927,15 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                 }
 
                 // Stage 3: Honest diagnostic error state when neither Wi-Fi RemotePairing nor USB is reachable
-                let wifi_hint = if let Some(ref pinned_u) = pinned_udid {
-                    format_offline_target_error(pinned_u, resolved_ip.as_deref())
-                } else if let Some(ref ip_str) = resolved_ip {
+                iphone_link_apple::diag_log::record("wifi_preflight", "missing_remote_plist");
+                let wifi_hint = if let Some(ref ip_str) = resolved_ip {
                     format!(
-                        "iPhone terdeteksi di Wi-Fi ({ip_str}), tetapi belum diatur untuk RemotePairing Wi-Fi. Colok kabel USB 1x lalu klik 'Atur Wi-Fi'."
+                        "iPhone terdeteksi di Wi-Fi ({ip_str}), tetapi belum diatur untuk RemotePairing Wi-Fi. Colok kabel USB 1x lalu klik 'Atur Wi-Fi'. / iPhone found on Wi-Fi ({ip_str}), but Wi-Fi RemotePairing is not set up yet. Connect USB once and click 'Set up Wi-Fi'."
                     )
                 } else {
-                    "Streaming Wi-Fi nirkabel tidak menemukan iPhone di jaringan Wi-Fi (_remotepairing._tcp.local.). Pastikan iPhone menyala, terhubung di Wi-Fi yang sama, dan sudah pernah klik 'Atur Wi-Fi' 1x via USB.".to_string()
+                    "Record RemotePairing Wi-Fi belum tersedia dan iPhone belum terhubung via USB. Hubungkan kabel USB 1x lalu klik 'Atur Wi-Fi'. / Wi-Fi RemotePairing record missing and no USB iPhone detected. Connect USB once and click 'Set up Wi-Fi'.".to_string()
                 };
+                let _ = format_offline_target_error;
                 let err_json = iphone_link_apple::mirror::global_set_screen_error(
                     pinned_udid.as_deref(),
                     "wifi",
@@ -13917,7 +13949,9 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
             }
 
             if !is_wifi && explicit_honest_gate != Some(false) {
-                if let Some(real_udid) = find_usb_match(explicit_honest_gate.is_none()) {
+                let require_live_usb =
+                    explicit_honest_gate.is_none() || req_transport.eq_ignore_ascii_case("usb");
+                if let Some(real_udid) = find_usb_match(require_live_usb) {
                     iphone_link_apple::physical_stream::set_active_session_device_identity(
                         &real_udid, None, None, None,
                     );
@@ -13933,11 +13967,16 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
                     }
                     return HttpResponse::ok_json(&resp_json);
                 }
-                if explicit_honest_gate.is_none() {
+                if require_live_usb {
+                    iphone_link_apple::models::clear_metadata_cache(None);
+                    iphone_link_apple::diag_log::record(
+                        "usb_preflight",
+                        "usb_device_offline_in_usbmuxd",
+                    );
                     let err_json = iphone_link_apple::mirror::global_set_screen_error(
                         req_udid.as_deref(),
                         &req_transport,
-                        "Perangkat iPhone USB tidak terdeteksi atau belum terpercaya (Trust). Hubungkan kabel USB dan buka kunci iPhone.",
+                        "Perangkat iPhone USB tidak terdeteksi atau belum terpercaya (Trust). Hubungkan kabel USB dan buka kunci iPhone. / USB iPhone not detected or not trusted yet. Connect USB cable and unlock your iPhone.",
                     );
                     if let Ok(mut st) = state.lock() {
                         st.is_streaming = false;
@@ -14053,6 +14092,13 @@ pub fn handle_request(req: &HttpRequest, state: &Arc<Mutex<AppState>>, web_dir: 
     }
 
     if path == "/api/wifi/pair" || path == "/api/wifi/setup" {
+        let live_phase = iphone_link_apple::mirror::current_screen_phase();
+        if live_phase == "running" || live_phase == "starting" {
+            iphone_link_apple::diag_log::record("wifi_pair", "blocked_while_streaming");
+            return HttpResponse::ok_json(
+                r#"{"ok":false,"native":true,"busy":true,"error":"streaming_active","message_id":"Hentikan mirroring terlebih dahulu sebelum mengatur Wi-Fi agar koneksi USB tidak terputus.","message_en":"Stop mirroring first before setting up Wi-Fi so the active USB connection is not interrupted."}"#,
+            );
+        }
         let req_udid = parse_string_param(&req.body, "udid")
             .or_else(|| extract_query_param(&req.query, "udid"))
             .map(|s| iphone_link_apple::physical_stream::sanitize_udid_label(&s))
@@ -14431,8 +14477,8 @@ fn transform_mirror_html(raw: &str) -> String {
 
 fn build_index_html_template_parts(raw: &str) -> (String, String) {
     let mut html = raw
-        .replace("iPhone Link v4.0.0", "iPhone Link v5.0.1")
-        .replace("iPhone Link v3.0.0", "iPhone Link v5.0.1")
+        .replace("iPhone Link v4.0.0", "iPhone Link v5.0.2")
+        .replace("iPhone Link v3.0.0", "iPhone Link v5.0.2")
         .replace("iPhone Link v4.0", "iPhone Link v5.0")
         .replace("iPhone Link v3.0", "iPhone Link v5.0");
     if !html.contains("tahap222-theme-contrast") {
@@ -15411,7 +15457,7 @@ mod tests {
         let resp_status = handle_request(&req_status, &state, Path::new("web"));
         assert_eq!(resp_status.status_code, 200);
         let body_str = String::from_utf8_lossy(&resp_status.body);
-        assert!(body_str.contains(r#""version": "5.0.1""#));
+        assert!(body_str.contains(r#""version": "5.0.2""#));
         assert!(body_str.contains(r#""zero_python_runtime": true"#));
         assert!(body_str.contains(r#""zero_powershell_runtime": true"#));
         assert!(body_str.contains("devicePixelRatio"));
@@ -15539,7 +15585,7 @@ mod tests {
         assert!(V4_BRIDGE_JS.contains("persistUnlockPinDual"));
         assert!(V4_BRIDGE_JS.contains("guardPinInputAgainstAccidentalWipe"));
         assert!(V4_BRIDGE_JS.contains("handlePendingTrayAction"));
-        assert!(V4_BRIDGE_JS.contains("iPhone Link v5.0.1"));
+        assert!(V4_BRIDGE_JS.contains("iPhone Link v5.0.2"));
 
         // 2. Deterministic folderInstanceId & disk save/load/wipe roundtrip
         let tmp_dir = env::temp_dir().join("iphone_link_tahap183_test");
@@ -15892,12 +15938,12 @@ mod tests {
         assert_eq!(resp_status.status_code, 200);
         assert!(elapsed_ms < 50.0, "status took too long: {elapsed_ms} ms");
         let status_json = String::from_utf8_lossy(&resp_status.body);
-        assert!(status_json.contains(r#""currentVersion":"5.0.1""#));
-        assert!(status_json.contains(r#""latestVersion":"5.0.1""#));
+        assert!(status_json.contains(r#""currentVersion":"5.0.2""#));
+        assert!(status_json.contains(r#""latestVersion":"5.0.2""#));
         assert!(status_json.contains(r#""updateAvailable":false"#));
         assert!(status_json.contains(r#""user_settings.json""#));
 
-        // 2. Simulate cache rejecting stale v4.0.0 & accepting v5.0.2
+        // 2. Simulate cache rejecting stale v4.0.0 & accepting v5.0.3
         {
             let mut st = state.lock().unwrap();
             st.updater.apply_worker_payload(
@@ -15905,14 +15951,14 @@ mod tests {
                 "stable",
             );
             assert!(!st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "5.0.1");
+            assert_eq!(st.updater.latest_version, "5.0.2");
 
             st.updater.apply_worker_payload(
-                r#"{"status":"update_available","latestVersion":"5.0.2","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.2.zip","channel":"beta"}"#,
+                r#"{"status":"update_available","latestVersion":"5.0.3","updateAvailable":true,"downloadUrl":"https://example.com/v5.0.3.zip","channel":"beta"}"#,
                 "beta",
             );
             assert!(st.updater.update_available);
-            assert_eq!(st.updater.latest_version, "5.0.2");
+            assert_eq!(st.updater.latest_version, "5.0.3");
         }
 
         // 3. POST /api/update/check gracefully handles worker absent/offline without throwing HTTP error
@@ -15927,7 +15973,7 @@ mod tests {
         assert_eq!(resp_chk.status_code, 200);
         let chk_json = String::from_utf8_lossy(&resp_chk.body);
         assert!(chk_json.contains(r#""ok":true"#));
-        assert!(chk_json.contains(r#""currentVersion":"5.0.1""#));
+        assert!(chk_json.contains(r#""currentVersion":"5.0.2""#));
         assert!(chk_json.contains(r#""channel":"beta""#));
     }
 
@@ -16447,8 +16493,10 @@ mod tests {
                                         }
                                     }
                                 } else {
-                                    let _ = rlp(&mut s);
-                                    wlp(&mut s, "<plist version=\"1.0\"><dict><key>alt_irk</key><data>AQIDBAUGBwgJCgsMDQ4PEA==</data><key>encryptionKey</key><data>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</data></dict></plist>");
+                                    iphone_link_apple::rp_wifi_tls::run_mock_rppairing_usb_pair_server(
+                                        &mut s,
+                                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                                    );
                                 }
                             }
                         }));
@@ -17799,12 +17847,12 @@ mod tests {
         let resp_root = handle_request(&req_root, &state, Path::new("Z:\\nonexistent\\web"));
         assert_eq!(resp_root.status_code, 200);
         let html = String::from_utf8_lossy(&resp_root.body);
-        assert!(html.contains("iPhone Link v5.0.1"), "HTML updater card missing v5.0.1 branding");
+        assert!(html.contains("iPhone Link v5.0.2"), "HTML updater card missing v5.0.2 branding");
         assert!(html.contains("iPhone Link v5.0"), "HTML footer credit missing v5.0 branding");
         assert!(!html.contains("iPhone Link v4.0"), "HTML still contains stale v4.0 branding");
         assert!(!html.contains("iPhone Link v3.0"), "HTML still contains stale v3.0 branding");
 
-        // 2. /v4_bridge.js reports v5.0.1 & v5.0
+        // 2. /v4_bridge.js reports v5.0.2 & v5.0
         let resp_js = handle_request(
             &HttpRequest {
                 method: "GET".to_string(),
@@ -17818,10 +17866,10 @@ mod tests {
             Path::new("web"),
         );
         let js = String::from_utf8_lossy(&resp_js.body);
-        assert!(js.contains("iPhone Link v5.0.1"));
+        assert!(js.contains("iPhone Link v5.0.2"));
         assert!(js.contains("iPhone Link v5.0"));
 
-        // 3. GET /api/status & GET /api/settings report Pure Native Rust Zero Python / Zero PowerShell v5.0.1
+        // 3. GET /api/status & GET /api/settings report Pure Native Rust Zero Python / Zero PowerShell v5.0.2
         let resp_st = handle_request(
             &HttpRequest {
                 method: "GET".to_string(),
@@ -17836,7 +17884,7 @@ mod tests {
         );
         let st_json = String::from_utf8_lossy(&resp_st.body);
         assert!(st_json.trim_end().ends_with('}'), "status JSON must end cleanly with }}: {st_json}");
-        assert!(st_json.contains(r#""version": "5.0.1""#), "got {st_json}");
+        assert!(st_json.contains(r#""version": "5.0.2""#), "got {st_json}");
         assert!(st_json.contains(APP_EDITION_V5), "got {st_json}");
         assert!(st_json.contains(r#""zero_python_runtime": true"#), "got {st_json}");
         assert!(st_json.contains(r#""zero_powershell_runtime": true"#), "got {st_json}");
@@ -17854,7 +17902,7 @@ mod tests {
             Path::new("web"),
         );
         let cfg_json = String::from_utf8_lossy(&resp_cfg.body);
-        assert!(cfg_json.contains(r#""version":"5.0.1""#), "got {cfg_json}");
+        assert!(cfg_json.contains(r#""version":"5.0.2""#), "got {cfg_json}");
         assert!(cfg_json.contains(r#""zero_python_runtime":true"#), "got {cfg_json}");
         assert!(cfg_json.contains(r#""zero_powershell_runtime":true"#), "got {cfg_json}");
     }
@@ -17862,24 +17910,25 @@ mod tests {
     #[test]
     fn test_tahap236_updater_v5_downgrade_protection_and_protected_configs() {
         let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(crate::updater::CURRENT_VERSION, "5.0.1");
-        assert!(!crate::updater::is_newer_version("5.0.1", "4.0.0"));
-        assert!(!crate::updater::is_newer_version("5.0.1", "3.0.0"));
-        assert!(!crate::updater::is_newer_version("5.0.1", "5.0.0"));
-        assert!(!crate::updater::is_newer_version("5.0.1", "5.0.1"));
-        assert!(crate::updater::is_newer_version("5.0.1", "5.0.2"));
+        assert_eq!(crate::updater::CURRENT_VERSION, "5.0.2");
+        assert!(!crate::updater::is_newer_version("5.0.2", "4.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.2", "3.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.2", "5.0.0"));
+        assert!(!crate::updater::is_newer_version("5.0.2", "5.0.1"));
+        assert!(!crate::updater::is_newer_version("5.0.2", "5.0.2"));
+        assert!(crate::updater::is_newer_version("5.0.2", "5.0.3"));
         assert!(crate::updater::is_protected_config_file("user_settings.json"));
         assert!(crate::updater::is_protected_config_file("wifi_state.json"));
         assert!(crate::updater::is_protected_config_file("typed_history.json"));
 
         let mut cache = UpdateStateCache::default();
-        assert_eq!(cache.current_version, "5.0.1");
+        assert_eq!(cache.current_version, "5.0.2");
         cache.apply_worker_payload(
             r#"{"status":"update_available","latestVersion":"4.0.0","updateAvailable":true,"channel":"stable"}"#,
             "stable",
         );
         assert!(!cache.update_available);
-        assert_eq!(cache.latest_version, "5.0.1");
+        assert_eq!(cache.latest_version, "5.0.2");
     }
 
     #[test]
@@ -18521,6 +18570,12 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp_base);
         let pair_dir = tmp_base.join("pairing");
         let _ = fs::create_dir_all(&pair_dir);
+        for u_seed in ["00008030-TEST-DEV-B", "00008150-TEST-DEV-A"] {
+            let _ = fs::write(
+                pair_dir.join(format!("remote_{u_seed}.plist")),
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>peer_alt_irk</key><data>AAAAAAAAAAAAAAAAAAAAAA==</data><key>private_key</key><data>AQIDBA==</data><key>public_key</key><data>AQIDBA==</data></dict></plist>",
+            );
+        }
         let wifi_state_file = tmp_base.join("wifi_state.json");
 
         let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
@@ -18631,6 +18686,12 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp_base);
         let pair_dir = tmp_base.join("pairing");
         let _ = fs::create_dir_all(&pair_dir);
+        for u_seed in ["00008030-TEST-DEV-B", "00008150-TEST-DEV-A"] {
+            let _ = fs::write(
+                pair_dir.join(format!("remote_{u_seed}.plist")),
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>peer_alt_irk</key><data>AAAAAAAAAAAAAAAAAAAAAA==</data><key>private_key</key><data>AQIDBA==</data><key>public_key</key><data>AQIDBA==</data></dict></plist>",
+            );
+        }
         let wifi_state_file = tmp_base.join("wifi_state.json");
 
         let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
@@ -19026,6 +19087,10 @@ mod tests {
         // 2. Seed RFC 5737 synthetic paired Wi-Fi iPhone (0 personal data)
         let synth_udid = "00008150-0000000000000249";
         let synth_ip = "192.0.2.49";
+        let _ = fs::write(
+            pair_dir.join(format!("remote_{synth_udid}.plist")),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>peer_alt_irk</key><data>AAAAAAAAAAAAAAAAAAAAAA==</data><key>private_key</key><data>AQIDBA==</data><key>public_key</key><data>AQIDBA==</data></dict></plist>",
+        );
         let _ = fs::write(
             pair_dir.join(format!("{synth_udid}.json")),
             format!(
@@ -20312,5 +20377,442 @@ mod tests {
         assert!(!report.contains("847291"));
         assert!(!report.contains("SECRETBLOB123"));
         iphone_link_apple::diag_log::clear_for_test();
+    }
+
+    #[test]
+    fn test_tahap295_usb_vs_usb_wifi_badge_truth_table() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let tmp_base = env::temp_dir().join(format!(
+            "iphone_link_tahap295_badge_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairings");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        if let Ok(mut g) = paired_wifi_udids_ram_cache().lock() {
+            g.clear();
+        }
+
+        let udid_a = "00008101-00000000000295A";
+        let udid_b = "00008101-00000000000295B";
+        let udid_c = "00008101-00000000000295C";
+
+        // Seed Case B (paired plist + wifi_enabled_on_device=true, ZERO IP) & Case C (paired plist + valid IP + reachable=true)
+        for paired_u in [udid_b, udid_c] {
+            let _ = fs::write(
+                pair_dir.join(format!("remote_{paired_u}.plist")),
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>peer_alt_irk</key><data>AAAAAAAAAAAAAAAAAAAAAA==</data>
+  <key>private_key</key><data>AQIDBA==</data>
+  <key>public_key</key><data>AQIDBA==</data>
+</dict></plist>"#,
+            );
+        }
+        let _ = fs::write(
+            &wifi_state_file,
+            format!(
+                r#"{{
+                  "devices": {{
+                    "{udid_b}": {{"name":"CaseB","model":"iPhone 12","wifi_enabled_on_device":true,"reachable":true}},
+                    "{udid_c}": {{"name":"CaseC","model":"iPhone 12","lastIp":"198.51.100.55","wifi_enabled_on_device":true,"reachable":true}}
+                  }}
+                }}"#
+            ),
+        );
+
+        let mk_meta = |udid: &str, conn: &str| iphone_link_apple::models::DeviceMetadata {
+            udid: udid.to_string(),
+            device_id: 1,
+            connection_type: conn.to_string(),
+            device_name: "iPhone 12".to_string(),
+            product_type: "iPhone13,2".to_string(),
+            marketing_model: "iPhone 12".to_string(),
+            product_version: "27.2.1".to_string(),
+            build_version: "24D1".to_string(),
+            device_class: "iPhone".to_string(),
+            wifi_address: String::new(),
+            bluetooth_address: String::new(),
+            screen_type: iphone_link_apple::models::ScreenType::Notch,
+            paired: true,
+        };
+
+        let unified = collect_unified_devices(
+            &[
+                // Case A: USB + usbmuxd Network Sync entry, wifi_paired=false, ip=None -> MUST NOT be wifi_online!
+                mk_meta(udid_a, "Network"),
+                mk_meta(udid_a, "USB"),
+                // Case B: USB + wifi_paired=true, ip=None -> MUST NOT be wifi_online!
+                mk_meta(udid_b, "USB"),
+                // Case C: USB + wifi_paired=true + IP + reachable -> wifi_online=true
+                mk_meta(udid_c, "USB"),
+            ],
+            &[],
+            false,
+        );
+
+        let dev_a = unified.iter().find(|d| d.udid == udid_a).unwrap();
+        assert!(dev_a.usb && !dev_a.wifi_paired && !dev_a.wifi_online && dev_a.ip.is_none());
+
+        let dev_b = unified.iter().find(|d| d.udid == udid_b).unwrap();
+        assert!(dev_b.usb && dev_b.wifi_paired && !dev_b.wifi_online && dev_b.ip.is_none());
+
+        let dev_c = unified.iter().find(|d| d.udid == udid_c).unwrap();
+        assert!(
+            dev_c.usb
+                && dev_c.wifi_paired
+                && dev_c.wifi_online
+                && dev_c.ip.as_deref() == Some("198.51.100.55")
+        );
+
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+        clear_wifi_status_stream_cache_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+    }
+
+    #[test]
+    fn test_tahap296_wifi_pair_failure_is_honest_and_guarded_when_streaming() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::diag_log::clear_for_test();
+
+        let tmp_base = env::temp_dir().join(format!("iphone_link_t296_pair_guard_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+
+        // 1. Streaming / Starting phase MUST refuse `/api/wifi/pair` gracefully
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let _ = iphone_link_apple::mirror::global_start_screen(Some("00008150-00000000000296A"), "cable", false);
+        let pair_req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/wifi/pair".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: r#"{"udid":"00008150-00000000000296A"}"#.to_string(),
+            body_bytes: br#"{"udid":"00008150-00000000000296A"}"#.to_vec(),
+        };
+        let resp_busy = handle_request(&pair_req, &state, Path::new("web"));
+        let b_busy = String::from_utf8_lossy(&resp_busy.body).to_string();
+        assert!(
+            b_busy.contains(r#""ok":false"#) && b_busy.contains(r#""busy":true"#) && b_busy.contains("streaming_active"),
+            "POST /api/wifi/pair while streaming must refuse cleanly: {b_busy}"
+        );
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+
+        // 2. When mock RemotePairing USB port closes cleanly without sending M2, prepare_wifi_over_usb MUST return Err (NOT swallow)
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let mux_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mux_addr = mux_listener.local_addr().unwrap();
+        mux_listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_srv = stop.clone();
+
+        fn r_mux(s: &mut std::net::TcpStream) -> String {
+            let mut hdr = [0u8; 16];
+            if s.read_exact(&mut hdr).is_err() { return String::new(); }
+            let len = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+            let mut b = vec![0u8; len.saturating_sub(16)];
+            let _ = s.read_exact(&mut b);
+            String::from_utf8_lossy(&b).into_owned()
+        }
+        fn w_mux(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let total = (16 + b.len()) as u32;
+            let mut hdr = [0u8; 16];
+            hdr[0..4].copy_from_slice(&total.to_le_bytes());
+            hdr[4..8].copy_from_slice(&1u32.to_le_bytes());
+            hdr[8..12].copy_from_slice(&8u32.to_le_bytes());
+            hdr[12..16].copy_from_slice(&1u32.to_le_bytes());
+            let _ = s.write_all(&hdr);
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+        fn r_lp(s: &mut std::net::TcpStream) -> String {
+            let mut lb = [0u8; 4];
+            if s.read_exact(&mut lb).is_err() { return String::new(); }
+            let len = u32::from_be_bytes(lb) as usize;
+            let mut b = vec![0u8; len];
+            let _ = s.read_exact(&mut b);
+            String::from_utf8_lossy(&b).into_owned()
+        }
+        fn w_lp(s: &mut std::net::TcpStream, xml: &str) {
+            let b = xml.as_bytes();
+            let _ = s.write_all(&(b.len() as u32).to_be_bytes());
+            let _ = s.write_all(b);
+            let _ = s.flush();
+        }
+
+        let srv_h = thread::spawn(move || {
+            let mut hs = Vec::new();
+            while !stop_srv.load(Ordering::Relaxed) {
+                match mux_listener.accept() {
+                    Ok((mut s, _)) => {
+                        let _ = s.set_nonblocking(false);
+                        let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                        hs.push(thread::spawn(move || {
+                            let req = r_mux(&mut s);
+                            if req.contains("ListDevices") {
+                                w_mux(&mut s, "<plist version=\"1.0\"><dict><key>DeviceList</key><array><dict><key>Properties</key><dict><key>SerialNumber</key><string>00008150-00000000000296B</string><key>DeviceID</key><integer>9</integer><key>ConnectionType</key><string>USB</string></dict></dict></array></dict></plist>");
+                            } else if req.contains("ReadPairRecord") {
+                                w_mux(&mut s, "<plist version=\"1.0\"><dict><key>PairRecordData</key><data>PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48cGxpc3QgdmVyc2lvbj0iMS4wIj48ZGljdD48a2V5Pkhvc3RJRDwva2V5PjxzdHJpbmc+SDE8L3N0cmluZz48L2RpY3Q+PC9wbGlzdD4=</data></dict></plist>");
+                            } else if req.contains("Connect") {
+                                let is_ld = req.contains("<integer>32498</integer>");
+                                w_mux(&mut s, "<plist version=\"1.0\"><dict><key>Number</key><integer>0</integer></dict></plist>");
+                                if is_ld {
+                                    for _ in 0..8 {
+                                        let r = r_lp(&mut s);
+                                        if r.is_empty() { break; }
+                                        if r.contains("StartSession") {
+                                            w_lp(&mut s, "<plist version=\"1.0\"><dict><key>EnableSessionSSL</key><false/></dict></plist>");
+                                        } else if r.contains("SetValue") {
+                                            w_lp(&mut s, "<plist version=\"1.0\"><dict><key>Request</key><string>SetValue</string></dict></plist>");
+                                        } else if r.contains("StartService") {
+                                            w_lp(&mut s, "<plist version=\"1.0\"><dict><key>Port</key><integer>59222</integer><key>EnableServiceSSL</key><false/></dict></plist>");
+                                        } else if r.contains("GetValue") {
+                                            w_lp(&mut s, "<plist version=\"1.0\"><dict><key>Value</key><string>00008150-00000000000296B</string></dict></plist>");
+                                        }
+                                    }
+                                }
+                                // Port 59222 drops immediately to simulate RemotePairing service rejection
+                            }
+                        }));
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(5)),
+                    Err(_) => break,
+                }
+            }
+            for h in hs { let _ = h.join(); }
+        });
+
+        env::set_var("USBMUXD_SOCKET_ADDRESS", mux_addr.to_string());
+        let fail_res = iphone_link_apple::wifi::prepare_wifi_over_usb(Some("00008150-00000000000296B"));
+        stop.store(true, Ordering::Relaxed);
+        let _ = srv_h.join();
+
+        assert!(fail_res.is_err(), "RemotePairing failure MUST NOT be swallowed: {fail_res:?}");
+
+        // 3. `wifi_enabled_on_device: true` WITHOUT `remote_<udid>.plist` MUST stay `wifi_paired: false`
+        let _ = fs::write(
+            &wifi_state_file,
+            r#"{"devices":{"00008150-00000000000296B":{"name":"NoPlistPhone","model":"iPhone 12","wifi_enabled_on_device":true,"reachable":true}}}"#,
+        );
+        assert!(!iphone_link_apple::wifi::has_remote_record("00008150-00000000000296B"));
+        let unified = collect_unified_devices(&[], &[], false);
+        assert!(unified.is_empty(), "without remote_*.plist device must not claim wifi_paired: {unified:?}");
+
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+    }
+
+    #[test]
+    fn test_tahap296_wifi_preflight_logs_milestones_and_never_purges_last_ip() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::diag_log::clear_for_test();
+        iphone_link_apple::wifi::clear_cached_wifi_reachability();
+
+        let tmp_base = env::temp_dir().join(format!("iphone_link_t296_preflight_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp_base);
+        let pair_dir = tmp_base.join("pairing");
+        let _ = fs::create_dir_all(&pair_dir);
+        let wifi_state_file = tmp_base.join("wifi_state.json");
+        let prev_pair = env::var_os("IPHONE_LINK_PAIRING_DIR");
+        let prev_wstate = env::var_os("IPHONE_LINK_WIFI_STATE_PATH");
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        env::set_var("IPHONE_LINK_PAIRING_DIR", &pair_dir);
+        env::set_var("IPHONE_LINK_WIFI_STATE_PATH", &wifi_state_file);
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+
+        // 1. Failed probe in discover_iphone_ip_on_lan MUST keep `last_ip` intact!
+        let test_udid = "00008150-00000000000296C";
+        let _ = fs::write(
+            &wifi_state_file,
+            format!(
+                r#"{{"devices":{{"{test_udid}":{{"name":"PreservedIP","last_ip":"198.51.100.77","lastIp":"198.51.100.77","reachable":true}}}}}}"#
+            ),
+        );
+        let _ = iphone_link_apple::wifi::discover_iphone_ip_on_lan(Some(test_udid), 60);
+        let after_meta = iphone_link_apple::wifi::read_device_metadata_from_wifi_state(test_udid);
+        assert_eq!(
+            after_meta.last_ip.as_deref(),
+            Some("198.51.100.77"),
+            "last_ip MUST be preserved after single probe timeout!"
+        );
+
+        // 2. Wi-Fi start WITHOUT `remote_<udid>.plist` logs `wifi_preflight` + returns honest missing-record message
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let start_missing = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/screen/start".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: format!(r#"{{"udid":"{test_udid}","transport":"wifi","honestGate":true}}"#),
+            body_bytes: format!(r#"{{"udid":"{test_udid}","transport":"wifi","honestGate":true}}"#).into_bytes(),
+        };
+        let r_missing = handle_request(&start_missing, &state, Path::new("web"));
+        let b_missing = String::from_utf8_lossy(&r_missing.body).to_string();
+        assert!(
+            b_missing.contains(r#""phase":"error""#) && b_missing.contains("RemotePairing"),
+            "missing plist must give honest RemotePairing setup error: {b_missing}"
+        );
+        let logs = iphone_link_apple::diag_log::snapshot().join("\n");
+        assert!(logs.contains("[wifi_preflight]"), "missing [wifi_preflight] in diag_log: {logs}");
+        assert!(logs.contains("missing_remote_plist"), "missing reason in diag_log: {logs}");
+        assert!(!logs.contains(test_udid), "diag_log leaked raw UDID: {logs}");
+
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+        match prev_pair {
+            Some(v) => env::set_var("IPHONE_LINK_PAIRING_DIR", v),
+            None => env::remove_var("IPHONE_LINK_PAIRING_DIR"),
+        }
+        match prev_wstate {
+            Some(v) => env::set_var("IPHONE_LINK_WIFI_STATE_PATH", v),
+            None => env::remove_var("IPHONE_LINK_WIFI_STATE_PATH"),
+        }
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        let _ = fs::remove_dir_all(&tmp_base);
+    }
+
+    #[test]
+    fn test_tahap296_zero_poll_guard_active_during_usb_streaming_and_device_audio() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        assert!(!is_effective_streaming_now(&state));
+
+        // Even if AppState.is_streaming is false, live `mirror` streaming activates Zero-Poll everywhere!
+        let _ = iphone_link_apple::mirror::global_start_screen(Some("00008150-00000000000296D"), "usb", false);
+        assert!(
+            is_effective_streaming_now(&state),
+            "is_effective_streaming_now must be true when mirror is running even if AppState.is_streaming=false"
+        );
+
+        let diag_req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/driver/diagnostics".to_string(),
+            query: "refresh=1".to_string(),
+            headers: HashMap::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+        };
+        let resp = handle_request(&diag_req, &state, Path::new("web"));
+        assert_eq!(resp.status_code, 200);
+        let report = build_zero_pii_diagnostic_report(&state);
+        assert!(report.contains("usb_hevc_diagnostics:"));
+
+        // Zero-Poll audio poller check: `"device"` (Hanya perangkat) MUST NOT poll every 1.2s
+        assert!(!crate::native_ui::should_poll_running_status_for_audio(true, false, false, false, "device", false));
+        assert!(!crate::native_ui::should_poll_running_status_for_audio(true, false, false, false, "pc", true));
+        assert!(crate::native_ui::should_poll_running_status_for_audio(true, false, false, false, "pc", false));
+        assert!(!crate::native_ui::should_poll_running_status_for_audio(true, true, false, false, "pc", false));
+
+        let _ = iphone_link_apple::mirror::global_stop_screen();
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+    }
+
+    #[test]
+    fn test_tahap296_usb_offline_start_fails_fast_under_one_second_with_honest_gate() {
+        let _guard = TEST_SERIAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _hid_guard = iphone_link_apple::hid::HID_TEST_SERIAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
+        iphone_link_apple::diag_log::clear_for_test();
+
+        let prev_mux = env::var_os("USBMUXD_SOCKET_ADDRESS");
+        env::set_var("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:1");
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let req_udid = "00008101-000000000002960";
+        let req_body = format!(r#"{{"udid":"{req_udid}","transport":"usb","honestGate":true,"mode":"auto"}}"#);
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/screen/start".to_string(),
+            query: String::new(),
+            headers: HashMap::new(),
+            body: req_body.clone(),
+            body_bytes: req_body.into_bytes(),
+        };
+
+        let t0 = std::time::Instant::now();
+        let resp = handle_request(&req, &state, Path::new("web"));
+        let elapsed = t0.elapsed();
+
+        match prev_mux {
+            Some(v) => env::set_var("USBMUXD_SOCKET_ADDRESS", v),
+            None => env::remove_var("USBMUXD_SOCKET_ADDRESS"),
+        }
+
+        assert!(
+            elapsed < Duration::from_millis(1000),
+            "Offline USB start with honestGate:true MUST fail fast (< 1s), took {elapsed:?}"
+        );
+        let body = String::from_utf8_lossy(&resp.body).to_string();
+        let parsed = serde_json::from_str(&body).expect("valid error JSON");
+        assert_eq!(parsed.get("phase").and_then(|v| v.as_str()), Some("error"));
+        for field in ["error", "note", "stageDetail", "stage_detail"] {
+            let txt = parsed.get(field).and_then(|v| v.as_str()).unwrap_or("");
+            assert!(
+                !txt.contains(req_udid),
+                "UI error field `{field}` must NEVER leak raw UDID: {txt}"
+            );
+        }
+        let logs = iphone_link_apple::diag_log::snapshot().join("\n");
+        assert!(
+            logs.contains("[usb_preflight] usb_device_offline_in_usbmuxd"),
+            "Expected usb_preflight milestone in diag_log: {logs}"
+        );
+        iphone_link_apple::mirror::global_reset_mirror_runtime_for_test();
     }
 }

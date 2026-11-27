@@ -1,6 +1,6 @@
 [package]
 name = "iphone-link-desktop"
-version = "5.0.1"
+version = "5.0.2"
 edition = "2021"
 
 [[bin]]

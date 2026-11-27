@@ -342,6 +342,14 @@ pub struct NOTIFYICONDATAW {
 extern "system" {
     fn SetCurrentProcessExplicitAppUserModelID(AppID: *const u16) -> i32;
     fn Shell_NotifyIconW(dwMessage: u32, lpData: *const NOTIFYICONDATAW) -> i32;
+    fn ShellExecuteW(
+        hwnd: *mut c_void,
+        lpOperation: *const u16,
+        lpFile: *const u16,
+        lpParameters: *const u16,
+        lpDirectory: *const u16,
+        nShowCmd: i32,
+    ) -> isize;
 }
 
 #[link(name = "advapi32")]
@@ -981,11 +989,31 @@ mod diag_ffi {
     use std::ffi::c_void;
 
     pub const SC_MANAGER_CONNECT: u32 = 0x0001;
+    pub const SERVICE_CHANGE_CONFIG: u32 = 0x0002;
     pub const SERVICE_QUERY_STATUS: u32 = 0x0004;
+    pub const SERVICE_START: u32 = 0x0010;
+    pub const SERVICE_STOP: u32 = 0x0020;
     pub const SC_STATUS_PROCESS_INFO: u32 = 0;
+    pub const SERVICE_STOPPED: u32 = 0x0000_0001;
     pub const SERVICE_RUNNING: u32 = 0x0000_0004;
+    pub const SERVICE_CONTROL_STOP: u32 = 0x0000_0001;
+    pub const SERVICE_AUTO_START: u32 = 0x0000_0002;
+    pub const SERVICE_NO_CHANGE: u32 = 0xFFFF_FFFF;
+    pub const ERROR_ACCESS_DENIED: u32 = 5;
     pub const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
     pub const INVALID_HANDLE_VALUE: isize = -1;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct SERVICE_STATUS {
+        pub dw_service_type: u32,
+        pub dw_current_state: u32,
+        pub dw_controls_accepted: u32,
+        pub dw_win32_exit_code: u32,
+        pub dw_service_specific_exit_code: u32,
+        pub dw_check_point: u32,
+        pub dw_wait_hint: u32,
+    }
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -1034,6 +1062,29 @@ mod diag_ffi {
             cb_buf_size: u32,
             pcb_bytes_needed: *mut u32,
         ) -> i32;
+        pub fn ControlService(
+            h_service: *mut c_void,
+            dw_control: u32,
+            lp_service_status: *mut SERVICE_STATUS,
+        ) -> i32;
+        pub fn StartServiceW(
+            h_service: *mut c_void,
+            dw_num_service_args: u32,
+            lp_service_arg_vectors: *const *const u16,
+        ) -> i32;
+        pub fn ChangeServiceConfigW(
+            h_service: *mut c_void,
+            dw_service_type: u32,
+            dw_start_type: u32,
+            dw_error_control: u32,
+            lp_binary_path_name: *const u16,
+            lp_load_order_group: *const u16,
+            lpdw_tag_id: *mut u32,
+            lp_dependencies: *const u16,
+            lp_service_start_name: *const u16,
+            lp_password: *const u16,
+            lp_display_name: *const u16,
+        ) -> i32;
         pub fn CloseServiceHandle(h_sc_object: *mut c_void) -> i32;
     }
 
@@ -1043,6 +1094,186 @@ mod diag_ffi {
         pub fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
         pub fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
         pub fn CloseHandle(h_object: *mut c_void) -> i32;
+    }
+}
+
+/// Outcome of a pure Win32 SCM `Apple Mobile Device Service` clean restart (`stop -> wait <= 8s -> start`).
+#[derive(Debug, Clone)]
+pub struct AmdsRestartOutcome {
+    pub ok: bool,
+    pub access_denied: bool,
+    pub stopped: bool,
+    pub started: bool,
+    pub final_state: Win32ServiceState,
+    pub detail: String,
+}
+
+unsafe fn query_scm_service_current_state(h_svc: *mut c_void) -> Option<u32> {
+    let mut ssp = diag_ffi::SERVICE_STATUS_PROCESS::default();
+    let mut needed: u32 = 0;
+    let ok = diag_ffi::QueryServiceStatusEx(
+        h_svc,
+        diag_ffi::SC_STATUS_PROCESS_INFO,
+        (&mut ssp as *mut diag_ffi::SERVICE_STATUS_PROCESS).cast::<u8>(),
+        std::mem::size_of::<diag_ffi::SERVICE_STATUS_PROCESS>() as u32,
+        &mut needed,
+    );
+    if ok != 0 {
+        Some(ssp.dw_current_state)
+    } else {
+        None
+    }
+}
+
+/// Cleanly restarts `Apple Mobile Device Service` directly via Win32 SCM FFI (`advapi32`):
+/// sets Auto-Start (best effort), stops if running (polling up to 8 s), then starts and awaits `Running`.
+pub fn restart_apple_mobile_device_service_native() -> AmdsRestartOutcome {
+    unsafe {
+        let h_scm = diag_ffi::OpenSCManagerW(
+            ptr::null(),
+            ptr::null(),
+            diag_ffi::SC_MANAGER_CONNECT,
+        );
+        if h_scm.is_null() {
+            let err = GetLastError();
+            return AmdsRestartOutcome {
+                ok: false,
+                access_denied: err == diag_ffi::ERROR_ACCESS_DENIED,
+                stopped: false,
+                started: false,
+                final_state: query_win32_apple_service_state(),
+                detail: format!("OpenSCManagerW err={err}"),
+            };
+        }
+
+        let svc_name = to_wide_null("Apple Mobile Device Service");
+        let full_rights = diag_ffi::SERVICE_STOP
+            | diag_ffi::SERVICE_START
+            | diag_ffi::SERVICE_QUERY_STATUS
+            | diag_ffi::SERVICE_CHANGE_CONFIG;
+        let mut h_svc = diag_ffi::OpenServiceW(h_scm, svc_name.as_ptr(), full_rights);
+        if h_svc.is_null() {
+            let first_err = GetLastError();
+            if first_err != diag_ffi::ERROR_ACCESS_DENIED {
+                h_svc = diag_ffi::OpenServiceW(
+                    h_scm,
+                    svc_name.as_ptr(),
+                    diag_ffi::SERVICE_STOP | diag_ffi::SERVICE_START | diag_ffi::SERVICE_QUERY_STATUS,
+                );
+            }
+            if h_svc.is_null() {
+                let err = GetLastError();
+                let _ = diag_ffi::CloseServiceHandle(h_scm);
+                return AmdsRestartOutcome {
+                    ok: false,
+                    access_denied: err == diag_ffi::ERROR_ACCESS_DENIED,
+                    stopped: false,
+                    started: false,
+                    final_state: query_win32_apple_service_state(),
+                    detail: format!("OpenServiceW err={err}"),
+                };
+            }
+        }
+
+        let _ = diag_ffi::ChangeServiceConfigW(
+            h_svc,
+            diag_ffi::SERVICE_NO_CHANGE,
+            diag_ffi::SERVICE_AUTO_START,
+            diag_ffi::SERVICE_NO_CHANGE,
+            ptr::null(),
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null(),
+            ptr::null(),
+            ptr::null(),
+        );
+
+        let initial_state = query_scm_service_current_state(h_svc).unwrap_or(0);
+        let mut stopped = initial_state == diag_ffi::SERVICE_STOPPED;
+        let mut stop_access_denied = false;
+        if initial_state != diag_ffi::SERVICE_STOPPED {
+            let mut ss = diag_ffi::SERVICE_STATUS::default();
+            let stop_ok = diag_ffi::ControlService(h_svc, diag_ffi::SERVICE_CONTROL_STOP, &mut ss);
+            if stop_ok == 0 {
+                let err = GetLastError();
+                if err == diag_ffi::ERROR_ACCESS_DENIED {
+                    stop_access_denied = true;
+                }
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(8_000);
+            while std::time::Instant::now() < deadline {
+                if query_scm_service_current_state(h_svc) == Some(diag_ffi::SERVICE_STOPPED) {
+                    stopped = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+
+        let mut start_access_denied = false;
+        let start_ok = diag_ffi::StartServiceW(h_svc, 0, ptr::null());
+        if start_ok == 0 {
+            let err = GetLastError();
+            if err == diag_ffi::ERROR_ACCESS_DENIED {
+                start_access_denied = true;
+            }
+        }
+        let mut running = false;
+        let deadline_start = std::time::Instant::now() + std::time::Duration::from_millis(8_000);
+        while std::time::Instant::now() < deadline_start {
+            if query_scm_service_current_state(h_svc) == Some(diag_ffi::SERVICE_RUNNING) {
+                running = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        let _ = diag_ffi::CloseServiceHandle(h_svc);
+        let _ = diag_ffi::CloseServiceHandle(h_scm);
+
+        let final_state = if running {
+            Win32ServiceState::Running
+        } else {
+            query_win32_apple_service_state()
+        };
+        let access_denied = (stop_access_denied || start_access_denied) && !running;
+        let detail = format!(
+            "stopped={stopped}, started={running}, access_denied={access_denied}"
+        );
+        iphone_link_apple::diag_log::record("amds_repair", &detail);
+        AmdsRestartOutcome {
+            ok: running,
+            access_denied,
+            stopped,
+            started: running,
+            final_state,
+            detail,
+        }
+    }
+}
+
+/// Launches an elevated child (`ShellExecuteW("runas", exe, "--repair-amds-elevated")`) ONLY when
+/// triggered explicitly by user interaction (`Perbaiki Driver` button).
+pub fn launch_elevated_amds_repair_self() -> Result<(), String> {
+    let exe_path = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let exe_w = to_wide_null(&exe_path.to_string_lossy());
+    let verb_w = to_wide_null("runas");
+    let params_w = to_wide_null("--repair-amds-elevated");
+    let rc = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            verb_w.as_ptr(),
+            exe_w.as_ptr(),
+            params_w.as_ptr(),
+            ptr::null(),
+            0, // SW_HIDE
+        )
+    };
+    if rc > 32 {
+        Ok(())
+    } else {
+        Err(format!("ShellExecuteW runas failed rc={rc}"))
     }
 }
 
@@ -1094,7 +1325,59 @@ pub fn query_win32_apple_service_state() -> Win32ServiceState {
     }
 }
 
-/// Detects active competing Apple USB tools (`3uTools.exe`, `iTunes.exe`, `AppleDevices.exe`)
+/// Matches a Windows executable name (case-insensitive) against known third-party tools
+/// that compete for iPhone USB / AirPlay sessions while explicitly allowlisting core Apple services.
+pub fn match_conflicting_apple_usb_process(exe_name: &str) -> Option<&'static str> {
+    let low = exe_name.trim().to_ascii_lowercase();
+    if low.is_empty() {
+        return None;
+    }
+    if matches!(
+        low.as_str(),
+        "applemobiledeviceservice.exe"
+            | "applemobiledeviceprocess.exe"
+            | "mdnsresponder.exe"
+            | "apsdaemon.exe"
+    ) {
+        return None;
+    }
+    if low.starts_with("3utools") || low.starts_with("3uairplayer") {
+        return Some("3uTools / 3uAirPlayer");
+    }
+    if low == "itunes.exe" {
+        return Some("iTunes.exe");
+    }
+    if low == "appledevices.exe" {
+        return Some("AppleDevices.exe");
+    }
+    if low.starts_with("itools") {
+        return Some("iTools");
+    }
+    if low.starts_with("imazing") {
+        return Some("iMazing");
+    }
+    if low.starts_with("anytrans") || low.starts_with("imobie") {
+        return Some("AnyTrans / iMobie");
+    }
+    if low.starts_with("copytrans") {
+        return Some("CopyTrans");
+    }
+    if low.starts_with("tenorshare") || low.starts_with("icarefone") {
+        return Some("Tenorshare / iCareFone");
+    }
+    if low.starts_with("drfone") {
+        return Some("Dr.Fone");
+    }
+    if low == "altserver.exe" {
+        return Some("AltServer.exe");
+    }
+    if low.starts_with("sideloadly") {
+        return Some("Sideloadly");
+    }
+    None
+}
+
+/// Detects active competing Apple USB tools (`3uTools*`, `iTools*`, `iTunes.exe`, `AppleDevices.exe`, etc.)
 /// natively via Win32 `CreateToolhelp32Snapshot` (0 PowerShell).
 pub fn detect_conflicting_apple_usb_processes() -> Vec<String> {
     let mut found = Vec::new();
@@ -1113,14 +1396,7 @@ pub fn detect_conflicting_apple_usb_processes() -> Vec<String> {
                     .position(|&c| c == 0)
                     .unwrap_or(pe.sz_exe_file.len());
                 let name = String::from_utf16_lossy(&pe.sz_exe_file[..nul]);
-                let low = name.to_ascii_lowercase();
-                let matched = match low.as_str() {
-                    "3utools.exe" => Some("3uTools.exe"),
-                    "itunes.exe" => Some("iTunes.exe"),
-                    "appledevices.exe" => Some("AppleDevices.exe"),
-                    _ => None,
-                };
-                if let Some(canon) = matched {
+                if let Some(canon) = match_conflicting_apple_usb_process(&name) {
                     if !found.iter().any(|x| x == canon) {
                         found.push(canon.to_string());
                     }
@@ -2688,7 +2964,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     // 6. Test /api/status and webview metrics
     let (code_status, body_status) = http_send(port, "GET", "/api/status", "")?;
     let status_ok = code_status == 200
-        && body_status.contains(r#""version": "5.0.1""#)
+        && body_status.contains(r#""version": "5.0.2""#)
         && body_status.contains("webviewMetrics");
 
     // 7. Test language switching: English -> Indonesian
@@ -2746,7 +3022,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
 
     let test_res = UiSelfTestResult {
         status: "PASS".to_string(),
-        version: "5.0.1".to_string(),
+        version: "5.0.2".to_string(),
         true_dwm_acrylic_active,
         static_wallpaper_disabled,
         index_html_served,
@@ -2764,7 +3040,7 @@ pub fn run_ui_self_test(web_dir: &Path) -> Result<UiSelfTestResult, String> {
     let json_report = format!(
         r#"{{
   "status": "PASS",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "true_dwm_acrylic_active": {},
   "static_wallpaper_disabled": {},
   "index_html_served": {},
@@ -3043,5 +3319,50 @@ mod tests {
         assert!(!RESTORE_WINDOW_MESSAGE_NAME.to_ascii_lowercase().contains("kelvin"));
         assert!(!MAIN_WINDOW_CLASS_NAME.to_ascii_lowercase().contains("kelvin"));
         assert!(!MAIN_WINDOW_TITLE.to_ascii_lowercase().contains("kelvin"));
+    }
+
+    #[test]
+    fn test_tahap295_conflict_process_matcher_variants_and_exclusions() {
+        for exe in [
+            "3uTools.exe",
+            "3UToolsService.EXE",
+            "3uToolsHelper.exe",
+            "3uToolsDaemon.exe",
+            "3uAirPlayer.exe",
+            "3uToolsAirPlayer.exe",
+            "iTools4.exe",
+            "iMazingMini.exe",
+            "AnyTrans.exe",
+            "iMobieHelper.exe",
+            "CopyTransManager.exe",
+            "Tenorshare.exe",
+            "iCareFone.exe",
+            "DrFone.exe",
+            "AltServer.exe",
+            "Sideloadly.exe",
+            "iTunes.exe",
+            "AppleDevices.exe",
+        ] {
+            assert!(
+                match_conflicting_apple_usb_process(exe).is_some(),
+                "Expected conflicting process match for `{exe}`"
+            );
+        }
+
+        for allowed in [
+            "",
+            "AppleMobileDeviceService.exe",
+            "APPLEMOBILEDEVICEPROCESS.EXE",
+            "mDNSResponder.exe",
+            "APSDaemon.exe",
+            "iPhone Link.exe",
+            "explorer.exe",
+        ] {
+            assert_eq!(
+                match_conflicting_apple_usb_process(allowed),
+                None,
+                "Required/safe process `{allowed}` MUST NOT be flagged as conflict"
+            );
+        }
     }
 }

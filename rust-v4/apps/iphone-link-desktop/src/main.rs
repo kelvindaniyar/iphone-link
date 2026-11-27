@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-//! iPhone Link v5.0.1 Native Rust Desktop Engine Entry Point (Default Zero-WebView2).
+//! iPhone Link v5.0.2 Native Rust Desktop Engine Entry Point (Default Zero-WebView2).
 
 pub mod dcomp_presenter;
 pub mod i18n;
@@ -86,7 +86,7 @@ fn find_zlaac_dll() -> Option<PathBuf> {
 }
 
 fn run_self_test() -> i32 {
-    println!("=== iPhone Link v5.0.1 Native Rust Self-Test ===");
+    println!("=== iPhone Link v5.0.2 Native Rust Self-Test ===");
 
     // 1. Model Resolution & Screen Type Detection
     let model_18_1 = resolve_apple_model("iPhone18,1");
@@ -358,9 +358,9 @@ fn run_self_test() -> i32 {
         && dwm_info.elapsed_ms < 150;
 
     // OTA Updater verification
-    let v5 = Semver::parse("v5.0.1").unwrap();
+    let v5 = Semver::parse("v5.0.2").unwrap();
     let v4 = Semver::parse("v4.0.0").unwrap();
-    let semver_passed = v5.is_newer_than(&v4) && crate::updater::CURRENT_VERSION == "5.0.1";
+    let semver_passed = v5.is_newer_than(&v4) && crate::updater::CURRENT_VERSION == "5.0.2";
     let hash_passed = verify_sha256(b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     let config_protect_passed = is_protected_config_file("user_settings.json")
         && is_protected_config_file("wifi_state.json")
@@ -457,7 +457,7 @@ fn run_self_test() -> i32 {
     // Structured JSON result
     let json_output = format!(r#"{{
   "status": "{}",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "edition": "100% Pure Native Rust (Zero Python & Zero PowerShell)",
   "zero_python_runtime": true,
   "zero_powershell_runtime": true,
@@ -983,6 +983,7 @@ pub enum LaunchMode {
     NativeVideoSelftest,
     NativeUiSelftest,
     NativeVideoPreview,
+    RepairAmdsElevated,
     OcrBatchEval,
     LegacyWebView2UiSelfTest,
     ServeForMs,
@@ -1024,6 +1025,7 @@ pub fn should_bypass_single_instance(args: &[String]) -> bool {
                 | "--native-video-selftest"
                 | "--native-ui-selftest"
                 | "--ocr-batch-eval"
+                | "--repair-amds-elevated"
         )
     })
 }
@@ -1038,6 +1040,8 @@ pub fn resolve_launch_mode(args: &[String], headless_env: bool) -> LaunchMode {
         LaunchMode::NativeUiSelftest
     } else if has("--native-video-preview") {
         LaunchMode::NativeVideoPreview
+    } else if has("--repair-amds-elevated") {
+        LaunchMode::RepairAmdsElevated
     } else if has("--ocr-batch-eval") {
         LaunchMode::OcrBatchEval
     } else if has("--ui-self-test") {
@@ -1143,6 +1147,10 @@ fn main() {
             drop(_single_instance_guard);
             std::process::exit(code);
         }
+        LaunchMode::RepairAmdsElevated => {
+            let outcome = window_dwm::restart_apple_mobile_device_service_native();
+            std::process::exit(if outcome.ok { 0 } else { 1 });
+        }
         LaunchMode::OcrBatchEval => {
             if let Some(pos) = args.iter().position(|a| a == "--ocr-batch-eval") {
                 if let (Some(in_p), Some(out_p)) = (args.get(pos + 1), args.get(pos + 2)) {
@@ -1160,7 +1168,7 @@ fn main() {
                 let _ = AttachConsole(0xFFFFFFFF);
                 let _ = CoInitializeEx(std::ptr::null_mut(), 2);
             }
-            println!("=== iPhone Link v5.0.1 Native Rust UI Self-Test ===");
+            println!("=== iPhone Link v5.0.2 Native Rust UI Self-Test ===");
             let web_dir = find_web_dir();
             match window_dwm::run_ui_self_test(&web_dir) {
                 Ok(res) => {

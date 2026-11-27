@@ -9,7 +9,7 @@ use std::time::Duration;
 use idevice::{
     amfi::AmfiClient,
     core_device_proxy::CoreDeviceProxy,
-    cryptexd::{install_ddi, installed_ddi, Cryptex1Assets},
+    cryptexd::{install_ddi_with_progress, installed_ddi, Cryptex1Assets, DdiInstallProgress},
     lockdown::LockdownClient,
     mobile_image_mounter::ImageMounter,
     provider::{IdeviceProvider as _, UsbmuxdProvider},
@@ -271,22 +271,83 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
         return Err(WIFI_DDI_POST_REBOOT_BILINGUAL.into());
     }
 
-    // Step 1: Ensure DDI assets exist locally (auto-download 1x via pure WinHTTP if missing).
+    // Step 1: Ensure DDI assets exist locally (auto-download 1x via WinHTTP on blocking pool).
     crate::diag_log::record("ddi", "Ensuring DDI files exist locally");
     on_stage(
         DdiStage::DownloadingDdi,
         10,
         "Menyiapkan komponen iOS 27 (pertama kali)...",
     );
-    let dir = ddi::ensure_ddi_files_downloaded(kind, |pct, msg| {
-        on_stage(DdiStage::DownloadingDdi, pct, msg);
-    })?;
+    let (dl_tx, dl_rx) = std::sync::mpsc::channel::<(u8, String)>();
+    let dl_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dl_result: std::sync::Arc<std::sync::Mutex<Option<Result<std::path::PathBuf, String>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let dl_waker: std::sync::Arc<std::sync::Mutex<Option<std::task::Waker>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    {
+        let dl_done_bg = std::sync::Arc::clone(&dl_done);
+        let dl_res_bg = std::sync::Arc::clone(&dl_result);
+        let dl_waker_bg = std::sync::Arc::clone(&dl_waker);
+        std::thread::Builder::new()
+            .name("iphone-ddi-download".into())
+            .spawn(move || {
+                let res = ddi::ensure_ddi_files_downloaded(kind, |pct, msg| {
+                    let _ = dl_tx.send((pct, msg.to_string()));
+                    if let Ok(mut wg) = dl_waker_bg.lock() {
+                        if let Some(wk) = wg.take() {
+                            wk.wake();
+                        }
+                    }
+                });
+                if let Ok(mut g) = dl_res_bg.lock() {
+                    *g = Some(res);
+                }
+                dl_done_bg.store(true, std::sync::atomic::Ordering::Release);
+                if let Ok(mut wg) = dl_waker_bg.lock() {
+                    if let Some(wk) = wg.take() {
+                        wk.wake();
+                    }
+                }
+            })
+            .map_err(|e| format!("Gagal memulai task unduh DDI: {e}"))?;
+    }
+    let dir = std::future::poll_fn(|cx| {
+        while let Ok((pct, msg)) = dl_rx.try_recv() {
+            on_stage(DdiStage::DownloadingDdi, pct, &msg);
+        }
+        if dl_done.load(std::sync::atomic::Ordering::Acquire) {
+            while let Ok((pct, msg)) = dl_rx.try_recv() {
+                on_stage(DdiStage::DownloadingDdi, pct, &msg);
+            }
+            if let Ok(mut g) = dl_result.lock() {
+                if let Some(res) = g.take() {
+                    return std::task::Poll::Ready(res);
+                }
+            }
+            return std::task::Poll::Ready(Err("Task unduh DDI berhenti tanpa hasil.".to_string()));
+        }
+        if let Ok(mut wg) = dl_waker.lock() {
+            *wg = Some(cx.waker().clone());
+        }
+        while let Ok((pct, msg)) = dl_rx.try_recv() {
+            on_stage(DdiStage::DownloadingDdi, pct, &msg);
+        }
+        if dl_done.load(std::sync::atomic::Ordering::Acquire) {
+            if let Ok(mut g) = dl_result.lock() {
+                if let Some(res) = g.take() {
+                    return std::task::Poll::Ready(res);
+                }
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await?;
 
     // Step 2: Read DDI assets and perform real Apple TSS personalization + device mount.
     crate::diag_log::record("ddi", "Mounting Developer Disk Image");
     on_stage(
         DdiStage::MountingDdi,
-        75,
+        71,
         "Memasang Developer Disk Image ke iPhone...",
     );
     let files = ddi::read(kind, &dir).map_err(|e| format!("Gagal membaca berkas DDI: {e}"))?;
@@ -308,16 +369,88 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
                 files.root_hash,
                 identity,
             );
+            let mount_started = std::time::Instant::now();
+            let mut last_logged_quartile: u8 = 0;
+            let mut last_ui_bytes: usize = 0;
+            let mut upload_started_at: Option<std::time::Instant> = None;
+
             tokio::time::timeout(
-                Duration::from_secs(45),
-                install_ddi(rsd_provider, rsd, &assets),
+                Duration::from_secs(90),
+                install_ddi_with_progress(rsd_provider, rsd, &assets, true, |prog| match prog {
+                    DdiInstallProgress::CheckingChipId => {
+                        crate::diag_log::record("ddi", "Step 1/5: Reading Chip ID");
+                        on_stage(
+                            DdiStage::MountingDdi,
+                            72,
+                            "Membaca identitas chip iPhone... | Reading iPhone chip ID...",
+                        );
+                    }
+                    DdiInstallProgress::ReadingNonce => {
+                        crate::diag_log::record("ddi", "Step 2/5: Reading ApNonce");
+                        on_stage(
+                            DdiStage::MountingDdi,
+                            74,
+                            "Membaca nonce keamanan iPhone... | Reading iPhone security nonce...",
+                        );
+                    }
+                    DdiInstallProgress::RequestingTss => {
+                        crate::diag_log::record("ddi", "Step 3/5: Requesting Apple TSS signature");
+                        on_stage(
+                            DdiStage::MountingDdi,
+                            76,
+                            "Meminta tanda tangan digital Apple TSS... | Requesting Apple TSS signature...",
+                        );
+                    }
+                    DdiInstallProgress::UploadingAsset { label, sent, total } => {
+                        if label == "image" && total > 0 {
+                            let started = *upload_started_at.get_or_insert_with(std::time::Instant::now);
+                            if sent == 0 || sent == total || sent.saturating_sub(last_ui_bytes) >= 512 * 1024 {
+                                last_ui_bytes = sent;
+                                let pct = 78u8.saturating_add(((sent.min(total) * 10) / total) as u8).min(88);
+                                let sent_mb = sent as f64 / (1024.0 * 1024.0);
+                                let total_mb = total as f64 / (1024.0 * 1024.0);
+                                let detail = format!(
+                                    "Mengunggah DDI ke iPhone ({sent_mb:.1} / {total_mb:.1} MB)... | Uploading DDI to iPhone ({sent_mb:.1} / {total_mb:.1} MB)..."
+                                );
+                                on_stage(DdiStage::MountingDdi, pct, &detail);
+                            }
+                            let pct_100 = ((sent.min(total) * 100) / total) as u8;
+                            for q in [25u8, 50, 75, 100] {
+                                if pct_100 >= q && last_logged_quartile < q {
+                                    last_logged_quartile = q;
+                                    let secs = started.elapsed().as_secs_f64().max(0.001);
+                                    let kbps = ((sent as f64) / 1024.0) / secs;
+                                    crate::diag_log::record(
+                                        "ddi",
+                                        &format!(
+                                            "Step 4/5: Uploading Image.dmg {q}% ({sent}/{total} bytes, {kbps:.0} KB/s)"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    DdiInstallProgress::WaitingMountReply => {
+                        crate::diag_log::record(
+                            "ddi",
+                            "Step 5/5: Verifying & mounting Cryptex1 DDI on iPhone",
+                        );
+                        on_stage(
+                            DdiStage::MountingDdi,
+                            90,
+                            "Memverifikasi & memasang Developer Disk Image di iPhone... | Verifying & mounting DDI on iPhone...",
+                        );
+                    }
+                }),
             )
             .await
             .map_err(|_| {
-                "Timeout memasang Cryptex1 DDI ke iPhone (>45 detik). Buka kunci layar iPhone dan pastikan kabel USB terpasang erat. / Timed out mounting Cryptex1 DDI (>45s). Unlock iPhone and retry.".to_string()
+                crate::diag_log::record("ddi", "Cryptex1 DDI mount timeout (>90s)");
+                "Timeout memasang Cryptex1 DDI ke iPhone (>90 detik). Buka kunci layar iPhone dan pastikan kabel USB terpasang erat. / Timed out mounting Cryptex1 DDI (>90s). Unlock iPhone and retry.".to_string()
             })?
             .map_err(|e| {
                     let s = format!("{e}");
+                    crate::diag_log::record("ddi", &format!("Cryptex1 DDI mount failed: {s}"));
                     if usb_provider.is_none() {
                         format!("{WIFI_DDI_POST_REBOOT_BILINGUAL} ({s})")
                     } else if s.to_ascii_lowercase().contains("developer mode") {
@@ -326,6 +459,13 @@ pub async fn ensure_ddi_with_rsd<P: idevice::provider::RsdProvider>(
                         format!("Gagal memasang Cryptex1 DDI: {s}")
                     }
                 })?;
+            crate::diag_log::record(
+                "ddi",
+                &format!(
+                    "Cryptex1 DDI mounted successfully in {}ms",
+                    mount_started.elapsed().as_millis()
+                ),
+            );
         }
         Kind::Personalized => {
             let Some(provider) = usb_provider else {
@@ -2074,5 +2214,233 @@ pub(crate) mod tests {
             wifi_err.contains("kabel USB") && wifi_err.contains("USB cable"),
             "Wi-Fi post-reboot error must be bilingual: {wifi_err}"
         );
+    }
+
+    #[test]
+    fn test_tahap295_cryptex1_install_progress_milestones() {
+        let _guard = MOCK_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let img_bytes = vec![0x5Au8; 600 * 1024];
+        let tc_bytes = b"SYNTHETIC-TRUSTCACHE-295".to_vec();
+        let info_bytes = b"<plist><dict/></plist>".to_vec();
+        let hash_bytes = b"ROOTHASH-295".to_vec();
+        let ticket_bytes = b"IM4M-TICKET-295".to_vec();
+
+        let device_nonce = vec![0xA1u8; 32];
+        let mut wrapped_nonce = vec![0x00, 0x00];
+        wrapped_nonce.extend_from_slice(&device_nonce);
+        wrapped_nonce.extend_from_slice(&(device_nonce.len() as u32).to_le_bytes());
+
+        let mut manifest_dict = plist::Dictionary::new();
+        let mut comp_tc = plist::Dictionary::new();
+        comp_tc.insert("Digest".into(), plist::Value::Data(vec![0xAB; 48]));
+        let mut comp_tc_info = plist::Dictionary::new();
+        comp_tc_info.insert("Personalize".into(), plist::Value::Boolean(true));
+        comp_tc.insert("Info".into(), plist::Value::Dictionary(comp_tc_info));
+        manifest_dict.insert("Cryptex1,GenericTrustCache".into(), plist::Value::Dictionary(comp_tc));
+        let mut comp_dmg = plist::Dictionary::new();
+        comp_dmg.insert("Digest".into(), plist::Value::Data(vec![0xCD; 48]));
+        let mut comp_dmg_info = plist::Dictionary::new();
+        comp_dmg_info.insert("Personalize".into(), plist::Value::Boolean(false));
+        comp_dmg.insert("Info".into(), plist::Value::Dictionary(comp_dmg_info));
+        manifest_dict.insert("Cryptex1,GenericDmg".into(), plist::Value::Dictionary(comp_dmg));
+
+        let mut identity = plist::Dictionary::new();
+        identity.insert("Cryptex1,ChipID".into(), plist::Value::String("0x20000".into()));
+        identity.insert("Cryptex1,Type".into(), plist::Value::String("Cryptex1".into()));
+        identity.insert("Cryptex1,ProductClass".into(), plist::Value::from(2u64));
+        identity.insert("Cryptex1,Version".into(), plist::Value::String("27.2.1".into()));
+        identity.insert("Cryptex1,SubType".into(), plist::Value::from(1u64));
+        identity.insert("Cryptex1,NonceDomain".into(), plist::Value::from(4u64));
+        identity.insert("Cryptex1,UseProductClass".into(), plist::Value::Boolean(true));
+        identity.insert("Cryptex1,PreauthorizationVersion".into(), plist::Value::String("1.0".into()));
+        identity.insert("Manifest".into(), plist::Value::Dictionary(manifest_dict));
+
+        // 1. Loopback TSS mock server
+        let tss_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let tss_port = tss_listener.local_addr().unwrap().port();
+        let ticket_tss = ticket_bytes.clone();
+        let tss_srv = std::thread::spawn(move || {
+            let (mut s, _) = tss_listener.accept().unwrap();
+            let (_req_line, _body) = read_http_request(&mut s);
+            let mut resp = plist::Dictionary::new();
+            resp.insert("Cryptex1,Ticket".into(), plist::Value::Data(ticket_tss));
+            let xml = plist::to_bytes_xml(&plist::Value::Dictionary(resp)).unwrap();
+            let mut full = b"STATUS=0&MESSAGE=SUCCESS&REQUEST_STRING=".to_vec();
+            full.extend_from_slice(&xml);
+            write_http_response(&mut s, "200 OK", &full);
+        });
+
+        // 2. Loopback mock cryptexd H2/RemoteXPC server handling all 3 RPCs
+        let cxd_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cxd_port = cxd_listener.local_addr().unwrap().port();
+        let cxd_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cxd_stop_srv = cxd_stop.clone();
+        cxd_listener.set_nonblocking(true).unwrap();
+        let cxd_srv = std::thread::spawn(move || {
+            use idevice::remote_xpc::*;
+            while !cxd_stop_srv.load(std::sync::atomic::Ordering::Relaxed) {
+                match cxd_listener.accept() {
+                    Ok((mut s, _)) => {
+                        let _ = s.set_nonblocking(false);
+                        let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+                        let mut magic = [0u8; 24];
+                        if s.read_exact(&mut magic).is_err() {
+                            continue;
+                        }
+                        let mut srv_settings = Vec::new();
+                        srv_settings.extend_from_slice(&4u16.to_be_bytes());
+                        srv_settings.extend_from_slice(&(2 * 1024 * 1024u32).to_be_bytes());
+                        let _ = s.write_all(&build_h2_frame(4, 0, 0, &srv_settings));
+                        let _ = s.write_all(&build_h2_frame(8, 0, 0, &(2 * 1024 * 1024u32).to_be_bytes()));
+                        let _ = s.flush();
+
+                        let mut root_acc = Vec::new();
+                        let mut decoded_rpc: Option<XpcObject> = None;
+                        while decoded_rpc.is_none() {
+                            let Ok((ft, _fl, sid, body)) = read_h2_frame_sync(&mut s) else {
+                                break;
+                            };
+                            if ft == 0 && sid == 1 && !body.is_empty() {
+                                root_acc.extend_from_slice(&body);
+                                while root_acc.len() >= 24 {
+                                    let sz = u64::from_le_bytes([
+                                        root_acc[8], root_acc[9], root_acc[10], root_acc[11],
+                                        root_acc[12], root_acc[13], root_acc[14], root_acc[15],
+                                    ]) as usize;
+                                    if root_acc.len() < 24 + sz {
+                                        break;
+                                    }
+                                    let frame = root_acc[..24 + sz].to_vec();
+                                    root_acc.drain(..24 + sz);
+                                    if sz >= 12 {
+                                        let mut off = 32usize;
+                                        if let Some(obj) = decode_xpc_object(&frame, &mut off) {
+                                            if obj.dict_get("routine").is_some() {
+                                                decoded_rpc = Some(obj);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let Some(rpc) = decoded_rpc else {
+                            continue;
+                        };
+                        let routine = rpc.dict_get("routine").and_then(XpcObject::as_str).unwrap_or("");
+                        let reply = match routine {
+                            "read-personalization-id" => XpcObject::Dictionary(vec![
+                                ("error".into(), XpcObject::Int64(0)),
+                                ("argv".into(), XpcObject::Dictionary(vec![
+                                    ("img4_chip_chip".into(), XpcObject::Uint64(0x8101)),
+                                    ("img4_chip_ecid".into(), XpcObject::Uint64(0x1122_3344_5566_7788)),
+                                    ("img4_chip_bord".into(), XpcObject::Uint64(0x0E)),
+                                    ("img4_chip_cpro".into(), XpcObject::Uint64(1)),
+                                    ("img4_chip_csec".into(), XpcObject::Uint64(1)),
+                                    ("img4_chip_sdom".into(), XpcObject::Uint64(1)),
+                                ])),
+                            ]),
+                            "get-nonce" => XpcObject::Dictionary(vec![
+                                ("error".into(), XpcObject::Int64(0)),
+                                ("argv".into(), XpcObject::Dictionary(vec![
+                                    ("nonce".into(), XpcObject::Data(wrapped_nonce.clone())),
+                                ])),
+                            ]),
+                            "install" => {
+                                let mut ended_streams = 0usize;
+                                while ended_streams < 5 {
+                                    let Ok((ft, fl, sid, _body)) = read_h2_frame_sync(&mut s) else {
+                                        break;
+                                    };
+                                    if ft == 0 && sid >= 5 && (fl & 0x01) != 0 {
+                                        ended_streams += 1;
+                                    }
+                                }
+                                XpcObject::Dictionary(vec![("error".into(), XpcObject::Int64(0))])
+                            }
+                            _ => XpcObject::Dictionary(vec![("error".into(), XpcObject::Int64(22))]),
+                        };
+                        let resp_wrap = build_xpc_wrapper(
+                            XPC_FLAG_ALWAYS_SET | XPC_FLAG_DATA_PRESENT | XPC_FLAG_REPLY,
+                            1,
+                            Some(&reply),
+                        );
+                        let _ = s.write_all(&build_h2_frame(0, 0, 3, &resp_wrap));
+                        let _ = s.flush();
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        std::env::set_var(
+            idevice::tss::ENV_TSS_URL,
+            format!("http://127.0.0.1:{tss_port}/TSS/controller?action=2"),
+        );
+
+        let mut adapter = idevice::tcp::adapter::Adapter::new(
+            Box::new(std::io::Cursor::new(Vec::new())),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        )
+        .with_loopback_target(Some(std::net::SocketAddr::from(([127, 0, 0, 1], cxd_port))))
+        .to_async_handle();
+
+        let mut services = std::collections::HashMap::new();
+        services.insert(
+            idevice::cryptexd::CRYPTEXD_SERVICE_NAME.to_string(),
+            idevice::rsd::RsdService {
+                entitlement: "com.apple.security.cryptexd".into(),
+                port: cxd_port,
+                uses_remote_xpc: true,
+                features: None,
+                service_version: None,
+            },
+        );
+        let mut rsd = RsdHandshake {
+            services,
+            protocol_version: 7,
+            uuid: "T295-MILESTONE-UUID".into(),
+        };
+        let assets = Cryptex1Assets::from_parts(img_bytes, tc_bytes, info_bytes, hash_bytes, identity);
+
+        let mut seen: Vec<DdiInstallProgress> = Vec::new();
+        block_on(install_ddi_with_progress(&mut adapter, &mut rsd, &assets, true, |ev| {
+            seen.push(ev);
+        }))
+        .expect("install_ddi_with_progress MUST succeed with loopback mocks");
+
+        std::env::remove_var(idevice::tss::ENV_TSS_URL);
+        cxd_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = tss_srv.join();
+        let _ = cxd_srv.join();
+
+        assert!(seen.contains(&DdiInstallProgress::CheckingChipId));
+        assert!(seen.contains(&DdiInstallProgress::ReadingNonce));
+        assert!(seen.contains(&DdiInstallProgress::RequestingTss));
+        assert!(seen.contains(&DdiInstallProgress::WaitingMountReply));
+        let image_chunks: Vec<(usize, usize)> = seen
+            .iter()
+            .filter_map(|p| match p {
+                DdiInstallProgress::UploadingAsset { label, sent, total } if *label == "image" => {
+                    Some((*sent, *total))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            image_chunks.len() >= 2 && image_chunks.last() == Some(&(600 * 1024, 600 * 1024)),
+            "Expected multiple image upload progress events ending at 100%, got: {image_chunks:?}"
+        );
+        let idx_chip = seen.iter().position(|p| matches!(p, DdiInstallProgress::CheckingChipId)).unwrap();
+        let idx_nonce = seen.iter().position(|p| matches!(p, DdiInstallProgress::ReadingNonce)).unwrap();
+        let idx_tss = seen.iter().position(|p| matches!(p, DdiInstallProgress::RequestingTss)).unwrap();
+        let idx_up = seen.iter().position(|p| matches!(p, DdiInstallProgress::UploadingAsset { label: "image", .. })).unwrap();
+        let idx_wait = seen.iter().position(|p| matches!(p, DdiInstallProgress::WaitingMountReply)).unwrap();
+        assert!(idx_chip < idx_nonce && idx_nonce < idx_tss && idx_tss < idx_up && idx_up < idx_wait);
     }
 }

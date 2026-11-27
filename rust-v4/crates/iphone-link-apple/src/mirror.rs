@@ -2787,6 +2787,8 @@ pub fn global_on_physical_stream_error(session_gen: u64, err_msg: &str) {
     if LIVE_SESSION_GEN.load(Ordering::SeqCst) != session_gen {
         return;
     }
+    let clean_err = crate::diag_log::sanitize_ui_no_raw_udid(err_msg);
+    crate::models::clear_metadata_cache(None);
     {
         let mut g = mirror_runtime().lock().unwrap_or_else(|e| e.into_inner());
         if LIVE_SESSION_GEN.load(Ordering::SeqCst) != session_gen {
@@ -2795,13 +2797,13 @@ pub fn global_on_physical_stream_error(session_gen: u64, err_msg: &str) {
         g.phase = "error".to_string();
         g.reconnecting = false;
         g.url = None;
-        g.error = Some(err_msg.to_string());
-        g.note = Some(err_msg.to_string());
+        g.error = Some(clean_err.clone());
+        g.note = Some(clean_err.clone());
         g.stage.clear();
         g.stage_progress = 0;
         g.stage_step = 0;
         g.stage_title = "Koneksi stream terputus".to_string();
-        g.stage_detail = err_msg.to_string();
+        g.stage_detail = clean_err;
         g.tunnel_active = false;
         g.audio.screen_phase = "error".to_string();
         MIRROR_STREAM_ACTIVE.store(false, Ordering::SeqCst);
@@ -3266,6 +3268,25 @@ pub fn is_mirror_streaming_fast() -> bool {
     MIRROR_STREAM_ACTIVE.load(Ordering::Relaxed)
 }
 
+/// Returns `"idle"`, `"starting"`, `"waiting_airplay"`, `"running"`, or `"error"`.
+pub fn current_screen_phase() -> String {
+    mirror_runtime()
+        .lock()
+        .map(|g| g.phase.clone())
+        .unwrap_or_else(|_| "idle".to_string())
+}
+
+/// Returns `true` when mirroring is currently active OR negotiating/starting (`Zero-Poll` guard).
+pub fn is_mirror_starting_or_running_fast() -> bool {
+    if MIRROR_STREAM_ACTIVE.load(Ordering::Relaxed) {
+        return true;
+    }
+    mirror_runtime()
+        .lock()
+        .map(|g| g.phase == "running" || g.phase == "starting")
+        .unwrap_or(false)
+}
+
 pub fn active_orientation_fast() -> u32 {
     MIRROR_ACTIVE_ORIENTATION.load(Ordering::Relaxed)
 }
@@ -3519,6 +3540,7 @@ pub fn global_on_wifi_coredevice_error(raw_err: &str, lang_is_en: bool) -> Strin
 pub fn global_set_screen_error(udid: Option<&str>, transport: &str, err_msg: &str) -> String {
     stop_active_physical_worker();
     LIVE_SESSION_GEN.fetch_add(1, Ordering::SeqCst);
+    let clean_err = crate::diag_log::sanitize_ui_no_raw_udid(err_msg);
     let now_ms = now_epoch_ms();
     let mut g = mirror_runtime().lock().unwrap_or_else(|e| e.into_inner());
     g.stop_cooldown_until_ms = 0;
@@ -3530,11 +3552,11 @@ pub fn global_set_screen_error(udid: Option<&str>, transport: &str, err_msg: &st
     g.udid = udid.map(|s| s.to_string());
     g.phase = "error".to_string();
     g.url = None;
-    g.error = Some(err_msg.to_string());
-    g.note = Some(err_msg.to_string());
+    g.error = Some(clean_err.clone());
+    g.note = Some(clean_err.clone());
     g.stage_step = 0;
     g.stage_title = "Koneksi gagal".to_string();
-    g.stage_detail = err_msg.to_string();
+    g.stage_detail = clean_err;
     g.tunnel_active = false;
     g.audio.screen_phase = "error".to_string();
     MIRROR_STREAM_ACTIVE.store(false, Ordering::SeqCst);
@@ -4174,15 +4196,7 @@ mod tests {
         }
         assert!(depack.push(&ap, 1000, false).is_none());
         assert_eq!(depack.dimensions(), Some((1216, 2656)));
-        assert_eq!(
-            depack.trim(),
-            FrameTrim {
-                top: 0,
-                left: 0,
-                bottom: 58,
-                right: 14
-            }
-        );
+        assert_eq!(depack.trim(), FrameTrim::zero());
 
         // Fragmented IDR_W_RADL (type 19) using FU (type 49 -> 49<<1 = 0x62)
         let fu_start = vec![0x62, 0x01, 0x80 | 19, 0xAA, 0xBB];

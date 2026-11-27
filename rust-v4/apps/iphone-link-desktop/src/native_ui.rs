@@ -93,6 +93,24 @@ pub fn should_use_disk_blur_cache(is_selftest: bool) -> bool {
     !is_selftest && !is_test_loopback_only_env()
 }
 
+/// Returns `true` ONLY when active USB/Wi-Fi CoreDevice mirroring needs the 1.2s audio sync poll
+/// (disabled when audio is routed to `"device"` / Hanya perangkat, muted, AirPlay, or bridge already active).
+pub fn should_poll_running_status_for_audio(
+    streaming: bool,
+    airplay_active: bool,
+    bridge_active: bool,
+    bridge_connecting: bool,
+    audio_routing: &str,
+    audio_muted: bool,
+) -> bool {
+    streaming
+        && !airplay_active
+        && !bridge_active
+        && !bridge_connecting
+        && !audio_muted
+        && !audio_routing.eq_ignore_ascii_case("device")
+}
+
 /// Gate ensuring selftest & loopback tests never hydrate/touch real persisted Auto-Unlock PIN.
 #[inline]
 pub fn should_hydrate_disk_pin(is_selftest: bool) -> bool {
@@ -1024,12 +1042,15 @@ pub fn compute_active_video_physical_rect(
 }
 
 /// Maps client physical pixel `(client_x, client_y)` into iOS HID `0..=65535` ONLY when inside
-/// `rect` (rejects clicks on Fullscreen blur wings, Top Bar, Bottom Nav, and Side Drawer).
-pub fn map_client_px_to_ios_hid_from_rect(
+/// `rect` (rejects clicks on Fullscreen blur wings, Top Bar, Bottom Nav, and Side Drawer),
+/// with dynamic manual crop compensation `(top, bottom, left, right)` from `(active_w, active_h)`.
+pub fn map_client_px_to_ios_hid_from_rect_with_crop(
     client_x: i32,
     client_y: i32,
     rect: ActiveVideoPhysicalRect,
     rotation_deg: u16,
+    active_dims: (u32, u32),
+    crop: (u32, u32, u32, u32),
 ) -> Option<(u16, u16)> {
     let w = rect.width as i32;
     let h = rect.height as i32;
@@ -1044,11 +1065,62 @@ pub fn map_client_px_to_ios_hid_from_rect(
     }
     let nx = ((client_x - rect.x) as f64) / (w as f64);
     let ny = ((client_y - rect.y) as f64) / (h as f64);
-    Some(crate::native_input::stage_norm_to_ios_hid(
-        nx,
-        ny,
-        u32::from(rotation_deg),
+    let crop_clamped = (
+        crop.0.min(24),
+        crop.1.min(24),
+        crop.2.min(24),
+        crop.3.min(24),
+    );
+    if crop_clamped == (0, 0, 0, 0) {
+        return Some(crate::native_input::stage_norm_to_ios_hid(
+            nx,
+            ny,
+            u32::from(rotation_deg),
+        ));
+    }
+
+    let (ux, uy) = match u32::from(rotation_deg) % 360 {
+        270 => (1.0 - ny, nx),
+        90 => (ny, 1.0 - nx),
+        180 => (1.0 - nx, 1.0 - ny),
+        _ => (nx, ny),
+    };
+    let (aw, ah) = if active_dims.0 > 0 && active_dims.1 > 0 {
+        (active_dims.0 as f64, active_dims.1 as f64)
+    } else {
+        (1202.0, 2598.0)
+    };
+    let px_scale = (aw / 390.0).max(1.0);
+    let extra_t = (crop_clamped.0 as f64) * px_scale;
+    let extra_b = (crop_clamped.1 as f64) * px_scale;
+    let extra_l = (crop_clamped.2 as f64) * px_scale;
+    let extra_r = (crop_clamped.3 as f64) * px_scale;
+
+    let vis_w = (aw - extra_l - extra_r).max(1.0);
+    let vis_h = (ah - extra_t - extra_b).max(1.0);
+    let ios_norm_x = ((extra_l + ux * vis_w) / aw).clamp(0.0, 1.0);
+    let ios_norm_y = ((extra_t + uy * vis_h) / ah).clamp(0.0, 1.0);
+
+    Some((
+        (ios_norm_x * 65535.0).round().clamp(0.0, 65535.0) as u16,
+        (ios_norm_y * 65535.0).round().clamp(0.0, 65535.0) as u16,
     ))
+}
+
+pub fn map_client_px_to_ios_hid_from_rect(
+    client_x: i32,
+    client_y: i32,
+    rect: ActiveVideoPhysicalRect,
+    rotation_deg: u16,
+) -> Option<(u16, u16)> {
+    map_client_px_to_ios_hid_from_rect_with_crop(
+        client_x,
+        client_y,
+        rect,
+        rotation_deg,
+        (0, 0),
+        (0, 0, 0, 0),
+    )
 }
 
 /// Airspace Visibility Guard:
@@ -2610,9 +2682,7 @@ fn parse_launchpad_from_status(val: &serde_json::Value, lang_en: bool) -> Launch
                 .get("wifiOnline")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let reachable = d.get("reachable").and_then(|v| v.as_bool()).unwrap_or(false);
-            let wifi_paired = d.get("wifiPaired").and_then(|v| v.as_bool()).unwrap_or(false);
-            let wifi_up = wifi_online || (reachable && wifi_paired);
+            let wifi_up = wifi_online && !ip.is_empty();
             let online = usb || wifi_up;
 
             let display_title = if !model.is_empty() && !name.is_empty() && !model.eq_ignore_ascii_case(&name) {
@@ -3366,8 +3436,9 @@ pub fn resolve_topbar_status_pill_text(
 }
 
 /// Pure Connecting watchdog for CoreDevice USB/Wi-Fi handshake:
-/// flags `"stage_stagnant"` (>= 25s on one step) or `"total_timeout"` (>= 90s overall),
-/// while staying silent during passive `waiting_airplay` sessions.
+/// - DDI stages (`downloading_ddi`, `mounting_ddi`): `>= 45s` stagnant or `>= 120s` total
+/// - Standard stages: `>= 25s` stagnant or `>= 90s` total
+/// Stays silent during passive `waiting_airplay` sessions.
 pub fn evaluate_connecting_watchdog(
     phase: &str,
     airplay_active: bool,
@@ -3378,10 +3449,13 @@ pub fn evaluate_connecting_watchdog(
     if phase != "starting" || airplay_active || stage == "waiting_airplay" {
         return None;
     }
-    if total_ms >= 90_000 {
+    let is_ddi_stage = stage == "downloading_ddi" || stage == "mounting_ddi";
+    let total_limit_ms = if is_ddi_stage { 120_000 } else { 90_000 };
+    let stagnant_limit_ms = if is_ddi_stage { 45_000 } else { 25_000 };
+    if total_ms >= total_limit_ms {
         return Some("total_timeout");
     }
-    if stagnant_ms >= 25_000 {
+    if stagnant_ms >= stagnant_limit_ms {
         return Some("stage_stagnant");
     }
     None
@@ -3919,6 +3993,12 @@ pub fn run_native_ui(
     // DirectComposition HWND hooks replace legacy winit/FocusScope double-dispatch!
     let subclass_installed = Rc::new(Cell::new(true));
     let live_video_dims: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((0, 0)));
+    let live_manual_crop: Arc<Mutex<(u32, u32, u32, u32)>> = Arc::new(Mutex::new((
+        init_crops.0.clamp(0, 24) as u32,
+        init_crops.1.clamp(0, 24) as u32,
+        init_crops.2.clamp(0, 24) as u32,
+        init_crops.3.clamp(0, 24) as u32,
+    )));
     let frame1_reveal_needed = Arc::new(AtomicBool::new(false));
     let airplay_manual_landscape_rc = Rc::new(Cell::new(false));
 
@@ -4101,6 +4181,8 @@ pub fn run_native_ui(
             let sub_c = subclass_state.clone();
             let rect_c = active_rect_shared.clone();
             let rot_c = hooks_rot_deg.clone();
+            let dims_c = live_video_dims.clone();
+            let crop_c = live_manual_crop.clone();
             let cap_c = pointer_captured_hook.clone();
             let router_c = input_router.clone();
             Box::new(move |msg, cx, cy| {
@@ -4114,7 +4196,16 @@ pub fn run_native_ui(
                 }
                 let rect = rect_c.lock().map(|g| *g).unwrap_or_default();
                 let rot = rot_c.load(Ordering::Relaxed);
-                let hit = map_client_px_to_ios_hid_from_rect(cx, cy, rect, rot);
+                let active_dims = dims_c.lock().map(|g| *g).unwrap_or((0, 0));
+                let crop = crop_c.lock().map(|g| *g).unwrap_or((0, 0, 0, 0));
+                let hit = map_client_px_to_ios_hid_from_rect_with_crop(
+                    cx,
+                    cy,
+                    rect,
+                    rot,
+                    active_dims,
+                    crop,
+                );
 
                 if msg == 0x0201 {
                     // WM_LBUTTONDOWN: only start HID touch inside active iPhone screen (blur wings go to Slint)
@@ -4128,7 +4219,14 @@ pub fn run_native_ui(
                 if msg == 0x0200 && was_captured {
                     let clamped_x = cx.clamp(rect.x, rect.x + (rect.width as i32).saturating_sub(1));
                     let clamped_y = cy.clamp(rect.y, rect.y + (rect.height as i32).saturating_sub(1));
-                    if let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect(clamped_x, clamped_y, rect, rot) {
+                    if let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect_with_crop(
+                        clamped_x,
+                        clamped_y,
+                        rect,
+                        rot,
+                        active_dims,
+                        crop,
+                    ) {
                         router_c.handle_pointer_event(StagePointerEvent::Move { hid_x, hid_y });
                     }
                     return true;
@@ -4137,7 +4235,14 @@ pub fn run_native_ui(
                     cap_c.store(false, Ordering::SeqCst);
                     let clamped_x = cx.clamp(rect.x, rect.x + (rect.width as i32).saturating_sub(1));
                     let clamped_y = cy.clamp(rect.y, rect.y + (rect.height as i32).saturating_sub(1));
-                    if let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect(clamped_x, clamped_y, rect, rot) {
+                    if let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect_with_crop(
+                        clamped_x,
+                        clamped_y,
+                        rect,
+                        rot,
+                        active_dims,
+                        crop,
+                    ) {
                         router_c.handle_pointer_event(StagePointerEvent::Up { hid_x, hid_y });
                     }
                     return true;
@@ -4150,6 +4255,8 @@ pub fn run_native_ui(
             let sub_c = subclass_state.clone();
             let rect_c = active_rect_shared.clone();
             let rot_c = hooks_rot_deg.clone();
+            let dims_c = live_video_dims.clone();
+            let crop_c = live_manual_crop.clone();
             let router_c = input_router.clone();
             Box::new(move |cx, cy, delta, is_horiz| {
                 if sub_c.pin_editing.load(Ordering::Relaxed) || !v_act.load(Ordering::Relaxed) {
@@ -4157,7 +4264,16 @@ pub fn run_native_ui(
                 }
                 let rect = rect_c.lock().map(|g| *g).unwrap_or_default();
                 let rot = rot_c.load(Ordering::Relaxed);
-                let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect(cx, cy, rect, rot) else {
+                let active_dims = dims_c.lock().map(|g| *g).unwrap_or((0, 0));
+                let crop = crop_c.lock().map(|g| *g).unwrap_or((0, 0, 0, 0));
+                let Some((hid_x, hid_y)) = map_client_px_to_ios_hid_from_rect_with_crop(
+                    cx,
+                    cy,
+                    rect,
+                    rot,
+                    active_dims,
+                    crop,
+                ) else {
                     return false;
                 };
                 let ctrl = unsafe { ((win32().get_key_state)(VK_CONTROL) as u16 & 0x8000) != 0 }
@@ -5129,9 +5245,9 @@ pub fn run_native_ui(
                                 u2.set_is_airplay_session(airplay);
                                 if fallback_reason.as_deref() == Some("hevc_mft_missing") {
                                     u2.set_connecting_detail(SharedString::from(if u2.get_lang_en() {
-                                        "Auto AirPlay H.264 + Touch active (PC lacks HEVC codec)."
+                                        "Auto AirPlay H.264 + Audio active (View Only, PC lacks HEVC codec)."
                                     } else {
-                                        "Mode AirPlay H.264 + Sentuh aktif otomatis (PC belum ada codec HEVC)."
+                                        "Mode AirPlay H.264 + Audio aktif (Tampilan Saja, PC belum ada codec HEVC)."
                                     }));
                                 }
                             }
@@ -5183,7 +5299,8 @@ pub fn run_native_ui(
                                 u2.set_first_frame_ready(false);
                                 u2.set_is_airplay_session(false);
                                 u2.set_status_pill(SharedString::from(if u2.get_lang_en() { "Ready" } else { "Siap" }));
-                                u2.set_error_text(SharedString::from(err_msg));
+                                let clean_err = iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(&err_msg);
+                                u2.set_error_text(SharedString::from(clean_err));
                             }
                         }
                     }
@@ -5273,13 +5390,16 @@ pub fn run_native_ui(
                                 u2.set_phase(SharedString::from("idle"));
                                 u2.set_stage(SharedString::from(""));
                                 u2.set_is_airplay_session(false);
-                                u2.set_error_text(SharedString::from(if u2.get_lang_en() { message_en } else { message_id }));
+                                let raw_msg = if u2.get_lang_en() { message_en } else { message_id };
+                                let clean = iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(&raw_msg);
+                                u2.set_error_text(SharedString::from(clean));
                             }
                             StartMirrorOutcome::Error(err_msg) => {
                                 u2.set_phase(SharedString::from("idle"));
                                 u2.set_stage(SharedString::from(""));
                                 u2.set_is_airplay_session(false);
-                                u2.set_error_text(SharedString::from(err_msg));
+                                let clean = iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(&err_msg);
+                                u2.set_error_text(SharedString::from(clean));
                             }
                         }
                     }
@@ -6184,6 +6304,7 @@ pub fn run_native_ui(
         let pipe_rc = pipeline.clone();
         let st_c = state.clone();
         let wd_c = web_dir.clone();
+        let crop_s = live_manual_crop.clone();
         ui.on_set_crop_edge(move |edge_ss, raw_val| {
             let Some(u) = ui_weak.upgrade() else { return };
             let v = raw_val.clamp(0, 24);
@@ -6200,6 +6321,9 @@ pub fn run_native_ui(
                 u.get_crop_left().clamp(0, 24) as u32,
                 u.get_crop_right().clamp(0, 24) as u32,
             );
+            if let Ok(mut g) = crop_s.lock() {
+                *g = (ct, cb, cl, cr);
+            }
             if let Some(ref p) = *pipe_rc.borrow() {
                 p.set_crop(ct, cb, cl, cr);
             }
@@ -6218,6 +6342,7 @@ pub fn run_native_ui(
         let pipe_rc = pipeline.clone();
         let st_c = state.clone();
         let wd_c = web_dir.clone();
+        let crop_s = live_manual_crop.clone();
         ui.on_reset_crop(move || {
             if let Some(u) = ui_weak.upgrade() {
                 u.set_crop_top(0);
@@ -6232,6 +6357,9 @@ pub fn run_native_ui(
                     u2.set_fb_crop_state(0);
                     u2.set_fb_crop_text(SharedString::from(""));
                 });
+            }
+            if let Ok(mut g) = crop_s.lock() {
+                *g = (0, 0, 0, 0);
             }
             if let Some(ref p) = *pipe_rc.borrow() {
                 p.set_crop(0, 0, 0, 0);
@@ -6254,6 +6382,7 @@ pub fn run_native_ui(
         let pipe_rc = pipeline.clone();
         let st_c = state.clone();
         let wd_c = web_dir.clone();
+        let crop_s = live_manual_crop.clone();
         ui.on_save_crop(move || {
             let Some(u) = ui_weak.upgrade() else { return };
             let (ct, cb, cl, cr) = (
@@ -6262,6 +6391,9 @@ pub fn run_native_ui(
                 u.get_crop_left().clamp(0, 24) as u32,
                 u.get_crop_right().clamp(0, 24) as u32,
             );
+            if let Ok(mut g) = crop_s.lock() {
+                *g = (ct, cb, cl, cr);
+            }
             if let Some(ref p) = *pipe_rc.borrow() {
                 p.set_crop(ct, cb, cl, cr);
             }
@@ -7086,20 +7218,88 @@ pub fn run_native_ui(
         let st_c = state.clone();
         let wd_c = web_dir.clone();
         ui.on_pair_wifi(move || {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let phase = u.get_phase().to_string();
+            let en = u.get_lang_en();
+            if phase == "running" || phase == "starting" {
+                u.set_wifi_status_text(SharedString::from(if en {
+                    "Stop mirroring first before setting up Wi-Fi."
+                } else {
+                    "Hentikan mirroring terlebih dahulu sebelum mengatur Wi-Fi."
+                }));
+                return;
+            }
+            let selected_udid = u.get_selected_udid().to_string();
+            u.set_wifi_status_text(SharedString::from(if en {
+                "Setting up Wi-Fi via USB..."
+            } else {
+                "Mengatur Wi-Fi via USB..."
+            }));
             let st_t = st_c.clone();
             let wd_t = wd_c.clone();
             let ui_w2 = ui_weak.clone();
             std::thread::spawn(move || {
-                let resp = inprocess_api(&st_t, &wd_t, "POST", "/api/wifi/pair", "{}");
+                let body = if selected_udid.trim().is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!(r#"{{"udid":"{}"}}"#, escape_json(selected_udid.trim()))
+                };
+                let resp = inprocess_api(&st_t, &wd_t, "POST", "/api/wifi/pair", &body);
+                let parsed: Result<serde_json::Value, _> = serde_json::from_str(&resp);
+                let is_ok = parsed
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v.get("ok"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let status_val = if is_ok {
+                    let sresp = inprocess_api(&st_t, &wd_t, "GET", "/api/status?refresh=1", "");
+                    serde_json::from_str(&sresp).ok()
+                } else {
+                    None
+                };
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(u) = ui_w2.upgrade() {
-                        u.set_wifi_status_text(SharedString::from(
-                            if resp.contains("\"ok\":true") {
-                                "Wi-Fi pairing aktif"
+                    if let Some(u2) = ui_w2.upgrade() {
+                        let en2 = u2.get_lang_en();
+                        let display_msg = match &parsed {
+                            Ok(v) => {
+                                let primary = if en2 {
+                                    v.get("message_en")
+                                } else {
+                                    v.get("message_id")
+                                };
+                                let raw = primary
+                                    .or_else(|| v.get("message"))
+                                    .or_else(|| v.get("error"))
+                                    .and_then(|x| x.as_str())
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or(if is_ok {
+                                        if en2 { "Wi-Fi pairing active" } else { "Wi-Fi pairing aktif" }
+                                    } else if en2 {
+                                        "Plug in iPhone via USB briefly and retry Set up Wi-Fi."
+                                    } else {
+                                        "Hubungkan iPhone via USB sebentar lalu coba Pairing Wi-Fi."
+                                    });
+                                iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(raw)
+                            }
+                            Err(_) => if en2 {
+                                "Failed to process Wi-Fi pairing response.".to_string()
                             } else {
-                                "Hubungkan iPhone via USB sebentar lalu coba Pairing Wi-Fi."
+                                "Gagal memproses respons Pairing Wi-Fi.".to_string()
                             },
-                        ));
+                        };
+                        u2.set_wifi_status_text(SharedString::from(display_msg));
+                        if let Some(sv) = status_val {
+                            let sum = parse_launchpad_from_status(&sv, en2);
+                            u2.set_devices(ModelRc::new(VecModel::from(sum.cards)));
+                            u2.set_device_model_name(SharedString::from(sum.model_name));
+                            u2.set_device_title(SharedString::from(sum.hero_title));
+                            u2.set_device_subtitle(SharedString::from(sum.hero_subtitle));
+                            u2.set_device_pill_title(SharedString::from(sum.pill_title));
+                            u2.set_device_pill_detail(SharedString::from(sum.pill_detail));
+                            u2.set_device_ready(sum.ready);
+                        }
                     }
                 });
             });
@@ -7180,7 +7380,8 @@ pub fn run_native_ui(
                             if ok {
                                 u.set_error_text(SharedString::from(""));
                             } else {
-                                u.set_error_text(SharedString::from(fb_msg));
+                                let clean_fb = iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(&fb_msg);
+                                u.set_error_text(SharedString::from(clean_fb));
                             }
                         }
                         if let Ok(diag_v) = parsed_diag {
@@ -7345,9 +7546,9 @@ pub fn run_native_ui(
                             u.set_update_status_text(SharedString::from(st_txt));
                         } else {
                             u.set_update_status_text(SharedString::from(if en {
-                                "iPhone Link v5.0.1 is up to date."
+                                "iPhone Link v5.0.2 is up to date."
                             } else {
-                                "iPhone Link v5.0.1 sudah versi terbaru."
+                                "iPhone Link v5.0.2 sudah versi terbaru."
                             }));
                         }
                     }
@@ -7453,6 +7654,8 @@ pub fn run_native_ui(
         let auto_audio_triggered_gen_rc = Rc::new(Cell::new(0u64));
         let auto_audio_started_at_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
         let auto_audio_reopened_gen_rc = Rc::new(Cell::new(0u64));
+        let last_err_refresh_rc: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+        let prev_phase_err_rc = Rc::new(Cell::new(false));
         let logo_scale_sync = last_logo_scale_bits.clone();
         let loopback_only_sync = std::env::var("IPHONE_LINK_TEST_LOOPBACK_ONLY")
             .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
@@ -7686,6 +7889,13 @@ pub fn run_native_ui(
                 conn_stagnant_ms,
                 conn_total_ms,
             ) {
+                iphone_link_apple::diag_log::record(
+                    "watchdog",
+                    &format!(
+                        "aborted reason={wd_reason} stage={effective_stage} stagnant_ms={conn_stagnant_ms} total_ms={conn_total_ms}"
+                    ),
+                );
+                let is_ddi_wd = effective_stage == "downloading_ddi" || effective_stage == "mounting_ddi";
                 connecting_started_at_rc.set(None);
                 last_stage_change_at_rc.set(None);
                 last_stage_key_rc.borrow_mut().clear();
@@ -7696,10 +7906,22 @@ pub fn run_native_ui(
                 sub_st.phase_running.store(false, Ordering::SeqCst);
                 let wd_en = u.get_lang_en();
                 let wd_msg = if wd_reason == "total_timeout" {
-                    if wd_en {
+                    if is_ddi_wd {
+                        if wd_en {
+                            "DDI preparation/mount timed out (>120s). Unplug & replug the USB cable, unlock your iPhone, verify Trust, Developer Mode & internet, or click Copy Diagnostic Log."
+                        } else {
+                            "Penyiapan/pemasangan DDI terlalu lama (>120 detik). Cabut lalu colok ulang kabel USB, buka kunci iPhone, cek Trust, Developer Mode & internet, atau klik Salin Log Diagnostik."
+                        }
+                    } else if wd_en {
                         "USB/CoreDevice handshake timed out (>90s). Unplug & replug the USB cable, unlock your iPhone, verify Trust & Developer Mode, or click Copy Diagnostic Log."
                     } else {
                         "Koneksi USB/CoreDevice terlalu lama (>90 detik). Cabut lalu colok ulang kabel USB, buka kunci iPhone, cek Trust & Developer Mode, atau klik Salin Log Diagnostik."
+                    }
+                } else if is_ddi_wd {
+                    if wd_en {
+                        "Developer Disk Image step stalled (>45s). Unlock iPhone, check internet/firewall to Apple TSS, or click Copy Diagnostic Log."
+                    } else {
+                        "Proses Developer Disk Image tertahan (>45 detik). Buka kunci layar iPhone, cek koneksi internet/firewall ke Apple TSS, atau klik Salin Log Diagnostik."
                     }
                 } else if wd_en {
                     "Connection stalled at the current step (>25s). Replug USB cable, check Apple Mobile Device Service / conflicting apps, or click Copy Diagnostic Log."
@@ -7724,8 +7946,72 @@ pub fn run_native_ui(
                 u.set_status_pill(SharedString::from(ready_pill));
                 u.set_status_pill_compact(SharedString::from(ready_pill));
                 u.set_error_text(SharedString::from(wd_msg));
+                let should_refresh = last_err_refresh_rc
+                    .get()
+                    .is_none_or(|t| t.elapsed() >= Duration::from_millis(1500));
+                if should_refresh {
+                    last_err_refresh_rc.set(Some(Instant::now()));
+                    let st_r = st_c.clone();
+                    let wd_r = wd_c.clone();
+                    let ui_wr = ui_weak.clone();
+                    std::thread::spawn(move || {
+                        let sresp = inprocess_api(&st_r, &wd_r, "GET", "/api/status?refresh=1", "");
+                        if let Ok(sv) = serde_json::from_str(&sresp) {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(u2) = ui_wr.upgrade() {
+                                    let sum = parse_launchpad_from_status(&sv, u2.get_lang_en());
+                                    u2.set_devices(ModelRc::new(VecModel::from(sum.cards)));
+                                    u2.set_device_model_name(SharedString::from(sum.model_name));
+                                    u2.set_device_title(SharedString::from(sum.hero_title));
+                                    u2.set_device_subtitle(SharedString::from(sum.hero_subtitle));
+                                    u2.set_device_pill_title(SharedString::from(sum.pill_title));
+                                    u2.set_device_pill_detail(SharedString::from(sum.pill_detail));
+                                    u2.set_device_ready(sum.ready);
+                                    if u2.get_phase() == "idle" {
+                                        u2.set_status_pill(SharedString::from(if u2.get_drawer_open() {
+                                            sum.status_pill_wide
+                                        } else {
+                                            sum.status_pill_short
+                                        }));
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
                 return;
             }
+
+            let is_err_now = effective_phase == "error";
+            if is_err_now && !prev_phase_err_rc.get() {
+                let should_refresh = last_err_refresh_rc
+                    .get()
+                    .is_none_or(|t| t.elapsed() >= Duration::from_millis(1500));
+                if should_refresh {
+                    last_err_refresh_rc.set(Some(Instant::now()));
+                    let st_r = st_c.clone();
+                    let wd_r = wd_c.clone();
+                    let ui_wr = ui_weak.clone();
+                    std::thread::spawn(move || {
+                        let sresp = inprocess_api(&st_r, &wd_r, "GET", "/api/status?refresh=1", "");
+                        if let Ok(sv) = serde_json::from_str(&sresp) {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(u2) = ui_wr.upgrade() {
+                                    let sum = parse_launchpad_from_status(&sv, u2.get_lang_en());
+                                    u2.set_devices(ModelRc::new(VecModel::from(sum.cards)));
+                                    u2.set_device_model_name(SharedString::from(sum.model_name));
+                                    u2.set_device_title(SharedString::from(sum.hero_title));
+                                    u2.set_device_subtitle(SharedString::from(sum.hero_subtitle));
+                                    u2.set_device_pill_title(SharedString::from(sum.pill_title));
+                                    u2.set_device_pill_detail(SharedString::from(sum.pill_detail));
+                                    u2.set_device_ready(sum.ready);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+            prev_phase_err_rc.set(is_err_now);
 
             let stream_or_start = effective_phase == "running" || effective_phase == "starting";
             streaming_rc.store(stream_or_start, Ordering::Relaxed);
@@ -7744,7 +8030,12 @@ pub fn run_native_ui(
             u.set_stage_title(SharedString::from(stage_title));
             u.set_stage_detail(SharedString::from(stage_detail));
             if !err_str.is_empty() || effective_phase == "running" {
-                u.set_error_text(SharedString::from(if effective_phase == "running" { "" } else { err_str }));
+                let ui_err = if effective_phase == "running" {
+                    String::new()
+                } else {
+                    iphone_link_apple::diag_log::sanitize_ui_no_raw_udid(err_str)
+                };
+                u.set_error_text(SharedString::from(ui_err));
             }
             if effective_phase == "idle" && !u.get_first_frame_ready() {
                 u.set_is_airplay_session(false);
@@ -8196,12 +8487,20 @@ pub fn run_native_ui(
                             }
                         });
                     }
-                } else if streaming
-                    && !mirror::is_airplay_active()
-                    && !iphone_link_audio::is_global_pc_audio_bridge_active()
-                    && !iphone_link_audio::is_global_pc_audio_bridge_connecting()
-                    && last_running_bt_sync.elapsed() >= Duration::from_millis(1200)
-                {
+                } else if {
+                    let (aud_route, aud_muted) = poller_state
+                        .lock()
+                        .map(|s| (s.audio_routing.clone(), s.audio_muted))
+                        .unwrap_or_else(|_| ("device".to_string(), false));
+                    should_poll_running_status_for_audio(
+                        streaming,
+                        mirror::is_airplay_active(),
+                        iphone_link_audio::is_global_pc_audio_bridge_active(),
+                        iphone_link_audio::is_global_pc_audio_bridge_connecting(),
+                        &aud_route,
+                        aud_muted,
+                    ) && last_running_bt_sync.elapsed() >= Duration::from_millis(1200)
+                } {
                     last_running_bt_sync = Instant::now();
                     let _ = inprocess_api(&poller_state, &poller_web, "GET", "/api/status", "");
                 }
@@ -10190,8 +10489,8 @@ pub fn run_native_ui_selftest() -> i32 {
                             let topbar_auto_ok = ar_on && ar_off && budgets_ok && main_src.contains("text: \"AUTO\";");
                             let saweria_ok = main_src.contains("Dukung Kreator di Saweria")
                                 && main_src.contains("Support Creator on Saweria")
-                                // Superseded by Tahap 288 V3 / Tahap 293: clean single-row footer "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
-                                && main_src.contains("iPhone Link v5.0.1 by")
+                                // Superseded by Tahap 288 V3 / Tahap 293: clean single-row footer "iPhone Link v5.0.2 by Kelvin Daniyar · GPL-3.0"
+                                && main_src.contains("iPhone Link v5.0.2 by")
                                 && main_src.contains("Kelvin Daniyar")
                                 && main_src.contains(" · GPL-3.0")
                                 && !main_src.contains("Forked from")
@@ -10960,7 +11259,7 @@ mod tests {
             compute_fullscreen_exit_physical_rect(Some(saved), wa, true, true, "iphone", 1.5);
         assert_eq!((rwl, rhl), ((1200.0f32 * 1.5).round() as i32, (468.0f32 * 1.5).round() as i32));
 
-        // Hero online on Wi-Fi even when usb=false and wifiOnline=false (reachable && wifiPaired)
+        // Hero online on Wi-Fi when usb=false and wifiOnline=true with non-empty IP (Tahap 295 Pilar 5)
         let wifi_status = serde_json::json!({
             "selectedUdid": "00008150-0000000000000001",
             "devices": [{
@@ -10969,13 +11268,13 @@ mod tests {
                 "model": "iPhone 17 Pro",
                 "ip": "192.168.1.90",
                 "usb": false,
-                "wifiOnline": false,
+                "wifiOnline": true,
                 "reachable": true,
                 "wifiPaired": true
             }]
         });
         let sum = parse_launchpad_from_status(&wifi_status, true);
-        assert!(sum.ready, "Hero card MUST be online when Wi-Fi reachable && wifiPaired");
+        assert!(sum.ready, "Hero card MUST be online when wifiOnline=true and ip is present");
         assert_eq!(format_status_pill_with_transport("running", "", "wifi", false, true), "Mirroring · Wi-Fi");
         assert_eq!(format_status_pill_with_transport("running", "", "usb", false, true), "Mirroring · USB");
         assert_eq!(format_status_pill_with_transport("starting", "waiting_airplay", "wifi", true, true), "AirPlay Ready");
@@ -12231,11 +12530,11 @@ mod tests {
     #[test]
     fn test_tahap282_saweria_footer_dark_light_tokens_and_public_url_allowlist() {
         let main_src = include_str!("../ui/main_window.slint");
-        // Superseded by Tahap 288 V3 / Tahap 293: footer simplified cleanly to "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
+        // Superseded by Tahap 288 V3 / Tahap 293: footer simplified cleanly to "iPhone Link v5.0.2 by Kelvin Daniyar · GPL-3.0"
         for needle in [
             "Dukung Kreator di Saweria",
             "Support Creator on Saweria",
-            "iPhone Link v5.0.1 by",
+            "iPhone Link v5.0.2 by",
             "Kelvin Daniyar",
             "https://saweria.co/kelvindaniyar",
             "https://github.com/kelvindaniyar",
@@ -13654,7 +13953,7 @@ mod tests {
             0
         );
         for req in [
-            "iPhone Link v5.0.1 by ",
+            "iPhone Link v5.0.2 by ",
             "Kelvin Daniyar",
             " · GPL-3.0",
             "Dukung Kreator di Saweria",
@@ -13831,7 +14130,7 @@ mod tests {
         assert_eq!(sum_usb.cards[0].transport_badge.as_str(), "USB");
         assert_eq!(sum_usb.status_pill_short, "USB Siap");
 
-        // 2. Same device once Wi-Fi paired & reachable -> "USB + Wi-Fi"
+        // 2. Same device once Wi-Fi paired & online with IP -> "USB + Wi-Fi"
         let sv_paired: serde_json::Value = serde_json::from_str(
             r#"{
                 "selectedUdid": "00008150-000000000002931",
@@ -13840,7 +14139,7 @@ mod tests {
                     "name": "TestPhone",
                     "model": "iPhone 17 Pro",
                     "usb": true,
-                    "wifiOnline": false,
+                    "wifiOnline": true,
                     "reachable": true,
                     "wifiPaired": true,
                     "ip": "198.51.100.42"
@@ -13852,14 +14151,18 @@ mod tests {
         assert_eq!(sum_paired.cards[0].transport_badge.as_str(), "USB + Wi-Fi");
         assert!(sum_paired.status_pill_short.contains("Wi-Fi"));
 
-        // 3. Connecting watchdog boundaries: 25s stagnant / 90s total, silent in waiting_airplay
+        // 3. Connecting watchdog boundaries: 25s/90s standard, 45s/120s DDI, silent in waiting_airplay
         assert_eq!(evaluate_connecting_watchdog("starting", false, "connecting", 24_999, 24_999), None);
         assert_eq!(
             evaluate_connecting_watchdog("starting", false, "connecting", 25_000, 25_000),
             Some("stage_stagnant")
         );
         assert_eq!(
-            evaluate_connecting_watchdog("starting", false, "mounting_ddi", 5_000, 90_000),
+            evaluate_connecting_watchdog("starting", false, "connecting", 5_000, 90_000),
+            Some("total_timeout")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "mounting_ddi", 5_000, 120_000),
             Some("total_timeout")
         );
         assert_eq!(evaluate_connecting_watchdog("starting", false, "waiting_airplay", 40_000, 120_000), None);
@@ -13896,6 +14199,189 @@ mod tests {
         // 5. Honest Top Bar pill while AirPlay awaits first frame vs streaming
         assert_eq!(resolve_topbar_status_pill_text("running", "waiting_frame", "airplay", true, true), "AirPlay...");
         assert_eq!(resolve_topbar_status_pill_text("running", "streaming", "airplay", true, true), "AirPlay");
+    }
+
+    #[test]
+    fn test_tahap295_watchdog_ddi_vs_standard_thresholds() {
+        // DDI stages allow up to 45s stagnant and 120s total
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "downloading_ddi", 44_999, 119_999), None);
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "mounting_ddi", 44_999, 119_999), None);
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "downloading_ddi", 45_000, 50_000),
+            Some("stage_stagnant")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "mounting_ddi", 45_000, 60_000),
+            Some("stage_stagnant")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "mounting_ddi", 10_000, 120_000),
+            Some("total_timeout")
+        );
+
+        // Standard stages enforce strict 25s stagnant / 90s total
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "connecting", 24_999, 89_999), None);
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "connecting", 25_000, 25_000),
+            Some("stage_stagnant")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "reconnecting_rsd", 25_000, 30_000),
+            Some("stage_stagnant")
+        );
+        assert_eq!(
+            evaluate_connecting_watchdog("starting", false, "connecting", 5_000, 90_000),
+            Some("total_timeout")
+        );
+        assert_eq!(evaluate_connecting_watchdog("starting", false, "waiting_airplay", 60_000, 150_000), None);
+        assert_eq!(evaluate_connecting_watchdog("starting", true, "mounting_ddi", 60_000, 150_000), None);
+
+        // UI card badge strictly requires wifiOnline && non-empty ip (reachable && wifiPaired alone NEVER fakes USB + Wi-Fi)
+        let sv_stale_paired: serde_json::Value = serde_json::from_str(
+            r#"{
+                "selectedUdid": "00008150-000000000002951",
+                "devices": [{
+                    "udid": "00008150-000000000002951",
+                    "name": "iPhone12",
+                    "model": "iPhone 12",
+                    "usb": true,
+                    "wifiOnline": false,
+                    "reachable": true,
+                    "wifiPaired": true,
+                    "ip": null
+                }]
+            }"#,
+        )
+        .unwrap();
+        let sum = parse_launchpad_from_status(&sv_stale_paired, false);
+        assert_eq!(sum.cards[0].transport_badge.as_str(), "USB");
+    }
+
+    #[test]
+    fn test_tahap297_iphone11_pro_max_aperture_and_baked_padding_zero_blackbar() {
+        use iphone_link_video::d3d11_context::{Rect, VramFrameSnapshot};
+        use iphone_link_video::mf_decoder::{resolve_reconciled_aperture_rect, VideoCodecKind};
+        use iphone_link_video::video_hwnd::compute_post_trim_dimensions_with_pad;
+
+        // Tier 1 non-double-trim when MFT emits MF_MT_MINIMUM_DISPLAY_APERTURE + SPS also carries trim
+        let ap = Rect {
+            left: 0,
+            top: 0,
+            right: 1202,
+            bottom: 2598,
+        };
+        let (vis, used_ap) = resolve_reconciled_aperture_rect(
+            1216,
+            2656,
+            Some(ap),
+            VideoCodecKind::Hevc,
+            (0, 0, 58, 14),
+            None,
+            false,
+        );
+        assert!(used_ap);
+        assert_eq!((vis.left, vis.top, vis.right, vis.bottom), (0, 0, 1202, 2598));
+
+        // When MFT returns full 1216x2656 (None strict aperture), Tier 1 applies SPS conformance trim
+        let (vis_sps, used_ap2) = resolve_reconciled_aperture_rect(
+            1216,
+            2656,
+            None,
+            VideoCodecKind::Hevc,
+            (0, 0, 58, 14),
+            None,
+            false,
+        );
+        assert!(!used_ap2);
+        assert_eq!(
+            (vis_sps.left, vis_sps.top, vis_sps.right, vis_sps.bottom),
+            (0, 0, 1202, 2598)
+        );
+
+        // Zero double-trim even if snapshot carries both visible_rect and trim
+        let gpu = iphone_link_video::d3d11_context::LiveD3d11Gpu::new().unwrap();
+        let tex = gpu.create_nv12_texture(1216, 2656, false).unwrap();
+        let snap = VramFrameSnapshot {
+            slot_idx: 0,
+            texture: tex,
+            coded_width: 1216,
+            coded_height: 2656,
+            visible_rect: Rect {
+                left: 0,
+                top: 0,
+                right: 1216,
+                bottom: 2656,
+            },
+            trim: (0, 0, 0, 0),
+            frame_seq: 1,
+            pts_us: 0,
+            is_airplay: false,
+            color_info: Default::default(),
+            timestamp: std::time::Instant::now(),
+            cpu_nv12_backup: None,
+        };
+        // Tier 2 detected pad=(58, 14) trims cleanly to 1202x2598
+        assert_eq!(compute_post_trim_dimensions_with_pad(&snap, (58, 14)), (1202, 2598));
+
+        // Manual crop HID compensation shifts edge touch inward accurately
+        let rect = ActiveVideoPhysicalRect {
+            x: 100,
+            y: 50,
+            width: 390,
+            height: 844,
+            ..Default::default()
+        };
+        let hid_cropped = map_client_px_to_ios_hid_from_rect_with_crop(
+            100,
+            50,
+            rect,
+            0,
+            (1202, 2598),
+            (0, 0, 10, 0),
+        )
+        .unwrap();
+        assert!(hid_cropped.0 > 1000, "Left crop=10 must offset X touch > 0: {:?}", hid_cropped);
+    }
+
+    #[test]
+    fn test_tahap297_iphone17_pro_dynamic_parity_zero_regression() {
+        use iphone_link_video::mf_decoder::{resolve_reconciled_aperture_rect, VideoCodecKind};
+
+        // iPhone 17 Pro active 1206x2622 inside 1216x2624 (trim_bottom=2, trim_right=10)
+        let (vis, _) = resolve_reconciled_aperture_rect(
+            1216,
+            2624,
+            None,
+            VideoCodecKind::Hevc,
+            (0, 0, 2, 10),
+            None,
+            false,
+        );
+        assert_eq!((vis.left, vis.top, vis.right, vis.bottom), (0, 0, 1206, 2622));
+
+        // 0.0 drift when crop=(0,0,0,0) compared to legacy map_client_px_to_ios_hid_from_rect
+        let rect = ActiveVideoPhysicalRect {
+            x: 40,
+            y: 44,
+            width: 408,
+            height: 887,
+            ..Default::default()
+        };
+        for &(px, py) in &[(40, 44), (244, 487), (447, 930)] {
+            for &rot in &[0u16, 90, 180, 270] {
+                assert_eq!(
+                    map_client_px_to_ios_hid_from_rect_with_crop(
+                        px,
+                        py,
+                        rect,
+                        rot,
+                        (1206, 2622),
+                        (0, 0, 0, 0),
+                    ),
+                    map_client_px_to_ios_hid_from_rect(px, py, rect, rot)
+                );
+            }
+        }
     }
 }
 

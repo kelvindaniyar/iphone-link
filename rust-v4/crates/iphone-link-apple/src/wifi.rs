@@ -27,7 +27,7 @@ use idevice::{
     ReadWrite,
 };
 use serde_json::{json, Map, Value};
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::link::{block_on, usbmux};
 use crate::wifi_discovery::{
@@ -392,17 +392,21 @@ pub fn find_record(udid: &str) -> Option<Record> {
     all_records().into_iter().find(|r| r.udid == udid)
 }
 
-pub fn save_remote_record(
+pub fn save_remote_record_with_unlock_key(
     udid: &str,
     irk: &[u8; 16],
     private_key: &[u8],
     public_key: &[u8],
+    remote_unlock_host_key: &str,
 ) -> Result<Vec<PathBuf>, String> {
     let mut d = plist::Dictionary::new();
     d.insert("peer_alt_irk".into(), plist::Value::Data(irk.to_vec()));
     d.insert("private_key".into(), plist::Value::Data(private_key.to_vec()));
     d.insert("public_key".into(), plist::Value::Data(public_key.to_vec()));
-    d.insert("remote_unlock_host_key".into(), "".into());
+    d.insert(
+        "remote_unlock_host_key".into(),
+        remote_unlock_host_key.into(),
+    );
     let val = plist::Value::Dictionary(d);
 
     let mut written = Vec::new();
@@ -422,6 +426,15 @@ pub fn save_remote_record(
         return Err(errors.join("; "));
     }
     Ok(written)
+}
+
+pub fn save_remote_record(
+    udid: &str,
+    irk: &[u8; 16],
+    private_key: &[u8],
+    public_key: &[u8],
+) -> Result<Vec<PathBuf>, String> {
+    save_remote_record_with_unlock_key(udid, irk, private_key, public_key, "")
 }
 
 pub fn rp_file(r: &Record, identifier: &str) -> Result<RpPairingFile, String> {
@@ -1007,23 +1020,7 @@ pub fn has_remote_record(udid: &str) -> bool {
     if udid.is_empty() {
         return false;
     }
-    if find_record(udid).is_some() {
-        return true;
-    }
-    record_dirs().into_iter().any(|dir| {
-        let p = dir.join(format!("remote_{udid}.plist"));
-        p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
-    }) || get_device_wifi_state(udid)
-        .get("wifi_enabled_on_device")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
-fn plist_file_exists_for(udid: &str) -> bool {
-    record_dirs().into_iter().any(|dir| {
-        let p = dir.join(format!("remote_{udid}.plist"));
-        p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
-    })
+    find_record(udid).is_some()
 }
 
 pub fn wifi_paired_udids() -> Vec<String> {
@@ -1033,17 +1030,6 @@ pub fn wifi_paired_udids() -> Vec<String> {
         found.insert(r.udid);
     }
     let devices_obj = state.get("devices").and_then(|v| v.as_object());
-    if let Some(devs) = devices_obj {
-        for (u, entry) in devs {
-            if entry
-                .get("wifi_enabled_on_device")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                found.insert(u.clone());
-            }
-        }
-    }
     let mut list: Vec<String> = found.into_iter().collect();
     list.sort_by(|a, b| {
         let key = |u: &String| -> (u8, std::cmp::Reverse<u64>, u8, String) {
@@ -1053,17 +1039,12 @@ pub fn wifi_paired_udids() -> Vec<String> {
                 None if meta.last_ip.is_some() => 1,
                 _ => 2,
             };
-            let has_p = plist_file_exists_for(u);
             let has_w = devices_obj
                 .and_then(|m| m.get(u))
                 .and_then(|e| e.get("wifi_enabled_on_device"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let rec_prio = match (has_p, has_w) {
-                (true, true) => 0,
-                (true, false) | (false, true) => 1,
-                (false, false) => 2,
-            };
+            let rec_prio = if has_w { 0 } else { 1 };
             (online_prio, std::cmp::Reverse(meta.last_seen_at), rec_prio, u.clone())
         };
         key(a).cmp(&key(b))
@@ -1473,7 +1454,8 @@ pub fn discover_iphone_ip_on_lan(udid: Option<&str>, timeout_ms: u64) -> Option<
                     return Some(last_ip.to_string());
                 } else {
                     cached_ip_opt = Some(last_ip.to_string());
-                    update_device_wifi_state(u, None, None, true, None, None, false, false, None);
+                    // Preserve `last_ip` when a single probe times out; only mark reachable=false
+                    update_device_wifi_state(u, None, None, false, None, None, false, false, None);
                 }
             }
         }
@@ -2136,6 +2118,7 @@ pub fn prepare_wifi_over_usb(udid: Option<&str>) -> Result<WifiPairResult, Strin
             .start_session(&pairing)
             .await
             .map_err(|e| format!("lockdown session: {e}"))?;
+        crate::diag_log::record("wifi_pair", "usb_lockdown_connected");
 
         lockdown
             .set_value(
@@ -2152,6 +2135,7 @@ pub fn prepare_wifi_over_usb(udid: Option<&str>) -> Result<WifiPairResult, Strin
                 Some("com.apple.mobile.wireless_lockdown"),
             )
             .await;
+        crate::diag_log::record("wifi_pair", "wireless_lockdown_enabled");
 
         let dev_name = lockdown
             .get_value(Some("DeviceName"), None)
@@ -2192,45 +2176,57 @@ pub fn prepare_wifi_over_usb(udid: Option<&str>) -> Result<WifiPairResult, Strin
         let host = hostname();
         let host_id = host_identifier(&host);
         let old = find_record(&resolved_udid);
-        let mut rp_pf = match &old {
-            Some(r) => rp_file(r, &host_id)?,
-            None => {
-                let mut f = RpPairingFile::generate(&host);
-                f.identifier = host_id;
-                f
-            }
-        };
 
+        crate::diag_log::record("wifi_pair", "rp_lockdown_connecting");
         let rp_res = async {
             let service = RemotePairingLockdownService::connect(&provider)
                 .await
-                .map_err(|e| format!("{e}"))?;
-            let mut client = service.into_client(&host).map_err(|e| format!("{e}"))?;
-            client
-                .connect(&mut rp_pf, || async { "000000".to_string() })
-                .await
-                .map_err(|e| format!("{e}"))
+                .map_err(|e| format!("connect {e}"))?;
+            let mut rp_stream = service
+                .into_inner_stream()
+                .map_err(|e| format!("stream {e}"))?;
+            crate::rp_wifi_tls::pair_usb_remotepairing_lockdown(
+                &mut rp_stream,
+                &host,
+                &host_id,
+                old.as_ref(),
+            )
+            .await
         }
         .await;
 
         match rp_res {
-            Ok(()) => {
-                if !old
-                    .as_ref()
-                    .is_some_and(|r| r.public_key == rp_pf.public_key_bytes() && r.peer_alt_irk == *rp_pf.alt_irk().unwrap_or(&r.peer_alt_irk))
-                {
-                    if let Some(&irk) = rp_pf.alt_irk() {
-                        let _ = save_remote_record(
-                            &resolved_udid,
-                            &irk,
-                            &rp_pf.private_key_bytes(),
-                            &rp_pf.public_key_bytes(),
-                        );
-                    }
+            Ok(outcome) => {
+                if !outcome.verified_existing || old.is_none() {
+                    save_remote_record_with_unlock_key(
+                        &resolved_udid,
+                        &outcome.peer_alt_irk,
+                        &outcome.private_key,
+                        &outcome.public_key,
+                        &outcome.remote_unlock_host_key,
+                    )?;
                 }
+                if find_record(&resolved_udid).is_none() {
+                    return Err(
+                        "File remote_<udid>.plist belum ditemukan setelah RemotePairing Wi-Fi."
+                            .to_string(),
+                    );
+                }
+                crate::diag_log::record(
+                    "wifi_pair",
+                    if outcome.verified_existing {
+                        "rp_existing_verified"
+                    } else {
+                        "rp_paired_and_plist_saved"
+                    },
+                );
             }
             Err(e) => {
-                info!("wifi: RemotePairing service fallback notice: {e}");
+                crate::diag_log::record("wifi_pair", &format!("rp_pair_failed: {e}"));
+                let clean = crate::diag_log::sanitize_ui_no_raw_udid(&e);
+                return Err(format!(
+                    "RemotePairing Wi-Fi gagal ({clean}). Pastikan layar iPhone terbuka, sudah ketuk Trust, dan tidak sedang mirroring."
+                ));
             }
         }
 
@@ -2405,22 +2401,32 @@ pub fn pair_wifi_json(udid: Option<&str>) -> String {
             Value::Object(obj).to_json_string()
         }
         Err(err) => {
+            let clean_err = crate::diag_log::sanitize_ui_no_raw_udid(&err);
+            let low = clean_err.to_ascii_lowercase();
+            let needs_usb_plug = low.contains("plug in")
+                || low.contains("usbmuxd")
+                || low.contains("not connected");
+            let (msg_id, msg_en) = if needs_usb_plug {
+                (
+                    "Hubungkan iPhone menggunakan kabel USB terlebih dahulu, buka kunci layar, dan ketuk Trust This Computer.".to_string(),
+                    "Plug in the iPhone first via USB cable, unlock the screen, and tap Trust This Computer.".to_string(),
+                )
+            } else {
+                (
+                    clean_err.clone(),
+                    format!("Wi-Fi RemotePairing setup failed: {clean_err}"),
+                )
+            };
             let wifi_st = get_wifi_status(udid, false);
             let mut obj = Map::new();
             obj.insert("ok".into(), Value::Bool(false));
             obj.insert("native".into(), Value::Bool(true));
             obj.insert("udid".into(), Value::from(udid.map(str::to_string)));
             obj.insert("wifi_enabled".into(), Value::Bool(false));
-            obj.insert("error".into(), Value::String(err));
+            obj.insert("error".into(), Value::String(clean_err));
             obj.insert("wifi".into(), wifi_st.to_json_value());
-            obj.insert(
-                "message_id".into(),
-                Value::String("Hubungkan iPhone menggunakan kabel USB terlebih dahulu, buka kunci layar, dan ketuk Trust This Computer.".into()),
-            );
-            obj.insert(
-                "message_en".into(),
-                Value::String("Plug in the iPhone first via USB cable, unlock the screen, and tap Trust This Computer.".into()),
-            );
+            obj.insert("message_id".into(), Value::String(msg_id));
+            obj.insert("message_en".into(), Value::String(msg_en));
             Value::Object(obj).to_json_string()
         }
     }
@@ -2887,13 +2893,9 @@ mod tests {
                                             write_lp(&mut s, lresp);
                                         }
                                     } else if port == 59999 {
-                                        if let Some(pr) = read_lp(&mut s) {
-                                            assert_eq!(pr.get("PIN").and_then(|v| v.as_string()), Some("000000"));
-                                            let mut presp = plist::Dictionary::new();
-                                            presp.insert("alt_irk".into(), plist::Value::Data(irk.to_vec()));
-                                            presp.insert("encryptionKey".into(), plist::Value::Data(vec![0x5Au8; 32]));
-                                            write_lp(&mut s, presp);
-                                        }
+                                        crate::rp_wifi_tls::run_mock_rppairing_usb_pair_server(
+                                            &mut s, irk,
+                                        );
                                     }
                                 }
                                 _ => {}

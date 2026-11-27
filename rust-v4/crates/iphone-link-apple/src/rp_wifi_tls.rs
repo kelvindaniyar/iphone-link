@@ -1762,7 +1762,7 @@ pub fn discover_remotepairing_mdns(
     out
 }
 
-async fn send_rp_json(stream: &mut TcpStream, val: &Value) -> Result<(), String> {
+async fn send_rp_json_rw<S: AsyncWrite + Unpin>(stream: &mut S, val: &Value) -> Result<(), String> {
     let body = serde_json::to_vec(val).map_err(|e| format!("RP json encode: {e}"))?;
     if body.len() > u16::MAX as usize {
         return Err("RP json body too large".into());
@@ -1778,7 +1778,7 @@ async fn send_rp_json(stream: &mut TcpStream, val: &Value) -> Result<(), String>
     stream.flush().await.map_err(|e| format!("RP send flush: {e}"))
 }
 
-async fn recv_rp_json(stream: &mut TcpStream) -> Result<Value, String> {
+async fn recv_rp_json_rw<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Value, String> {
     let mut hdr = [0u8; 11];
     stream
         .read_exact(&mut hdr)
@@ -1794,6 +1794,1391 @@ async fn recv_rp_json(stream: &mut TcpStream) -> Result<Value, String> {
         .await
         .map_err(|e| format!("RP recv body: {e}"))?;
     serde_json::from_slice(&body).map_err(|e| format!("RP json decode: {e}"))
+}
+
+async fn send_rp_json(stream: &mut TcpStream, val: &Value) -> Result<(), String> {
+    send_rp_json_rw(stream, val).await
+}
+
+async fn recv_rp_json(stream: &mut TcpStream) -> Result<Value, String> {
+    recv_rp_json_rw(stream).await
+}
+
+// ============================================================================
+// 4B. Pure-Rust SRP-6a 3072-bit (SHA-512), OPACK Codec, & USB RPPairing v19
+// ============================================================================
+
+const SRP_PRIME_3072_HEX: &str = "\
+FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1\
+29024E088A67CC74020BBEA63B139B22514A08798E3404DD\
+EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245\
+E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED\
+EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D\
+C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F\
+83655D23DCA3AD961C62F356208552BB9ED529077096966\
+D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3\
+BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C\
+9DE2BCBF6955817183995497CEA956AE515D2261898FA051\
+015728E5A8AAAC42DAD33170D04507A33A85521ABDF1CBA6\
+4ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C\
+7ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6\
+BF12FFA06D98A0864D87602733EC86A64521F2B18177B200\
+CBBE117577A615D6C770988C0BAD946E208E24FA074E5AB3\
+143DB5BFCE0FD108E4B82D120A93AD2CAFFFFFFFFFFFFFFF\
+F";
+
+fn parse_prime_3072_bytes() -> [u8; 384] {
+    let clean: Vec<u8> = SRP_PRIME_3072_HEX
+        .bytes()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
+    let hex_val = |c: u8| -> u8 {
+        match c {
+            b'0'..=b'9' => c - b'0',
+            b'a'..=b'f' => c - b'a' + 10,
+            b'A'..=b'F' => c - b'A' + 10,
+            _ => 0,
+        }
+    };
+    let mut out = [0u8; 384];
+    for i in 0..384 {
+        out[i] = (hex_val(clean[i * 2]) << 4) | hex_val(clean[i * 2 + 1]);
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct U3072([u64; 48]);
+
+impl U3072 {
+    const ZERO: Self = Self([0u64; 48]);
+
+    fn one() -> Self {
+        let mut l = [0u64; 48];
+        l[0] = 1;
+        Self(l)
+    }
+
+    fn from_be_384(bytes: &[u8; 384]) -> Self {
+        let mut limbs = [0u64; 48];
+        for i in 0..48 {
+            let off = (47 - i) * 8;
+            limbs[i] = u64::from_be_bytes([
+                bytes[off],
+                bytes[off + 1],
+                bytes[off + 2],
+                bytes[off + 3],
+                bytes[off + 4],
+                bytes[off + 5],
+                bytes[off + 6],
+                bytes[off + 7],
+            ]);
+        }
+        Self(limbs)
+    }
+
+    fn to_be_bytes_padded_384(&self) -> [u8; 384] {
+        let mut out = [0u8; 384];
+        for i in 0..48 {
+            let off = (47 - i) * 8;
+            out[off..off + 8].copy_from_slice(&self.0[i].to_be_bytes());
+        }
+        out
+    }
+
+    fn to_be_bytes_minimal(&self) -> Vec<u8> {
+        let full = self.to_be_bytes_padded_384();
+        let start = full.iter().position(|&b| b != 0).unwrap_or(383);
+        full[start..].to_vec()
+    }
+
+    fn is_zero(&self) -> bool {
+        self.0.iter().all(|&x| x == 0)
+    }
+
+    fn cmp_val(&self, other: &Self) -> std::cmp::Ordering {
+        for i in (0..48).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                std::cmp::Ordering::Equal => continue,
+                ord => return ord,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+
+    fn sub_raw(&self, rhs: &Self) -> (Self, bool) {
+        let mut out = [0u64; 48];
+        let mut borrow: u64 = 0;
+        for i in 0..48 {
+            let (d1, b1) = self.0[i].overflowing_sub(rhs.0[i]);
+            let (d2, b2) = d1.overflowing_sub(borrow);
+            out[i] = d2;
+            borrow = u64::from(b1 || b2);
+        }
+        (Self(out), borrow != 0)
+    }
+
+    fn add_raw(&self, rhs: &Self) -> (Self, bool) {
+        let mut out = [0u64; 48];
+        let mut carry: u64 = 0;
+        for i in 0..48 {
+            let s = (self.0[i] as u128) + (rhs.0[i] as u128) + (carry as u128);
+            out[i] = s as u64;
+            carry = (s >> 64) as u64;
+        }
+        (Self(out), carry != 0)
+    }
+
+    fn add_mod(&self, rhs: &Self, modulus: &Self) -> Self {
+        let (sum, carry) = self.add_raw(rhs);
+        if carry || sum.cmp_val(modulus) != std::cmp::Ordering::Less {
+            sum.sub_raw(modulus).0
+        } else {
+            sum
+        }
+    }
+
+    fn sub_mod(&self, rhs: &Self, modulus: &Self) -> Self {
+        if self.cmp_val(rhs) != std::cmp::Ordering::Less {
+            self.sub_raw(rhs).0
+        } else {
+            let (with_n, _) = self.add_raw(modulus);
+            with_n.sub_raw(rhs).0
+        }
+    }
+
+    fn shl1_mod(&self, modulus: &Self) -> Self {
+        self.add_mod(self, modulus)
+    }
+
+    fn mont_mul(a: &Self, b: &Self, modulus: &Self) -> Self {
+        // For RFC 5054 3072-bit prime, lowest limb is 0xFFFF_FFFF_FFFF_FFFF == -1 mod 2^64,
+        // so -modulus[0]^{-1} mod 2^64 == 1.
+        const N0_INV: u64 = 1;
+        let mut t = [0u64; 50];
+        for i in 0..48 {
+            let mut carry: u128 = 0;
+            let ai = a.0[i] as u128;
+            for j in 0..48 {
+                let prod = ai * (b.0[j] as u128) + (t[j] as u128) + carry;
+                t[j] = prod as u64;
+                carry = prod >> 64;
+            }
+            let s1 = (t[48] as u128) + carry;
+            t[48] = s1 as u64;
+            t[49] = ((t[49] as u128) + (s1 >> 64)) as u64;
+
+            let m = t[0].wrapping_mul(N0_INV) as u128;
+            let p0 = m * (modulus.0[0] as u128) + (t[0] as u128);
+            let mut c2 = p0 >> 64;
+            for j in 1..48 {
+                let prod = m * (modulus.0[j] as u128) + (t[j] as u128) + c2;
+                t[j - 1] = prod as u64;
+                c2 = prod >> 64;
+            }
+            let s2 = (t[48] as u128) + c2;
+            t[47] = s2 as u64;
+            t[48] = ((t[49] as u128) + (s2 >> 64)) as u64;
+            t[49] = 0;
+        }
+        let mut res = [0u64; 48];
+        res.copy_from_slice(&t[0..48]);
+        let r = Self(res);
+        if t[48] != 0 || r.cmp_val(modulus) != std::cmp::Ordering::Less {
+            r.sub_raw(modulus).0
+        } else {
+            r
+        }
+    }
+
+    fn from_be_bytes_mod(bytes: &[u8], ctx: &Srp3072Params) -> Self {
+        let mut acc = Self::ZERO;
+        let mut i = 0;
+        while i < bytes.len() {
+            // Shift left by 8 bits using 8 modular doublings
+            for _ in 0..8 {
+                acc = acc.shl1_mod(&ctx.n);
+            }
+            let mut b_val = Self::ZERO;
+            b_val.0[0] = u64::from(bytes[i]);
+            acc = acc.add_mod(&b_val, &ctx.n);
+            i += 1;
+        }
+        acc
+    }
+
+    fn mul_mod(&self, rhs: &Self, ctx: &Srp3072Params) -> Self {
+        let a_m = Self::mont_mul(self, &ctx.r2, &ctx.n);
+        let b_m = Self::mont_mul(rhs, &ctx.r2, &ctx.n);
+        let p_m = Self::mont_mul(&a_m, &b_m, &ctx.n);
+        Self::mont_mul(&p_m, &Self::one(), &ctx.n)
+    }
+
+    fn pow_mod_be_exp(&self, exp_be: &[u8], ctx: &Srp3072Params) -> Self {
+        let base_m = Self::mont_mul(self, &ctx.r2, &ctx.n);
+        let mut acc_m = Self::mont_mul(&Self::one(), &ctx.r2, &ctx.n);
+        let clean = strip_leading_zeros(exp_be);
+        let mut started = false;
+        for &byte in clean {
+            for bit in (0..8).rev() {
+                let set = ((byte >> bit) & 1) != 0;
+                if !started {
+                    if !set {
+                        continue;
+                    }
+                    started = true;
+                } else {
+                    acc_m = Self::mont_mul(&acc_m, &acc_m, &ctx.n);
+                }
+                if set {
+                    acc_m = Self::mont_mul(&acc_m, &base_m, &ctx.n);
+                }
+            }
+        }
+        Self::mont_mul(&acc_m, &Self::one(), &ctx.n)
+    }
+}
+
+struct Srp3072Params {
+    n_bytes: [u8; 384],
+    n: U3072,
+    r2: U3072,
+    g: U3072,
+    k: U3072,
+}
+
+static SRP_3072_PARAMS: OnceLock<Srp3072Params> = OnceLock::new();
+
+fn srp3072_params() -> &'static Srp3072Params {
+    SRP_3072_PARAMS.get_or_init(|| {
+        let n_bytes = parse_prime_3072_bytes();
+        let n = U3072::from_be_384(&n_bytes);
+        let mut r2 = U3072::one();
+        for _ in 0..6144 {
+            r2 = r2.shl1_mod(&n);
+        }
+        let mut g = U3072::ZERO;
+        g.0[0] = 5;
+        let mut pad_g = [0u8; 384];
+        pad_g[383] = 5;
+        let k_hash = sha512_chunks(&[&n_bytes, &pad_g]);
+        let mut params = Srp3072Params {
+            n_bytes,
+            n,
+            r2,
+            g,
+            k: U3072::ZERO,
+        };
+        params.k = U3072::from_be_bytes_mod(&k_hash, &params);
+        params
+    })
+}
+
+fn strip_leading_zeros(b: &[u8]) -> &[u8] {
+    let first = b.iter().position(|&x| x != 0).unwrap_or_else(|| b.len().saturating_sub(1));
+    &b[first..]
+}
+
+fn big_add_mul_be(a_be: &[u8], u_be: &[u8], x_be: &[u8]) -> Vec<u8> {
+    let u = strip_leading_zeros(u_be);
+    let x = strip_leading_zeros(x_be);
+    let a = strip_leading_zeros(a_be);
+    let out_len = (u.len() + x.len()).max(a.len()) + 2;
+    let mut acc = vec![0u8; out_len];
+    for (ui, &ub) in u.iter().rev().enumerate() {
+        let mut carry = 0u32;
+        for (xi, &xb) in x.iter().rev().enumerate() {
+            let pos = out_len - 1 - (ui + xi);
+            let prod = u32::from(ub) * u32::from(xb) + u32::from(acc[pos]) + carry;
+            acc[pos] = (prod & 0xFF) as u8;
+            carry = prod >> 8;
+        }
+        let mut pos = out_len - 1 - (ui + x.len());
+        while carry > 0 {
+            let sum = u32::from(acc[pos]) + carry;
+            acc[pos] = (sum & 0xFF) as u8;
+            carry = sum >> 8;
+            if pos == 0 {
+                break;
+            }
+            pos -= 1;
+        }
+    }
+    let mut carry = 0u32;
+    for (ai, &ab) in a.iter().rev().enumerate() {
+        let pos = out_len - 1 - ai;
+        let sum = u32::from(acc[pos]) + u32::from(ab) + carry;
+        acc[pos] = (sum & 0xFF) as u8;
+        carry = sum >> 8;
+    }
+    let mut pos = out_len.saturating_sub(a.len() + 1);
+    while carry > 0 {
+        let sum = u32::from(acc[pos]) + carry;
+        acc[pos] = (sum & 0xFF) as u8;
+        carry = sum >> 8;
+        if pos == 0 {
+            break;
+        }
+        pos -= 1;
+    }
+    strip_leading_zeros(&acc).to_vec()
+}
+
+#[derive(Debug, Clone)]
+pub struct Srp6aClientResult {
+    pub a_pub_be: Vec<u8>,
+    pub session_key_64: [u8; 64],
+    pub m1_64: [u8; 64],
+    pub m2_expected_64: [u8; 64],
+}
+
+#[derive(Debug, Clone)]
+pub struct Srp6aServerResult {
+    pub b_pub_be: Vec<u8>,
+    pub session_key_64: [u8; 64],
+    pub m1_expected_64: [u8; 64],
+    pub m2_64: [u8; 64],
+}
+
+fn srp_common_proofs(
+    ctx: &Srp3072Params,
+    username: &str,
+    salt: &[u8],
+    a_pub_min: &[u8],
+    b_pub_min: &[u8],
+    session_key_64: &[u8; 64],
+) -> ([u8; 64], [u8; 64]) {
+    let h_n = sha512(&ctx.n_bytes);
+    let h_g = sha512(&[5u8]);
+    let mut h_n_xor_g = [0u8; 64];
+    for i in 0..64 {
+        h_n_xor_g[i] = h_n[i] ^ h_g[i];
+    }
+    let h_u = sha512(username.as_bytes());
+    let m1 = sha512_chunks(&[
+        strip_leading_zeros(&h_n_xor_g),
+        strip_leading_zeros(&h_u),
+        strip_leading_zeros(salt),
+        a_pub_min,
+        b_pub_min,
+        session_key_64,
+    ]);
+    let m2 = sha512_chunks(&[a_pub_min, &m1, session_key_64]);
+    (m1, m2)
+}
+
+/// Computes pure-Rust SRP-6a 3072-bit SHA-512 client public `A`, session key `K`, `M1`, and expected `M2`
+/// matching `srptools` (`Pair-Setup`) byte-for-byte.
+pub fn srp6a_3072_client_compute(
+    username: &str,
+    password: &str,
+    salt: &[u8],
+    server_b_be: &[u8],
+    client_a_be: &[u8],
+) -> Result<Srp6aClientResult, String> {
+    let ctx = srp3072_params();
+    let b_mod = U3072::from_be_bytes_mod(server_b_be, ctx);
+    if b_mod.is_zero() {
+        return Err("SRP-6a server public key B is zero mod N".into());
+    }
+    let a_pub = ctx.g.pow_mod_be_exp(client_a_be, ctx);
+    let u_hash = sha512_chunks(&[&a_pub.to_be_bytes_padded_384(), &b_mod.to_be_bytes_padded_384()]);
+    let u_mod = U3072::from_be_bytes_mod(&u_hash, ctx);
+    if u_mod.is_zero() {
+        return Err("SRP-6a scrambling parameter u is zero".into());
+    }
+
+    let inner = sha512_chunks(&[username.as_bytes(), b":", password.as_bytes()]);
+    let x_hash = sha512_chunks(&[strip_leading_zeros(salt), &inner]);
+    let gx = ctx.g.pow_mod_be_exp(&x_hash, ctx);
+    let kv = ctx.k.mul_mod(&gx, ctx);
+    let base = b_mod.sub_mod(&kv, &ctx.n);
+    let exp = big_add_mul_be(client_a_be, &u_hash, &x_hash);
+    let s = base.pow_mod_be_exp(&exp, ctx);
+    let s_min = s.to_be_bytes_minimal();
+    let session_key_64 = sha512(&s_min);
+
+    let a_min = a_pub.to_be_bytes_minimal();
+    let b_min = b_mod.to_be_bytes_minimal();
+    let (m1_64, m2_expected_64) =
+        srp_common_proofs(ctx, username, salt, &a_min, &b_min, &session_key_64);
+    Ok(Srp6aClientResult {
+        a_pub_be: a_min,
+        session_key_64,
+        m1_64,
+        m2_expected_64,
+    })
+}
+
+/// Server-side SRP-6a 3072-bit helper for deterministic test & mock USB RemotePairing server use.
+pub fn srp6a_3072_server_compute_b(username: &str, password: &str, salt: &[u8], server_b_priv_be: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let ctx = srp3072_params();
+    let inner = sha512_chunks(&[username.as_bytes(), b":", password.as_bytes()]);
+    let x_hash = sha512_chunks(&[strip_leading_zeros(salt), &inner]);
+    let v = ctx.g.pow_mod_be_exp(&x_hash, ctx);
+    let kv = ctx.k.mul_mod(&v, ctx);
+    let gb = ctx.g.pow_mod_be_exp(server_b_priv_be, ctx);
+    let b_pub = kv.add_mod(&gb, &ctx.n);
+    (b_pub.to_be_bytes_minimal(), v.to_be_bytes_minimal())
+}
+
+pub fn srp6a_3072_server_finish(
+    username: &str,
+    salt: &[u8],
+    v_be: &[u8],
+    server_b_priv_be: &[u8],
+    b_pub_be: &[u8],
+    client_a_pub_be: &[u8],
+) -> Result<Srp6aServerResult, String> {
+    let ctx = srp3072_params();
+    let a_mod = U3072::from_be_bytes_mod(client_a_pub_be, ctx);
+    let b_mod = U3072::from_be_bytes_mod(b_pub_be, ctx);
+    let v_mod = U3072::from_be_bytes_mod(v_be, ctx);
+    if a_mod.is_zero() {
+        return Err("SRP-6a client public key A is zero mod N".into());
+    }
+    let u_hash = sha512_chunks(&[&a_mod.to_be_bytes_padded_384(), &b_mod.to_be_bytes_padded_384()]);
+    let vu = v_mod.pow_mod_be_exp(&u_hash, ctx);
+    let avu = a_mod.mul_mod(&vu, ctx);
+    let s = avu.pow_mod_be_exp(server_b_priv_be, ctx);
+    let session_key_64 = sha512(&s.to_be_bytes_minimal());
+    let a_min = a_mod.to_be_bytes_minimal();
+    let b_min = b_mod.to_be_bytes_minimal();
+    let (m1_expected_64, m2_64) =
+        srp_common_proofs(ctx, username, salt, &a_min, &b_min, &session_key_64);
+    Ok(Srp6aServerResult {
+        b_pub_be: b_min,
+        session_key_64,
+        m1_expected_64,
+        m2_64,
+    })
+}
+
+/// Minimal pure-Rust Apple OPACK value tree (`opack2` wire parity for `deviceInfo` / `altIRK`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpackVal {
+    Bool(bool),
+    Null,
+    Int(u64),
+    Float(f64),
+    Str(String),
+    Bytes(Vec<u8>),
+    Array(Vec<OpackVal>),
+    Dict(Vec<(OpackVal, OpackVal)>),
+}
+
+fn opack_encode_len_tag(out: &mut Vec<u8>, base: u8, inline_max_len: usize, len: usize) {
+    if len <= inline_max_len {
+        out.push(base + len as u8);
+    } else if len <= 0xFF {
+        out.push(base + inline_max_len as u8 + 1);
+        out.push(len as u8);
+    } else if len <= 0xFFFF {
+        out.push(base + inline_max_len as u8 + 2);
+        out.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        out.push(base + inline_max_len as u8 + 3);
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+    }
+}
+
+pub fn opack_encode(val: &OpackVal) -> Vec<u8> {
+    fn write_val(val: &OpackVal, out: &mut Vec<u8>) {
+        match val {
+            OpackVal::Bool(true) => out.push(0x01),
+            OpackVal::Bool(false) => out.push(0x02),
+            OpackVal::Null => out.push(0x03),
+            OpackVal::Int(n) => {
+                if *n <= 0x27 {
+                    out.push((*n as u8) + 8);
+                } else if *n <= 0xFF {
+                    out.push(0x30);
+                    out.push(*n as u8);
+                } else if *n <= 0xFFFF_FFFF {
+                    out.push(0x32);
+                    out.extend_from_slice(&(*n as u32).to_le_bytes());
+                } else {
+                    out.push(0x33);
+                    out.extend_from_slice(&n.to_le_bytes());
+                }
+            }
+            OpackVal::Float(f) => {
+                out.push(0x36);
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+            OpackVal::Str(s) => {
+                let raw = s.as_bytes();
+                opack_encode_len_tag(out, 0x40, 0x20, raw.len());
+                out.extend_from_slice(raw);
+            }
+            OpackVal::Bytes(b) => {
+                opack_encode_len_tag(out, 0x70, 0x20, b.len());
+                out.extend_from_slice(b);
+            }
+            OpackVal::Array(items) => {
+                if items.len() < 15 {
+                    out.push(0xD0 + items.len() as u8);
+                    for it in items {
+                        write_val(it, out);
+                    }
+                } else {
+                    out.push(0xDF);
+                    for it in items {
+                        write_val(it, out);
+                    }
+                    out.push(0x03);
+                }
+            }
+            OpackVal::Dict(entries) => {
+                if entries.len() < 15 {
+                    out.push(0xE0 + entries.len() as u8);
+                    for (k, v) in entries {
+                        write_val(k, out);
+                        write_val(v, out);
+                    }
+                } else {
+                    out.push(0xEF);
+                    for (k, v) in entries {
+                        write_val(k, out);
+                        write_val(v, out);
+                    }
+                    out.push(0x03);
+                    out.push(0x03);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    write_val(val, &mut out);
+    out
+}
+
+pub fn opack_decode(data: &[u8]) -> Result<OpackVal, String> {
+    fn read_len(data: &[u8], off: &mut usize, tag: u8, base: u8, max_tag: u8) -> Result<usize, String> {
+        if tag <= max_tag {
+            return Ok(usize::from(tag - base));
+        }
+        match tag - max_tag {
+            1 => {
+                if *off >= data.len() {
+                    return Err("opack truncated u8 length".into());
+                }
+                let v = usize::from(data[*off]);
+                *off += 1;
+                Ok(v)
+            }
+            2 => {
+                if *off + 2 > data.len() {
+                    return Err("opack truncated u16 length".into());
+                }
+                let v = usize::from(u16::from_be_bytes([data[*off], data[*off + 1]]));
+                *off += 2;
+                Ok(v)
+            }
+            3 => {
+                if *off + 4 > data.len() {
+                    return Err("opack truncated u32 length".into());
+                }
+                let v = u32::from_be_bytes([
+                    data[*off],
+                    data[*off + 1],
+                    data[*off + 2],
+                    data[*off + 3],
+                ]) as usize;
+                *off += 4;
+                Ok(v)
+            }
+            4 => {
+                if *off + 8 > data.len() {
+                    return Err("opack truncated u64 length".into());
+                }
+                let v = u64::from_be_bytes(data[*off..*off + 8].try_into().unwrap()) as usize;
+                *off += 8;
+                Ok(v)
+            }
+            _ => Err("opack invalid length selector".into()),
+        }
+    }
+
+    fn read_val(
+        data: &[u8],
+        off: &mut usize,
+        obj_table: &mut Vec<OpackVal>,
+        depth: usize,
+    ) -> Result<(u8, OpackVal), String> {
+        if depth > 32 {
+            return Err("opack recursion depth exceeded".into());
+        }
+        if *off >= data.len() {
+            return Err("opack unexpected EOF".into());
+        }
+        let tag = data[*off];
+        *off += 1;
+        let val = match tag {
+            0x01 => OpackVal::Bool(true),
+            0x02 => OpackVal::Bool(false),
+            0x03 | 0x04 => OpackVal::Null,
+            0x05 => {
+                if *off + 16 > data.len() {
+                    return Err("opack truncated UUID".into());
+                }
+                let v = OpackVal::Bytes(data[*off..*off + 16].to_vec());
+                *off += 16;
+                obj_table.push(v.clone());
+                v
+            }
+            0x06 => {
+                if *off + 8 > data.len() {
+                    return Err("opack truncated timestamp".into());
+                }
+                let f = f64::from_le_bytes(data[*off..*off + 8].try_into().unwrap());
+                *off += 8;
+                let v = OpackVal::Float(f);
+                obj_table.push(v.clone());
+                v
+            }
+            0x08..=0x2F => OpackVal::Int(u64::from(tag - 8)),
+            0x30 => {
+                if *off >= data.len() {
+                    return Err("opack truncated u8".into());
+                }
+                let v = u64::from(data[*off]);
+                *off += 1;
+                OpackVal::Int(v)
+            }
+            0x31 => {
+                if *off + 2 > data.len() {
+                    return Err("opack truncated u16".into());
+                }
+                let v = u64::from(u16::from_le_bytes([data[*off], data[*off + 1]]));
+                *off += 2;
+                OpackVal::Int(v)
+            }
+            0x32 => {
+                if *off + 4 > data.len() {
+                    return Err("opack truncated u32".into());
+                }
+                let v = u64::from(u32::from_le_bytes(data[*off..*off + 4].try_into().unwrap()));
+                *off += 4;
+                OpackVal::Int(v)
+            }
+            0x33 => {
+                if *off + 8 > data.len() {
+                    return Err("opack truncated u64".into());
+                }
+                let v = u64::from_le_bytes(data[*off..*off + 8].try_into().unwrap());
+                *off += 8;
+                OpackVal::Int(v)
+            }
+            0x35 => {
+                if *off + 4 > data.len() {
+                    return Err("opack truncated f32".into());
+                }
+                let f = f32::from_le_bytes(data[*off..*off + 4].try_into().unwrap()) as f64;
+                *off += 4;
+                OpackVal::Float(f)
+            }
+            0x36 => {
+                if *off + 8 > data.len() {
+                    return Err("opack truncated f64".into());
+                }
+                let f = f64::from_le_bytes(data[*off..*off + 8].try_into().unwrap());
+                *off += 8;
+                OpackVal::Float(f)
+            }
+            0x40..=0x64 => {
+                let len = read_len(data, off, tag, 0x40, 0x60)?;
+                if *off + len > data.len() {
+                    return Err("opack truncated string".into());
+                }
+                let s = String::from_utf8_lossy(&data[*off..*off + len]).into_owned();
+                *off += len;
+                let v = OpackVal::Str(s);
+                obj_table.push(v.clone());
+                v
+            }
+            0x70..=0x94 => {
+                let len = read_len(data, off, tag, 0x70, 0x90)?;
+                if *off + len > data.len() {
+                    return Err("opack truncated bytes".into());
+                }
+                let b = data[*off..*off + len].to_vec();
+                *off += len;
+                let v = OpackVal::Bytes(b);
+                obj_table.push(v.clone());
+                v
+            }
+            0xA0..=0xBF => {
+                let idx = usize::from(tag - 0xA0);
+                obj_table
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("opack backref {idx} out of bounds"))?
+            }
+            0xC1 => {
+                if *off >= data.len() {
+                    return Err("opack truncated u8 backref".into());
+                }
+                let idx = usize::from(data[*off]);
+                *off += 1;
+                obj_table
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("opack backref {idx} out of bounds"))?
+            }
+            0xC2 => {
+                if *off + 2 > data.len() {
+                    return Err("opack truncated u16 backref".into());
+                }
+                let idx = usize::from(u16::from_le_bytes([data[*off], data[*off + 1]]));
+                *off += 2;
+                obj_table
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("opack backref {idx} out of bounds"))?
+            }
+            0xD0..=0xDE => {
+                let cnt = usize::from(tag - 0xD0);
+                let mut items = Vec::with_capacity(cnt);
+                for _ in 0..cnt {
+                    items.push(read_val(data, off, obj_table, depth + 1)?.1);
+                }
+                OpackVal::Array(items)
+            }
+            0xDF => {
+                let mut items = Vec::new();
+                loop {
+                    let (t, el) = read_val(data, off, obj_table, depth + 1)?;
+                    if t == 0x03 {
+                        break;
+                    }
+                    items.push(el);
+                }
+                OpackVal::Array(items)
+            }
+            0xE0..=0xEE => {
+                let cnt = usize::from(tag - 0xE0);
+                let mut entries = Vec::with_capacity(cnt);
+                for _ in 0..cnt {
+                    let k = read_val(data, off, obj_table, depth + 1)?.1;
+                    let v = read_val(data, off, obj_table, depth + 1)?.1;
+                    entries.push((k, v));
+                }
+                OpackVal::Dict(entries)
+            }
+            0xEF => {
+                let mut entries = Vec::new();
+                loop {
+                    let (kt, k) = read_val(data, off, obj_table, depth + 1)?;
+                    let (_, v) = read_val(data, off, obj_table, depth + 1)?;
+                    if kt == 0x03 {
+                        break;
+                    }
+                    entries.push((k, v));
+                }
+                OpackVal::Dict(entries)
+            }
+            other => return Err(format!("opack unsupported object type: 0x{other:02X}")),
+        };
+        Ok((tag, val))
+    }
+    let mut off = 0usize;
+    let mut obj_table = Vec::new();
+    Ok(read_val(data, &mut off, &mut obj_table, 0)?.1)
+}
+
+pub fn opack_extract_alt_irk(data: &[u8]) -> Option<[u8; 16]> {
+    let Ok(OpackVal::Dict(entries)) = opack_decode(data) else {
+        return None;
+    };
+    for (k, v) in entries {
+        if let (OpackVal::Str(ks), OpackVal::Bytes(bs)) = (k, v) {
+            if ks == "altIRK" && bs.len() == 16 {
+                let mut irk = [0u8; 16];
+                irk.copy_from_slice(&bs);
+                return Some(irk);
+            }
+        }
+    }
+    None
+}
+
+#[derive(Clone, Debug)]
+pub struct UsbRemotePairOutcome {
+    pub peer_alt_irk: [u8; 16],
+    pub private_key: [u8; 32],
+    pub public_key: [u8; 32],
+    pub remote_unlock_host_key: String,
+    pub verified_existing: bool,
+}
+
+async fn recv_rp_pairing_data<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Vec<u8>, String> {
+    for _ in 0..4u8 {
+        let resp = tokio::time::timeout(Duration::from_secs(12), recv_rp_json_rw(stream))
+            .await
+            .map_err(|_| "RemotePairing pairingData timeout".to_string())??;
+        let ev = resp
+            .pointer("/message/plain/_0/event/_0")
+            .ok_or_else(|| format!("Unexpected RP response shape: {resp:?}"))?;
+        if let Some(rej) = ev.get("pairingRejectedWithError") {
+            let desc = rej
+                .pointer("/wrappedError/userInfo/NSLocalizedDescription")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pairing rejected by iPhone");
+            return Err(format!("Pairing ditolak iPhone: {desc}"));
+        }
+        if ev.get("awaitingUserConsent").is_some() {
+            continue;
+        }
+        if let Some(b64) = ev.pointer("/pairingData/_0/data").and_then(|v| v.as_str()) {
+            return b64_decode(b64).ok_or_else(|| "pairingData base64 invalid".to_string());
+        }
+        return Err(format!("Unexpected RP event: {ev:?}"));
+    }
+    Err("Too many awaitingUserConsent events from iPhone".into())
+}
+
+/// Executes 100% native pure-Rust Apple `RPPairing` v19 over an already-connected USB Lockdown
+/// service stream (`com.apple.dt.remotepairingdeviced.lockdown`): Handshake -> Pair-Verify probe ->
+/// SRP-6a 3072-bit Pair-Setup M1..M6 -> OPACK `altIRK` extraction -> `createRemoteUnlockKey`.
+pub async fn pair_usb_remotepairing_lockdown<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    host_name: &str,
+    host_id: &str,
+    existing_record: Option<&crate::wifi::Record>,
+) -> Result<UsbRemotePairOutcome, String> {
+    let mut seq: u64 = 0;
+
+    // 1. Handshake (`attemptPairVerify: true`, `wireProtocolVersion: 19`)
+    let hs_req = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "request": {
+                        "_0": {
+                            "handshake": {
+                                "_0": {
+                                    "hostOptions": { "attemptPairVerify": true },
+                                    "wireProtocolVersion": 19
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &hs_req).await?;
+    let _hs_resp = tokio::time::timeout(Duration::from_secs(6), recv_rp_json_rw(stream))
+        .await
+        .map_err(|_| "RP USB handshake timeout".to_string())??;
+
+    // 2. Pair-Verify probe: if existing local record still validates on peer, keep its keys cleanly
+    let mut pv_xpriv = [0u8; 32];
+    fill_random(&mut pv_xpriv)?;
+    let pv_xpub = x25519_public(&pv_xpriv);
+    let pv_m1_tlv = tlv8_encode(&[(0x06, &[0x01]), (0x03, &pv_xpub)]);
+    let pv_m1_b64 = b64_encode(&pv_m1_tlv);
+    let pv_m1_req = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "event": {
+                        "_0": {
+                            "pairingData": {
+                                "_0": {
+                                    "data": pv_m1_b64,
+                                    "kind": "verifyManualPairing",
+                                    "startNewSession": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &pv_m1_req).await?;
+    let pv_m2_raw = recv_rp_pairing_data(stream).await?;
+    let pv_m2_tlv = tlv8_decode(&pv_m2_raw);
+
+    if !pv_m2_tlv.contains_key(&0x07) {
+        if let (Some(rec), Some(peer_pk_slice)) = (
+            existing_record,
+            pv_m2_tlv.get(&0x03).filter(|v| v.len() == 32),
+        ) {
+            if rec.private_key.len() == 32 && rec.public_key.len() == 32 {
+                let mut rec_priv = [0u8; 32];
+                rec_priv.copy_from_slice(&rec.private_key);
+                let mut peer_pk = [0u8; 32];
+                peer_pk.copy_from_slice(peer_pk_slice);
+                let enc_key = x25519(&pv_xpriv, &peer_pk);
+                let pv_key = hkdf_sha512_32(
+                    &enc_key,
+                    b"Pair-Verify-Encrypt-Salt",
+                    b"Pair-Verify-Encrypt-Info",
+                );
+                let mut sign_buf = Vec::with_capacity(64 + host_id.len());
+                sign_buf.extend_from_slice(&pv_xpub);
+                sign_buf.extend_from_slice(host_id.as_bytes());
+                sign_buf.extend_from_slice(&peer_pk);
+                let sig = ed25519_sign(&rec_priv, &sign_buf);
+                let inner_m3 = tlv8_encode(&[(0x01, host_id.as_bytes()), (0x0A, &sig)]);
+                let enc_m3 =
+                    chacha20_poly1305_encrypt(&pv_key, b"\x00\x00\x00\x00PV-Msg03", &inner_m3, &[]);
+                let m3_tlv = tlv8_encode(&[(0x06, &[0x03]), (0x05, &enc_m3)]);
+                let m3_b64 = b64_encode(&m3_tlv);
+                let m3_req = json!({
+                    "message": {
+                        "plain": {
+                            "_0": {
+                                "event": {
+                                    "_0": {
+                                        "pairingData": {
+                                            "_0": {
+                                                "data": m3_b64,
+                                                "kind": "verifyManualPairing",
+                                                "startNewSession": false
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "originatedBy": "host",
+                    "sequenceNumber": seq
+                });
+                seq += 1;
+                send_rp_json_rw(stream, &m3_req).await?;
+                if let Ok(m4_raw) = recv_rp_pairing_data(stream).await {
+                    let m4_tlv = tlv8_decode(&m4_raw);
+                    if !m4_tlv.contains_key(&0x07) {
+                        let mut rec_pub = [0u8; 32];
+                        rec_pub.copy_from_slice(&rec.public_key);
+                        return Ok(UsbRemotePairOutcome {
+                            peer_alt_irk: rec.peer_alt_irk,
+                            private_key: rec_priv,
+                            public_key: rec_pub,
+                            remote_unlock_host_key: String::new(),
+                            verified_existing: true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let failed_ev = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "event": {
+                        "_0": {
+                            "pairVerifyFailed": {}
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &failed_ev).await?;
+
+    // 3. Pair-Setup M1 -> M2 (`METHOD=0x00, STATE=0x01`)
+    let m1_tlv = tlv8_encode(&[(0x00, &[0x00]), (0x06, &[0x01])]);
+    let ps_m1_b64 = b64_encode(&m1_tlv);
+    let m1_req = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "event": {
+                        "_0": {
+                            "pairingData": {
+                                "_0": {
+                                    "data": ps_m1_b64,
+                                    "kind": "setupManualPairing",
+                                    "sendingHost": host_name,
+                                    "startNewSession": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &m1_req).await?;
+    let m2_raw = recv_rp_pairing_data(stream).await?;
+    let m2_tlv = tlv8_decode(&m2_raw);
+    if let Some(err_b) = m2_tlv.get(&0x07) {
+        return Err(format!("Pair-Setup M2 error: {err_b:02X?}"));
+    }
+    let server_b = m2_tlv
+        .get(&0x03)
+        .filter(|v| !v.is_empty())
+        .ok_or("Pair-Setup M2 missing server PUBLIC_KEY")?;
+    let salt = m2_tlv
+        .get(&0x02)
+        .filter(|v| !v.is_empty())
+        .ok_or("Pair-Setup M2 missing SALT")?;
+
+    // 4. SRP-6a 3072-bit M3 -> M4 (promptless PIN "000000" over trusted USB lockdownd)
+    let mut a_priv = [0u8; 32];
+    fill_random(&mut a_priv)?;
+    let srp = srp6a_3072_client_compute("Pair-Setup", "000000", salt, server_b, &a_priv)?;
+    let m3_tlv = tlv8_encode(&[
+        (0x06, &[0x03]),
+        (0x03, &srp.a_pub_be),
+        (0x04, &srp.m1_64),
+    ]);
+    let ps_m3_b64 = b64_encode(&m3_tlv);
+    let m3_req = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "event": {
+                        "_0": {
+                            "pairingData": {
+                                "_0": {
+                                    "data": ps_m3_b64,
+                                    "kind": "setupManualPairing",
+                                    "sendingHost": host_name,
+                                    "startNewSession": false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &m3_req).await?;
+    let m4_raw = recv_rp_pairing_data(stream).await?;
+    let m4_tlv = tlv8_decode(&m4_raw);
+    if let Some(err_b) = m4_tlv.get(&0x07) {
+        return Err(format!("Pair-Setup M4 error: {err_b:02X?}"));
+    }
+    let m4_proof = m4_tlv
+        .get(&0x04)
+        .ok_or("Pair-Setup M4 missing server PROOF")?;
+    if m4_proof.as_slice() != srp.m2_expected_64.as_slice() {
+        return Err("Pair-Setup M4 SRP server proof mismatch".into());
+    }
+
+    // 5. Pair-Setup M5 -> M6 (Ed25519 host identity + OPACK `device_info` + extract peer `altIRK`)
+    let mut ed_seed = [0u8; 32];
+    fill_random(&mut ed_seed)?;
+    let ed_pub = ed25519_public_from_seed(&ed_seed);
+    let setup_enc_key = hkdf_sha512_32(
+        &srp.session_key_64,
+        b"Pair-Setup-Encrypt-Salt",
+        b"Pair-Setup-Encrypt-Info",
+    );
+    let sign_prefix = hkdf_sha512_32(
+        &srp.session_key_64,
+        b"Pair-Setup-Controller-Sign-Salt",
+        b"Pair-Setup-Controller-Sign-Info",
+    );
+    let mut signbuf = Vec::with_capacity(32 + host_id.len() + 32);
+    signbuf.extend_from_slice(&sign_prefix);
+    signbuf.extend_from_slice(host_id.as_bytes());
+    signbuf.extend_from_slice(&ed_pub);
+    let signature = ed25519_sign(&ed_seed, &signbuf);
+
+    let mut host_alt_irk = [0u8; 16];
+    fill_random(&mut host_alt_irk)?;
+    let host_info_opack = opack_encode(&OpackVal::Dict(vec![
+        (OpackVal::Str("altIRK".into()), OpackVal::Bytes(host_alt_irk.to_vec())),
+        (OpackVal::Str("btAddr".into()), OpackVal::Str("11:22:33:44:55:66".into())),
+        (
+            OpackVal::Str("mac".into()),
+            OpackVal::Bytes(vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+        ),
+        (
+            OpackVal::Str("remotepairing_serial_number".into()),
+            OpackVal::Str("AAAAAAAAAAAA".into()),
+        ),
+        (OpackVal::Str("accountID".into()), OpackVal::Str(host_id.to_string())),
+        (OpackVal::Str("model".into()), OpackVal::Str("computer-model".into())),
+        (OpackVal::Str("name".into()), OpackVal::Str(host_name.to_string())),
+    ]));
+
+    let m5_inner = tlv8_encode(&[
+        (0x01, host_id.as_bytes()),
+        (0x03, &ed_pub),
+        (0x0A, &signature),
+        (0x11, &host_info_opack),
+    ]);
+    let enc_m5 =
+        chacha20_poly1305_encrypt(&setup_enc_key, b"\x00\x00\x00\x00PS-Msg05", &m5_inner, &[]);
+    let m5_tlv = tlv8_encode(&[(0x05, &enc_m5), (0x06, &[0x05])]);
+    let ps_m5_b64 = b64_encode(&m5_tlv);
+    let m5_req = json!({
+        "message": {
+            "plain": {
+                "_0": {
+                    "event": {
+                        "_0": {
+                            "pairingData": {
+                                "_0": {
+                                    "data": ps_m5_b64,
+                                    "kind": "setupManualPairing",
+                                    "sendingHost": host_name,
+                                    "startNewSession": false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    seq += 1;
+    send_rp_json_rw(stream, &m5_req).await?;
+
+    let m6_raw = recv_rp_pairing_data(stream).await?;
+    let m6_tlv = tlv8_decode(&m6_raw);
+    if let Some(err_b) = m6_tlv.get(&0x07) {
+        return Err(format!("Pair-Setup M6 error: {err_b:02X?}"));
+    }
+    let enc_m6 = m6_tlv
+        .get(&0x05)
+        .ok_or("Pair-Setup M6 missing ENCRYPTED_DATA")?;
+    let m6_plain =
+        chacha20_poly1305_decrypt(&setup_enc_key, b"\x00\x00\x00\x00PS-Msg06", enc_m6, &[])
+            .map_err(|e| format!("Pair-Setup M6 decrypt: {e}"))?;
+    let m6_inner = tlv8_decode(&m6_plain);
+    let peer_info_bytes = m6_inner
+        .get(&0x11)
+        .ok_or("Pair-Setup M6 missing peer INFO OPACK payload")?;
+    let peer_alt_irk = opack_extract_alt_irk(peer_info_bytes)
+        .ok_or("Pair-Setup M6 INFO missing valid 16-byte altIRK")?;
+
+    // 6. Main encrypted session: `createRemoteUnlockKey` (best-effort; empty string on tvOS/error)
+    let client_main_key = hkdf_sha512_32(&srp.session_key_64, &[], b"ClientEncrypt-main");
+    let server_main_key = hkdf_sha512_32(&srp.session_key_64, &[], b"ServerEncrypt-main");
+    let unlock_req = serde_json::to_vec(&json!({
+        "request": {
+            "_0": {
+                "createRemoteUnlockKey": {}
+            }
+        }
+    }))
+    .unwrap_or_default();
+    let nonce0 = [0u8; 12];
+    let enc_unlock = chacha20_poly1305_encrypt(&client_main_key, &nonce0, &unlock_req, &[]);
+    let enc_unlock_b64 = b64_encode(&enc_unlock);
+    let env_unlock = json!({
+        "message": {
+            "streamEncrypted": {
+                "_0": enc_unlock_b64
+            }
+        },
+        "originatedBy": "host",
+        "sequenceNumber": seq
+    });
+    let mut remote_unlock_host_key = String::new();
+    if send_rp_json_rw(stream, &env_unlock).await.is_ok() {
+        if let Ok(Ok(cl_resp)) =
+            tokio::time::timeout(Duration::from_secs(3), recv_rp_json_rw(stream)).await
+        {
+            if let Some(cl_ct) = cl_resp
+                .pointer("/message/streamEncrypted/_0")
+                .and_then(|v| v.as_str())
+                .and_then(b64_decode)
+            {
+                if let Ok(cl_plain) =
+                    chacha20_poly1305_decrypt(&server_main_key, &nonce0, &cl_ct, &[])
+                {
+                    if let Ok(cl_json) = serde_json::from_slice(&cl_plain) {
+                        if let Some(hk) = cl_json
+                            .pointer("/response/_1/createRemoteUnlockKey/hostKey")
+                            .and_then(|v| v.as_str())
+                        {
+                            remote_unlock_host_key = hk.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(UsbRemotePairOutcome {
+        peer_alt_irk,
+        private_key: ed_seed,
+        public_key: ed_pub,
+        remote_unlock_host_key,
+        verified_existing: false,
+    })
+}
+
+/// Deterministic in-process mock `RPPairing` v19 USB server for unit tests in `rp_wifi_tls`, `wifi`, and `server_v4`.
+pub fn run_mock_rppairing_usb_pair_server(stream: &mut std::net::TcpStream, peer_irk: [u8; 16]) {
+    use std::io::{Read, Write};
+    fn read_msg(s: &mut std::net::TcpStream) -> Option<Value> {
+        let mut hdr = [0u8; 11];
+        s.read_exact(&mut hdr).ok()?;
+        if &hdr[0..9] != RP_MAGIC {
+            return None;
+        }
+        let len = u16::from_be_bytes([hdr[9], hdr[10]]) as usize;
+        let mut body = vec![0u8; len];
+        s.read_exact(&mut body).ok()?;
+        serde_json::from_slice(&body).ok()
+    }
+    fn write_msg(s: &mut std::net::TcpStream, val: &Value) {
+        let Ok(body) = serde_json::to_vec(val) else {
+            return;
+        };
+        let mut pkt = Vec::with_capacity(RP_MAGIC.len() + 2 + body.len());
+        pkt.extend_from_slice(RP_MAGIC);
+        pkt.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        pkt.extend_from_slice(&body);
+        let _ = s.write_all(&pkt);
+        let _ = s.flush();
+    }
+
+    let Some(_hs) = read_msg(stream) else { return };
+    write_msg(
+        stream,
+        &json!({
+            "message": {
+                "plain": {
+                    "_0": {
+                        "response": {
+                            "_1": {
+                                "handshake": {
+                                    "_0": {
+                                        "peerDeviceInfo": {
+                                            "identifier": "mock-peer-id",
+                                            "model": "iPhone18,1"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    );
+
+    // Pair-Verify M1 -> reject with ERROR 0x02 so client runs full Pair-Setup
+    let Some(_pv_m1) = read_msg(stream) else { return };
+    let pv_err = tlv8_encode(&[(0x06, &[0x02]), (0x07, &[0x02])]);
+    let pv_err_b64 = b64_encode(&pv_err);
+    write_msg(
+        stream,
+        &json!({
+            "message": { "plain": { "_0": { "event": { "_0": { "pairingData": { "_0": { "data": pv_err_b64 } } } } } } }
+        }),
+    );
+    let Some(_pv_fail) = read_msg(stream) else { return };
+
+    // Pair-Setup M1 -> send M2 (salt + server B)
+    let Some(_ps_m1) = read_msg(stream) else { return };
+    let salt: [u8; 16] = core::array::from_fn(|i| (i as u8) + 1);
+    let srv_b_priv = [0xAAu8; 32];
+    let (b_pub, v_be) = srp6a_3072_server_compute_b("Pair-Setup", "000000", &salt, &srv_b_priv);
+    let ps_m2 = tlv8_encode(&[(0x06, &[0x02]), (0x02, &salt), (0x03, &b_pub)]);
+    let ps_m2_b64 = b64_encode(&ps_m2);
+    write_msg(
+        stream,
+        &json!({
+            "message": { "plain": { "_0": { "event": { "_0": { "pairingData": { "_0": { "data": ps_m2_b64 } } } } } } }
+        }),
+    );
+
+    // Pair-Setup M3 -> verify M1 and send M4 (M2 proof)
+    let Some(ps_m3) = read_msg(stream) else { return };
+    let m3_b64 = ps_m3
+        .pointer("/message/plain/_0/event/_0/pairingData/_0/data")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let m3_tlv = tlv8_decode(&b64_decode(m3_b64).unwrap_or_default());
+    let cli_a = m3_tlv.get(&0x03).cloned().unwrap_or_default();
+    let cli_m1 = m3_tlv.get(&0x04).cloned().unwrap_or_default();
+    let Ok(srv_res) =
+        srp6a_3072_server_finish("Pair-Setup", &salt, &v_be, &srv_b_priv, &b_pub, &cli_a)
+    else {
+        return;
+    };
+    if cli_m1.as_slice() != srv_res.m1_expected_64.as_slice() {
+        return;
+    }
+    let ps_m4 = tlv8_encode(&[(0x06, &[0x04]), (0x04, &srv_res.m2_64)]);
+    let ps_m4_b64 = b64_encode(&ps_m4);
+    write_msg(
+        stream,
+        &json!({
+            "message": { "plain": { "_0": { "event": { "_0": { "pairingData": { "_0": { "data": ps_m4_b64 } } } } } } }
+        }),
+    );
+
+    // Pair-Setup M5 -> decrypt M5 -> send M6 containing peer `altIRK` in OPACK INFO
+    let Some(ps_m5) = read_msg(stream) else { return };
+    let m5_b64 = ps_m5
+        .pointer("/message/plain/_0/event/_0/pairingData/_0/data")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let m5_tlv = tlv8_decode(&b64_decode(m5_b64).unwrap_or_default());
+    let setup_key = hkdf_sha512_32(
+        &srv_res.session_key_64,
+        b"Pair-Setup-Encrypt-Salt",
+        b"Pair-Setup-Encrypt-Info",
+    );
+    let Some(enc_m5) = m5_tlv.get(&0x05) else { return };
+    if chacha20_poly1305_decrypt(&setup_key, b"\x00\x00\x00\x00PS-Msg05", enc_m5, &[]).is_err() {
+        return;
+    }
+    let peer_opack = opack_encode(&OpackVal::Dict(vec![
+        (OpackVal::Str("altIRK".into()), OpackVal::Bytes(peer_irk.to_vec())),
+        (OpackVal::Str("model".into()), OpackVal::Str("iPhone18,1".into())),
+        (OpackVal::Str("name".into()), OpackVal::Str("Mock-iPhone".into())),
+    ]));
+    let m6_inner = tlv8_encode(&[(0x11, &peer_opack)]);
+    let enc_m6 =
+        chacha20_poly1305_encrypt(&setup_key, b"\x00\x00\x00\x00PS-Msg06", &m6_inner, &[]);
+    let ps_m6 = tlv8_encode(&[(0x06, &[0x06]), (0x05, &enc_m6)]);
+    let ps_m6_b64 = b64_encode(&ps_m6);
+    write_msg(
+        stream,
+        &json!({
+            "message": { "plain": { "_0": { "event": { "_0": { "pairingData": { "_0": { "data": ps_m6_b64 } } } } } } }
+        }),
+    );
+
+    // Encrypted `createRemoteUnlockKey`
+    let Some(_unlock_msg) = read_msg(stream) else { return };
+    let server_main_key = hkdf_sha512_32(&srv_res.session_key_64, &[], b"ServerEncrypt-main");
+    let resp_plain = serde_json::to_vec(&json!({
+        "response": { "_1": { "createRemoteUnlockKey": { "hostKey": "mock-unlock-key-296" } } }
+    }))
+    .unwrap_or_default();
+    let enc_resp = chacha20_poly1305_encrypt(&server_main_key, &[0u8; 12], &resp_plain, &[]);
+    let enc_resp_b64 = b64_encode(&enc_resp);
+    write_msg(
+        stream,
+        &json!({
+            "message": { "streamEncrypted": { "_0": enc_resp_b64 } }
+        }),
+    );
 }
 
 pub struct RealWifiCdTunnel {
@@ -1884,6 +3269,14 @@ pub async fn connect_real_apple_rp_wifi_tunnel(
                 verified_eps.push(ep);
             }
         }
+        crate::diag_log::record(
+            "wifi_mdns",
+            &format!(
+                "round={round} total={} verified={}",
+                mdns_eps.len(),
+                verified_eps.len()
+            ),
+        );
         if let Some(first_ep) = verified_eps.first() {
             let fresh_ip = first_ep.ip.to_string();
             effective_hint = Some(fresh_ip.clone());
@@ -1998,6 +3391,10 @@ async fn connect_real_rp_single(
     host_id: &str,
     tcp_timeout_ms: u64,
 ) -> Result<RealWifiCdTunnel, String> {
+    crate::diag_log::record(
+        "wifi_rp_verify",
+        &format!("connecting {}:{} timeout_ms={tcp_timeout_ms}", addr.ip(), addr.port()),
+    );
     let mut ctrl = tokio::time::timeout(
         Duration::from_millis(tcp_timeout_ms),
         TcpStream::connect(addr),
@@ -2192,6 +3589,7 @@ async fn connect_real_rp_single(
         .pointer("/response/_1/createListener/port")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| format!("createListener missing port: {cl_json:?}"))? as u16;
+    crate::diag_log::record("wifi_rp_verify", &format!("createListener ok data_port={data_port}"));
 
     // Step 5: Connect TLS 1.2 PSK (`0x00A8`) to `<ip>:<data_port>` + CDTunnel handshake
     let data_addr = SocketAddr::new(addr.ip(), data_port);
@@ -2222,6 +3620,10 @@ async fn connect_real_rp_single(
         .map_err(|e| format!("CDTunnel Wi-Fi handshake: {e}"))?;
 
     let info = cd.info.clone();
+    crate::diag_log::record(
+        "wifi_tls_psk",
+        &format!("connected rsd_port={} mtu={}", info.server_rsd_port, info.mtu),
+    );
     let client_ip: Ipv6Addr = info
         .client_address
         .parse()
@@ -2725,6 +4127,87 @@ mod tests {
             "TAHAP281_TLS_BURST_MS={:.3} bytes={}",
             elapsed_ms,
             recovered.len()
+        );
+    }
+
+    #[test]
+    fn test_tahap296_srp6a_3072_and_opack_alt_irk_roundtrip() {
+        // 1. Exact golden vectors from Python `srptools` ("Pair-Setup", PIN "000000")
+        let salt: Vec<u8> = (1u8..=16).collect();
+        let cli_a = hex_to_vec("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        let srv_b = hex_to_vec("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
+        let expected_a = hex_to_vec("eecc6724ae6254074ff0632985ebd75641c5beaac7c52040a4b5f90cadd01455f1afc84eeb89c383a0fa0a66cd92d876d695d22a381e5168685001e194cb24982f7ce57f26a3467f0efe9dffda740f8ec79d7f33e48db75417569b16523f236d4c88ad77907cf9e6e5af4826382f4040eb06fb6b740602b058625bac0c12f7df534053a296217493378e739984fff377ff0ea140df0edbf7084dcef9063d8e5fb53a04cddd5a82a872c22a6c9c8d2ca006fc8a83f5e900d48fde5d66dd77162f781a3c0101dbdb1a3f253c25e719173bc831b16899153436f3a00de29b9850a7bfc1900d5694c454f4a7d712651b807eee435508ed3dfdf4a83dce0888c295c146ec25ddf02d8fb96f264fe9fc8f7a9750160239fb69ca0964b88f8d0f39a8fa143f1452c3c115d73763ae6286e664d0ad8682b3e05fcca7c377a70bfbf53e8de5e9db3e07b43b3bfeea3cf83884c3148f6fdab49858c16443ba4f51e86f77aaa7fbafe856a606ba0b9ca1651ca0945a99283a7bb8fdd591baee983a5b85ffe0");
+        let expected_b = hex_to_vec("fe28b9d0da79a8d2fae11d853c0debd7398b40dbfe9696109a6d00b8344683a237d1a5b0efb3b0176dd6d3b0107a4e4f4076ff5615436b557f4b7f25db5619afb31e95c9d0d92d0e00c74a4ccf5700ee05a39d19ee8673967c31a2141a71287c38313d0e1727ad283fe463e557720d6e039e5d6a6956113ec225bc8d78bdbbe6bd1ff030d43784434786af7786814c692db7ed08de2c2d9f9567363ec596cee5d760fbe73eb6f2ea3025dcb4b8eb8dd3bacb7b8a4ed04b0e621834b2dd98989099422d5961caf24b1d682cf7c3c08e830dc8e00227e73d45064e092697f70fb05b58a1d9c7536899ce821616b0f41ef29e0688dc7a8cd04db44ab2e8f74b0d6be969464265848e3cddc08610652643a67370413bfac8a48bbb4e5985cb018a04dddba603567a2f60f945a69377332f03e15273edb5da772c5486d4086d6f1a395a0f287018dceab7fc242e45b50d4cbc1ff47dae116bac8b3fe4f5c4f9241314d7b39c22718aad4b8344dca05e129d0a9c0f9752df446aa1efbfaf847be962fd");
+        let expected_k = hex_to_vec("9dc828152221b6e101355e61b07fdb7b8a1f96d7d3a77a5e88be60272623b566573db6acba2eb7b062a502a5ebc990fb4e5170f69ac25a6a27618d2883caaa82");
+        let expected_m1 = hex_to_vec("435ff68addb4ff4b2e152ef7c50538e9ad56c513c1974d1a1e10cde98192e8e0b7fce3ef2bbdc116636eddc241fefb993dc7aa24071e9daa8a2b74b7c43dc0e0");
+        let expected_m2 = hex_to_vec("a30ee7339c67b663d2d5522511f47a621e99817c70182559b01f3506d7f9511f9fa9824050e341c25c67cdcb44ad28a7931ad9b5075187cef97cc2ad865f28dc");
+
+        let (b_pub, v_be) = srp6a_3072_server_compute_b("Pair-Setup", "000000", &salt, &srv_b);
+        assert_eq!(b_pub, expected_b, "SRP B mismatch");
+
+        let cli = srp6a_3072_client_compute("Pair-Setup", "000000", &salt, &b_pub, &cli_a)
+            .expect("client compute");
+        assert_eq!(cli.a_pub_be, expected_a, "SRP A mismatch");
+        assert_eq!(cli.session_key_64.as_slice(), expected_k.as_slice(), "SRP K mismatch");
+        assert_eq!(cli.m1_64.as_slice(), expected_m1.as_slice(), "SRP M1 mismatch");
+        assert_eq!(cli.m2_expected_64.as_slice(), expected_m2.as_slice(), "SRP M2 mismatch");
+
+        let srv = srp6a_3072_server_finish("Pair-Setup", &salt, &v_be, &srv_b, &b_pub, &cli.a_pub_be)
+            .expect("server finish");
+        assert_eq!(srv.session_key_64, cli.session_key_64);
+        assert_eq!(srv.m1_expected_64, cli.m1_64);
+        assert_eq!(srv.m2_64, cli.m2_expected_64);
+
+        // Safe B < k*g^x modular subtraction test (must never underflow)
+        let small_b = [1u8];
+        let small_res = srp6a_3072_client_compute("Pair-Setup", "000000", &salt, &small_b, &cli_a)
+            .expect("small B mod N must not underflow");
+        assert_eq!(small_res.session_key_64.len(), 64);
+
+        // 2. OPACK wire round-trip against Python `opack2` golden hex + `altIRK` extraction
+        let host_info = OpackVal::Dict(vec![
+            (
+                OpackVal::Str("accountID".into()),
+                OpackVal::Str("00000000-0000-0000-0000-000000000000".into()),
+            ),
+            (OpackVal::Str("model".into()), OpackVal::Str("Windows".into())),
+            (OpackVal::Str("name".into()), OpackVal::Str("TestHost".into())),
+            (
+                OpackVal::Str("altIRK".into()),
+                OpackVal::Bytes((1u8..=16).collect()),
+            ),
+        ]);
+        let encoded = opack_encode(&host_info);
+        let expected_opack = hex_to_vec(
+            "e4496163636f756e744944612430303030303030302d303030302d303030302d303030302d303030303030303030303030456d6f64656c4757696e646f7773446e616d654854657374486f737446616c7449524b800102030405060708090a0b0c0d0e0f10",
+        );
+        assert_eq!(encoded, expected_opack, "OPACK wire encoding mismatch");
+        let extracted_irk = opack_extract_alt_irk(&encoded).expect("extract altIRK");
+        assert_eq!(extracted_irk, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+
+        // 3. Full loopback TCP `pair_usb_remotepairing_lockdown` against real `run_mock_rppairing_usb_pair_server`
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let expected_peer_irk: [u8; 16] = core::array::from_fn(|i| 0xA0 + i as u8);
+        let srv_h = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+            run_mock_rppairing_usb_pair_server(&mut s, expected_peer_irk);
+        });
+
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let outcome = rt.block_on(async {
+            let mut tcp = TcpStream::connect(addr).await.unwrap();
+            pair_usb_remotepairing_lockdown(&mut tcp, "TestHost", "mock-host-id", None).await
+        });
+        let _ = srv_h.join();
+        let pair_ok = outcome.expect("native USB RPPairing loopback must succeed");
+        assert!(!pair_ok.verified_existing);
+        assert_eq!(pair_ok.peer_alt_irk, expected_peer_irk);
+        assert_eq!(pair_ok.remote_unlock_host_key, "mock-unlock-key-296");
+        assert_eq!(
+            ed25519_public_from_seed(&pair_ok.private_key),
+            pair_ok.public_key
         );
     }
 }

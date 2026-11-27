@@ -570,9 +570,9 @@ export component MainWindow inherits Window {
     in-out property <[DiagRow]> diagnostics: [];
     in-out property <bool> auto-check-update: true;
     in-out property <string> update-channel: "stable"; // "stable" | "beta"
-    in-out property <string> update-status-text: "iPhone Link v5.0.1 (Native Rust)";
+    in-out property <string> update-status-text: "iPhone Link v5.0.2 (Native Rust)";
     in-out property <bool> update-available: false;
-    in-out property <string> latest-version: "5.0.1";
+    in-out property <string> latest-version: "5.0.2";
     in-out property <string> update-release-url: "";
     in-out property <string> update-download-url: "";
     in-out property <string> diag-feedback-text: "";
@@ -2253,8 +2253,8 @@ export component MainWindow inherits Window {
 
                                     Text {
                                         text: root.is-en
-                                            ? "iOS 27+: HEVC 60 FPS + full control · iOS 17.4-26: Hybrid control (experimental) · iOS <=17.3: AirPlay H.264"
-                                            : "iOS 27+: HEVC 60 FPS + kontrol penuh · iOS 17.4-26: Hybrid kontrol (eksperimental) · iOS <=17.3: AirPlay H.264";
+                                            ? "iOS 27+: HEVC 60 FPS + full control · iOS 17-26: AirPlay H.264 + Audio (View Only)"
+                                            : "iOS 27+: HEVC 60 FPS + kontrol penuh · iOS 17-26: AirPlay H.264 + Audio (Tampilan Saja)";
                                         color: root.text-muted;
                                         font-size: 10px;
                                         wrap: word-wrap;
@@ -3268,7 +3268,7 @@ export component MainWindow inherits Window {
                                     dark-mode: root.dark-mode;
 
                                     DrawerAccordion {
-                                        title: "iPhone Link v5.0.1";
+                                        title: "iPhone Link v5.0.2";
                                         badge: root.update-available
                                             ? ((root.is-en ? "New v" : "Baru v") + root.latest-version)
                                             : (root.update-channel == "beta" ? "Beta" : (root.is-en ? "Stable" : "Stabil"));
@@ -3635,12 +3635,12 @@ export component MainWindow inherits Window {
                                             }
                                         }
 
-                                        // Clean Creator Attribution Row: "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0"
+                                        // Clean Creator Attribution Row: "iPhone Link v5.0.2 by Kelvin Daniyar · GPL-3.0"
                                         HorizontalLayout {
                                             alignment: center;
                                             spacing: 0px;
                                             Text {
-                                                text: "iPhone Link v5.0.1 by ";
+                                                text: "iPhone Link v5.0.2 by ";
                                                 color: root.dark-mode ? #CBD5E1 : #0F172A;
                                                 font-size: 10.5px;
                                                 font-weight: 600;

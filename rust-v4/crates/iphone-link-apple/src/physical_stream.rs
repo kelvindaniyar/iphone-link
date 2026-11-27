@@ -782,13 +782,41 @@ fn build_ipv6_udp(
 #[derive(Debug)]
 struct TcpSeg {
     seq: u32,
+    ack_num: u32,
+    window: u16,
     flags: u8,
+    win_scale: Option<u8>,
     payload: Vec<u8>,
+}
+
+/// Parses RFC 7323 Window Scale option (Kind=3, Length=3) from TCP header options.
+fn parse_tcp_win_scale(opts: &[u8]) -> Option<u8> {
+    let mut i = 0usize;
+    while i < opts.len() {
+        let kind = opts[i];
+        if kind == 0 {
+            break;
+        }
+        if kind == 1 {
+            i += 1;
+            continue;
+        }
+        let len = *opts.get(i + 1)? as usize;
+        if len < 2 || i + len > opts.len() {
+            break;
+        }
+        if kind == 3 && len == 3 {
+            return Some(opts[i + 2].min(14));
+        }
+        i += len;
+    }
+    None
 }
 
 struct TcpRouteEntry {
     tx: mpsc::Sender<TcpSeg>,
     read_waker: Arc<Mutex<Option<std::task::Waker>>>,
+    write_waker: Arc<Mutex<Option<std::task::Waker>>>,
 }
 
 type TcpRoutes = Arc<Mutex<HashMap<(u16, u16), TcpRouteEntry>>>;
@@ -1028,6 +1056,7 @@ impl Drop for CdTunnelRouter {
             .unwrap_or_default();
         for entry in drained {
             wake_route_reader(&entry.read_waker);
+            wake_route_reader(&entry.write_waker);
         }
     }
 }
@@ -1117,13 +1146,15 @@ impl CdTunnelRouter {
 
                     let mut tx_blocked = false;
                     let mut tx_did_work = false;
+                    let mut tx_batches = 0usize;
                     loop {
                         if tx_in_flight_pos >= tx_in_flight.len() {
-                            if tx_pending.is_empty() {
+                            if tx_batches >= 4 || tx_pending.is_empty() {
                                 break;
                             }
                             coalesce_tx_batch(&mut tx_pending, &mut tx_in_flight);
                             tx_in_flight_pos = 0;
+                            tx_batches += 1;
                         }
                         if tx_in_flight_pos >= tx_in_flight.len() {
                             break;
@@ -1232,28 +1263,44 @@ impl CdTunnelRouter {
                                         let seq = u32::from_be_bytes([
                                             body[4], body[5], body[6], body[7],
                                         ]);
+                                        let ack_num = u32::from_be_bytes([
+                                            body[8], body[9], body[10], body[11],
+                                        ]);
                                         let doff = ((body[12] >> 4) as usize) * 4;
                                         let flags = body[13];
+                                        let window = u16::from_be_bytes([body[14], body[15]]);
                                         if doff >= 20 && doff <= body.len() {
+                                            let win_scale = if (flags & 0x02) != 0 && doff > 20 {
+                                                parse_tcp_win_scale(&body[20..doff])
+                                            } else {
+                                                None
+                                            };
                                             let pay = body[doff..].to_vec();
-                                            let wake_opt = routes_rd.lock().ok().and_then(|guard| {
+                                            let wakers_opt = routes_rd.lock().ok().and_then(|guard| {
                                                 guard.get(&(dport, sport)).and_then(|entry| {
                                                     if entry
                                                         .tx
                                                         .send(TcpSeg {
                                                             seq,
+                                                            ack_num,
+                                                            window,
                                                             flags,
+                                                            win_scale,
                                                             payload: pay,
                                                         })
                                                         .is_ok()
                                                     {
-                                                        Some(Arc::clone(&entry.read_waker))
+                                                        Some((
+                                                            Arc::clone(&entry.read_waker),
+                                                            Arc::clone(&entry.write_waker),
+                                                        ))
                                                     } else {
                                                         None
                                                     }
                                                 })
                                             });
-                                            if let Some(w_slot) = wake_opt {
+                                            if let Some((r_slot, w_slot)) = wakers_opt {
+                                                wake_route_reader(&r_slot);
                                                 wake_route_reader(&w_slot);
                                             }
                                         }
@@ -1323,6 +1370,7 @@ impl CdTunnelRouter {
                     .unwrap_or_default();
                 for entry in drained_routes {
                     wake_route_reader(&entry.read_waker);
+                    wake_route_reader(&entry.write_waker);
                 }
             });
 
@@ -1344,23 +1392,46 @@ impl CdTunnelRouter {
             udp_rx,
         )
     }
+}
 
+/// TCP SYN options isolated by tunnel channel:
+/// - `enable_wscale = true`: DDI bulk upload channels (`CdTcpRw`) use `MSS=1340 + NOP + WScale=6` (256 KB+ window).
+/// - `enable_wscale = false`: `XpcH2Session` control/DisplayService channels use standard `MSS=1340` only.
+pub fn build_syn_options_for_channel(enable_wscale: bool) -> &'static [u8] {
+    if enable_wscale {
+        &[0x02, 0x04, 0x05, 0x3C, 0x01, 0x03, 0x03, 0x06]
+    } else {
+        &[0x02, 0x04, 0x05, 0x3C]
+    }
+}
+
+impl CdTunnelRouter {
     async fn connect_tcp(&self, dport: u16) -> Result<CdTcpConn, String> {
+        self.connect_tcp_with_wscale(dport, true).await
+    }
+
+    async fn connect_tcp_with_wscale(
+        &self,
+        dport: u16,
+        enable_wscale: bool,
+    ) -> Result<CdTcpConn, String> {
         let sport = self.next_ephemeral.fetch_add(1, Ordering::Relaxed);
         let (seg_tx, seg_rx) = mpsc::channel();
         let read_waker = Arc::new(Mutex::new(None));
+        let write_waker = Arc::new(Mutex::new(None));
         if let Ok(mut g) = self.tcp_routes.lock() {
             g.insert(
                 (sport, dport),
                 TcpRouteEntry {
                     tx: seg_tx,
                     read_waker: Arc::clone(&read_waker),
+                    write_waker: Arc::clone(&write_waker),
                 },
             );
         }
 
         let mut seq = 1000u32;
-        // SYN + MSS=1340
+        let syn_opts = build_syn_options_for_channel(enable_wscale);
         let syn = build_ipv6_tcp(
             self.src_ip,
             self.dst_ip,
@@ -1369,7 +1440,7 @@ impl CdTunnelRouter {
             seq,
             0,
             0x02,
-            &[0x02, 0x04, 0x05, 0x3C],
+            syn_opts,
             &[],
         );
         self.tx_pkt
@@ -1378,7 +1449,7 @@ impl CdTunnelRouter {
         seq = seq.wrapping_add(1);
 
         let deadline = Instant::now() + Duration::from_secs(6);
-        let ack = loop {
+        let (ack, syn_ack_win, peer_wscale) = loop {
             let rem = deadline.saturating_duration_since(Instant::now());
             if rem.is_zero() {
                 return Err(format!("TCP SYN-ACK timeout on port {dport}"));
@@ -1386,7 +1457,12 @@ impl CdTunnelRouter {
             match seg_rx.recv_timeout(rem.min(Duration::from_millis(200))) {
                 Ok(seg) => {
                     if (seg.flags & 0x12) == 0x12 {
-                        break seg.seq.wrapping_add(1);
+                        let wscale = if enable_wscale {
+                            seg.win_scale.unwrap_or(0).min(14)
+                        } else {
+                            0
+                        };
+                        break (seg.seq.wrapping_add(1), u32::from(seg.window), wscale);
                     }
                     if (seg.flags & 0x04) != 0 {
                         return Err(format!("TCP RST on port {dport}"));
@@ -1408,7 +1484,16 @@ impl CdTunnelRouter {
             sport,
             dport,
             seq,
+            snd_una: seq,
             ack,
+            peer_window_bytes: syn_ack_win.max(1300),
+            peer_wscale,
+            unacked: VecDeque::new(),
+            dup_ack_seq: seq,
+            dup_ack_count: 0,
+            rto: Duration::from_millis(250),
+            zwp_last_at: None,
+            zwp_probes: 0,
             tx_pkt: self.tx_pkt.clone(),
             tx_flush_barrier: Some((self.tx_flush_req.clone(), self.tx_flush_ack.clone())),
             seg_rx,
@@ -1417,6 +1502,7 @@ impl CdTunnelRouter {
             routes: self.tcp_routes.clone(),
             read_timeout: Duration::from_secs(10),
             read_waker,
+            write_waker,
             peer_closed: false,
             router_stopped: self.stop_pump.clone(),
         })
@@ -1428,13 +1514,30 @@ impl CdTunnelRouter {
     }
 }
 
+#[derive(Debug, Clone)]
+struct UnackedTcpSeg {
+    seq: u32,
+    payload: Vec<u8>,
+    sent_at: Instant,
+    retransmits: u8,
+}
+
 struct CdTcpConn {
     src_ip: [u8; 16],
     dst_ip: [u8; 16],
     sport: u16,
     dport: u16,
     seq: u32,
+    snd_una: u32,
     ack: u32,
+    peer_window_bytes: u32,
+    peer_wscale: u8,
+    unacked: VecDeque<UnackedTcpSeg>,
+    dup_ack_seq: u32,
+    dup_ack_count: u8,
+    rto: Duration,
+    zwp_last_at: Option<Instant>,
+    zwp_probes: u8,
     tx_pkt: mpsc::Sender<Vec<u8>>,
     tx_flush_barrier: Option<(Arc<AtomicU64>, Arc<AtomicU64>)>,
     seg_rx: mpsc::Receiver<TcpSeg>,
@@ -1443,6 +1546,7 @@ struct CdTcpConn {
     routes: TcpRoutes,
     read_timeout: Duration,
     read_waker: Arc<Mutex<Option<std::task::Waker>>>,
+    write_waker: Arc<Mutex<Option<std::task::Waker>>>,
     peer_closed: bool,
     router_stopped: Arc<AtomicBool>,
 }
@@ -1468,6 +1572,207 @@ impl Drop for CdTcpConn {
 }
 
 impl CdTcpConn {
+    fn apply_peer_ack(&mut self, seg: &TcpSeg) {
+        if (seg.flags & 0x10) == 0 {
+            return;
+        }
+        let prev_win = self.peer_window_bytes;
+        let new_win = if (seg.flags & 0x02) != 0 {
+            u32::from(seg.window)
+        } else {
+            u32::from(seg.window) << self.peer_wscale
+        };
+        self.peer_window_bytes = new_win;
+        if new_win > 0 {
+            self.zwp_last_at = None;
+            self.zwp_probes = 0;
+        }
+
+        let adv = seg.ack_num.wrapping_sub(self.snd_una) as i32;
+        let not_future = seg.ack_num.wrapping_sub(self.seq) as i32;
+        if adv > 0 && not_future <= 0 {
+            self.snd_una = seg.ack_num;
+            self.dup_ack_seq = seg.ack_num;
+            self.dup_ack_count = 0;
+            self.rto = Duration::from_millis(250);
+            while let Some(front) = self.unacked.front_mut() {
+                let end_seq = front.seq.wrapping_add(front.payload.len() as u32);
+                if (end_seq.wrapping_sub(self.snd_una) as i32) <= 0 {
+                    self.unacked.pop_front();
+                } else {
+                    let partial = self.snd_una.wrapping_sub(front.seq) as i32;
+                    if partial > 0 {
+                        let drop_n = (partial as usize).min(front.payload.len());
+                        front.payload.drain(..drop_n);
+                        front.seq = front.seq.wrapping_add(drop_n as u32);
+                        front.retransmits = 0;
+                        front.sent_at = Instant::now();
+                    }
+                    break;
+                }
+            }
+        } else if adv == 0
+            && !self.unacked.is_empty()
+            && seg.payload.is_empty()
+            && new_win == prev_win
+            && new_win > 0
+        {
+            if self.dup_ack_seq == seg.ack_num {
+                self.dup_ack_count = self.dup_ack_count.saturating_add(1);
+            } else {
+                self.dup_ack_seq = seg.ack_num;
+                self.dup_ack_count = 1;
+            }
+            if self.dup_ack_count == 3 {
+                if let Some(front) = self.unacked.front_mut() {
+                    let pkt = build_ipv6_tcp(
+                        self.src_ip,
+                        self.dst_ip,
+                        self.sport,
+                        self.dport,
+                        front.seq,
+                        self.ack,
+                        0x18,
+                        &[],
+                        &front.payload,
+                    );
+                    if self.tx_pkt.send(pkt).is_ok() {
+                        front.sent_at = Instant::now();
+                        front.retransmits = front.retransmits.saturating_add(1);
+                    }
+                }
+            }
+        }
+    }
+
+    fn send_windowed_slice(&mut self, data: &[u8]) -> Result<usize, String> {
+        if self.peer_window_bytes == 0 {
+            return Ok(0);
+        }
+        let in_flight = self.seq.wrapping_sub(self.snd_una);
+        let effective_cap = self.peer_window_bytes.min(256 * 1024);
+        let avail = effective_cap.saturating_sub(in_flight) as usize;
+        if avail == 0 {
+            return Ok(0);
+        }
+        let slice = &data[..data.len().min(avail)];
+        let now = Instant::now();
+        let mut sent = 0usize;
+        for chunk in slice.chunks(1300) {
+            let pkt = build_ipv6_tcp(
+                self.src_ip,
+                self.dst_ip,
+                self.sport,
+                self.dport,
+                self.seq,
+                self.ack,
+                0x18,
+                &[],
+                chunk,
+            );
+            self.tx_pkt
+                .send(pkt)
+                .map_err(|_| "tunnel writer closed".to_string())?;
+            self.unacked.push_back(UnackedTcpSeg {
+                seq: self.seq,
+                payload: chunk.to_vec(),
+                sent_at: now,
+                retransmits: 0,
+            });
+            self.seq = self.seq.wrapping_add(chunk.len() as u32);
+            sent += chunk.len();
+        }
+        Ok(sent)
+    }
+
+    fn check_retransmit_or_zwp(
+        &mut self,
+        now: Instant,
+        has_pending_write: bool,
+    ) -> Result<Option<Duration>, std::io::Error> {
+        if let Some(front) = self.unacked.front_mut() {
+            let elapsed = now.saturating_duration_since(front.sent_at);
+            if elapsed >= self.rto {
+                if front.retransmits >= 8 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "TCP retransmit limit exceeded on port {} at seq {}",
+                            self.dport, front.seq
+                        ),
+                    ));
+                }
+                let pkt = build_ipv6_tcp(
+                    self.src_ip,
+                    self.dst_ip,
+                    self.sport,
+                    self.dport,
+                    front.seq,
+                    self.ack,
+                    0x18,
+                    &[],
+                    &front.payload,
+                );
+                self.tx_pkt.send(pkt).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "tunnel writer closed")
+                })?;
+                front.sent_at = now;
+                front.retransmits = front.retransmits.saturating_add(1);
+                self.rto = (self.rto * 2).min(Duration::from_millis(2000));
+                return Ok(Some(self.rto));
+            }
+            return Ok(Some(
+                self.rto
+                    .saturating_sub(elapsed)
+                    .max(Duration::from_millis(10)),
+            ));
+        }
+
+        if has_pending_write && self.peer_window_bytes == 0 {
+            let zwp_interval = Duration::from_millis(250);
+            match self.zwp_last_at {
+                None => {
+                    self.zwp_last_at = Some(now);
+                    return Ok(Some(zwp_interval));
+                }
+                Some(last) => {
+                    let elapsed = now.saturating_duration_since(last);
+                    if elapsed >= zwp_interval {
+                        if self.zwp_probes >= 40 {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                format!("TCP zero-window stall timeout on port {}", self.dport),
+                            ));
+                        }
+                        let probe = build_ipv6_tcp(
+                            self.src_ip,
+                            self.dst_ip,
+                            self.sport,
+                            self.dport,
+                            self.seq.wrapping_sub(1),
+                            self.ack,
+                            0x10,
+                            &[],
+                            &[],
+                        );
+                        self.tx_pkt.send(probe).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::BrokenPipe,
+                                "tunnel writer closed",
+                            )
+                        })?;
+                        self.zwp_probes = self.zwp_probes.saturating_add(1);
+                        self.zwp_last_at = Some(now);
+                        return Ok(Some(zwp_interval));
+                    }
+                    return Ok(Some(zwp_interval.saturating_sub(elapsed).max(Duration::from_millis(10))));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     fn drain_nonblocking_for_async(&mut self) -> Result<bool, String> {
         let mut ack_needed = false;
         let mut peer_fin = false;
@@ -1477,6 +1782,7 @@ impl CdTcpConn {
                     if (seg.flags & 0x04) != 0 {
                         return Err(format!("TCP connection reset on port {}", self.dport));
                     }
+                    self.apply_peer_ack(&seg);
                     if !seg.payload.is_empty() {
                         if seg.seq == self.ack {
                             self.ack = self.ack.wrapping_add(seg.payload.len() as u32);
@@ -1593,6 +1899,7 @@ impl CdTcpConn {
             if (seg.flags & 0x04) != 0 {
                 return Err(format!("TCP connection reset on port {}", self.dport));
             }
+            self.apply_peer_ack(&seg);
             if !seg.payload.is_empty() {
                 if seg.seq == self.ack {
                     self.ack = self.ack.wrapping_add(seg.payload.len() as u32);
@@ -1655,6 +1962,7 @@ impl CdTcpConn {
             if (seg.flags & 0x04) != 0 {
                 return Err(format!("TCP connection reset on port {}", self.dport));
             }
+            self.apply_peer_ack(&seg);
             if !seg.payload.is_empty() {
                 if seg.seq == self.ack {
                     self.ack = self.ack.wrapping_add(seg.payload.len() as u32);
@@ -1721,6 +2029,14 @@ impl std::fmt::Debug for CdTcpRw {
     }
 }
 
+impl CdTcpRw {
+    fn new(conn: CdTcpConn) -> Self {
+        Self {
+            conn: Mutex::new(conn),
+        }
+    }
+}
+
 impl tokio::io::AsyncRead for CdTcpRw {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -1735,6 +2051,9 @@ impl tokio::io::AsyncRead for CdTcpRw {
                     e,
                 )));
             }
+        }
+        if !guard.unacked.is_empty() {
+            let _ = guard.check_retransmit_or_zwp(Instant::now(), false)?;
         }
         if !guard.rx_buf.is_empty() {
             let n = guard.rx_buf.len().min(buf.unfilled_mut().len());
@@ -1780,25 +2099,101 @@ impl tokio::io::AsyncRead for CdTcpRw {
 impl tokio::io::AsyncWrite for CdTcpRw {
     fn poll_write(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        match guard.send_all(buf) {
-            Ok(()) => Poll::Ready(Ok(buf.len())),
-            Err(e) => Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                e,
-            ))),
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
         }
+        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .drain_nonblocking_for_async()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))?;
+        if guard.peer_closed || guard.router_stopped.load(Ordering::Acquire) {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "TCP peer closed",
+            )));
+        }
+        let _ = guard.check_retransmit_or_zwp(Instant::now(), true)?;
+        let sent = guard
+            .send_windowed_slice(buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+        if sent > 0 {
+            return Poll::Ready(Ok(sent));
+        }
+
+        // Window saturated or Zero-Window: register waker, re-drain, retry.
+        if let Ok(mut wslot) = guard.write_waker.lock() {
+            *wslot = Some(cx.waker().clone());
+        }
+        guard
+            .drain_nonblocking_for_async()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))?;
+        if guard.peer_closed || guard.router_stopped.load(Ordering::Acquire) {
+            if let Ok(mut wslot) = guard.write_waker.lock() {
+                *wslot = None;
+            }
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "TCP peer closed",
+            )));
+        }
+        let sent_retry = guard
+            .send_windowed_slice(buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+        if sent_retry > 0 {
+            if let Ok(mut wslot) = guard.write_waker.lock() {
+                *wslot = None;
+            }
+            return Poll::Ready(Ok(sent_retry));
+        }
+        let _ = guard.check_retransmit_or_zwp(Instant::now(), true)?;
+        Poll::Pending
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .drain_nonblocking_for_async()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))?;
+        let _ = guard.check_retransmit_or_zwp(Instant::now(), false)?;
+        if guard.unacked.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        if guard.peer_closed || guard.router_stopped.load(Ordering::Acquire) {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "TCP peer closed before ACK flush completed",
+            )));
+        }
+        if let Ok(mut wslot) = guard.write_waker.lock() {
+            *wslot = Some(cx.waker().clone());
+        }
+        guard
+            .drain_nonblocking_for_async()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionReset, e))?;
+        if guard.unacked.is_empty() {
+            if let Ok(mut wslot) = guard.write_waker.lock() {
+                *wslot = None;
+            }
+            return Poll::Ready(Ok(()));
+        }
+        if guard.peer_closed || guard.router_stopped.load(Ordering::Acquire) {
+            if let Ok(mut wslot) = guard.write_waker.lock() {
+                *wslot = None;
+            }
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "TCP peer closed before ACK flush completed",
+            )));
+        }
+        let _ = guard.check_retransmit_or_zwp(Instant::now(), false)?;
+        Poll::Pending
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
     }
 }
 
@@ -1816,9 +2211,7 @@ impl idevice::provider::RsdProvider for CdTunnelRsdProvider {
             .connect_tcp(port)
             .await
             .map_err(|e| idevice::IdeviceError::Io(std::io::Error::other(e)))?;
-        Ok(Box::new(CdTcpRw {
-            conn: Mutex::new(conn),
-        }))
+        Ok(Box::new(CdTcpRw::new(conn)))
     }
 }
 
@@ -1899,7 +2292,7 @@ struct XpcH2Session {
 impl XpcH2Session {
     async fn open(router: &CdTunnelRouter, port: u16) -> Result<Self, String> {
         tokio::time::timeout(Duration::from_secs(8), async move {
-            let mut conn = router.connect_tcp(port).await?;
+            let mut conn = router.connect_tcp_with_wscale(port, false).await?;
 
             let mut init = Vec::new();
             init.extend_from_slice(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
@@ -2369,7 +2762,7 @@ pub fn process_rtp_video_packet_guarded(
                     .unwrap_or_else(|| "hev1.1.6.L150.B0".to_string());
                 let hvcc = build_hvcc_record(vps, sps, pps);
                 let (cw, ch, trim) = parse_hevc_sps_dimensions_and_trim(sps)
-                    .unwrap_or((1216, 2656, FrameTrim::default()));
+                    .unwrap_or((1216, 2656, FrameTrim::zero()));
                 crate::mirror::update_live_codec_from_sps_with_trim(
                     session_gen,
                     &codec_str,
@@ -3850,9 +4243,9 @@ async fn run_physical_usb_display_async_ex(
     }
     let dev = matched_dev.ok_or_else(|| {
         if last_err.is_empty() {
-            format!("iPhone USB {clean_udid} tidak ditemukan di usbmuxd.")
+            "iPhone USB tidak ditemukan di usbmuxd. Pastikan kabel terhubung dan layar iPhone terbuka.".to_string()
         } else {
-            last_err
+            crate::diag_log::sanitize_ui_no_raw_udid(&last_err)
         }
     })?;
     let _udid = dev.udid.clone();
@@ -3974,7 +4367,7 @@ async fn run_physical_wifi_lockdown_proxy(
 
     let svc_rw: Box<dyn idevice::ReadWrite> = if ssl {
         let pf = pairing_opt.ok_or_else(|| {
-            format!("PairingFile Lockdown untuk {udid} tidak ditemukan.")
+            "PairingFile Lockdown untuk iPhone tidak ditemukan. Hubungkan USB sekali lalu ketuk Trust.".to_string()
         })?;
         idevice::tls::upgrade_client_tls(Box::new(svc_tcp), &pf)
             .await
@@ -4046,22 +4439,29 @@ async fn run_physical_wifi_display_async_ex(
     stop: Arc<AtomicBool>,
     gate_only: bool,
 ) -> Result<(), String> {
-    if ip.trim().is_empty() {
-        return Err(format_wifi_remote_pairing_error("", None, false));
-    }
     if !crate::wifi::has_remote_record(&udid) && crate::wifi::all_records().is_empty() {
-        return Err(format_wifi_remote_pairing_error(&ip, Some("record Wi-Fi belum tersedia"), false));
+        crate::diag_log::record("wifi_err", "missing_remote_plist");
+        return Err(format_wifi_remote_pairing_error(
+            &ip,
+            Some("record RemotePairing (remote_<udid>.plist) belum tersedia"),
+            false,
+        ));
     }
+    let stage_target = if ip.trim().is_empty() {
+        "mDNS LAN".to_string()
+    } else {
+        ip.clone()
+    };
     if !gate_only {
         crate::mirror::update_stage_status(
             session_gen,
             2,
             "Koneksi aman",
-            &format!("Membuka terowongan RemotePairing TLS-PSK Wi-Fi ke {ip}..."),
+            &format!("Membuka terowongan RemotePairing TLS-PSK Wi-Fi ke {stage_target}..."),
         );
     }
 
-    // Path A (Primary — Tahap 240): Real Apple RemotePairing over Wi-Fi (_remotepairing._tcp.local.
+    // Path A (Primary - Tahap 240): Real Apple RemotePairing over Wi-Fi (_remotepairing._tcp.local.
     // + Pair-Verify X25519/Ed25519/ChaCha20-Poly1305 + createListener + TLS 1.2 PSK 0x00A8 + CDTunnel)
     let path_a_err = match crate::rp_wifi_tls::connect_real_apple_rp_wifi_tunnel(&udid, &ip).await {
         Ok(raw_rp) => {
@@ -4071,7 +4471,7 @@ async fn run_physical_wifi_display_async_ex(
                     3,
                     "Siapkan perangkat",
                     &format!(
-                        "Terowongan Wi-Fi RemotePairing TLS-PSK aktif ({}:{}) — memulai DisplayService...",
+                        "Terowongan Wi-Fi RemotePairing TLS-PSK aktif ({}:{}) - memulai DisplayService...",
                         raw_rp.resolved_ip, raw_rp.resolved_port
                     ),
                 );
@@ -4103,9 +4503,11 @@ async fn run_physical_wifi_display_async_ex(
     }
 
     // Path B (Fallback): Direct Wireless Lockdown CoreDeviceProxy (<ip>:62078)
-    let path_b_err = if !ip.is_empty() {
+    let path_b_err = if !ip.trim().is_empty() {
+        crate::diag_log::record("wifi_lockdown_fallback", "trying port 62078 CoreDeviceProxy");
         match run_physical_wifi_lockdown_proxy(&udid, &ip).await {
             Ok((raw_tunnel, src_ip, dst_ip, rsd_port, raw_sock)) => {
+                crate::diag_log::record("wifi_lockdown_fallback", &format!("connected rsd_port={rsd_port}"));
                 match run_physical_tunnel_display_async(
                     raw_tunnel,
                     src_ip,
@@ -4125,14 +4527,18 @@ async fn run_physical_wifi_display_async_ex(
                     Err(e) => e,
                 }
             }
-            Err(e) => e,
+            Err(e) => {
+                crate::diag_log::record("wifi_lockdown_fallback", &format!("failed: {e}"));
+                e
+            }
         }
     } else {
-        "IP Wi-Fi kosong".to_string()
+        crate::diag_log::record("wifi_lockdown_fallback", "skipped empty last_ip");
+        "IP Wi-Fi belum terresolusi via mDNS".to_string()
     };
 
     let merged_err = format!("{path_a_err} | {path_b_err}");
-    crate::diag_log::record("wifi_tunnel", &format!("RemotePairing failed: {merged_err}"));
+    crate::diag_log::record("wifi_err", &format!("RemotePairing failed: {merged_err}"));
     Err(format_wifi_remote_pairing_error(&ip, Some(&merged_err), false))
 }
 
@@ -4177,7 +4583,8 @@ async fn run_physical_tunnel_display_async(
     let mut peer_info = rsd_xpc
         .rpc_with_timeout(&rsd_handshake, false, Duration::from_secs(8))
         .await?;
-    crate::diag_log::record("usb_tunnel", "RSD handshake completed");
+    let stream_diag_cat = if is_wifi_transport { "wifi_rsd" } else { "usb_tunnel" };
+    crate::diag_log::record(stream_diag_cat, "RSD handshake completed");
     let mut rsd_product_version = String::new();
     if let Some(props) = peer_info.dict_get("Properties") {
         let rsd_udid = props
@@ -4316,7 +4723,7 @@ async fn run_physical_tunnel_display_async(
     }
 
     if !gate_only {
-        crate::diag_log::record("usb_tunnel", &format!("DisplayService starting on port {disp_port}"));
+        crate::diag_log::record(stream_diag_cat, &format!("DisplayService starting on port {disp_port}"));
         crate::mirror::update_stage_status(
             session_gen,
             3,
@@ -4452,6 +4859,7 @@ async fn run_physical_tunnel_display_async(
     let mut depack = HevcDepacketizer::new();
     let mut au = Vec::new();
     let mut codec_ready = false;
+    let mut last_applied_sps: Option<Vec<u8>> = None;
     let mut sent_first_key = false;
     let mut fir_seq = 1u8;
     let mut highest_seq = 0u32;
@@ -4469,6 +4877,9 @@ async fn run_physical_tunnel_display_async(
     let mut fu_in_progress = false;
     let mut au_in_progress = false;
     let mut last_gap_pli_at = Instant::now() - Duration::from_secs(5);
+    let stream_started_at = Instant::now();
+    let mut video_frames_count: u64 = 0;
+    let mut rtcp_sr_count: u64 = 0;
 
     // Tahap 243 ROOT-CAUSE FIX (Xcode / Golden v4.0.0 Byte-Exact RTCP RR + Empty-CNAME SDES):
     // Apple AVConference enables `RTCPTimeoutEnabled=True, RTCPTimeoutInterval=20s` and negotiates
@@ -4531,6 +4942,7 @@ async fn run_physical_tunnel_display_async(
                         if theirs_ssrc == 0 && sr_ssrc != 0 {
                             theirs_ssrc = sr_ssrc;
                         }
+                        rtcp_sr_count = rtcp_sr_count.saturating_add(1);
                         RTCP_SR_RECEIVED.fetch_add(1, Ordering::SeqCst);
                         let media = picker.main.unwrap_or(theirs_ssrc);
                         send_rtcp_rr_xcode(
@@ -4621,7 +5033,8 @@ async fn run_physical_tunnel_display_async(
                     }
                     if marker && !au.is_empty() {
                         let complete_au = std::mem::take(&mut au);
-                        if !codec_ready {
+                        let sps_changed = depack.sps.as_deref() != last_applied_sps.as_deref();
+                        if !codec_ready || sps_changed {
                             if let (Some(vps), Some(sps), Some(pps)) =
                                 (depack.vps.as_deref(), depack.sps.as_deref(), depack.pps.as_deref())
                             {
@@ -4629,7 +5042,7 @@ async fn run_physical_tunnel_display_async(
                                     .unwrap_or_else(|| "hev1.1.6.L150.B0".to_string());
                                 let hvcc = build_hvcc_record(vps, sps, pps);
                                 let (cw, ch, trim) = parse_hevc_sps_dimensions_and_trim(sps)
-                                    .unwrap_or((1216, 2656, FrameTrim::default()));
+                                    .unwrap_or((1216, 2656, FrameTrim::zero()));
                                 crate::mirror::update_live_codec_from_sps_with_trim(
                                     session_gen,
                                     &codec_str,
@@ -4638,6 +5051,7 @@ async fn run_physical_tunnel_display_async(
                                     ch,
                                     Some(trim),
                                 );
+                                last_applied_sps = Some(sps.to_vec());
                                 codec_ready = true;
                             }
                         }
@@ -4665,6 +5079,7 @@ async fn run_physical_tunnel_display_async(
                                 }
                             }
                             sent_first_key = true;
+                            video_frames_count = video_frames_count.saturating_add(1);
                             if !gate_only {
                                 crate::mirror::global_on_physical_video_frame(complete_au, has_key);
                             }
@@ -4685,6 +5100,14 @@ async fn run_physical_tunnel_display_async(
                 let cause = router
                     .exit_reason()
                     .unwrap_or_else(|| "CDTunnel router disconnected unexpectedly".to_string());
+                let disc_cat = if is_wifi_transport { "wifi_stream" } else { "usb_stream" };
+                crate::diag_log::record(
+                    disc_cat,
+                    &format!(
+                        "tunnel_disconnected cause={cause} frames={video_frames_count} rtcp={rtcp_sr_count} elapsed_ms={}",
+                        stream_started_at.elapsed().as_millis()
+                    ),
+                );
                 set_last_disconnect_reason(Some(cause.clone()));
                 return Err(cause);
             }
@@ -4793,6 +5216,14 @@ async fn run_physical_tunnel_display_async(
             } else {
                 "Koneksi tunnel iPhone terhenti selama 12 detik (tidak ada RTP/RTCP).".to_string()
             };
+            let disc_cat = if is_wifi_transport { "wifi_stream" } else { "usb_stream" };
+            crate::diag_log::record(
+                disc_cat,
+                &format!(
+                    "rx_silence_12s cause={reason} frames={video_frames_count} rtcp={rtcp_sr_count} elapsed_ms={}",
+                    stream_started_at.elapsed().as_millis()
+                ),
+            );
             set_last_disconnect_reason(Some(reason.clone()));
             return Err(reason);
         }
@@ -4862,6 +5293,28 @@ fn sleep_interruptible(stop: &AtomicBool, session_gen: u64, total_ms: u64) -> bo
     !stop.load(Ordering::Relaxed) && crate::mirror::current_live_session_gen() == session_gen
 }
 
+/// Preserves the true `attempt=0` disconnect cause when auto-retries fail after active frames,
+/// ensuring later retry failures (e.g. `usbmuxd` device gone) never overwrite the root cause.
+pub fn compose_preserved_stream_disconnect_error(
+    initial_err: Option<&str>,
+    last_err: &str,
+    had_frames: bool,
+) -> String {
+    let clean_last = crate::diag_log::sanitize_ui_no_raw_udid(last_err.trim());
+    if had_frames {
+        if let Some(init) = initial_err.map(str::trim).filter(|s| !s.is_empty()) {
+            let clean_init = crate::diag_log::sanitize_ui_no_raw_udid(init);
+            if !clean_init.is_empty() && clean_init != clean_last {
+                return format!("{clean_init} (Sambung ulang gagal: {clean_last})");
+            }
+            if !clean_init.is_empty() {
+                return clean_init;
+            }
+        }
+    }
+    clean_last
+}
+
 pub fn spawn_physical_usb_display_worker(
     udid: String,
     session_gen: u64,
@@ -4872,7 +5325,9 @@ pub fn spawn_physical_usb_display_worker(
         .name("iphone-physical-stream".into())
         .spawn(move || {
             let _worker_guard = worker_guard;
+            let mut initial_err: Option<String> = None;
             let mut last_err = String::new();
+            let mut had_frames_ever = false;
             for attempt in 0..=3u32 {
                 if stop.load(Ordering::Relaxed)
                     || crate::mirror::current_live_session_gen() != session_gen
@@ -4892,9 +5347,27 @@ pub fn spawn_physical_usb_display_worker(
                 match res {
                     Ok(()) => return,
                     Err(err_msg) => {
-                        last_err = err_msg.clone();
-                        set_last_disconnect_reason(Some(err_msg.clone()));
                         let had_frames = crate::mirror::has_ever_received_frame_for_session(session_gen);
+                        had_frames_ever |= had_frames;
+                        if attempt == 0 && initial_err.is_none() {
+                            initial_err = Some(err_msg.clone());
+                            crate::diag_log::record(
+                                "usb_stream",
+                                &format!("attempt=0 error={err_msg} had_frames={had_frames}"),
+                            );
+                        } else {
+                            crate::diag_log::record(
+                                "usb_retry",
+                                &format!("attempt={attempt} error={err_msg} had_frames={had_frames}"),
+                            );
+                        }
+                        last_err = err_msg.clone();
+                        let preserved_now = compose_preserved_stream_disconnect_error(
+                            initial_err.as_deref(),
+                            &last_err,
+                            had_frames_ever,
+                        );
+                        set_last_disconnect_reason(Some(preserved_now));
                         let max_retries = if had_frames { 3 } else { 1 };
                         if attempt < max_retries {
                             if had_frames {
@@ -4919,7 +5392,13 @@ pub fn spawn_physical_usb_display_worker(
             if !stop.load(Ordering::Relaxed)
                 && crate::mirror::current_live_session_gen() == session_gen
             {
-                crate::mirror::global_on_physical_stream_error(session_gen, &last_err);
+                let final_err = compose_preserved_stream_disconnect_error(
+                    initial_err.as_deref(),
+                    &last_err,
+                    had_frames_ever,
+                );
+                set_last_disconnect_reason(Some(final_err.clone()));
+                crate::mirror::global_on_physical_stream_error(session_gen, &final_err);
             }
         });
 }
@@ -4935,7 +5414,9 @@ pub fn spawn_physical_wifi_display_worker(
         .name("iphone-wifi-stream".into())
         .spawn(move || {
             let _worker_guard = worker_guard;
+            let mut initial_err: Option<String> = None;
             let mut last_err = String::new();
+            let mut had_frames_ever = false;
             for attempt in 0..=3u32 {
                 if stop.load(Ordering::Relaxed)
                     || crate::mirror::current_live_session_gen() != session_gen
@@ -4956,9 +5437,27 @@ pub fn spawn_physical_wifi_display_worker(
                 match res {
                     Ok(()) => return,
                     Err(err_msg) => {
-                        last_err = err_msg.clone();
-                        set_last_disconnect_reason(Some(err_msg.clone()));
                         let had_frames = crate::mirror::has_ever_received_frame_for_session(session_gen);
+                        had_frames_ever |= had_frames;
+                        if attempt == 0 && initial_err.is_none() {
+                            initial_err = Some(err_msg.clone());
+                            crate::diag_log::record(
+                                "wifi_stream",
+                                &format!("attempt=0 error={err_msg} had_frames={had_frames}"),
+                            );
+                        } else {
+                            crate::diag_log::record(
+                                "wifi_retry",
+                                &format!("attempt={attempt} error={err_msg} had_frames={had_frames}"),
+                            );
+                        }
+                        last_err = err_msg.clone();
+                        let preserved_now = compose_preserved_stream_disconnect_error(
+                            initial_err.as_deref(),
+                            &last_err,
+                            had_frames_ever,
+                        );
+                        set_last_disconnect_reason(Some(preserved_now));
                         // Tahap 244 Pilar 4: Allow 1 automatic cold-start retry (matching USB!) when
                         // iOS `remoted` drops `rsd_xpc`/`DisplayService` with `early eof` on first
                         // wake before frame #1, and up to 3 transparent reconnects once streaming.
@@ -4993,7 +5492,13 @@ pub fn spawn_physical_wifi_display_worker(
             if !stop.load(Ordering::Relaxed)
                 && crate::mirror::current_live_session_gen() == session_gen
             {
-                crate::mirror::global_on_physical_stream_error(session_gen, &last_err);
+                let final_err = compose_preserved_stream_disconnect_error(
+                    initial_err.as_deref(),
+                    &last_err,
+                    had_frames_ever,
+                );
+                set_last_disconnect_reason(Some(final_err.clone()));
+                crate::mirror::global_on_physical_stream_error(session_gen, &final_err);
             }
         });
 }
@@ -5656,7 +6161,16 @@ mod tests {
             sport: 50000,
             dport: 51001,
             seq: 1001,
+            snd_una: 1001,
             ack: 2001,
+            peer_window_bytes: 65535,
+            peer_wscale: 0,
+            unacked: VecDeque::new(),
+            dup_ack_seq: 1001,
+            dup_ack_count: 0,
+            rto: Duration::from_millis(250),
+            zwp_last_at: None,
+            zwp_probes: 0,
             tx_pkt,
             tx_flush_barrier: None,
             seg_rx,
@@ -5665,6 +6179,7 @@ mod tests {
             routes,
             read_timeout: Duration::from_secs(1),
             read_waker: Arc::new(Mutex::new(None)),
+            write_waker: Arc::new(Mutex::new(None)),
             peer_closed: false,
             router_stopped: Arc::new(AtomicBool::new(false)),
         };
@@ -5673,7 +6188,10 @@ mod tests {
         seg_tx
             .send(TcpSeg {
                 seq: 2001,
+                ack_num: 1001,
+                window: 65535,
                 flags: 0x18,
+                win_scale: None,
                 payload: vec![1, 2, 3, 4],
             })
             .unwrap();
@@ -5686,7 +6204,10 @@ mod tests {
         seg_tx
             .send(TcpSeg {
                 seq: 2005,
+                ack_num: 1001,
+                window: 65535,
                 flags: 0x11,
+                win_scale: None,
                 payload: Vec::new(),
             })
             .unwrap();
@@ -6281,7 +6802,16 @@ mod tests {
             sport: 51000,
             dport: 58783,
             seq: 1001,
+            snd_una: 1001,
             ack: 2000,
+            peer_window_bytes: 65535,
+            peer_wscale: 0,
+            unacked: VecDeque::new(),
+            dup_ack_seq: 1001,
+            dup_ack_count: 0,
+            rto: Duration::from_millis(250),
+            zwp_last_at: None,
+            zwp_probes: 0,
             tx_pkt,
             tx_flush_barrier: None,
             seg_rx,
@@ -6290,19 +6820,21 @@ mod tests {
             routes: tcp_routes,
             read_timeout: Duration::from_secs(5),
             read_waker,
+            write_waker: Arc::new(Mutex::new(None)),
             peer_closed: false,
             router_stopped: stopped,
         };
-        let mut rw = CdTcpRw {
-            conn: Mutex::new(conn),
-        };
+        let mut rw = CdTcpRw::new(conn);
 
         // Inject delayed payload after 150ms so poll_read MUST hit Poll::Pending first, then wake!
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
             let _ = seg_tx.send(TcpSeg {
                 seq: 2000,
+                ack_num: 1001,
+                window: 65535,
                 flags: 0x18,
+                win_scale: None,
                 payload: b"CRYPTEXD_OK".to_vec(),
             });
             wake_route_reader(&waker_for_sender);
@@ -6338,7 +6870,16 @@ mod tests {
             sport: 51001,
             dport: 58784,
             seq: 1001,
+            snd_una: 1001,
             ack: 3000,
+            peer_window_bytes: 65535,
+            peer_wscale: 0,
+            unacked: VecDeque::new(),
+            dup_ack_seq: 1001,
+            dup_ack_count: 0,
+            rto: Duration::from_millis(250),
+            zwp_last_at: None,
+            zwp_probes: 0,
             tx_pkt,
             tx_flush_barrier: None,
             seg_rx,
@@ -6347,12 +6888,11 @@ mod tests {
             routes: tcp_routes,
             read_timeout: Duration::from_secs(5),
             read_waker,
+            write_waker: Arc::new(Mutex::new(None)),
             peer_closed: false,
             router_stopped: stopped,
         };
-        let mut rw = CdTcpRw {
-            conn: Mutex::new(conn),
-        };
+        let mut rw = CdTcpRw::new(conn);
 
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
@@ -6391,5 +6931,451 @@ mod tests {
 
         let err_ip_id = format_wifi_remote_pairing_error("198.51.100.42", Some("timeout"), false);
         assert!(err_ip_id.contains("198.51.100.42") && err_ip_id.contains("'Atur Wi-Fi'"));
+    }
+
+    fn build_test_ipv6_tcp_win(
+        src: [u8; 16],
+        dst: [u8; 16],
+        sport: u16,
+        dport: u16,
+        seq: u32,
+        ack: u32,
+        flags: u8,
+        window: u16,
+        opts: &[u8],
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut pkt = build_ipv6_tcp(src, dst, sport, dport, seq, ack, flags, opts, payload);
+        pkt[40 + 14..40 + 16].copy_from_slice(&window.to_be_bytes());
+        pkt[40 + 16..40 + 18].copy_from_slice(&[0u8, 0u8]);
+        let csum = ipv6_checksum(&src, &dst, 6, &pkt[40..]);
+        pkt[40 + 16..40 + 18].copy_from_slice(&csum.to_be_bytes());
+        pkt
+    }
+
+    #[test]
+    fn test_tahap295_tcp_options_wscale_and_rto_probe() {
+        use tokio::io::AsyncWriteExt;
+
+        // 1. parse_tcp_win_scale edge cases
+        assert_eq!(parse_tcp_win_scale(&[]), None);
+        assert_eq!(parse_tcp_win_scale(&[0x02, 0x04, 0x05, 0x3C]), None);
+        assert_eq!(
+            parse_tcp_win_scale(&[0x02, 0x04, 0x05, 0x3C, 0x01, 0x03, 0x03, 0x06]),
+            Some(6)
+        );
+        assert_eq!(parse_tcp_win_scale(&[0x03, 0x03, 20]), Some(14));
+        assert_eq!(parse_tcp_win_scale(&[0x01, 0x00, 0x03, 0x03, 0x05]), None);
+
+        // 2. Wrap-around ACK near u32::MAX, Zero-Window=0 backpressure, and ZWP/RTO retransmit
+        let src = Ipv6Addr::LOCALHOST.octets();
+        let dst = Ipv6Addr::LOCALHOST.octets();
+        let (tx_pkt, rx_pkt) = mpsc::channel();
+        let (seg_tx, seg_rx) = mpsc::channel();
+        let read_waker = Arc::new(Mutex::new(None));
+        let write_waker = Arc::new(Mutex::new(None));
+        let waker_for_tx = Arc::clone(&write_waker);
+        let tcp_routes: TcpRoutes = Arc::new(Mutex::new(HashMap::new()));
+        let stopped = Arc::new(AtomicBool::new(false));
+
+        let init_seq = u32::MAX - 500;
+        let conn = CdTcpConn {
+            src_ip: src,
+            dst_ip: dst,
+            sport: 52000,
+            dport: 59000,
+            seq: init_seq,
+            snd_una: init_seq,
+            ack: 2000,
+            peer_window_bytes: 0, // Zero-Window starts closed!
+            peer_wscale: 4,
+            unacked: VecDeque::new(),
+            dup_ack_seq: init_seq,
+            dup_ack_count: 0,
+            rto: Duration::from_millis(120),
+            zwp_last_at: None,
+            zwp_probes: 0,
+            tx_pkt,
+            tx_flush_barrier: None,
+            seg_rx,
+            rx_buf: Vec::new(),
+            ooo: BTreeMap::new(),
+            routes: tcp_routes,
+            read_timeout: Duration::from_secs(5),
+            read_waker,
+            write_waker,
+            peer_closed: false,
+            router_stopped: stopped,
+        };
+        let mut rw = CdTcpRw::new(conn);
+
+        // Reopen peer window after 120ms, then drop first data segment & ACK wrapped sequence
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            let _ = seg_tx.send(TcpSeg {
+                seq: 2000,
+                ack_num: init_seq,
+                window: 256, // 256 << 4 = 4096 bytes
+                flags: 0x10,
+                win_scale: None,
+                payload: Vec::new(),
+            });
+            wake_route_reader(&waker_for_tx);
+
+            // Wait for data segment, ignore first send, accept RTO retransmit
+            let mut got = 0usize;
+            let expected_end = init_seq.wrapping_add(1400);
+            while let Ok(pkt) = rx_pkt.recv_timeout(Duration::from_secs(3)) {
+                let tcp = &pkt[40..];
+                let doff = ((tcp[12] >> 4) as usize) * 4;
+                let p_len = tcp.len().saturating_sub(doff);
+                if p_len > 0 {
+                    got += 1;
+                    if got == 2 {
+                        let _ = seg_tx.send(TcpSeg {
+                            seq: 2000,
+                            ack_num: expected_end,
+                            window: 256,
+                            flags: 0x10,
+                            win_scale: None,
+                            payload: Vec::new(),
+                        });
+                        wake_route_reader(&waker_for_tx);
+                        break;
+                    }
+                }
+            }
+        });
+
+        let data = vec![0xA5u8; 1400];
+        runtime().block_on(async move {
+            tokio::time::timeout(Duration::from_secs(4), async {
+                rw.write_all(&data).await.expect("write across zero-window & wraparound");
+                rw.flush().await.expect("flush waits until wrapped ACK arrives after RTO retransmit");
+            })
+            .await
+            .expect("wraparound ACK + zero-window probe MUST complete in <4s");
+        });
+    }
+
+    #[test]
+    fn test_tahap295_cd_tcp_sliding_window_multi_mb_upload_and_packet_loss() {
+        use tokio::io::AsyncWriteExt;
+
+        #[derive(Debug)]
+        struct TestTunnelDuplex {
+            rx_buf: Arc<Mutex<VecDeque<u8>>>,
+            tx_pkt_to_peer: mpsc::Sender<Vec<u8>>,
+            closed: Arc<AtomicBool>,
+        }
+        impl tokio::io::AsyncRead for TestTunnelDuplex {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                if self.closed.load(Ordering::Relaxed) {
+                    return Poll::Ready(Ok(()));
+                }
+                let Ok(mut q) = self.rx_buf.lock() else {
+                    return Poll::Pending;
+                };
+                if q.is_empty() {
+                    return Poll::Pending;
+                }
+                let max_take = buf.unfilled_mut().len().min(q.len());
+                let mut tmp = Vec::with_capacity(max_take);
+                for _ in 0..max_take {
+                    if let Some(b) = q.pop_front() {
+                        tmp.push(b);
+                    }
+                }
+                buf.put_slice(&tmp);
+                Poll::Ready(Ok(()))
+            }
+        }
+        impl tokio::io::AsyncWrite for TestTunnelDuplex {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                let _ = self.tx_pkt_to_peer.send(buf.to_vec());
+                Poll::Ready(Ok(buf.len()))
+            }
+            fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+            fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                self.closed.store(true, Ordering::SeqCst);
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        fn run_upload_scenario(
+            payload_len: usize,
+            syn_ack_wscale: Option<u8>,
+            ack_raw_window: u16,
+            drop_every: u64,
+            trigger_zero_window: bool,
+        ) {
+            let src_ip: Ipv6Addr = "fd80:295::1".parse().unwrap();
+            let dst_ip: Ipv6Addr = "fd80:295::2".parse().unwrap();
+            let src_bytes = src_ip.octets();
+            let dst_bytes = dst_ip.octets();
+
+            let peer_rx_queue = Arc::new(Mutex::new(VecDeque::<u8>::new()));
+            let (tx_to_peer, rx_from_client) = mpsc::channel::<Vec<u8>>();
+            let closed = Arc::new(AtomicBool::new(false));
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_srv = Arc::clone(&stop);
+            let rx_q_srv = Arc::clone(&peer_rx_queue);
+            let got_data = Arc::new(Mutex::new(Vec::<u8>::with_capacity(payload_len)));
+            let got_data_srv = Arc::clone(&got_data);
+
+            let peer_th = std::thread::spawn(move || {
+                let mut acc = Vec::new();
+                let mut rcv_nxt: u32 = 0;
+                let server_seq: u32 = 77_000;
+                let mut ooo: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+                let mut pkt_cnt: u64 = 0;
+                let mut paused_once = false;
+                let mut zero_win_until: Option<Instant> = None;
+                let mut sport_connected = 0u16;
+                let mut dport_connected = 0u16;
+
+                let push = |pkt: &[u8]| {
+                    if let Ok(mut q) = rx_q_srv.lock() {
+                        q.extend(pkt);
+                    }
+                };
+
+                while !stop_srv.load(Ordering::Relaxed) {
+                    if let Some(until) = zero_win_until {
+                        if Instant::now() >= until && dport_connected != 0 {
+                            zero_win_until = None;
+                            push(&build_test_ipv6_tcp_win(
+                                dst_bytes,
+                                src_bytes,
+                                dport_connected,
+                                sport_connected,
+                                server_seq + 1,
+                                rcv_nxt,
+                                0x10,
+                                ack_raw_window,
+                                &[],
+                                &[],
+                            ));
+                        }
+                    }
+
+                    let chunk = match rx_from_client.recv_timeout(Duration::from_millis(10)) {
+                        Ok(c) => c,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
+                    acc.extend_from_slice(&chunk);
+                    while acc.len() >= 40 {
+                        let plen = u16::from_be_bytes([acc[4], acc[5]]) as usize;
+                        if acc.len() < 40 + plen {
+                            break;
+                        }
+                        let pkt = acc[..40 + plen].to_vec();
+                        acc.drain(..40 + plen);
+                        if pkt[6] != 6 || pkt.len() < 60 {
+                            continue;
+                        }
+                        let tcp = &pkt[40..];
+                        let sport = u16::from_be_bytes([tcp[0], tcp[1]]);
+                        let dport = u16::from_be_bytes([tcp[2], tcp[3]]);
+                        let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
+                        let doff = ((tcp[12] >> 4) as usize) * 4;
+                        let flags = tcp[13];
+                        let payload = &tcp[doff..];
+
+                        if (flags & 0x02) != 0 {
+                            sport_connected = sport;
+                            dport_connected = dport;
+                            // Client SYN must propose MSS + WScale=6
+                            assert_eq!(parse_tcp_win_scale(&tcp[20..doff]), Some(6));
+                            rcv_nxt = seq.wrapping_add(1);
+                            let syn_opts: Vec<u8> = match syn_ack_wscale {
+                                Some(ws) => vec![0x02, 0x04, 0x05, 0x3C, 0x01, 0x03, 0x03, ws],
+                                None => vec![0x02, 0x04, 0x05, 0x3C],
+                            };
+                            push(&build_test_ipv6_tcp_win(
+                                dst_bytes,
+                                src_bytes,
+                                dport,
+                                sport,
+                                server_seq,
+                                rcv_nxt,
+                                0x12,
+                                65535,
+                                &syn_opts,
+                                &[],
+                            ));
+                            continue;
+                        }
+
+                        if payload.is_empty() {
+                            if zero_win_until.is_some() {
+                                push(&build_test_ipv6_tcp_win(
+                                    dst_bytes,
+                                    src_bytes,
+                                    dport,
+                                    sport,
+                                    server_seq + 1,
+                                    rcv_nxt,
+                                    0x10,
+                                    0,
+                                    &[],
+                                    &[],
+                                ));
+                            }
+                            continue;
+                        }
+
+                        if zero_win_until.is_some() {
+                            push(&build_test_ipv6_tcp_win(
+                                dst_bytes,
+                                src_bytes,
+                                dport,
+                                sport,
+                                server_seq + 1,
+                                rcv_nxt,
+                                0x10,
+                                0,
+                                &[],
+                                &[],
+                            ));
+                            continue;
+                        }
+
+                        pkt_cnt += 1;
+                        if drop_every > 0 && (pkt_cnt % drop_every == 7) {
+                            // Deliberate packet drop: send NO ACK so sender recovers via DupACK/RTO
+                            continue;
+                        }
+
+                        let mut lock = got_data_srv.lock().unwrap();
+                        if seq == rcv_nxt {
+                            lock.extend_from_slice(payload);
+                            rcv_nxt = rcv_nxt.wrapping_add(payload.len() as u32);
+                            while let Some(next_p) = ooo.remove(&rcv_nxt) {
+                                rcv_nxt = rcv_nxt.wrapping_add(next_p.len() as u32);
+                                lock.extend_from_slice(&next_p);
+                            }
+                        } else if (seq.wrapping_sub(rcv_nxt) as i32) > 0 {
+                            ooo.entry(seq).or_insert_with(|| payload.to_vec());
+                        }
+                        let cur_len = lock.len();
+                        drop(lock);
+
+                        let win_out = if trigger_zero_window && !paused_once && cur_len >= payload_len / 3 {
+                            paused_once = true;
+                            zero_win_until = Some(Instant::now() + Duration::from_millis(80));
+                            0
+                        } else {
+                            ack_raw_window
+                        };
+                        push(&build_test_ipv6_tcp_win(
+                            dst_bytes,
+                            src_bytes,
+                            dport,
+                            sport,
+                            server_seq + 1,
+                            rcv_nxt,
+                            0x10,
+                            win_out,
+                            &[],
+                            &[],
+                        ));
+                    }
+                }
+            });
+
+            let mock = Box::new(TestTunnelDuplex {
+                rx_buf: peer_rx_queue,
+                tx_pkt_to_peer: tx_to_peer,
+                closed,
+            });
+            let (router, _udp_rx) = CdTunnelRouter::new(mock, src_ip, dst_ip, 58783);
+            let payload: Vec<u8> = (0..payload_len)
+                .map(|i| ((i.wrapping_mul(31).wrapping_add(7)) & 0xFF) as u8)
+                .collect();
+
+            let t0 = Instant::now();
+            runtime().block_on(async {
+                let conn = router.connect_tcp(59010).await.expect("SYN-ACK");
+                let mut rw = CdTcpRw::new(conn);
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    rw.write_all(&payload).await.expect("multi-MB write_all");
+                    rw.flush().await.expect("flush awaits full peer ACK");
+                })
+                .await
+                .expect("multi-MB CdTcpRw upload MUST complete cleanly without deadlock");
+            });
+            assert!(
+                t0.elapsed() < Duration::from_secs(8),
+                "Upload took too long: {:?}",
+                t0.elapsed()
+            );
+
+            stop.store(true, Ordering::Release);
+            drop(router);
+            let _ = peer_th.join();
+
+            let received = got_data.lock().unwrap();
+            assert_eq!(received.len(), payload.len(), "byte count mismatch");
+            assert_eq!(*received, payload, "payload corruption detected");
+        }
+
+        // Variant A: WScale=0 (65,535 B window), 5% deterministic drops + Zero-Window pause, 4.2 MB upload
+        run_upload_scenario(4_200_000, None, 65535, 20, true);
+        // Variant B: WScale=6 (4096 << 6 = 262,144 B window), lossless 1 MB upload
+        run_upload_scenario(1_048_576, Some(6), 4096, 0, false);
+    }
+
+    #[test]
+    fn test_tahap296_usb_disconnect_preserves_initial_root_cause_across_retry() {
+        // 1. WScale=6 SYN option MUST be isolated to DDI bulk channel only (XpcH2Session stays standard MSS=1340)
+        assert_eq!(
+            build_syn_options_for_channel(false),
+            &[0x02, 0x04, 0x05, 0x3C],
+            "XpcH2Session SYN must omit Window Scale"
+        );
+        assert_eq!(
+            build_syn_options_for_channel(true),
+            &[0x02, 0x04, 0x05, 0x3C, 0x01, 0x03, 0x03, 0x06],
+            "DDI CdTcpRw SYN must include WScale=6"
+        );
+
+        // 2. Active-stream attempt=0 root cause MUST survive retry failure (attempt=1..3) without raw UDIDs
+        let preserved = compose_preserved_stream_disconnect_error(
+            Some("CDTunnel read EOF (peer closed tunnel)"),
+            "iPhone USB 00008101-0011223344556677 tidak ditemukan di usbmuxd.",
+            true,
+        );
+        assert!(
+            preserved.contains("CDTunnel read EOF (peer closed tunnel)"),
+            "missing initial root cause in: {preserved}"
+        );
+        assert!(
+            preserved.contains("Sambung ulang gagal:"),
+            "missing retry context in: {preserved}"
+        );
+        assert!(
+            !preserved.contains("00008101-0011223344556677"),
+            "raw UDID must be stripped from preserved error: {preserved}"
+        );
+
+        // 3. Before first frame (`had_frames = false`), return sanitized latest error
+        let pre_frame = compose_preserved_stream_disconnect_error(
+            Some("early eof"),
+            "iPhone USB 00008101-0011223344556677 tidak ditemukan di usbmuxd.",
+            false,
+        );
+        assert_eq!(pre_frame, "iPhone USB tidak ditemukan di usbmuxd.");
     }
 }

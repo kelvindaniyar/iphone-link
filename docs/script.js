@@ -1,5 +1,5 @@
 /* ==========================================================================
-   iPhone Link v5.0.1 - Official Interactive Website Script (Pure Native Rust)
+   iPhone Link v5.0.2 - Official Interactive Website Script (Pure Native Rust)
    Zero Emoji - 100% Inline Vector SVG Icons - Obsidian Carbon & Apple Daylight
    ========================================================================== */
 (function () {
@@ -705,7 +705,7 @@
   }
 
   /* --------------------------------------------------------------------------
-     5. LIVE INTERACTIVE APP SIMULATOR ("COBA SEBELUM MENGUNDUH" - v5.0.1)
+     5. LIVE INTERACTIVE APP SIMULATOR ("COBA SEBELUM MENGUNDUH" - v5.0.2)
      -------------------------------------------------------------------------- */
   var SIM_TEXTS = {
     id: {
@@ -756,9 +756,9 @@
       btnUnlockDevmode: "Bantu Developer Mode (1-Klik)",
       btnAirplayFallback: "Beralih ke AirPlay (1-Klik)",
       drawerSaweriaBtn: "Dukung Kreator di Saweria",
-      drawerFooterCredit: "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0",
-      updReady: "v5.0.1 · Native Rust",
-      updLatest: "iPhone Link v5.0.1 sudah versi terbaru!"
+      drawerFooterCredit: "iPhone Link v5.0.2 by Kelvin Daniyar · GPL-3.0",
+      updReady: "v5.0.2 · Native Rust",
+      updLatest: "iPhone Link v5.0.2 sudah versi terbaru!"
     },
     en: {
       secAppearance: "APPEARANCE, LANGUAGE & TRACKPAD",
@@ -808,9 +808,9 @@
       btnUnlockDevmode: "Unlock Developer Mode (1-Click)",
       btnAirplayFallback: "Switch to AirPlay (1-Click)",
       drawerSaweriaBtn: "Support Creator on Saweria",
-      drawerFooterCredit: "iPhone Link v5.0.1 by Kelvin Daniyar · GPL-3.0",
-      updReady: "v5.0.1 · Native Rust",
-      updLatest: "iPhone Link v5.0.1 is up to date!"
+      drawerFooterCredit: "iPhone Link v5.0.2 by Kelvin Daniyar · GPL-3.0",
+      updReady: "v5.0.2 · Native Rust",
+      updLatest: "iPhone Link v5.0.2 is up to date!"
     }
   };
 
@@ -1023,7 +1023,7 @@
     var connLabel = simState.conn === "wifi"
       ? "Wi-Fi HEVC 60fps"
       : (simState.conn === "airplay" ? "AirPlay H.264 HD" : "USB 60fps");
-    if (simReadoutEl) simReadoutEl.textContent = devLabel + " - " + connLabel + " (v5.0)";
+    if (simReadoutEl) simReadoutEl.textContent = devLabel + " - " + connLabel + " (v5.0.2)";
 
     if (simBadgeMirrorEl) {
       if (simState.stopped) {
@@ -1101,7 +1101,7 @@
         '<strong style="font-size:0.8rem;">Apple Notes (OCR Demo)</strong>' +
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:3px 8px;font-size:0.68rem;">Home</button></div>' +
         '<div class="sim-notes-box">' +
-        "<strong>" + (isEn ? "v5.0.1 Architecture Notes" : "Catatan Arsitektur v5.0.1") + "</strong>" +
+        "<strong>" + (isEn ? "v5.0.2 Architecture Notes" : "Catatan Arsitektur v5.0.2") + "</strong>" +
         '<p style="margin:6px 0;">' + (isEn ? "Zero-WebView2 single process cuts standby RAM ~4x (~45 MB) with Always-On DWMSBT Acrylic." : "Mesin tunggal Zero-WebView2 memangkas RAM ~4x (~45 MB) + Always-On Acrylic.") + "</p>" +
         '<p style="margin:6px 0;">' + (isEn ? "Click Copy OCR (Alt+C) on the right drawer to copy cleanly to Windows!" : "Klik Salin OCR (Alt+C) di drawer kanan untuk menyalin teks ke PC!") + "</p>" +
         noteExtra +
@@ -1118,7 +1118,7 @@
         '<button type="button" class="sim-qnav-btn" data-open-screen="home" style="padding:3px 8px;font-size:0.68rem;">Home</button></div>' +
         '<div style="flex:1;border-radius:12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);display:flex;flex-direction:column;justify-content:flex-end;padding:12px;">' +
         '<div style="font-size:0.78rem;font-weight:750;">@kelvin.daniyar</div>' +
-        '<div style="font-size:0.7rem;color:#D4D4D8;">iPhone Link v5.0.1 Pure Native Rust (Zero-WebView2) · Trackpad ' + simState.trackpadSpeed + "%</div>" +
+        '<div style="font-size:0.7rem;color:#D4D4D8;">iPhone Link v5.0.2 Pure Native Rust (Zero-WebView2) · Trackpad ' + simState.trackpadSpeed + "%</div>" +
         "</div></div>";
       bindScreenButtons();
       return;
@@ -1658,16 +1658,16 @@
 
   var SHA_TABLE = {
     setup: {
-      name: "iPhone-Link-v5.0.1-Setup.exe",
-      hash: "C6C91777BD993C6E7CE2E614C4D77C92B70A9B80673F52970D6F40A995B8AC8B"
+      name: "iPhone-Link-v5.0.2-Setup.exe",
+      hash: "A21B1BEC697772C9540E814ACB8A039A37E1B70AF809263548A05F5A6BFDEDC3"
     },
     zip: {
-      name: "iPhone-Link-Win64-Native-Rust-v5.0.1.zip",
-      hash: "758FE4CC5B90A7EB043C0B09524C5E14B3F85B8976C734FD3CC59DA4F4CF0182"
+      name: "iPhone-Link-Win64-Native-Rust-v5.0.2.zip",
+      hash: "8B3A57EF04ABB3B034FCEB6F022BE8D926ED0676F9B442DF82E2C149F9842254"
     },
     exe: {
       name: "iPhone Link.exe",
-      hash: "0712E81B5A0896060CD6557C4BF693224B6D4A2C3AC5D51DBC2271AFBAC55529"
+      hash: "FEF0AD5E8435EFC32CA6D309A6EA0BB0F3E4C718D1116B74632E0047477FF077"
     }
   };
 
@@ -1705,7 +1705,7 @@
       var typ = (document.getElementById("fb-type") || {}).value || "Feedback";
       var dev = (document.getElementById("fb-device") || {}).value || "Windows 11 / iOS 17-27";
       var msg = (document.getElementById("fb-msg") || {}).value || "";
-      var title = encodeURIComponent("[v5.0.1 " + typ + "] " + dev);
+      var title = encodeURIComponent("[v5.0.2 " + typ + "] " + dev);
       var body = encodeURIComponent("**Category:** " + typ + "\n**Device / OS:** " + dev + "\n\n**Message:**\n" + msg);
       window.open("https://github.com/kelvindaniyar/iphone-link/issues/new?title=" + title + "&body=" + body, "_blank", "noopener");
     });

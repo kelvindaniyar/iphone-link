@@ -223,7 +223,7 @@ pub fn query_developer_mode_status(udid: Option<&str>) -> Result<bool, String> {
                 .iter()
                 .find(|d| d.udid == u)
                 .cloned()
-                .ok_or_else(|| format!("USB device {u} not found"))?,
+                .ok_or_else(|| "USB iPhone not found".to_string())?,
             _ => usb_devs
                 .into_iter()
                 .next()

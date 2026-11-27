@@ -1012,6 +1012,103 @@ const MF_MT_GEOMETRIC_APERTURE: Guid = Guid {
     data3: 0x400d,
     data4: [0x98, 0x0a, 0xaa, 0x85, 0x96, 0xc8, 0x56, 0x96],
 };
+// DEFINE_GUID (MF_MT_PAN_SCAN_APERTURE, 0x79614dde, 0x9187, 0x48fb, 0xb8, 0xc7, 0x4d, 0x52, 0x68, 0x9d, 0xe6, 0x49)
+const MF_MT_PAN_SCAN_APERTURE: Guid = Guid {
+    data1: 0x79614dde,
+    data2: 0x9187,
+    data3: 0x48fb,
+    data4: [0xb8, 0xc7, 0x4d, 0x52, 0x68, 0x9d, 0xe6, 0x49],
+};
+
+/// Reconciles MFT output aperture metadata (`MF_MT_MINIMUM_DISPLAY_APERTURE`, `MF_MT_GEOMETRIC_APERTURE`,
+/// `MF_MT_PAN_SCAN_APERTURE`) against SPS conformance trim (`expected_trim` / `expected_coded_dims`) so that
+/// cropping happens AT MOST ONCE (zero double-trimming).
+/// Returns `(visible_rect, used_mft_aperture)`.
+pub fn resolve_reconciled_aperture_rect(
+    coded_w: u32,
+    coded_h: u32,
+    mft_aperture: Option<Rect>,
+    codec: VideoCodecKind,
+    expected_trim: (u32, u32, u32, u32),
+    expected_coded_dims: Option<(u32, u32)>,
+    is_airplay: bool,
+) -> (Rect, bool) {
+    let full = Rect {
+        left: 0,
+        top: 0,
+        right: coded_w as i32,
+        bottom: coded_h as i32,
+    };
+    if coded_w == 0 || coded_h == 0 {
+        return (full, false);
+    }
+
+    if let Some(ap) = mft_aperture {
+        let is_in_bounds = ap.left >= 0
+            && ap.top >= 0
+            && ap.right > ap.left
+            && ap.bottom > ap.top
+            && (ap.right as u32) <= coded_w
+            && (ap.bottom as u32) <= coded_h;
+        let is_strict_crop = ap.left > 0
+            || ap.top > 0
+            || (ap.right as u32) < coded_w
+            || (ap.bottom as u32) < coded_h;
+        if is_in_bounds && is_strict_crop {
+            return (ap, true);
+        }
+    }
+
+    let max_trim = match codec {
+        VideoCodecKind::Hevc => 96,
+        VideoCodecKind::H264 => 32,
+    };
+    let (tt, tl, tb, tr) = if is_airplay { (0, 0, 0, 0) } else { expected_trim };
+    if (tt, tl, tb, tr) != (0, 0, 0, 0)
+        && tl + tr <= max_trim
+        && tt + tb <= max_trim
+        && tl + tr < coded_w
+        && tt + tb < coded_h
+    {
+        return (
+            Rect {
+                left: tl as i32,
+                top: tt as i32,
+                right: (coded_w - tr) as i32,
+                bottom: (coded_h - tb) as i32,
+            },
+            false,
+        );
+    }
+
+    if !is_airplay && codec == VideoCodecKind::H264 {
+        if let Some((ew, eh)) = expected_coded_dims {
+            if ew > 0
+                && eh > 0
+                && ew <= coded_w
+                && eh <= coded_h
+                && (ew < coded_w || eh < coded_h)
+                && coded_w.saturating_sub(ew) <= 32
+                && coded_h.saturating_sub(eh) <= 32
+            {
+                let (et, el, _eb, _er) = expected_trim;
+                let ox = el.min(coded_w.saturating_sub(ew)) as i32;
+                let oy = et.min(coded_h.saturating_sub(eh)) as i32;
+                return (
+                    Rect {
+                        left: ox,
+                        top: oy,
+                        right: ox + ew as i32,
+                        bottom: oy + eh as i32,
+                    },
+                    false,
+                );
+            }
+        }
+    }
+
+    (full, false)
+}
 
 // DEFINE_GUID (MF_MT_DEFAULT_STRIDE, 0x644b4e48, 0x1e02, 0x4516, 0xb0, 0xeb, 0xc0, 0x1c, 0xa9, 0xd4, 0x9a, 0xc6)
 const MF_MT_DEFAULT_STRIDE: Guid = Guid {
@@ -2529,6 +2626,7 @@ pub struct LiveMfVideoDecoder {
     coded_height: u32,
     default_stride: i32,
     visible_rect: Rect,
+    last_mft_aperture: Option<Rect>,
     expected_trim: (u32, u32, u32, u32),
     color_info: VideoColorInfo,
     vui_color_info: Option<VideoColorInfo>,
@@ -2661,6 +2759,7 @@ impl LiveMfVideoDecoder {
             coded_height: 0,
             default_stride: 0,
             visible_rect: Rect::default(),
+            last_mft_aperture: None,
             expected_trim: (0, 0, 0, 0),
             color_info: VideoColorInfo::default(),
             vui_color_info: None,
@@ -2719,6 +2818,7 @@ impl LiveMfVideoDecoder {
         self.provides_samples = false;
         self.out_buf_size = 0;
         self.default_stride = 0;
+        self.last_mft_aperture = None;
         self.last_input_pts_100ns = -1;
         self.consecutive_input_errors = 0;
     }
@@ -3019,65 +3119,54 @@ impl LiveMfVideoDecoder {
                     stride_i32
                 };
 
-                // Read MF_MT_MINIMUM_DISPLAY_APERTURE first, falling back to MF_MT_GEOMETRIC_APERTURE.
-                let mut area_bytes = [0u8; std::mem::size_of::<MfVideoArea>()];
-                let mut aperture_applied = false;
-                if let Ok(got) =
-                    mf_attr_get_blob(&mt, &MF_MT_MINIMUM_DISPLAY_APERTURE, &mut area_bytes)
-                {
-                    if got as usize >= std::mem::size_of::<MfVideoArea>() {
-                        let area: MfVideoArea =
-                            std::ptr::read_unaligned(area_bytes.as_ptr() as *const MfVideoArea);
-                        if area.cx > 0 && area.cy > 0 {
-                            let ox = i32::from(area.offset_x.value);
-                            let oy = i32::from(area.offset_y.value);
-                            self.visible_rect = Rect {
-                                left: ox,
-                                top: oy,
-                                right: ox + area.cx,
-                                bottom: oy + area.cy,
-                            };
-                            aperture_applied = true;
-                        }
-                    }
-                }
-                if !aperture_applied {
-                    if let Ok(got) =
-                        mf_attr_get_blob(&mt, &MF_MT_GEOMETRIC_APERTURE, &mut area_bytes)
-                    {
+                // Read MF_MT_MINIMUM_DISPLAY_APERTURE, then MF_MT_GEOMETRIC_APERTURE, then MF_MT_PAN_SCAN_APERTURE.
+                let mut parsed_aperture: Option<Rect> = None;
+                for ap_guid in [
+                    &MF_MT_MINIMUM_DISPLAY_APERTURE,
+                    &MF_MT_GEOMETRIC_APERTURE,
+                    &MF_MT_PAN_SCAN_APERTURE,
+                ] {
+                    let mut area_bytes = [0u8; std::mem::size_of::<MfVideoArea>()];
+                    if let Ok(got) = mf_attr_get_blob(&mt, ap_guid, &mut area_bytes) {
                         if got as usize >= std::mem::size_of::<MfVideoArea>() {
                             let area: MfVideoArea =
                                 std::ptr::read_unaligned(area_bytes.as_ptr() as *const MfVideoArea);
                             if area.cx > 0 && area.cy > 0 {
                                 let ox = i32::from(area.offset_x.value);
                                 let oy = i32::from(area.offset_y.value);
-                                self.visible_rect = Rect {
+                                let cand = Rect {
                                     left: ox,
                                     top: oy,
                                     right: ox + area.cx,
                                     bottom: oy + area.cy,
                                 };
-                                aperture_applied = true;
+                                if cand.left >= 0
+                                    && cand.top >= 0
+                                    && (cand.right as u32) <= w
+                                    && (cand.bottom as u32) <= h
+                                    && (cand.left > 0
+                                        || cand.top > 0
+                                        || (cand.right as u32) < w
+                                        || (cand.bottom as u32) < h)
+                                {
+                                    parsed_aperture = Some(cand);
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-                if !aperture_applied && self.codec == VideoCodecKind::H264 && w > 0 && h > 0 {
-                    let (tt, tl, tb, tr) = self.expected_trim;
-                    if (tt, tl, tb, tr) != (0, 0, 0, 0)
-                        && tl + tr <= 32
-                        && tt + tb <= 32
-                        && tl + tr < w
-                        && tt + tb < h
-                    {
-                        self.visible_rect = Rect {
-                            left: tl as i32,
-                            top: tt as i32,
-                            right: (w - tr) as i32,
-                            bottom: (h - tb) as i32,
-                        };
-                    }
-                }
+                self.last_mft_aperture = parsed_aperture;
+                let (reconciled_vis, _) = resolve_reconciled_aperture_rect(
+                    w,
+                    h,
+                    self.last_mft_aperture,
+                    self.codec,
+                    self.expected_trim,
+                    self.expected_coded_dims,
+                    false,
+                );
+                self.visible_rect = reconciled_vis;
 
                 let mut info = MftOutputStreamInfo::default();
                 let hr_info = get_out_info(mft.as_ptr(), 0, &mut info);
@@ -3784,45 +3873,38 @@ impl LiveMfVideoDecoder {
             return Ok(false);
         }
 
-        let mut vis = if self.visible_rect.right > self.visible_rect.left
-            && self.visible_rect.bottom > self.visible_rect.top
-        {
-            self.visible_rect
+        let sample_trim = if is_airplay {
+            (0, 0, 0, 0)
         } else {
-            Rect {
-                left: 0,
-                top: 0,
-                right: w as i32,
-                bottom: h as i32,
-            }
+            trim_override.unwrap_or(self.expected_trim)
         };
-        if self.codec == VideoCodecKind::H264 {
-            let vw_now = (vis.right - vis.left).max(0) as u32;
-            let vh_now = (vis.bottom - vis.top).max(0) as u32;
-            if vw_now == w && vh_now == h {
-                if let Some((ew, eh)) = self.expected_coded_dims {
-                    if ew > 0
-                        && eh > 0
-                        && ew <= w
-                        && eh <= h
-                        && (ew < w || eh < h)
-                        && w.saturating_sub(ew) <= 32
-                        && h.saturating_sub(eh) <= 32
-                    {
-                        let (tt, tl, _tb, _tr) = self.expected_trim;
-                        let ox = tl.min(w.saturating_sub(ew)) as i32;
-                        let oy = tt.min(h.saturating_sub(eh)) as i32;
-                        vis = Rect {
-                            left: ox,
-                            top: oy,
-                            right: ox + ew as i32,
-                            bottom: oy + eh as i32,
-                        };
-                    }
-                }
+        let mft_ap = self.last_mft_aperture.or_else(|| {
+            let r = self.visible_rect;
+            if r.right > r.left
+                && r.bottom > r.top
+                && r.left >= 0
+                && r.top >= 0
+                && (r.right as u32) <= w
+                && (r.bottom as u32) <= h
+                && (r.left > 0
+                    || r.top > 0
+                    || (r.right as u32) < w
+                    || (r.bottom as u32) < h)
+            {
+                Some(r)
+            } else {
+                None
             }
-        }
-        // Trust MFT actual decoded output dimensions; preserve non-mod16 aperture trim <= 32 px.
+        });
+        let (vis, used_mft_aperture) = resolve_reconciled_aperture_rect(
+            w,
+            h,
+            mft_ap,
+            self.codec,
+            sample_trim,
+            self.expected_coded_dims,
+            is_airplay,
+        );
 
         // IMFSample::GetBufferByIndex(0) -> vtable[40]
         let buf = unsafe {
@@ -4062,23 +4144,26 @@ impl LiveMfVideoDecoder {
             self.software_upload_frames = self.software_upload_frames.saturating_add(1);
         }
 
-        let effective_trim = if is_airplay {
+        let clamped_vis = Rect {
+            left: vis.left.clamp(0, commit_w.saturating_sub(2) as i32),
+            top: vis.top.clamp(0, commit_h.saturating_sub(2) as i32),
+            right: vis.right.clamp(2.min(commit_w as i32), commit_w as i32),
+            bottom: vis.bottom.clamp(2.min(commit_h as i32), commit_h as i32),
+        };
+        let vis_already_cropped = clamped_vis.left > 0
+            || clamped_vis.top > 0
+            || (clamped_vis.right as u32) < commit_w
+            || (clamped_vis.bottom as u32) < commit_h;
+        let effective_trim = if is_airplay || used_mft_aperture || vis_already_cropped {
             (0, 0, 0, 0)
         } else {
-            trim_override.unwrap_or(self.expected_trim)
+            sample_trim
         };
 
         let slot_color = if self.codec == VideoCodecKind::H264 {
             resolve_deterministic_bt709_color(self.vui_color_info)
         } else {
             self.color_info
-        };
-
-        let clamped_vis = Rect {
-            left: vis.left.clamp(0, commit_w.saturating_sub(2) as i32),
-            top: vis.top.clamp(0, commit_h.saturating_sub(2) as i32),
-            right: vis.right.clamp(2.min(commit_w as i32), commit_w as i32),
-            bottom: vis.bottom.clamp(2.min(commit_h as i32), commit_h as i32),
         };
 
         ring.commit_write_slot_with_color(
@@ -4198,6 +4283,14 @@ impl LiveMfVideoDecoder {
         } else {
             None
         }
+    }
+
+    pub fn last_mft_aperture(&self) -> Option<Rect> {
+        self.last_mft_aperture
+    }
+
+    pub fn expected_trim(&self) -> (u32, u32, u32, u32) {
+        self.expected_trim
     }
 
     pub fn nal_length_size(&self) -> usize {

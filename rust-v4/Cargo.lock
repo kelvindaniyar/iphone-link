@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "iphone-link-apple"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "idevice",
  "iphone-link-audio",
@@ -2045,11 +2045,11 @@ dependencies = [
 
 [[package]]
 name = "iphone-link-audio"
-version = "5.0.1"
+version = "5.0.2"
 
 [[package]]
 name = "iphone-link-desktop"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "iphone-link-apple",
  "iphone-link-audio",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "iphone-link-video"
-version = "5.0.1"
+version = "5.0.2"
 
 [[package]]
 name = "itertools"

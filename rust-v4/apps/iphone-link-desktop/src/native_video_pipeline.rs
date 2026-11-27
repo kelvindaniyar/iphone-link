@@ -18,26 +18,69 @@ use iphone_link_video::autorotate::ProbeGrid120x260;
 use iphone_link_video::d3d11_context::{D3d11Nv12VramRing, LiveD3d11Gpu};
 use iphone_link_video::mf_decoder::{DecoderError, LiveMfVideoDecoder, VideoCodecKind};
 use iphone_link_video::video_hwnd::{
-    compute_post_trim_dimensions, AirplayRenderPolicy, FitMode, LiveVideoHwnd, StagePointerEvent,
+    compute_post_trim_dimensions_with_pad, unpack_edge_pad, AirplayRenderPolicy, FitMode,
+    LiveVideoHwnd, StagePointerEvent,
 };
 
+fn post_trim_visible_dims_with_pad(
+    vis_w: u32,
+    vis_h: u32,
+    trim: (u32, u32, u32, u32),
+    detected_pad: (u32, u32),
+    is_airplay: bool,
+) -> (u32, u32) {
+    if is_airplay {
+        return (vis_w, vis_h);
+    }
+    let (tt, tl, tb, tr) = trim;
+    let w_t1 = vis_w.saturating_sub(tl + tr).max(2);
+    let h_t1 = vis_h.saturating_sub(tt + tb).max(2);
+    let pad_b = (detected_pad.0 & !1).min(96);
+    let pad_r = (detected_pad.1 & !1).min(96);
+    (
+        if w_t1 > pad_r + 16 {
+            w_t1 - pad_r
+        } else {
+            w_t1
+        },
+        if h_t1 > pad_b + 16 {
+            h_t1 - pad_b
+        } else {
+            h_t1
+        },
+    )
+}
+
+#[allow(dead_code)]
 fn post_trim_visible_dims(
     vis_w: u32,
     vis_h: u32,
     trim: (u32, u32, u32, u32),
     is_airplay: bool,
 ) -> (u32, u32) {
-    if is_airplay {
-        return (vis_w, vis_h);
-    }
-    let (tt, tl, tb, tr) = if trim == (0, 0, 0, 0) && vis_w == 1216 && vis_h == 2656 {
-        (0, 0, 58, 14)
-    } else {
-        trim
+    post_trim_visible_dims_with_pad(vis_w, vis_h, trim, (0, 0), is_airplay)
+}
+
+pub fn format_video_geom_diag_line(
+    codec: &str,
+    coded_w: u32,
+    coded_h: u32,
+    mft_ap: Option<(i32, i32, i32, i32)>,
+    sps_trim: (u32, u32, u32, u32),
+    detected_pad: (u32, u32),
+    active_w: u32,
+    active_h: u32,
+    rot: u16,
+    swapchain_w: u32,
+    swapchain_h: u32,
+) -> String {
+    let ap_str = match mft_ap {
+        Some((l, t, r, b)) => format!("{l},{t},{r},{b}"),
+        None => "none".to_string(),
     };
-    (
-        vis_w.saturating_sub(tl + tr).max(2),
-        vis_h.saturating_sub(tt + tb).max(2),
+    format!(
+        "codec={codec} coded={coded_w}x{coded_h} mftAp={ap_str} spsTrim={},{},{},{} edgePad={},{} active={active_w}x{active_h} rot={rot} stage={swapchain_w}x{swapchain_h}",
+        sps_trim.0, sps_trim.1, sps_trim.2, sps_trim.3, detected_pad.0, detected_pad.1
     )
 }
 
@@ -293,6 +336,9 @@ pub struct LiveVideoPipeline {
     hevc_init_failed_latched: Arc<AtomicBool>,
     dim_w: Arc<AtomicU32>,
     dim_h: Arc<AtomicU32>,
+    detected_pad_packed: Arc<AtomicU32>,
+    last_mft_ap: Arc<Mutex<Option<(i32, i32, i32, i32)>>>,
+    last_sps_trim: Arc<Mutex<(u32, u32, u32, u32)>>,
     decoder_fed: Arc<AtomicU64>,
     decoded_frames: Arc<AtomicU64>,
     trace_decoder_fed: Arc<AtomicU64>,
@@ -505,7 +551,7 @@ impl LiveVideoPipeline {
     fn init_with_view(
         gpu: Arc<LiveD3d11Gpu>,
         ring: Arc<D3d11Nv12VramRing>,
-        hwnd_view: LiveVideoHwnd,
+        mut hwnd_view: LiveVideoHwnd,
         initial_visible: bool,
         composition_mode: bool,
     ) -> Result<Self, String> {
@@ -530,6 +576,10 @@ impl LiveVideoPipeline {
 
         airplay::set_trace_d3d11_multithread_protected(hwnd_view.d3d11_multithread_protected());
         let child_hwnd = hwnd_view.hwnd();
+        let detected_pad_packed = Arc::new(AtomicU32::new(0));
+        hwnd_view.set_detected_pad_atomic(detected_pad_packed.clone());
+        let last_mft_ap = Arc::new(Mutex::new(None));
+        let last_sps_trim = Arc::new(Mutex::new((0u32, 0u32, 0u32, 0u32)));
         let view = Arc::new(Mutex::new(hwnd_view));
         let stop_flag = Arc::new(AtomicBool::new(false));
         let visible_flag = Arc::new(AtomicBool::new(initial_visible));
@@ -580,6 +630,9 @@ impl LiveVideoPipeline {
         let d_hevc_failed = hevc_init_failed_latched.clone();
         let d_w = dim_w.clone();
         let d_h = dim_h.clone();
+        let d_pad = detected_pad_packed.clone();
+        let d_mft_ap = last_mft_ap.clone();
+        let d_sps_trim = last_sps_trim.clone();
         let d_fed = decoder_fed.clone();
         let d_cnt = decoded_frames.clone();
         let d_trace_fed = trace_decoder_fed.clone();
@@ -624,23 +677,34 @@ impl LiveVideoPipeline {
                     let cur_epoch = d_epoch.load(Ordering::Relaxed);
                     if cur_epoch != seen_decode_epoch {
                         seen_decode_epoch = cur_epoch;
+                        if let Some(ref mut dec) = active_dec {
+                            dec.clean_teardown();
+                        }
+                        active_dec = None;
+                        active_kind = None;
+                        active_avcc = None;
+                        consecutive_fatal_hr = 0;
+                        d_pad.store(0, Ordering::Release);
+                        if let Ok(mut ap) = d_mft_ap.lock() {
+                            *ap = None;
+                        }
+                        if let Ok(mut st) = d_sps_trim.lock() {
+                            *st = (0, 0, 0, 0);
+                        }
                         trace_idrs_total = 0;
-                        prev_dec_idrs = active_dec
-                            .as_ref()
-                            .map(|d| d.idr_keyframes_detected())
-                            .unwrap_or(0);
-                        prev_dec_small_256_511 = active_dec
-                            .as_ref()
-                            .map(|d| d.avcc_small_256_511_frames())
-                            .unwrap_or(0);
-                        prev_dec_reconfigs = active_dec
-                            .as_ref()
-                            .map(|d| d.mft_reconfigs())
-                            .unwrap_or(0);
+                        prev_dec_idrs = 0;
+                        prev_dec_small_256_511 = 0;
+                        prev_dec_reconfigs = 0;
                     }
                     let cur_gen = mirror::current_live_session_gen();
                     if cur_gen != last_gen {
                         last_gen = cur_gen;
+                        if let Some(ref mut dec) = active_dec {
+                            dec.clean_teardown();
+                        }
+                        active_dec = None;
+                        active_kind = None;
+                        active_avcc = None;
                         watchdog.reset();
                         wd_clock = Instant::now();
                         d_pkt_ms.store(0, Ordering::Relaxed);
@@ -648,21 +712,18 @@ impl LiveVideoPipeline {
                         if let Ok(mut tr) = d_ar_tracker.lock() {
                             tr.reset();
                         }
-                        active_avcc = None;
+                        d_pad.store(0, Ordering::Release);
+                        if let Ok(mut ap) = d_mft_ap.lock() {
+                            *ap = None;
+                        }
+                        if let Ok(mut st) = d_sps_trim.lock() {
+                            *st = (0, 0, 0, 0);
+                        }
                         consecutive_fatal_hr = 0;
                         trace_idrs_total = 0;
-                        prev_dec_idrs = active_dec
-                            .as_ref()
-                            .map(|d| d.idr_keyframes_detected())
-                            .unwrap_or(0);
-                        prev_dec_small_256_511 = active_dec
-                            .as_ref()
-                            .map(|d| d.avcc_small_256_511_frames())
-                            .unwrap_or(0);
-                        prev_dec_reconfigs = active_dec
-                            .as_ref()
-                            .map(|d| d.mft_reconfigs())
-                            .unwrap_or(0);
+                        prev_dec_idrs = 0;
+                        prev_dec_small_256_511 = 0;
+                        prev_dec_reconfigs = 0;
                         airplay::set_trace_idr_keyframes_detected(0);
                         airplay::set_trace_avcc_small_256_511_frames(0);
                         airplay::set_trace_mft_reconfigs(0);
@@ -838,15 +899,30 @@ impl LiveVideoPipeline {
                                             d_cnt.fetch_add(em, Ordering::Relaxed);
                                             d_trace_cnt.fetch_add(em, Ordering::Relaxed);
                                         }
+                                        if let Ok(mut ap) = d_mft_ap.lock() {
+                                            *ap = dec
+                                                .last_mft_aperture()
+                                                .map(|r| (r.left, r.top, r.right, r.bottom));
+                                        }
+                                        if let Ok(mut sps_t) = d_sps_trim.lock() {
+                                            *sps_t = trim_t;
+                                        }
                                         if st.visible_width > 0 && st.visible_height > 0 {
+                                            let pad_now =
+                                                unpack_edge_pad(d_pad.load(Ordering::Acquire));
                                             let (pw, ph) = d_ring
                                                 .latest_slot()
-                                                .map(|snap| compute_post_trim_dimensions(&snap))
+                                                .map(|snap| {
+                                                    compute_post_trim_dimensions_with_pad(
+                                                        &snap, pad_now,
+                                                    )
+                                                })
                                                 .unwrap_or_else(|| {
-                                                    post_trim_visible_dims(
+                                                    post_trim_visible_dims_with_pad(
                                                         st.visible_width,
                                                         st.visible_height,
                                                         trim_t,
+                                                        pad_now,
                                                         false,
                                                     )
                                                 });
@@ -1137,15 +1213,29 @@ impl LiveVideoPipeline {
                                             d_cnt.fetch_add(em, Ordering::Relaxed);
                                             d_trace_cnt.fetch_add(em, Ordering::Relaxed);
                                         }
+                                        if let Ok(mut ap) = d_mft_ap.lock() {
+                                            *ap = dec
+                                                .last_mft_aperture()
+                                                .map(|r| (r.left, r.top, r.right, r.bottom));
+                                        }
+                                        if let Ok(mut sps_t) = d_sps_trim.lock() {
+                                            *sps_t = (0, 0, 0, 0);
+                                        }
                                         if st.visible_width > 0 && st.visible_height > 0 {
                                             let (pw, ph) = d_ring
                                                 .latest_slot()
-                                                .map(|snap| compute_post_trim_dimensions(&snap))
+                                                .map(|snap| {
+                                                    compute_post_trim_dimensions_with_pad(
+                                                        &snap,
+                                                        (0, 0),
+                                                    )
+                                                })
                                                 .unwrap_or_else(|| {
-                                                    post_trim_visible_dims(
+                                                    post_trim_visible_dims_with_pad(
                                                         st.visible_width,
                                                         st.visible_height,
                                                         (0, 0, 0, 0),
+                                                        (0, 0),
                                                         true,
                                                     )
                                                 });
@@ -1407,6 +1497,9 @@ impl LiveVideoPipeline {
         let r_is_ipad = is_ipad_profile.clone();
         let r_w = dim_w.clone();
         let r_h = dim_h.clone();
+        let r_codec = codec_label.clone();
+        let r_mft_ap = last_mft_ap.clone();
+        let r_sps_trim = last_sps_trim.clone();
         let r_ar_clock = pipeline_epoch_start;
         let r_last_pkt_ms = last_h264_pkt_ms;
         let r_clock_origin = pipeline_epoch_start;
@@ -1419,6 +1512,19 @@ impl LiveVideoPipeline {
                 let mut ar_grid = ProbeGrid120x260::new();
                 let mut stall_state = AirplayStallDumpState::default();
                 let mut last_stall_check_at = Instant::now();
+                let mut last_geom_sig: Option<(
+                    String,
+                    u32,
+                    u32,
+                    Option<(i32, i32, i32, i32)>,
+                    (u32, u32, u32, u32),
+                    (u32, u32),
+                    u32,
+                    u32,
+                    u16,
+                    u32,
+                    u32,
+                )> = None;
 
                 while !r_stop.load(Ordering::Relaxed) {
                     let cur_epoch = r_epoch.load(Ordering::Relaxed);
@@ -1426,6 +1532,7 @@ impl LiveVideoPipeline {
                         seen_epoch = cur_epoch;
                         last_seq = 0;
                         last_presented_seq = 0;
+                        last_geom_sig = None;
                         stall_state = AirplayStallDumpState::default();
                         r_pending_ar.store(-1, Ordering::Release);
                         if let Ok(mut tr) = r_ar_tracker.lock() {
@@ -1479,12 +1586,73 @@ impl LiveVideoPipeline {
                                     let (dx0, dy0, dx1, dy1) = v.last_presented_dest_rect();
                                     let dw = dx1.saturating_sub(dx0);
                                     let dh = dy1.saturating_sub(dy0);
+                                    let pad_now = v.detected_pad_trim();
+                                    let (sw_w, sw_h) = v.size();
+                                    let rot_now = v.last_effective_rotation_deg();
+                                    if st.frame_seq > 0 {
+                                        if let Some(snap) = r_ring.latest_slot() {
+                                            let (aw, ah) = compute_post_trim_dimensions_with_pad(
+                                                &snap, pad_now,
+                                            );
+                                            let prev_aw = r_w.swap(aw, Ordering::Relaxed);
+                                            let prev_ah = r_h.swap(ah, Ordering::Relaxed);
+                                            if prev_aw != 0
+                                                && prev_ah != 0
+                                                && (prev_aw, prev_ah) != (aw, ah)
+                                            {
+                                                notify_ready = true;
+                                            }
+                                            let codec_now = r_codec
+                                                .lock()
+                                                .map(|g| g.clone())
+                                                .unwrap_or_default();
+                                            let mft_ap_now =
+                                                r_mft_ap.lock().ok().and_then(|g| *g);
+                                            let sps_trim_now = r_sps_trim
+                                                .lock()
+                                                .map(|g| *g)
+                                                .unwrap_or((0, 0, 0, 0));
+                                            let geom_sig = (
+                                                codec_now,
+                                                snap.coded_width,
+                                                snap.coded_height,
+                                                mft_ap_now,
+                                                sps_trim_now,
+                                                pad_now,
+                                                aw,
+                                                ah,
+                                                rot_now,
+                                                sw_w,
+                                                sw_h,
+                                            );
+                                            if last_geom_sig.as_ref() != Some(&geom_sig) {
+                                                let line = format_video_geom_diag_line(
+                                                    &geom_sig.0,
+                                                    geom_sig.1,
+                                                    geom_sig.2,
+                                                    geom_sig.3,
+                                                    geom_sig.4,
+                                                    geom_sig.5,
+                                                    geom_sig.6,
+                                                    geom_sig.7,
+                                                    geom_sig.8,
+                                                    geom_sig.9,
+                                                    geom_sig.10,
+                                                );
+                                                iphone_link_apple::diag_log::record(
+                                                    "video_geom",
+                                                    &line,
+                                                );
+                                                last_geom_sig = Some(geom_sig);
+                                            }
+                                        }
+                                    }
                                     if st.frame_seq > 0 && dw > 0 && dh > 0 {
                                         airplay::set_trace_last_presented_dest_rect(
                                             dx0, dy0, dw, dh,
                                         );
                                         airplay::set_trace_last_presented_rotation_deg(u32::from(
-                                            v.last_effective_rotation_deg(),
+                                            rot_now,
                                         ));
                                     }
                                     if st.frame_seq > last_presented_seq
@@ -1622,6 +1790,9 @@ impl LiveVideoPipeline {
             hevc_init_failed_latched,
             dim_w,
             dim_h,
+            detected_pad_packed,
+            last_mft_ap,
+            last_sps_trim,
             decoder_fed,
             decoded_frames,
             trace_decoder_fed,
@@ -1736,8 +1907,22 @@ impl LiveVideoPipeline {
         }
     }
 
+    pub fn detected_pad_trim(&self) -> (u32, u32) {
+        unpack_edge_pad(self.detected_pad_packed.load(Ordering::Acquire))
+    }
+
     pub fn reset_for_new_session(&self) {
         self.session_epoch.fetch_add(1, Ordering::SeqCst);
+        self.detected_pad_packed.store(0, Ordering::Release);
+        if let Ok(mut dims) = self.last_resize_dims.lock() {
+            *dims = (0, 0);
+        }
+        if let Ok(mut ap) = self.last_mft_ap.lock() {
+            *ap = None;
+        }
+        if let Ok(mut st) = self.last_sps_trim.lock() {
+            *st = (0, 0, 0, 0);
+        }
         self.pending_hevc_autorotate_deg.store(-1, Ordering::SeqCst);
         if let Ok(mut tr) = self.hevc_autorotate_tracker.lock() {
             tr.reset();
@@ -3184,5 +3369,53 @@ mod tests {
             }
         }
         assert_eq!(init_attempts, 1, "HEVC init failure MUST latch after 1 attempt until reset");
+    }
+
+    #[test]
+    fn test_tahap297_landscape_270_airplay_isolation_and_multi_device_switch() {
+        // 1. AirPlay NEVER receives HEVC pad trimming regardless of frame dims
+        assert_eq!(
+            post_trim_visible_dims_with_pad(1216, 2656, (0, 0, 58, 14), (58, 14), true),
+            (1216, 2656)
+        );
+        // 2. Dynamic post-trim dims never hardcode 1216x2656 when trim=(0,0,0,0) and pad=(0,0)
+        assert_eq!(
+            post_trim_visible_dims_with_pad(1216, 2656, (0, 0, 0, 0), (0, 0), false),
+            (1216, 2656)
+        );
+        // 3. Landscape 270° rotated iPhone 11 Pro Max (coded 2656x1216 with pad=(14, 58))
+        assert_eq!(
+            post_trim_visible_dims_with_pad(2656, 1216, (0, 0, 0, 0), (14, 58), false),
+            (2598, 1202)
+        );
+        // 4. Multi-device switch iPhone 11 Pro Max (1202x2598, pad 58,14) -> iPhone 17 Pro (1206x2622, pad 0,0)
+        let line_11pm = format_video_geom_diag_line(
+            "HEVC",
+            1216,
+            2656,
+            None,
+            (0, 0, 0, 0),
+            (58, 14),
+            1202,
+            2598,
+            0,
+            408,
+            882,
+        );
+        assert!(line_11pm.contains("active=1202x2598") && line_11pm.contains("edgePad=58,14"));
+        let line_17p = format_video_geom_diag_line(
+            "HEVC",
+            1216,
+            2624,
+            Some((0, 0, 1206, 2622)),
+            (0, 0, 0, 0),
+            (0, 0),
+            1206,
+            2622,
+            0,
+            408,
+            887,
+        );
+        assert!(line_17p.contains("active=1206x2622") && line_17p.contains("edgePad=0,0"));
     }
 }

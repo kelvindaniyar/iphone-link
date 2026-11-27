@@ -34,7 +34,21 @@ fn is_hex_or_udid_char(b: u8) -> bool {
     b.is_ascii_hexdigit() || b == b'-'
 }
 
-fn redact_udids(input: &str) -> String {
+fn is_raw_udid_token(token: &str) -> bool {
+    let hex_only_len = token.bytes().filter(|b| b.is_ascii_hexdigit()).count();
+    let looks_modern_udid = token.len() == 25
+        && token.as_bytes().get(8) == Some(&b'-')
+        && token[..8].bytes().all(|b| b.is_ascii_hexdigit())
+        && token[9..].bytes().all(|b| b.is_ascii_hexdigit());
+    let looks_legacy_udid = hex_only_len == 40 && !token.contains('-');
+    let looks_dash_udid = token.len() >= 20
+        && token.contains('-')
+        && token.to_ascii_lowercase().starts_with("00008")
+        && hex_only_len >= 18;
+    looks_modern_udid || looks_legacy_udid || looks_dash_udid
+}
+
+fn replace_udid_tokens(input: &str, replacement: Option<&str>) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut i = 0;
@@ -46,18 +60,11 @@ fn redact_udids(input: &str) -> String {
                 j += 1;
             }
             let token = &input[i..j];
-            let hex_only_len = token.bytes().filter(|b| b.is_ascii_hexdigit()).count();
-            let looks_modern_udid = token.len() == 25
-                && token.as_bytes().get(8) == Some(&b'-')
-                && token[..8].bytes().all(|b| b.is_ascii_hexdigit())
-                && token[9..].bytes().all(|b| b.is_ascii_hexdigit());
-            let looks_legacy_udid = hex_only_len == 40 && !token.contains('-');
-            let looks_dash_udid = token.len() >= 20
-                && token.contains('-')
-                && token.to_ascii_lowercase().starts_with("00008")
-                && hex_only_len >= 18;
-            if looks_modern_udid || looks_legacy_udid || looks_dash_udid {
-                out.push_str(&short_fnv1a_tag(token));
+            if is_raw_udid_token(token) {
+                match replacement {
+                    Some(rep) => out.push_str(rep),
+                    None => out.push_str(&short_fnv1a_tag(token)),
+                }
                 i = j;
                 continue;
             }
@@ -71,6 +78,19 @@ fn redact_udids(input: &str) -> String {
         }
     }
     out
+}
+
+fn redact_udids(input: &str) -> String {
+    replace_udid_tokens(input, None)
+}
+
+/// Replaces any raw Apple UDID (25-char modern or 40-char legacy) in UI-facing error messages
+/// with `"iPhone"`, keeping LAN IPs, model names, and punctuation intact.
+pub fn sanitize_ui_no_raw_udid(input: &str) -> String {
+    let replaced = replace_udid_tokens(input, Some("iPhone"));
+    replaced
+        .replace("iPhone USB iPhone", "iPhone USB")
+        .replace("iPhone iPhone", "iPhone")
 }
 
 fn is_rfc1918_v4(octets: [u8; 4]) -> bool {
@@ -267,5 +287,32 @@ pub fn snapshot() -> Vec<String> {
 pub fn clear_for_test() {
     if let Ok(mut g) = ring_buffer().lock() {
         g.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tahap296_ui_error_sanitizer_strips_raw_udid_everywhere() {
+        let modern_udid = "00008101-0011223344556677";
+        let legacy_udid = "0123456789abcdef0123456789abcdef01234567";
+
+        let s_id = format!("iPhone USB {modern_udid} tidak ditemukan di usbmuxd.");
+        let c_id = sanitize_ui_no_raw_udid(&s_id);
+        assert!(!c_id.contains(modern_udid), "raw modern UDID leaked: {c_id}");
+        assert_eq!(c_id, "iPhone USB tidak ditemukan di usbmuxd.");
+
+        let s_pf = format!("PairingFile Lockdown untuk {modern_udid} tidak ditemukan.");
+        let c_pf = sanitize_ui_no_raw_udid(&s_pf);
+        assert!(!c_pf.contains(modern_udid), "raw modern UDID leaked: {c_pf}");
+        assert_eq!(c_pf, "PairingFile Lockdown untuk iPhone tidak ditemukan.");
+
+        let s_leg = format!("USB device {legacy_udid} on 198.51.100.55 (iPhone 12) not found");
+        let c_leg = sanitize_ui_no_raw_udid(&s_leg);
+        assert!(!c_leg.contains(legacy_udid), "raw legacy UDID leaked: {c_leg}");
+        assert!(c_leg.contains("198.51.100.55"), "must preserve LAN IP: {c_leg}");
+        assert!(c_leg.contains("iPhone 12"), "must preserve model name: {c_leg}");
     }
 }
